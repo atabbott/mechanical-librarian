@@ -34,6 +34,7 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
+    _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -381,8 +382,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "SELECT decision_id,proposal_id,target_fingerprint,destination,"
                 "actor,outcome,selected_value_document,idempotency_digest,"
                 "request_digest,occurred_at,document "
-                "FROM human_decisions WHERE review_case_id=? "
-                "ORDER BY ordinal",
+                "FROM human_decisions WHERE review_case_id=? AND "
+                + _episode_decision_sql("human_decisions")
+                + " ORDER BY ordinal",
                 (review_case_id,),
             ).fetchall()
             documents = []
@@ -538,9 +540,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     "AND current.item_id=?",
                     (target["connection"], target["library"], target["item"]),
                 ).fetchone()
+            # Only this episode's decision is replaced; an earlier
+            # episode's is history (#1358).
             previous = self._connection.execute(
                 "SELECT decision_id,'human' FROM human_decisions "
-                "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
+                "WHERE review_case_id=? AND destination=? AND "
+                + _episode_decision_sql("human_decisions")
+                + " ORDER BY ordinal DESC LIMIT 1",
                 (decision.review_case_id, decision.destination),
             ).fetchone()
             authored = None
@@ -640,6 +646,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._revoke_field_effect_authority_in_transaction(
                     previous[0], decision.occurred_at, required=False
                 )
+            # An earlier episode's decisions authorize nothing now; their
+            # plans close with this one (#1358).
+            for (earlier,) in self._connection.execute(
+                "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
+                "AND destination=? AND decision_id<>? AND NOT "
+                + _episode_decision_sql("human_decisions"),
+                (decision.review_case_id, decision.destination, decision.decision_id),
+            ).fetchall():
+                self._revoke_field_effect_authority_in_transaction(
+                    earlier, decision.occurred_at, required=False
+                )
             if automatic is None:
                 # A case admitted again can carry a release made on a later
                 # case, and a released row excludes its human decisions from
@@ -696,7 +713,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
         """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
         latest = self._connection.execute(
             "SELECT decision_id,outcome FROM human_decisions "
-            "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
+            "WHERE review_case_id=? AND destination=? AND "
+            + _episode_decision_sql("human_decisions")
+            + " ORDER BY ordinal DESC LIMIT 1",
             (decision.review_case_id, decision.destination),
         ).fetchone()
         if latest is None or latest[1] in {"withdraw", "reject"}:

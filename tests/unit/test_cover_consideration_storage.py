@@ -219,6 +219,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP INDEX description_decisions_case;"
         "DROP INDEX current_review_case_lineages_case;"
         "DROP INDEX current_review_packages_case;"
+        "DROP TABLE review_case_episodes;"
     )
     rows = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"

@@ -459,6 +459,7 @@ def _server(
     genre_current: tuple[str, ...] | None = None,
     genre_others: str = "ask",
     owner_write: bool = False,
+    owner_recur: bool = False,
     owner_library_change: bool = False,
     owner_readback: list[Callable[[str, bool], str]] | None = None,
     language_fixture: tuple[str, ...] | None = None,
@@ -1020,6 +1021,18 @@ def _server(
         if owner_write:
             case_id, report = _seed_owner_write(
                 repository, database.parent, report, case_id, genre_destination
+            )
+        if owner_recur:
+            # The previous title is chosen again and written, so the work
+            # reads as it first did and its first case is current again.
+            case_id, report = _seed_owner_write(
+                repository,
+                database.parent,
+                report,
+                case_id,
+                genre_destination,
+                title="Real Tigers",
+                at=910,
             )
     elif language_fixture is not None:
         from tests.support.language_reports import (
@@ -1859,7 +1872,16 @@ OWNER_TITLE = "Real Tigers Revisited"
 OWNER_EDIT = "Real Tigers: Library Edition"
 
 
-def _seed_owner_write(repository, root: Path, report, case_id: str, destination: str):
+def _seed_owner_write(
+    repository,
+    root: Path,
+    report,
+    case_id: str,
+    destination: str,
+    *,
+    title: str = OWNER_TITLE,
+    at: int = 900,
+):
     """Write an owner-entered title through the guarded pipeline over a fake
     library, then read the work back as its successor case (#1285)."""
     from mechanical_librarian.adapters.field_effect_authority import (
@@ -1881,16 +1903,22 @@ def _seed_owner_write(repository, root: Path, report, case_id: str, destination:
         destination="title",
         actor="owner",
         outcome="owner_entered",
-        selected_value={"kind": "text", "value": OWNER_TITLE},
-        idempotency_key="browser-owner-entered-title",
-        occurred_at=900,
+        selected_value={"kind": "text", "value": title},
+        idempotency_key=f"browser-owner-entered-title-{at}",
+        occurred_at=at,
+        previous=dict(
+            repository.previous_field_values(
+                report.target.connection, report.target.library, report.target.item
+            )
+        ).get("title"),
     )
     repository.record_human_decision(decision)
     authority = PersistedFieldEffectAuthority(repository)
     service, target = _guarded_application(repository, root, authority)
-    repository.grant_field_effect_consents(
-        report.target.connection, (report.target.library,), ("title",), 12
-    )
+    if at == 900:
+        repository.grant_field_effect_consents(
+            report.target.connection, (report.target.library,), ("title",), 12
+        )
     snapshot = authority.resolve(decision)
     operation = service.plan(
         decision,
@@ -1908,7 +1936,7 @@ def _seed_owner_write(repository, root: Path, report, case_id: str, destination:
     assert operation is not None
     target.seed(operation.plan)
     assert service.apply(operation.plan.plan_id).state == "verified"
-    return _read_back_title(repository, report, case, destination, OWNER_TITLE, 905)
+    return _read_back_title(repository, report, case, destination, title, at + 5)
 
 
 def _read_back_title(
@@ -10719,6 +10747,29 @@ def test_owner_chooses_the_previous_title_again():
             panel.get_by_text("You entered “Real Tigers”.", exact=True)
         ).to_be_focused()
         expect(panel.get_by_text("Your value is recorded.", exact=True)).to_be_visible()
+
+
+def test_a_work_back_at_its_earlier_title_reads_as_new():
+    """#1358: once the previous title is chosen again and written, the work's
+    first case is current again and shows nothing decided on it."""
+    with _owner_page(
+        genre_fixture=("Fantasy",),
+        genre_current=("Drama",),
+        owner_write=True,
+        owner_recur=True,
+    ) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        panel = page.get_by_role("region", name="Your value for Title")
+        expect(
+            panel.get_by_role("button", name="Enter a value", exact=True)
+        ).to_be_visible()
+        # Not "You entered …" with Change and Withdraw from its first episode.
+        expect(page.get_by_text(re.compile("^You entered"))).to_have_count(0)
+        expect(panel.get_by_role("button", name="Change", exact=True)).to_have_count(0)
+        expect(panel.get_by_role("button", name="Withdraw", exact=True)).to_have_count(
+            0
+        )
+        _owner_layout_holds(page)
 
 
 def test_the_previous_title_chosen_after_the_library_changed_is_refused():

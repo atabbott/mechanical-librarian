@@ -102,6 +102,11 @@ brackets are GitHub issues.
   empty sections, idle library cards and "No recommendation retained" are
   gone. Reminders that writes are protected remain only in the guided first
   review and Activity's permission control (#1519).
+- **Clean rebuild required.** A work that returns to an earlier content, for
+  example after you choose the previous value again, reads as new: it no
+  longer shows its earlier decision as written while the library holds
+  another value. Return to automatic also stops a field showing as held
+  (#1358).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
