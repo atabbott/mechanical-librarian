@@ -70,6 +70,9 @@ brackets are GitHub issues.
   bundled Codex CLI prints, instead of failing at once. The link opens in a
   new tab, and the code stays still while you select it and has a Copy
   button (#1493).
+- When the bundled Codex CLI gives up on device sign-in itself, Settings and
+  setup say the sign-in expired and offer to start again, instead of reporting
+  a permission or process failure (#1529).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
