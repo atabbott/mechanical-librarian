@@ -21,7 +21,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 
 
-POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v3"
+POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v4"
 DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
 
 # The product catalogue is deliberately closed.  A destination is an owner
@@ -30,7 +30,7 @@ DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
 OPTION_CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "title_layout": ("preserve", "title_and_subtitle"),
     "date_precision": ("year", "full_date"),
-    "language_rendering": ("preserve", "display_name"),
+    "language_rendering": ("display_name",),
     "contributor_names": ("preserve", "canonical"),
     "publisher_preference": ("publisher", "imprint"),
     "subtitle": ("fill_empty", "corroborated_split", "replace_descriptive"),

@@ -89,8 +89,10 @@ AI.
   populated; candidates may only fill an empty field. Grouped description
   evidence uses an eligible provider's exact text when one exists.
 - **Language** values in one base-and-script class (`English`, `en`, `eng`,
-  regional variants) form one alternative that keeps every reference. `bh`
-  resolves to `bih`, and `und` gives no authority
+  regional variants) form one alternative that keeps every reference and
+  states the class's display name, such as `English`. `bh` resolves to `bih`,
+  and `und` gives no authority. A current value of that class spelled another
+  way gets a `language_display_name` proposal, which is never automatic
   ([ADR-0065](../architecture/decisions/0065-language-equivalence-classes.md)).
 - **Publisher** and imprint observations bound to the edition are separate
   acceptable alternatives. A provider observation also needs an `accepted`

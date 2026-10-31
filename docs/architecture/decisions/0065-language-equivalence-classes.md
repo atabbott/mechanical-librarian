@@ -50,6 +50,46 @@ policy v5, decision policy v16 and shadow outcome v8. Under
 ADR-0013, earlier pre-release proposal and downstream decision state requires a
 clean rebuild; no migration, import, repair, or conversion is supplied.
 
+### Canonical display names
+
+Amended by #1314, because one language was written in three spellings
+(`english`, `en`, `eng`) depending on which provider was elected, and the
+owner decided on 2026-10-21 that every written language is one canonical
+display name. This amendment replaces the rule above that neither rendering
+option synthesizes a value.
+
+1. A fixed table (`domain/language_names.py`) names every supported favored
+   base, and a class with a script is named "Base (Script)", as in "Chinese
+   (Simplified)". Region is not part of a class, so it is not part of a name.
+   Names come from the CLDR English names the review frontend already shows,
+   with the ISO 639-2 or ISO 15924 English name where CLDR has none or where
+   two bases would share a name. No two classes share a name, and no name
+   reads as another base's code. A class whose script has no English name in
+   either source has no display name and keeps the form its evidence
+   admitted.
+2. Each name, in any case, is accepted as a representation of its class,
+   replacing the single bounded name `English`. A tag is read before a name, so
+   `ga` stays Irish while `Ga language` is Ga. Classes do not change.
+3. A language alternative states its class's display name. Fills and
+   replacements therefore write that name, from either an owner's choice or
+   Automatic, and the immutable MetadataReport still holds every original
+   representation.
+4. Only a current value spelled exactly as that name is preserved. A current
+   value of the same class spelled any other way, such as `en`, `eng`, `en-GB`
+   or `english`, becomes a `language_display_name` proposal that offers the
+   name. It is never automatic: the decision policy gives it no eligible
+   action, and the F46 `normalize` and `replace` language operations are no
+   longer permitted for Automatic. The owner accepts it through the ordinary
+   review and consent path, or keeps the current value.
+5. The `preserve` rendering option is retired; `display_name` is the only
+   `language_rendering` option, so a profile or override that names
+   `preserve` is refused.
+
+The proposal policy moves to `fixed-conservative-v41`, the decision policy to
+`deterministic-shadow-decision-policy-v25` and the metadata policy profile to
+`metadata-policy-profile-v4`. Under ADR-0013 earlier stores need a clean
+rebuild; no adoption is supplied.
+
 ## Consequences
 
 ### Positive
@@ -71,7 +111,8 @@ clean rebuild; no migration, import, repair, or conversion is supplied.
 ### Neutral or deferred
 
 - No language is inferred from content and no policy option is added.
-- Human-readable language-name synthesis remains outside this decision.
+- The #1314 amendment synthesizes display names from a fixed table, and that
+  table needs deliberate maintenance alongside the alias registry.
 - Cross-language and script conflicts remain owner decisions.
 
 ## Alternatives considered
@@ -88,8 +129,15 @@ the settled product contract requires those decisions to survive.
 
 ### Store a synthesized display name
 
-Rejected because no admitted evidence supplied that value and the existing
-policy records rendering intent without inventing candidate bytes.
+Rejected at first because no admitted evidence supplied that value. The #1314
+amendment adopts it: the owner chose one spelling per language over observed
+bytes, and the report keeps the observed bytes as provenance.
+
+### Keep `preserve` beside the display name
+
+Rejected in the #1314 amendment. Its only remaining effect would be to write a
+code where the display name writes a name, which brings back the several
+spellings the amendment removes.
 
 ## Validation
 

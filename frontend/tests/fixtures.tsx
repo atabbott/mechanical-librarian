@@ -370,7 +370,7 @@ export const createHttp = (): ReviewHttp => ({
     schema_version: 'metadata-policy-notebook-v1',
     policy_id: 'policy-1',
     profile: {
-      schema_version: 'metadata-policy-profile-v3',
+      schema_version: 'metadata-policy-profile-v4',
       name: 'Default',
       options: {},
       destinations: {},

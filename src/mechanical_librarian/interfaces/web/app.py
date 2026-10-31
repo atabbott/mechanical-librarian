@@ -1418,14 +1418,14 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: Literal["metadata-policy-profile-v3"] = "metadata-policy-profile-v3"
+    schema_version: Literal["metadata-policy-profile-v4"] = "metadata-policy-profile-v4"
 
 
 class _PolicyProfile(_ClosedModel):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: Literal["metadata-policy-profile-v3"]
+    schema_version: Literal["metadata-policy-profile-v4"]
 
 
 class _RichQualificationBase(_ClosedModel):
@@ -1537,7 +1537,7 @@ class _LanguageEbookQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["language_rendering"]
-    option: Literal["preserve", "display_name"]
+    option: Literal["display_name"]
 
 
 class _ContributorEbookQualification(_RichQualificationBase):

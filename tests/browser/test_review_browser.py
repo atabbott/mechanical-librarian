@@ -11459,8 +11459,11 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             # changes: the mixed case a truthful preview has to keep apart.
             page.goto(f"{origin}/policy?section=identity")
             chapters = page.get_by_role("navigation", name="Policy chapters")
+            # Language has one representation, so its destination changes.
+            page.get_by_role("region", name="Language", exact=True).get_by_role(
+                "button", name="Ignore", exact=True
+            ).click()
             for chapter, field, option in (
-                (None, "Language", "Preserve supported form"),
                 ("Publication", "ISBN", "Prefer ISBN-13"),
                 ("Curation", "Tags", "Fill only when empty"),
             ):

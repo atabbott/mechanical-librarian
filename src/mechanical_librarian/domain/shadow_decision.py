@@ -32,7 +32,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v24"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v25"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -863,9 +863,12 @@ def _eligible_actions(
     proposal: dict[str, object],
 ) -> tuple[PolicyAction, ...]:
     # Packet entry validated the proposal summary and the candidate list.
+    # A language conflict is the owner's, and so is respelling a current
+    # language as its display name: that is never automatic (#1314).
     if proposal["destination"] == "language" and (
         type(proposal.get("reasons")) is list
-        and "field_policy_conflict" in cast("list[object]", proposal["reasons"])
+        and {"field_policy_conflict", "language_display_name"}
+        & set(cast("list[object]", proposal["reasons"]))
     ):
         return ()
     sufficiency = cast("_ProposalSummary", proposal["decision_summary"])[

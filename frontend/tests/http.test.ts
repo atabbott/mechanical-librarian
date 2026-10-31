@@ -2108,7 +2108,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
+        schema_version: 'metadata-policy-profile-v4',
         name: 'Active',
         options: {},
         destinations: {},
@@ -2181,7 +2181,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
+        schema_version: 'metadata-policy-profile-v4',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: { title_layout: 'ask' },
@@ -2202,7 +2202,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
+        schema_version: 'metadata-policy-profile-v4',
         name: 'Active',
         options: { first: 'one', second: 'two' },
         destinations: { first: 'ask', second: 'ignore' },
@@ -2241,7 +2241,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
+        schema_version: 'metadata-policy-profile-v4',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: {},
