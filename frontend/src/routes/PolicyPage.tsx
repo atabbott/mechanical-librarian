@@ -54,6 +54,7 @@ const operationScopeLabels = {
   none: 'No automatic effect',
   fill: 'Fill empty only',
   fill_or_replace: 'Fill empty or replace',
+  fill_or_respell: 'Fill empty or respell the same language',
   preserve: 'Keep the current value',
   add: 'Add only',
   replace: 'Replace',
@@ -117,7 +118,7 @@ const fields: readonly FieldDefinition[] = [
     key: 'language_rendering',
     label: 'Language',
     meaning:
-      'Write every language as one display name, such as English; a current value spelled another way is offered for review.',
+      'Write every language as one display name, such as English; a current value of the same language spelled another way is respelled, and another language is never written.',
     options: ['display_name'],
     optionLabels: {
       display_name: 'Use language display name',
@@ -294,7 +295,7 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     transformation:
       'writes the display name of the language the evidence names, such as English; keeps a current value already spelled that way',
     effect:
-      'Automatic only fills an empty or undetermined language; respelling a current value is always offered for review',
+      'Automatic fills an empty or undetermined language and respells a current value of the same language to that name; a different language is never written',
     fallback:
       'keeps the recorded form when a language has no display name; an undetermined language is never written',
   },
@@ -1221,6 +1222,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         : 'Fill empty or replace only with a confirmed strict-rank upgrade'
     if (media === 'audiobook' && field.key === 'cover_order')
       return 'Replace a small incumbent only with a materially larger confirmed cover'
+    if (field.key === 'language_rendering') return operationScopeLabels.fill_or_respell
     const grouped = new Map<TargetDestination, string[]>()
     for (const entry of available) {
       if ('operation_scope' in entry)

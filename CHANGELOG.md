@@ -15,6 +15,11 @@ brackets are GitHub issues.
 - An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
   Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
   request or retry and no longer appear in an ebook's lookups (#1486).
+- **Clean rebuild required.** A title that only drops a leading "The", "A" or
+  "An", a bracketed ISBN suffix on a title-matched work, and a packaged "A
+  Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
+  `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
+  automatically (#1496).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

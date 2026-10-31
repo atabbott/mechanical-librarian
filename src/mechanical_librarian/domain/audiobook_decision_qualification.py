@@ -32,7 +32,7 @@ from mechanical_librarian.domain.work_identity import closed_creator_display_pos
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "885689d853bc56cee3069f48fc49db6512e3506a141448915a91dcdf7522083d"
+    "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -248,6 +248,8 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
         return True
     left = language_identity(current)
     right = language_identity(desired)
+    # A regional tag written as its display name drops the region: that is a
+    # replace F46 never measured, so it stays the owner's (#1496).
     return left is not None and left == right
 
 
@@ -295,6 +297,7 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "isbn_form:preserve_exact:audiobook_isbn_fill",
         "isbn_form:preserve_exact:audiobook_isbn_preserve",
         "language_rendering:display_name:audiobook_language_fill",
+        "language_rendering:display_name:audiobook_language_normalize",
         "language_rendering:display_name:audiobook_language_preserve",
         "publisher_preference:publisher:audiobook_publisher_fill",
         "publisher_preference:publisher:audiobook_publisher_preserve",
