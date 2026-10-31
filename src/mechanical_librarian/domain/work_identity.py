@@ -1680,9 +1680,12 @@ def _election_isbn_component(title: str) -> tuple[str, str] | None:
         if identifier is None or identifier.group("label").casefold() == "asin":
             return None
         compact = re.sub(r"[^0-9X]", "", identifier.group("value").upper())
-        clean_title = apply_work_title_transformation(
-            WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER, title, ()
-        )
+        prefix = bracketed.group("title")
+        # One step only: a title carrying another identifier, bracketed or
+        # bare, stays competing (ADR-0067).
+        if _IDENTIFIER.search(prefix) is not None:
+            return None
+        clean_title = _clean(prefix)
         return (
             (clean_title, compact)
             if _valid_isbn(compact) and clean_title and clean_title != title

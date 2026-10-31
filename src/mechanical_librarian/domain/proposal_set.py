@@ -4863,10 +4863,10 @@ def _alternatives(
             and target.state is TargetFieldState.VALUE
             and type(target.value) is str
             and type(proposal_value.value) is str
-            and title_has_leading_article(target.value)
-            and not title_has_leading_article(proposal_value.value)
-            and title_article_key(target.value)
-            == title_article_key(proposal_value.value)
+            and (target_fold := _title_article_fold(_value(destination, target.value)))
+            is not None
+            and target_fold[1] is not None
+            and _title_article_fold(proposal_value) == (target_fold[0], None)
         ):
             # Only the current title carries the article: the bare form
             # preserves it rather than replacing it (#1496).

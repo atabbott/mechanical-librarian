@@ -381,3 +381,30 @@ def test_a_bracketed_isbn_leaves_no_empty_bracket_in_the_lookup(decorated):
     assert ["Plain Work"] == [
         query.title for query in work_query_ladder(decorated, ("Ada Author",))
     ]
+
+
+def test_stacked_bracketed_isbns_stay_competing():
+    result = _title_result(
+        current="Plain Work [ISBN 9780306406157] (ISBN 9780306406157)",
+        providers=(
+            consensus_provider_title("open_library", "Plain Work"),
+            consensus_provider_title("hardcover", "Plain Work"),
+        ),
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE is not result.outcome
+
+
+def test_an_article_kept_for_the_current_title_keeps_a_different_apostrophe():
+    result = _title_result(
+        current="The Plain’s Work",
+        local="The Plain’s Work",
+        providers=(
+            consensus_provider_title("open_library", "Plain's Work"),
+            consensus_provider_title("hardcover", "Plain's Work"),
+        ),
+    )
+
+    offered = [value.value.value for value in result.alternatives]
+    assert len(offered) == len(set(offered))
+    assert "Plain's Work" in offered
