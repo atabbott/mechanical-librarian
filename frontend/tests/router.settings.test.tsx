@@ -2257,6 +2257,19 @@ describe('library languages in Settings (#1466)', () => {
     await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
     expect(screen.getByRole('option', { name: 'Filipino (tl)' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Filipino (fil)' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Bhojpuri (bih)' })).toBeInTheDocument()
+    // A listed alias or regional tag withholds the code the server groups it
+    // with: `tgl` is `tl`, and `bih-IN` is `bih`.
+    for (const [listed, withheld] of [
+      ['tgl', 'tl'],
+      ['bih-IN', 'bih'],
+    ] as const) {
+      cleanup()
+      http.getSettings = vi.fn(async () => withLanguages([listed]))
+      renderRoute('/settings?group=libraries', http)
+      await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
+      expect(screen.queryByRole('option', { name: new RegExp(`\\(${withheld}\\)$`) })).toBeNull()
+    }
     expect(screen.queryByRole('option', { name: /\((und|mul|mis|zxx)\)$/ })).toBeNull()
   })
 

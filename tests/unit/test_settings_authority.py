@@ -535,7 +535,7 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
 def test_the_settings_language_picker_offers_only_what_the_domain_accepts() -> None:
     """Settings offers each favoured ISO 639 base the domain admits as a
     library language and nothing else, so no offered choice is refused on
-    save (#1466); the limit is the domain's own."""
+    save (#1466); the limit and the alias map are the domain's own."""
 
     vocabulary = _settings_vocabulary()["library_languages"]
 
@@ -544,6 +544,12 @@ def test_the_settings_language_picker_offers_only_what_the_domain_accepts() -> N
         set(_ISO_639_ALIASES.values()) - {"und", "mul", "mis", "zxx"}
     )
     assert all(library_languages_valid((code,)) for code in vocabulary["codes"])
+    # The browser groups a listed tag by the domain's own aliases, so a listed
+    # `tgl` withholds `tl` exactly as the server would refuse the pair.
+    assert vocabulary["aliases"] == {
+        alias: base for alias, base in sorted(_ISO_639_ALIASES.items()) if alias != base
+    }
+    assert list(vocabulary["aliases"]) == sorted(vocabulary["aliases"])
 
 
 def test_the_first_run_vocabulary_states_owner_rules_and_every_contribution() -> None:

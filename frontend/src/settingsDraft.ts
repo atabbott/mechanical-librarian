@@ -294,19 +294,19 @@ const offeredLanguages = settingsVocabulary.library_languages.codes
   .map((code) => ({ value: code, label: languageName(code) }))
   .filter((option) => option.label !== option.value)
   .sort((left, right) => left.label.localeCompare(right.label))
-// The server refuses two entries of one language and script. An offered code
-// is its own group, since the browser's aliases join languages the server
-// keeps apart (`tl` and `fil`); any other tag, such as `deu` or `de-CH` from
-// the file or the API, is grouped as the browser reads it, so it withholds `de`.
-const offeredCodes: ReadonlySet<string> = new Set(settingsVocabulary.library_languages.codes)
+// The server refuses two entries of one language and script, and groups a
+// tag as `language_equivalence_class` does: the language subtag through the
+// domain's ISO 639 aliases, with its script, ignoring region. So a listed
+// `deu`, `de-CH` or `tgl` withholds `de` or `tl`, and `fil` withholds only
+// itself. A tag outside that shape is its own group.
+const languageAliases: Readonly<Record<string, string>> =
+  settingsVocabulary.library_languages.aliases
+const languageTag =
+  /^(?<language>[a-z]{2,3})(?:-(?<script>[A-Z][a-z]{3}))?(?:-(?:[A-Z]{2}|[0-9]{3}))?$/u
 const languageClass = (tag: string) => {
-  if (offeredCodes.has(tag)) return `${tag}-`
-  try {
-    const locale = new Intl.Locale(tag)
-    return `${locale.language}-${locale.script ?? ''}`
-  } catch {
-    return tag
-  }
+  const parts = languageTag.exec(tag)?.groups
+  if (!parts?.language) return tag
+  return `${languageAliases[parts.language] ?? parts.language}-${parts.script ?? ''}`
 }
 export const languageChoices = (listed: readonly string[]) => {
   const taken = new Set(listed.map(languageClass))
