@@ -39,6 +39,10 @@ brackets are GitHub issues.
   libraries with ebooks (#1458).
 - Settings edits a store-managed library's languages: add by name, reorder,
   remove, first preferred. A file-managed deployment shows its list (#1466).
+- At 200% text, Settings' language picker shows its whole label and the save
+  tray scrolls with the page once taller than a third of the window; setup's
+  step list, the masthead's background-work popover and Activity's pager
+  controls stay in view and full size (#1491, #1503).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

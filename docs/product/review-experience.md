@@ -61,7 +61,8 @@ providers, libraries, mounts, an optional cover reviewer, and kickoff.
 - Each step states its rules first. A refusal sits beside its field, clears
   when the field changes, and gives a safe cause and one remedy, never a code;
   at 200% text it stays in view.
-- Completed steps collapse to a row with Change. Reopening removes only the
+- Completed steps collapse to a row with Change. The step list stays beside
+  the step while it fits the window and scrolls inside itself when it does not. Reopening removes only the
   answers and secrets that depend on it. Resume returns to the first incomplete
   step, and a change in another tab restores the latest recorded step.
 - A connection failure names its class (name not resolved, refused,
@@ -129,7 +130,8 @@ the name shown.
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
 `Preparation idle` and still offers Scan now and Pause. Pause stops new scans;
-deferred provider lookups keep their schedule. `Escape` closes the popover and
+deferred provider lookups keep their schedule. The popover fits the window
+below the masthead, scrolling inside itself when it must. `Escape` closes it and
 returns focus to its trigger. Pending commands are disabled, not removed, so
 focus stays put and a second press sends nothing.
 
@@ -399,7 +401,8 @@ the page; below, a labelled selector replaces it.
 The page edits one draft of the whole configuration, with change counts per
 section. Indirect changes count too: turning a source off removes it from its
 libraries. A bottom tray, shared with Policy, appears while anything is unsaved,
-lists before and after values, and offers Discard all and Save settings. Save
+lists before and after values, and offers Discard all and Save settings. A tray
+taller than a third of the window scrolls with the page instead of floating. Save
 validates everything and goes to the first invalid value. A save is confirmed
 once, as saved and in use, in a notice above the page's end and the tray, so it
 moves nothing. A stale save reloads the newer settings and keeps the draft on

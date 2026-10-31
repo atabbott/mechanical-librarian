@@ -7047,6 +7047,11 @@ _SPLIT_SETUP_WORDS = """() => {
     found.push('the mark spills its letters');
   return found;
 }"""
+# Each step-list button that, once focused, lies outside the viewport.
+_OFF_SCREEN_STEP_BUTTONS = """() => [...document.querySelectorAll('aside button')]
+  .map((node) => { node.focus(); return [node, node.getBoundingClientRect()]; })
+  .filter(([, box]) => box.top < 0 || box.bottom > innerHeight + 0.5)
+  .map(([node, box]) => `${node.getAttribute('aria-label')} at ${Math.round(box.top)}px`)"""
 
 
 def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() -> None:
@@ -7055,7 +7060,9 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
     (#1490); every step-list Change button is a 2.75rem target at every width
     and text size; and with 200% text at 375 and 320px no word breaks in the
     step list, the mark, a provider's name or its access link, such as
-    Hardcover, and the mark holds its letters (#1491)."""
+    Hardcover, and the mark holds its letters; and at 200% text on a wide
+    screen, root or browser font, the step list never holds a focused button
+    off screen (#1491)."""
     with tempfile.TemporaryDirectory() as directory:
         with (
             real_setup_server(Path(directory)) as (origin, token_file, _cert),
@@ -7113,6 +7120,23 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
                                 f"{where}: {split}"
                                 for split in page.evaluate(_SPLIT_SETUP_WORDS)
                             ]
+                        if text and width == 1440:
+                            failures += [
+                                f"{where}: {off}"
+                                for off in page.evaluate(_OFF_SCREEN_STEP_BUTTONS)
+                            ]
+                page.evaluate("() => document.documentElement.style.fontSize = ''")
+                # A real 32px browser font moves the page's rem breakpoints too,
+                # so its two columns need a wider screen.
+                session = context.new_cdp_session(page)
+                session.send(
+                    "Page.setFontSizes", {"fontSizes": {"standard": 32, "fixed": 26}}
+                )
+                page.set_viewport_size({"width": 1700, "height": 900})
+                failures += [
+                    f"32px browser font at 1700x900: {off}"
+                    for off in page.evaluate(_OFF_SCREEN_STEP_BUTTONS)
+                ]
                 assert failures == [], "\n".join(failures)
             browser.close()
 
@@ -8164,6 +8188,60 @@ _UNDER_SAVED_NOTICE = """() => {
   const name = focused.getAttribute('aria-label') || focused.textContent.trim().slice(0, 40);
   return `${name} by ${Math.round(y)}px of ${Math.round(b.height)}px`;
 }"""
+
+
+# The language picker's label and the tray's "Review changes" when either
+# clips its text, and the tray's share of the viewport while it floats.
+_SETTINGS_LANGUAGE_FIT = """() => {
+  const clipped = (node) => node && node.scrollWidth > node.clientWidth + 0.5;
+  const tray = document.querySelector('.settings-tray');
+  const toggle = document.querySelector('.settings-review-toggle');
+  const floating = tray && getComputedStyle(tray).position === 'sticky';
+  return {
+    picker: clipped(document.querySelector('.settings-language-editor .cm-dropdown-trigger > span')),
+    toggle: clipped(toggle),
+    share: floating ? tray.getBoundingClientRect().height / innerHeight : 0,
+  };
+}"""
+
+
+def test_settings_language_picker_and_tray_fit_a_phone_at_200_percent_text() -> None:
+    """At 375 and 320px with 200% text the "Add a language" picker shows its
+    whole label, "Review changes" stays inside its button, and the save tray
+    floats only while it takes at most a third of the screen (#1503)."""
+    with _owner_page() as (page, origin, _case_id):
+        failures = []
+        for width, height in ((375, 812), (320, 640)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(f"{origin}/settings?group=libraries")
+            picker = page.get_by_role("combobox", name=re.compile("^Add a language to"))
+            picker.wait_for()
+            page.evaluate(
+                "() => { const sheet = new CSSStyleSheet(); "
+                "sheet.replaceSync('html { font-size: 200% }'); "
+                "document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet] }"
+            )
+            page.wait_for_function(
+                "() => getComputedStyle(document.documentElement).fontSize === '32px'",
+                timeout=5_000,
+            )
+            page.evaluate(_TWO_FRAMES)
+            where = f"200% text at {width}x{height}"
+            if page.evaluate(_SETTINGS_LANGUAGE_FIT)["picker"]:
+                failures.append(f"{where}: the picker's label is cut off")
+            picker.click()
+            page.get_by_role("option").nth(1).click()
+            expect(page.locator(".settings-review-toggle")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            fit = page.evaluate(_SETTINGS_LANGUAGE_FIT)
+            if fit["toggle"]:
+                failures.append(f'{where}: "Review changes" overflows its button')
+            if fit["share"] > 1 / 3:
+                failures.append(
+                    f"{where}: the floating tray takes {fit['share']:.0%} of the screen"
+                )
+            assert page.evaluate("document.documentElement.scrollWidth") <= width, where
+        assert failures == [], "\n".join(failures)
 
 
 def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
