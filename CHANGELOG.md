@@ -70,6 +70,18 @@ brackets are GitHub issues.
   bundled Codex CLI prints, instead of failing at once. The link opens in a
   new tab, and the code stays still while you select it and has a Copy
   button (#1493).
+- When the bundled Codex CLI gives up on device sign-in itself, Settings and
+  setup say the sign-in expired and offer to start again, instead of reporting
+  a permission or process failure (#1529).
+- Retry now no longer parks a provider scope that has no outstanding lookups,
+  so lookups that fail there later are retried and Activity stops asking for a
+  correction nothing needs (#1375).
+- Resuming automatic handling, or lifting a title suspension, now also gives an
+  automatic title decision to a work re-read while handling was paused; an
+  owner's hold carried to it shows as held (#1364).
+- Opening Mechanical Librarian's address while signed in goes to Library, and
+  a link opened while signed out returns to its page after sign-in. Sign-in
+  returns only to a page of this workspace (#1371).
 - The Works panel's lenses sit in one row that scrolls sideways, the pager
   offers only the moves that exist (none for a single page), and search is a
   rounded field with a × inside to clear it (#1520).
