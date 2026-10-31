@@ -97,6 +97,11 @@ brackets are GitHub issues.
 - A cover write held up because Audiobookshelf could not be reached now waits
   and is applied once the connection is back, up to three times, like every
   other field, instead of stopping. No clean rebuild is needed (#1415).
+- **Clean rebuild required.** A work that returns to an earlier content, for
+  example after you choose the previous value again, reads as new: it no
+  longer shows its earlier decision as written while the library holds
+  another value. Return to automatic also stops a field showing as held
+  (#1358).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

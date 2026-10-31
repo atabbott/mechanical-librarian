@@ -75,6 +75,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _episode_decision_sql,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
@@ -713,6 +716,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
                 + _FIELD_EFFECT_COMPANION_DECISION_SQL
                 + ") WHERE effect.state='verified' "
+                # A write planned before the case was admitted again is not
+                # what the library holds now: the work has left that content
+                # and returned to the case's own (#1358).
+                "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
+                "review_case_episodes WHERE review_case_id=?),0) "
                 "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
                 (
                     decision.review_case_id,
@@ -720,6 +728,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     decision.decision_id,
                     decision.review_case_id,
                     decision.destination,
+                    decision.review_case_id,
                 ),
             ).fetchone()
             if decision.destination == "description":
@@ -727,8 +736,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "SELECT effect.document FROM field_effects effect "
                     "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
                     "WHERE authored.review_case_id=? AND effect.state='verified' "
+                    "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
+                    "review_case_episodes WHERE review_case_id=?),0) "
                     "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
-                    (decision.review_case_id,),
+                    (decision.review_case_id, decision.review_case_id),
                 ).fetchone()
                 if authored_predecessor is not None and (
                     predecessor is None
@@ -1262,7 +1273,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "stale.decision_id=human.decision_id AND stale.kind='stale'))) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) AND NOT EXISTS ("
+                "current.destination=human.destination) AND "
+                # An earlier episode's decision of a case admitted again is
+                # history, never pending work (#1358).
+                 + _episode_decision_sql("human") + " AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds returned WHERE "
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
@@ -1357,7 +1371,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) "
                 "THEN human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) END AND NOT EXISTS ("
+                "current.destination=human.destination) END AND "
+                + _episode_decision_sql("human")
+                + " AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds returned WHERE "
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "

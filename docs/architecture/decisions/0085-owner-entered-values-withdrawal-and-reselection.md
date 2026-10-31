@@ -106,19 +106,24 @@ event, so the value a write replaced is durable.
   holds, so a successor shows the hold and its Resume automatic handling
   control. Library browse facts do not yet show a carried hold.
 - A case id is a content hash, so a work that returns to exactly the content of
-  an earlier case re-admits that case. Its own hold row takes the work's latest
-  hold state, a release or pending return included. Where that case has no
-  automatic decision, a new owner decision there removes its released row, so
-  the decision plans and nothing carries forward, as on a case never held.
-  Resume is accepted only where the case shows the hold holding a decision,
-  through the API as through its control, so a removed row is only ever a copy
-  of a release still recorded elsewhere and a released hold never resurrects. Its earlier decisions are append-only and
-  stay, so a re-admitted case can show its old decision wording, such as "You
-  entered X" marked written while the library holds the earlier value, and can
-  read as held while automatic handling is queued. Choosing the previous value
-  again reaches this too. Main already does this when an accepted write is
-  edited back by hand; making a recurring case a new episode is a follow-up
-  candidate.
+  an earlier case re-admits that case, and the re-admission starts a new
+  episode of it. Its earlier owner decisions are append-only and stay as
+  history, but they settle, word, withdraw and plan nothing in the new episode,
+  and a write planned before it is not its pre-image: the case reads as
+  undecided until the owner decides again. Choosing the previous value again
+  therefore leaves the earlier case reading as new, not as "You entered X"
+  marked written. An earlier episode's decision still keeps a new automatic
+  decision off that field of the case, so a recurrence never hands a field the
+  owner decided back to automatic handling.
+- The re-admitted case's own hold row takes the work's latest hold state, a
+  release or pending return included. Where that case has no automatic
+  decision, a new owner decision there removes its released row, so the
+  decision plans and nothing carries forward, as on a case never held. Resume
+  is accepted only where the case shows the hold holding a decision, through
+  the API as through its control, so a removed row is only ever a copy of a
+  release still recorded elsewhere and a released hold never resurrects. A
+  field reads as held only while its hold row is in force, so Return to
+  automatic clears the held flag on the case that set it too.
 - Extending owner entry to more fields, clearing a field and adapter
   compare-and-set are follow-up candidates.
 
@@ -148,7 +153,9 @@ withdraw eligibility in refusal order, the previous-value read (after a write,
 of any origin, never from a stale plan, a disagreeing event, an empty pre-image
 or a description), previous genres, hold carry-forward (a pending return is not
 carried, retire then re-admit keeps the hold, Resume automatic handling on the
-successor releases it), and the learning exclusion. Integration tests write,
+successor releases it), a re-admitted case as a new episode (the previous value
+chosen again, a decision on the re-admitted case, a later successor that
+recurs), and the learning exclusion. Integration tests write,
 verify and choose the previous value again through the guarded pipeline over a
 fake library. Vitest and browser journeys cover entry, subset, withdraw, the
 previous value, a stale reselection, and unbroken words at every width, theme

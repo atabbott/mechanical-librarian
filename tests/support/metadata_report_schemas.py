@@ -18,6 +18,9 @@ from typing import cast
 import pytest
 
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _episode_decision_sql,
+)
 from mechanical_librarian.domain.metadata_report import (
     COMPARISON_VERSION,
     ClaimKind,
@@ -317,22 +320,25 @@ assert PRIOR_REVIEW_WORK_SQL != persistence_schema._REVIEW_WORK_SQL
 PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw')", "'reject')"
 )
-# Before #1285 any owner decision settled a field; now only its latest one
-# does, unless it withdrew the field.
+# Before #1285 any owner decision settled a field; now only its latest one of
+# the case's episode does (#1358), unless it withdrew the field.
 HUMAN_DECIDED_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=result.destination "
-    "ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
+    "AND decision.destination=result.destination AND "
+    + _episode_decision_sql("decision")
+    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
 )
 PRIOR_HUMAN_DECIDED_SQL = (
     " AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination) "
 )
+# Every producer before #1358 kept no case episodes.
 PRIOR_ATTENTION_FACT_OBJECTS = tuple(
     (kind, name, sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL))
     for kind, name, sql in persistence_schema._ATTENTION_FACT_OBJECTS
+    if not name.startswith("review_case_episodes_")
 )
 
 

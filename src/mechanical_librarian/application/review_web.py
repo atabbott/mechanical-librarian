@@ -1003,8 +1003,13 @@ class InspectCurrentReviewCase:
                 "automatic_decision": automatic_decision,
                 "automatic_withheld_reason": None,
                 "automatic_selection_sources": automatic_selection_sources,
-                "manual_hold": carried_hold
-                or (decision is not None and automatic_decision is not None),
+                # Held only while the hold row is in force: Return to
+                # automatic releases it on the deciding case too (#1358).
+                "manual_hold": destination in snapshot.held_destinations
+                and (
+                    carried_hold
+                    or (decision is not None and automatic_decision is not None)
+                ),
                 "classification": classification.state,
                 "classification_reason": classification.reason,
                 "editable": classification.editable and has_owner_action,

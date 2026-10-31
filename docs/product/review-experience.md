@@ -291,7 +291,9 @@ cannot be replaced; a verified reversible field write can.
 There is no Undo and there are no bulk decisions. Going back means choosing
 the earlier value: after a write, Enter a value suggests the value it replaced ("Use
 previous value") and Choose genres tags those genres **Previous**. Authors return to an earlier value only when a
-provider proposes it.
+provider proposes it. A work that returns to an earlier content reads as new:
+the decisions recorded on it before are history, and the field shows only
+what you decide now.
 
 ### Audiobooks
 
