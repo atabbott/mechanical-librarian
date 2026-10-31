@@ -786,6 +786,18 @@ class GenerateProviderRetrySuccessor:
                         for item in observation.candidates
                     )
                 ),
+                # An audio edition stays with the WORK lane that admitted its
+                # book (#962); the aggregate drops any whose work is gone.
+                audio_editions=tuple(
+                    edition
+                    for edition in evidence.audio_editions
+                    if lane.kind is ProviderQueryKind.WORK
+                    and observation.status is ProviderStatus.CANDIDATES
+                    and any(
+                        item.edition_identity == edition.work_identity
+                        for item in observation.candidates
+                    )
+                ),
             )
 
         # Merge over the observed lanes only: retrying an asserted lane that

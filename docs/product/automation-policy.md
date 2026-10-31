@@ -108,7 +108,7 @@ inherited from ebooks.
 | `title_layout` | `title_and_subtitle` (default) | fill or replace | title: fill, preserve, replace; title/subtitle pair |
 | `date_precision` | `year` (default) | fill or replace | none |
 | `date_precision` | `full_date` | fill or replace | publishedDate: fill |
-| `language_rendering` | `preserve`, `display_name` (default) | fill or replace | language: fill, normalize, preserve, replace |
+| `language_rendering` | `display_name` (default) | fill | language: fill, preserve |
 | `contributor_names` | `preserve` | fill or replace | authors: add, fill, normalize, preserve, replace |
 | `contributor_names` | `canonical` (default) | fill or replace | authors and narrators: add, fill, normalize, preserve, replace |
 | `publisher_preference` | `publisher` (default) | fill or replace | publisher: fill, preserve |
@@ -329,12 +329,13 @@ separately and real conflicts stay visible.
 ### Language
 
 Language names and codes are grouped before election on both media
-([evaluation rules](../operations/proposal-set.md#evaluation-rules)). An
-equivalent current value stays unchanged and creates no choice. When filling,
-Preserve prefers an observed code and Display name an observed English name.
-Neither generates a spelling; if the preferred form was not observed, the other
-observed form is used. Region and script are kept; base or script
-disagreements stay manual. No language is inferred.
+([evaluation rules](../operations/proposal-set.md#evaluation-rules)), and every
+language is written as one display name, such as "English" or "Chinese
+(Simplified)", whatever spelling the evidence used. A current value already
+spelled that way stays unchanged. A current value of the same language spelled
+another way, such as `en`, `eng` or `en-GB`, is offered for review with its
+display name; Automatic never respells it. Region is not written; base or
+script disagreements stay manual. No language is inferred.
 
 ### Description
 

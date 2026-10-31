@@ -35,7 +35,7 @@ def test_current_records_match_runtime_permissions():
         "F20": F20_PASSING_AUTOMATIC_OPTIONS,
         "F46": audio.F46_PASSING_AUTOMATIC_OPTIONS,
     }
-    assert [len(current[f]) for f in ("F19A", "F20", "F46")] == [12, 13, 76]
+    assert [len(current[f]) for f in ("F19A", "F20", "F46")] == [11, 13, 70]
     for family, (name, _, _) in records.RECORDS.items():
         document = json.loads((ROOT / records.REFERENCE / name).read_bytes())
         assert (

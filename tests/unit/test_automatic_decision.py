@@ -82,7 +82,7 @@ def test_persisted_decision_requires_exact_canonical_document() -> None:
         policy_generation=1,
         rule_id="shadow_rule_" + "1" * 64,
         policy_category="language_rendering",
-        policy_option="preserve",
+        policy_option="display_name",
         qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
         source_outcome_id="shadow_outcome_" + "3" * 64,
         occurred_at=1,

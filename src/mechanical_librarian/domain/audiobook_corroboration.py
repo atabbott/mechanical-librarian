@@ -999,6 +999,9 @@ __all__ = [
     "stated_runtime_agreement",
     "tight_runtime_distance",
     "admitted_recording_asin",
+    "HardcoverEditionWitness",
+    "counted_audio_editions",
+    "hardcover_edition_witness",
     "recording_admitted",
     "recording_unmatched",
     "band_first_candidate",
@@ -1871,6 +1874,104 @@ def recording_unmatched(report: MetadataReport) -> bool:
     ebook, or an audiobook that admitted a recording, never is.
     """
     return report.file.format in AUDIO_FILE_FORMATS and not recording_admitted(report)
+
+
+class HardcoverEditionWitness(StrEnum):
+    """What Hardcover's audio editions say about this recording (#962, ADR-0089).
+
+    - `no_edition`: no counted edition; nothing is witnessed.
+    - `editions_disagree`: counted editions credit disjoint narrator casts, so
+      none is used (open choice A: fill nothing, record the disagreement).
+    - `unmatched`: counted editions agree and no audiobook authority put a
+      recording forward; the edition can later fill a gap or lead a lookup.
+    - `agrees`: an accepted recording is inside the tight band, or shares a
+      narrator with the counted editions. Same narrator and a close runtime
+      is the same recording with an offset in the stated time. A recording
+      that states no runtime or no narrator is never challenged.
+    - `challenged`: every accepted recording states a runtime outside the
+      tight band, after whole-minute floors, and credits only narrators the
+      counted editions do not. The match is the wrong recording and goes to the owner.
+    """
+
+    NO_EDITION = "no_edition"
+    EDITIONS_DISAGREE = "editions_disagree"
+    UNMATCHED = "unmatched"
+    AGREES = "agrees"
+    CHALLENGED = "challenged"
+
+
+def counted_audio_editions(report: MetadataReport) -> tuple[ProviderCandidate, ...]:
+    """Hardcover audio editions that witness this recording (#962).
+
+    An edition counts when it credits a narrator and states a runtime inside
+    the tight band of the recording's own. Its runtime is compared with the
+    file, never with Audible's, which a Hardcover record may only repeat.
+    """
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    local = local_runtime_seconds(report)
+    if report.audio is None or local is None:
+        return ()
+    return tuple(
+        edition
+        for observation in report.providers
+        if observation.authority == "hardcover"
+        and observation.status is ProviderStatus.CANDIDATES
+        for edition in observation.audio_editions
+        if _candidate_narrators(edition)
+        and runtime_agreement(local, candidate_runtime_seconds(edition)).outcome
+        is CorroborationOutcome.CORROBORATED
+    )
+
+
+def _accepted_recordings(report: MetadataReport) -> tuple[ProviderCandidate, ...]:
+    """Every product an audiobook authority put forward for this item."""
+    return tuple(
+        candidate
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and observation.status is ProviderStatus.CANDIDATES
+        for candidate in observation.candidates
+        if candidate.identity != candidate.work_identity
+    )
+
+
+def hardcover_edition_witness(report: MetadataReport) -> HardcoverEditionWitness:
+    """Judge the accepted recording against Hardcover's counted editions.
+
+    A Hardcover edition is never a second independent source for a field
+    (ADR-0089): an Audible exclusive's facts can only have come from Audible.
+    It is only compared with the file, so it can say which recording the file
+    is without echoing the match it judges.
+    """
+    editions = counted_audio_editions(report)
+    if not editions:
+        return HardcoverEditionWitness.NO_EDITION
+    casts = tuple(_candidate_narrators(edition) for edition in editions)
+    if any(
+        narrator_cast_disjoint(left, right)
+        for index, left in enumerate(casts)
+        for right in casts[index + 1 :]
+    ):
+        return HardcoverEditionWitness.EDITIONS_DISAGREE
+    accepted = _accepted_recordings(report)
+    if not accepted:
+        return HardcoverEditionWitness.UNMATCHED
+    local = local_runtime_seconds(report)
+    if any(
+        runtime_agreement(
+            local, candidate_runtime_seconds(candidate), provider_minutes=True
+        ).outcome
+        # An unstated runtime is no evidence of another recording.
+        in {CorroborationOutcome.CORROBORATED, CorroborationOutcome.NOT_COMPARABLE}
+        or not all(
+            narrator_cast_disjoint(_candidate_narrators(candidate), cast)
+            for cast in casts
+        )
+        for candidate in accepted
+    ):
+        return HardcoverEditionWitness.AGREES
+    return HardcoverEditionWitness.CHALLENGED
 
 
 def admitted_recording_asin(report: MetadataReport) -> str | None:

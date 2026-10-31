@@ -272,7 +272,7 @@ changes, each a map keyed by policy category.
 | --- | --- |
 | `title_layout` | `title_and_subtitle`, `preserve` |
 | `date_precision` | `year`, `full_date` |
-| `language_rendering` | `display_name`, `preserve` |
+| `language_rendering` | `display_name` |
 | `contributor_names` | `canonical`, `preserve` |
 | `publisher_preference` | `publisher`, `imprint` |
 | `subtitle` | `fill_empty`, `corroborated_split`, `replace_descriptive` |

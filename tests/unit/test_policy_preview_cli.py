@@ -101,7 +101,7 @@ def test_composed_preview_uses_active_profile_for_new_library() -> None:
     builtin = MetadataPolicyProfile.builtin()
     profile = MetadataPolicyProfile.create(
         "Activated policy",
-        {**dict(builtin.options), "language_rendering": "preserve"},
+        {**dict(builtin.options), "contributor_names": "preserve"},
         dict(builtin.destinations),
     )
     source = Path("docs/examples/synthetic-config.json")
@@ -164,7 +164,6 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "title_layout:title_and_subtitle",
             "date_precision:year",
             "date_precision:full_date",
-            "language_rendering:preserve",
             "language_rendering:display_name",
             "contributor_names:preserve",
             "contributor_names:canonical",
@@ -205,6 +204,7 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "description_fill:safe_plain_text",
             "isbn_form:preserve_exact",
             "isbn_form:prefer_isbn13",
+            "language_rendering:display_name",
             "series:primary_narrative",
             "series:source_order",
             "series:all_qualified",

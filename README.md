@@ -36,6 +36,8 @@ What works today:
 - An optional AI cover reviewer (Codex or an OpenRouter model) and optional
   description advice. Reviewers are advisory only and never receive library
   credentials.
+- A workspace in plain words, built to WCAG 2.2 AA, that works by keyboard
+  and stays usable on phones and at 200% text.
 
 What comes next is tracked as
 [GitHub milestones](https://github.com/atabbott/mechanical-librarian/milestones)

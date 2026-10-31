@@ -7251,9 +7251,7 @@ def test_paired_post_write_readback_projects_unconfirmed(audiobook_pair):
 
 
 @pytest.mark.parametrize("audio", (False, True))
-@pytest.mark.parametrize(
-    "option, expected", (("preserve", "en"), ("display_name", "English"))
-)
+@pytest.mark.parametrize("option, expected", (("display_name", "English"),))
 @pytest.mark.parametrize("current", (None, "UND"))
 def test_observed_language_reaches_guarded_write_and_readback(
     effects, audio, option, expected, current
@@ -7906,3 +7904,71 @@ def test_activity_witness_encoding_distinguishes_exact_sqlite_scalar_types():
         assert len({_encoded(value) for value in values}) == len(values)
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("audio", (False, True))
+@pytest.mark.parametrize("current", ("eng", "en-GB", "english"))
+def test_owner_accepted_language_respelling_writes_the_display_name(
+    effects, audio, current
+):
+    """A respelling is the owner's choice; once accepted it writes the name (#1314)."""
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from tests.support.language_reports import language_report, publish_language_case
+
+    report = language_report(("English", "en"), current, audio=audio)
+    case_id, _ = publish_language_case(effects.repository, report)
+    effects.repository.persist_shadow_outcome(case_id, 4)
+    assert not any(
+        json.loads(value)["destination"] == "language"
+        for value in effects.repository.get_review_case_decisions(case_id)
+    )
+    case = ReviewCase.create_from_data(
+        json.loads(effects.repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "language"
+    )
+    assert proposal["result"]["reasons"] == ["language_display_name"]
+    (alternative,) = proposal["result"]["alternatives"]
+    assert alternative["value"] == {"kind": "text", "value": "English"}
+    decision = HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination="language",
+        actor="owner",
+        outcome="accept",
+        selected_value=alternative["value"],
+        idempotency_key="language-respelling-owner",
+        occurred_at=5,
+    )
+    effects.repository.record_human_decision(decision)
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    snapshot = authority.resolve(decision)
+    assert snapshot.pre_value == current
+    assert snapshot.decision_value == {"kind": "text", "value": "English"}
+    effects.repository.grant_field_effect_consents(
+        "primary", (report.target.library,), ("language",), 6
+    )
+    service = effects.persisted_service(effects.repository, effects.target, authority)
+    operation = service.plan(
+        decision,
+        desired_value=snapshot.decision_value,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination="language",
+        pre_value=snapshot.pre_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    effects.target.seed(operation.plan)
+    result = service.apply(operation.plan.plan_id)
+    assert result.state == "verified"
+    assert (
+        effects.target._values[("primary", report.target.library, "item-1", "language")]
+        == "English"
+    )

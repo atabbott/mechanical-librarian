@@ -107,7 +107,10 @@ provider. Audiobook evidence remains read-side only.
    publication means a linked work's first publication, retaining year, month
    or day precision; recording and edition release dates do not vote. This
    adds no provider, credential mode or network destination. The audiobook
-   dispatch set is amended below (#1247).
+   dispatch set is amended below (#1247). Hardcover also reads an admitted
+   book's audio editions, as a witness to which recording the file is and
+   never as recording authority or a second independent source
+   ([ADR-0090](0090-hardcover-audio-edition-witness.md)).
 
 ## Consequences
 

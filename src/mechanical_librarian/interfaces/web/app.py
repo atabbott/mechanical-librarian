@@ -1537,7 +1537,7 @@ class _LanguageEbookQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["language_rendering"]
-    option: Literal["preserve", "display_name"]
+    option: Literal["display_name"]
 
 
 class _ContributorEbookQualification(_RichQualificationBase):

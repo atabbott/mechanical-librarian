@@ -81,17 +81,17 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v63` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v64` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
-| `fixed-conservative-v40` | The proposal policy |
+| `fixed-conservative-v41` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v9` | The deterministic decision packet |
-| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v24` |
-| `deterministic-shadow-decision-policy-v24` | The shadow decision policy |
+| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v25` |
+| `deterministic-shadow-decision-policy-v25` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v11` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
 

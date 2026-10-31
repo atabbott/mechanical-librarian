@@ -11,6 +11,11 @@ import unicodedata
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from mechanical_librarian.domain.language_names import (
+    language_display_name,
+    language_name_class,
+)
+
 _LANGUAGE_TAG = re.compile(
     r"^(?P<language>[a-z]{2,3})"
     r"(?:-(?P<script>[A-Z][a-z]{3}))?"
@@ -68,12 +73,15 @@ class LanguageIdentity:
 
 
 def language_identity(value: str) -> LanguageIdentity | None:
-    """Parse the closed canonical ISO/BCP 47 subset used by proposal policy."""
-    if value.casefold() == "english":
-        return LanguageIdentity("en", None, None)
+    """Parse the closed canonical ISO/BCP 47 subset used by proposal policy.
+
+    A tag wins; otherwise a class display name from the fixed table (#1314),
+    in any case, names its class without a region.
+    """
     match = _LANGUAGE_TAG.fullmatch(value)
     if match is None:
-        return None
+        named = language_name_class(value)
+        return None if named is None else LanguageIdentity(*named, None)
     base = _ISO_639_ALIASES.get(match["language"])
     script = match["script"]
     region = match["region"]
@@ -99,6 +107,12 @@ def language_equivalence_class(value: str) -> tuple[str, str | None] | None:
     if identity is None or language_is_unknown(value):
         return None
     return identity.base, identity.script
+
+
+def language_canonical_name(value: str) -> str | None:
+    """Name the class of one supported representation, or None (#1314)."""
+    language = language_equivalence_class(value)
+    return None if language is None else language_display_name(*language)
 
 
 def language_outcomes_compatible(left: str, right: str) -> bool:
@@ -154,6 +168,7 @@ __all__ = [
     "LanguageIdentity",
     "language_equivalence_class",
     "language_identity",
+    "language_canonical_name",
     "language_outcomes_compatible",
     "library_languages_valid",
     "publisher_statement_valid",

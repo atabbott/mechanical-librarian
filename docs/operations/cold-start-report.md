@@ -53,7 +53,7 @@ Each library carries these blocks, defined fully in the script's docstrings.
 | `automatic_decision_corroboration` | Automatic decisions by corroborating provider sources (`0`, `1`, `2`, `3_plus`). |
 | `automatic_decisions` | Persisted automatic decisions on current cases, per destination and `outcome`. |
 | `audiobook_dispatch` | How each audiobook report's lanes ended, by kind, provider class, Audible ladder depth, runtime `band` and `near_miss`. |
-| `audiobook_outcomes` | Audiobook reports split into `recording_admitted`, `work_only` and `evidence_only`. |
+| `audiobook_outcomes` | Audiobook reports split into `recording_admitted`, `work_only` and `evidence_only`; `hardcover_witness` counts what Hardcover's audio editions say about each ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)). |
 | `audiobook_cover_reads` | Audiobookshelf cover read states; `without_read` counts reports with none. |
 | `dispatches` | Initial, retry and replayed provider requests, per item and per provider, and `never_dispatched`. |
 

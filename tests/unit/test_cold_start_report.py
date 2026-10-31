@@ -1577,6 +1577,13 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             "runtime_contradiction": 1,
             "runtime_near_miss_only_or_mixed": 0,
         },
+        "hardcover_witness": {
+            "no_edition": 8,
+            "editions_disagree": 0,
+            "unmatched": 0,
+            "agrees": 0,
+            "challenged": 0,
+        },
     } == audiobooks["audiobook_outcomes"]
     assert {
         "reports": 8,

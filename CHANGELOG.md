@@ -12,11 +12,19 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** Hardcover's audio editions are read for every
+  matched audiobook work and compared with the file. The report records when
+  an edition with a different narrator matches the file and the Audible match
+  does not. A Hardcover edition never counts as a second source (#962).
+
 - **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
   filled under the default option (a cut-off one only by its own full text),
   and an "About the book" header line no longer counts as a difference.
   Marketing lines are never chosen as subtitles, and genres or synopses from a
   store in another language wait for your choice (#1317).
+- **Clean rebuild required.** Every language is written as one display name,
+  such as "English"; a current `en` or `eng` is offered for review, never
+  rewritten. The `preserve` language option is gone (#1314).
 - **Clean rebuild required.** An Audiobookshelf item holding audio and an EPUB
   is prepared as an audiobook, with the EPUB's details kept only as supporting
   evidence. The audio filter lists only items that hold audio (#1319).
@@ -67,7 +75,7 @@ brackets are GitHub issues.
 - Renovate moves Node, Python and uv pins together in one pull request; a new
   Node major or Python minor version waits for approval (#1448).
 
-## 0.29.1 — Clarity and accessibility (in progress)
+## 0.29.1 — Clarity and accessibility
 
 - At 200% text the write-permission panel, Policy's preview actions and the
   Review complete card stay on screen; that card's heading comes into view

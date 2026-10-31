@@ -117,10 +117,9 @@ const fields: readonly FieldDefinition[] = [
     key: 'language_rendering',
     label: 'Language',
     meaning:
-      'Group supported language names and codes; keep an equivalent current value unchanged.',
-    options: ['preserve', 'display_name'],
+      'Write every language as one display name, such as English; a current value spelled another way is offered for review.',
+    options: ['display_name'],
     optionLabels: {
-      preserve: 'Preserve supported form',
       display_name: 'Use language display name',
     },
     chapter: 'identity',
@@ -290,20 +289,14 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     effect: 'Automatic writes only the selected contributor value',
     fallback: 'makes no change when Automatic cannot decide safely',
   },
-  'language_rendering:preserve': {
-    admitted: 'the already-produced exact candidate and its policy/audit context',
-    transformation: 'keeps an equivalent current value; when filling, prefers an observed code',
-    effect: 'Automatic writes only a form present in the selected evidence',
-    fallback:
-      'uses another recorded form when no code is present; an undetermined language is never written',
-  },
   'language_rendering:display_name': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation:
-      'keeps an equivalent current value; when filling, prefers an observed English name',
-    effect: 'Automatic writes only a form present in the selected evidence',
+      'writes the display name of the language the evidence names, such as English; keeps a current value already spelled that way',
+    effect:
+      'Automatic only fills an empty or undetermined language; respelling a current value is always offered for review',
     fallback:
-      'uses a recorded code when no name is present; an undetermined language is never written',
+      'keeps the recorded form when a language has no display name; an undetermined language is never written',
   },
   'subtitle:fill_empty': {
     admitted: "one supported subtitle attested by the book's own metadata",

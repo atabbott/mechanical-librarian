@@ -82,6 +82,8 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.operations import OperationsError, StageTiming
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
+    HardcoverEditionWitness,
+    hardcover_edition_witness,
     lane_band,
     local_claim_runtime_seconds,
     stated_runtime_agreement,
@@ -488,7 +490,9 @@ def _audiobook_rows(
     stating a work-identity refusal. The outcome is the report's review scope
     or its evidence-only reason, the reason is named for every report a
     recording did not admit, and each Audiobookshelf cover read is (state,
-    timeout scope): closed vocabulary, flags and integers only.
+    timeout scope). The last member is what Hardcover's audio editions say
+    about the accepted recording (#962): closed vocabulary, flags and integers
+    only.
     """
     rows: list[tuple[object, ...]] = []
     for connection_name, library_name, document, has_case in connection.execute(
@@ -576,6 +580,7 @@ def _audiobook_rows(
                 cover_reads,
                 reason,
                 bool(has_case),
+                hardcover_edition_witness(report).value,
             )
         )
     return rows
@@ -958,6 +963,10 @@ def _audiobook_outcomes(rows: list[tuple[object, ...]]) -> dict[str, object]:
         },
         "work_only_by_reason": {
             reason: work_only[reason] for reason in _EVIDENCE_ONLY_REASONS
+        },
+        "hardcover_witness": {
+            witness.value: sum(1 for row in rows if row[7] == witness.value)
+            for witness in HardcoverEditionWitness
         },
     }
 

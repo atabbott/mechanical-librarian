@@ -10074,7 +10074,8 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
     # A tag reads by name beside the tag itself, so it never reads like the
     # name the display-name option writes (#1286).
     "option,expected",
-    (("display_name", "English"), ("preserve", "English (en)")),
+    # The retired preserve option is refused, so only the name is written (#1314).
+    (("display_name", "English"),),
 )
 def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
     audio, option, expected
@@ -10106,11 +10107,7 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             _login(page, origin)
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=language")
             page.get_by_role("heading", name="Language", exact=True).wait_for()
-            if option == "preserve":
-                recorded = page.get_by_role("region", name="Language recorded outcome")
-                expect(recorded.locator("dd")).to_have_text(expected)
-            else:
-                expect(page.get_by_text("English", exact=True)).to_be_visible()
+            expect(page.get_by_text("English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Evidence", exact=True).click()
             page.get_by_text(
                 "Undetermined language; not an eligible choice", exact=False
@@ -11556,8 +11553,11 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             # changes: the mixed case a truthful preview has to keep apart.
             page.goto(f"{origin}/policy?section=identity")
             chapters = page.get_by_role("navigation", name="Policy chapters")
+            # Language has one representation, so its destination changes.
+            page.get_by_role("region", name="Language", exact=True).get_by_role(
+                "button", name="Ignore", exact=True
+            ).click()
             for chapter, field, option in (
-                (None, "Language", "Preserve supported form"),
                 ("Publication", "ISBN", "Prefer ISBN-13"),
                 ("Curation", "Tags", "Fill only when empty"),
             ):
