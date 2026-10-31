@@ -2286,10 +2286,19 @@ describe('Policy keyboard focus (#1288)', () => {
     ],
   }
 
+  // The page focuses its chapter one frame after it mounts. An interaction that
+  // starts inside that frame loses its focus to the chapter, so each test lets
+  // the page settle first (#1552).
+  const renderIdentity = async (http = createHttp()) => {
+    renderRoute('/policy?section=identity', http)
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await waitFor(() => expect(document.getElementById('policy-identity')).toHaveFocus())
+    return title
+  }
+
   it('closes a representation menu onto its trigger when Tab leaves it', async () => {
     const user = userEvent.setup()
-    renderRoute('/policy?section=identity')
-    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    const title = await renderIdentity()
     const trigger = within(title).getByRole('combobox', {
       name: 'Title and subtitle representation',
     })
@@ -2313,11 +2322,10 @@ describe('Policy keyboard focus (#1288)', () => {
       if (path === 'preview') return emptyPreview
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
-    renderRoute('/policy?section=identity', {
+    const title = await renderIdentity({
       ...createHttp(),
       policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
     })
-    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     const validate = screen.getByRole('button', { name: 'Validate and preview' })
     validate.focus()
@@ -2341,11 +2349,10 @@ describe('Policy keyboard focus (#1288)', () => {
     const policyCommand = vi.fn(async (): Promise<unknown> => {
       throw new ApiError(422, 'policy_profile_invalid')
     })
-    renderRoute('/policy?section=identity', {
+    const title = await renderIdentity({
       ...createHttp(),
       policyCommand: <T,>() => policyCommand() as Promise<T>,
     })
-    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     const validate = screen.getByRole('button', { name: 'Validate and preview' })
     validate.focus()
@@ -2491,11 +2498,10 @@ describe('Policy keyboard focus (#1288)', () => {
       if (path === 'preview') return emptyPreview
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
-    renderRoute('/policy?section=identity', {
+    const title = await renderIdentity({
       ...createHttp(),
       policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
     })
-    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     await user.click(await screen.findByRole('button', { name: 'Review activation' }))
