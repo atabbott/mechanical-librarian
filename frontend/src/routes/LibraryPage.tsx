@@ -12,7 +12,7 @@ import { MediaHealth } from '../components/MediaHealth'
 import { CountPhrases } from '../components/CountPhrases'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
-import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import {
   Fragment,
   useCallback,
@@ -23,7 +23,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
+import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import {
@@ -177,6 +177,11 @@ const lensLabels = {
   no_attention_needed: 'No attention needed',
   not_matched: 'Not matched',
 } satisfies Record<LibraryLens, string>
+// The masthead's Library link is the current page; the active lens is the
+// current item within it, so it says `true` rather than a second `page` (#1530).
+const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
+  <a {...props} aria-current={props['aria-current'] ? 'true' : undefined} />
+))
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
     ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
@@ -636,16 +641,6 @@ const decisionValue = (field: ReviewField) => {
 // A recording's settled fill stays choosable without asking for review (#1249).
 const optionalChoice = (field: ReviewField) =>
   field.classification === 'owner_choosable' && choiceAvailable(field)
-const fieldState = (field: ReviewField) =>
-  field.humanDecision || field.manualHold
-    ? 'Owner decision recorded'
-    : field.automaticDecision
-      ? 'Resolved automatically'
-      : actionable(field)
-        ? 'Needs review'
-        : optionalChoice(field)
-          ? 'Optional choice'
-          : 'No eligible change'
 // A field tab says where its field stands in words, never a glyph: an
 // undecided optional field and a decided one both drew a check (#1290).
 const fieldStatus = (field: ReviewField) =>
@@ -658,6 +653,23 @@ const fieldStatus = (field: ReviewField) =>
         : optionalChoice(field)
           ? (['optional', 'Optional'] as const)
           : (['unchanged', 'No change'] as const)
+// A field with nothing to decide is either unchanged, because no source
+// offered a different value, or held: unavailable to this service, or waiting
+// on a recovery. The server's reason is the only thing that tells them apart,
+// so the two reasons for an unchanged field are named here (#1514).
+const unchangedReasons = new Set([
+  '',
+  'There is no owner decision available for this field.',
+  'There is no other value to choose from. You can enter your own.',
+])
+const contextKind = (field: ReviewField) =>
+  field.manualHold || !unchangedReasons.has(field.classificationReason)
+    ? /waiting for|pending a/u.test(field.classificationReason)
+      ? ('waiting' as const)
+      : ('unavailable' as const)
+    : ('unchanged' as const)
+const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
+  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting for a recovery' : 'unavailable'}`
 // Why a field reads as it does when the server gives no reason of its own.
 const humanReasons = {
   accept: 'You chose a proposed value for this field.',
@@ -2759,6 +2771,60 @@ export default function LibraryPage({
   const observedSearchIdentity = useRef(librarySearchIdentity(search))
   const expectedSearchIdentity = useRef<string | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
+  const lensRow = useRef<HTMLElement>(null)
+  // The lenses scroll sideways in one row. An edge with more lenses beyond it
+  // fades, so a row that happens to end between two lenses still shows it
+  // continues. The current lens is brought into the row's view, clear of the
+  // fade, without moving the page: on load, on a lens change, and when the row
+  // or its lenses change size, as with enlarged text.
+  useLayoutEffect(() => {
+    const row = lensRow.current
+    if (!row) return
+    const mark = () => {
+      const start = row.scrollLeft > 1
+      const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1
+      if (start || end) row.dataset.more = start && end ? 'both' : start ? 'start' : 'end'
+      else delete row.dataset.more
+    }
+    // The first and last lenses scroll the row to its end, so no fade covers
+    // them; any other lens is brought clear of both fades.
+    const reveal = (lens: Element | null) => {
+      if (lens instanceof HTMLElement) {
+        let left = row.scrollLeft
+        if (lens === row.firstElementChild) left = 0
+        else if (lens === row.lastElementChild) left = row.scrollWidth - row.clientWidth
+        else {
+          const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
+          const rowBox = row.getBoundingClientRect()
+          const box = lens.getBoundingClientRect()
+          // A lens too wide to clear both fades is centred, or starts at the
+          // row's edge when even the row is narrower, so its label's start shows.
+          if (box.width > rowBox.width - 2 * fade)
+            left +=
+              box.width > rowBox.width
+                ? box.left - rowBox.left
+                : box.left - rowBox.left - (rowBox.width - box.width) / 2
+          else if (box.left < rowBox.left + fade) left -= rowBox.left + fade - box.left
+          else if (box.right > rowBox.right - fade) left += box.right - (rowBox.right - fade)
+        }
+        if (Math.abs(left - row.scrollLeft) > 0.5) row.scrollLeft = left
+      }
+      mark()
+    }
+    const revealCurrent = () => reveal(row.querySelector('[aria-current]'))
+    // Focus leaves a partly shown lens where it is, so Tab reveals it too.
+    const revealFocused = (event: FocusEvent) => reveal(event.target as Element | null)
+    revealCurrent()
+    row.addEventListener('scroll', mark, { passive: true })
+    row.addEventListener('focusin', revealFocused)
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(revealCurrent) : null
+    for (const node of [row, ...row.children]) resized?.observe(node)
+    return () => {
+      row.removeEventListener('scroll', mark)
+      row.removeEventListener('focusin', revealFocused)
+      resized?.disconnect()
+    }
+  }, [search.lens])
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -3425,6 +3491,11 @@ export default function LibraryPage({
   }, [ownerWriteInFlight, queryClient, shownCaseId, updates])
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
+  const contextualSummary = {
+    unchanged: contextualFields.filter((field) => contextKind(field) === 'unchanged'),
+    waiting: contextualFields.filter((field) => contextKind(field) === 'waiting').length,
+    unavailable: contextualFields.filter((field) => contextKind(field) === 'unavailable').length,
+  }
   const activeQueueIndex = selected
     ? attentionItems.findIndex(
         (item) => item.id === search.preview && item.destination === selected.destination,
@@ -3684,7 +3755,9 @@ export default function LibraryPage({
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
   // the masthead, so once it holds focus it is brought fully into view; the
-  // page's scroll padding keeps it clear of the masthead (#1487).
+  // page's scroll padding keeps it clear of the masthead (#1487). Where Back to
+  // works leads the work, the reveal starts there instead, so it stays in view
+  // with the header beneath it, as much of it as the screen holds (#1530).
   useEffect(() => {
     if (!revealQueueChoice.current || !(selectedDetailReady || selectedReadError)) return
     revealQueueChoice.current = false
@@ -3692,8 +3765,18 @@ export default function LibraryPage({
     const focusFrame = requestAnimationFrame(() => {
       revealFrame = requestAnimationFrame(() => {
         const active = document.activeElement
-        if (active instanceof HTMLElement && active.closest('#main-content .workspace-detail'))
+        if (!(active instanceof HTMLElement && active.closest('#main-content .workspace-detail')))
+          return
+        const back = document.querySelector<HTMLElement>('.compact-workspace-back')
+        if (!back?.getClientRects().length) {
           active.scrollIntoView({ block: 'nearest' })
+          return
+        }
+        const masthead = document.querySelector<HTMLElement>('.masthead')?.getBoundingClientRect()
+        const clear = Math.max(0, masthead?.bottom ?? 0)
+        const top = back.getBoundingClientRect().top
+        if (top < clear || active.getBoundingClientRect().bottom > window.innerHeight)
+          window.scrollBy({ top: top - clear })
       })
     })
     return () => {
@@ -4459,10 +4542,10 @@ export default function LibraryPage({
               )}
             </span>
           </div>
-          <nav className="lenses" aria-label="Library lenses">
+          <nav className="lenses" aria-label="Library lenses" ref={lensRow}>
             {(['all', 'needs_attention', 'no_attention_needed', 'not_matched'] as const).map(
               (lens) => (
-                <Link
+                <LensLink
                   key={lens}
                   to="/library"
                   search={{
@@ -4479,7 +4562,7 @@ export default function LibraryPage({
                   activeProps={{ 'aria-current': 'page' }}
                 >
                   {lensLabels[lens]}
-                </Link>
+                </LensLink>
               ),
             )}
           </nav>
@@ -4498,16 +4581,18 @@ export default function LibraryPage({
                 placeholder="Search works…"
                 onChange={(event) => runSearch(event.target.value)}
               />
-              <button
-                type="button"
-                disabled={!queryText}
-                onClick={() => {
-                  runSearch('')
-                  searchInput.current?.focus()
-                }}
-              >
-                Clear
-              </button>
+              {queryText ? (
+                <button
+                  type="button"
+                  aria-label="Clear search text"
+                  onClick={() => {
+                    runSearch('')
+                    searchInput.current?.focus()
+                  }}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              ) : null}
             </div>
           </form>
           <div className="library-work-list" aria-busy={retained || undefined}>
@@ -4680,32 +4765,34 @@ export default function LibraryPage({
               })
             )}
           </div>
-          {data ? (
+          {data && (data.previousCursor || data.nextCursor) ? (
+            // Only the moves that exist are offered; with one page there is no pager.
             <div className="library-pager" aria-busy={retained || undefined}>
-              <button
-                type="button"
-                disabled={!data.previousCursor}
-                aria-disabled={retained || undefined}
-                onClick={() => movePage(data.previousCursor)}
-                onPointerEnter={() => pageIntent(data.previousCursor)}
-                onFocus={() => pageIntent(data.previousCursor)}
-              >
-                ← Previous
-              </button>
-              <span>
-                Page {String(data.page)}
-                {data.nextCursor ? '' : ' · Last page'}
-              </span>
-              <button
-                type="button"
-                disabled={!data.nextCursor}
-                aria-disabled={retained || undefined}
-                onClick={() => movePage(data.nextCursor)}
-                onPointerEnter={() => pageIntent(data.nextCursor)}
-                onFocus={() => pageIntent(data.nextCursor)}
-              >
-                Next →
-              </button>
+              {data.previousCursor ? (
+                <button
+                  type="button"
+                  className="library-pager-previous"
+                  aria-disabled={retained || undefined}
+                  onClick={() => movePage(data.previousCursor)}
+                  onPointerEnter={() => pageIntent(data.previousCursor)}
+                  onFocus={() => pageIntent(data.previousCursor)}
+                >
+                  ← <span className="library-pager-word">Previous</span>
+                </button>
+              ) : null}
+              <span>Page {String(data.page)}</span>
+              {data.nextCursor ? (
+                <button
+                  type="button"
+                  className="library-pager-next"
+                  aria-disabled={retained || undefined}
+                  onClick={() => movePage(data.nextCursor)}
+                  onPointerEnter={() => pageIntent(data.nextCursor)}
+                  onFocus={() => pageIntent(data.nextCursor)}
+                >
+                  <span className="library-pager-word">Next</span> →
+                </button>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -5393,27 +5480,48 @@ export default function LibraryPage({
                 <details className="automatic-resolution-details">
                   <summary>
                     <span>
-                      {contextualFields.length === 1
-                        ? '1 field has context'
-                        : `${String(contextualFields.length)} fields have context`}
+                      {contextualSummary.unchanged.length ? (
+                        <span>
+                          No change:{' '}
+                          {contextualSummary.unchanged
+                            .map((field) => destinationLabel(field.destination))
+                            .join(', ')}
+                        </span>
+                      ) : null}
+                      {contextualSummary.waiting ? (
+                        <span>{heldPhrase(contextualSummary.waiting, 'waiting')}</span>
+                      ) : null}
+                      {contextualSummary.unavailable ? (
+                        <span>{heldPhrase(contextualSummary.unavailable, 'unavailable')}</span>
+                      ) : null}
                     </span>
-                    <small>Inspect context</small>
+                    <small>Show why</small>
                   </summary>
                   <div className="automatic-resolution-list">
-                    {contextualFields.map((field) => (
-                      <div className="automatic-resolution-row" key={field.destination}>
-                        <span className="automatic-state-mark" aria-hidden="true">
-                          ✓
-                        </span>
-                        <div>
-                          <strong>{destinationLabel(field.destination)}</strong>
+                    {contextualFields.map((field) => {
+                      const kind = contextKind(field)
+                      return (
+                        <div
+                          className={`automatic-resolution-row is-${kind}`}
+                          key={field.destination}
+                        >
+                          <strong>
+                            {destinationLabel(field.destination)}
+                            {kind === 'unchanged' ? null : (
+                              <StatusPill tone="notice">
+                                {kind === 'waiting' ? 'Waiting' : 'Unavailable'}
+                              </StatusPill>
+                            )}
+                          </strong>
+                          <small>{decisionValue(field)}</small>
                           <small>
-                            {fieldState(field)} · {decisionValue(field)}
+                            {kind === 'unchanged'
+                              ? 'No source offered a different value.'
+                              : fieldReason(field)}
                           </small>
-                          <small>{fieldReason(field)}</small>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </details>
               ) : null}

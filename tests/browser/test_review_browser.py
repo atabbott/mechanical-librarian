@@ -3989,18 +3989,27 @@ _CHOSEN_HEADER_IN_VIEW = """() => {
   const header = active.getBoundingClientRect()
   const masthead = document.querySelector('.masthead').getBoundingClientRect()
   const clear = Math.max(0, masthead.bottom)
+  const room = innerHeight + 0.5
+  // Where Back to works leads the work, it is in view and the header follows
+  // it: whole when it fits, otherwise at least its first line (#1530).
+  const back = document.querySelector('.compact-workspace-back')
+  const lead = back?.getClientRects().length ? back.getBoundingClientRect() : null
   return {
     top: header.top,
     bottom: header.bottom,
+    back: lead && [lead.top, lead.bottom],
     clear,
     height: innerHeight,
-    inView: header.top >= clear - 0.5 && header.bottom <= innerHeight + 0.5,
+    inView: lead
+      ? lead.top >= clear - 0.5 && lead.bottom <= room && header.top >= lead.bottom - 0.5 &&
+        (header.bottom <= room || header.top <= innerHeight - 44)
+      : header.top >= clear - 0.5 && header.bottom <= room,
   }
 }"""
 
 
 def test_choosing_an_attention_item_keeps_the_focused_work_header_in_view() -> None:
-    """Choosing the rail's last queue item by keyboard leaves the focused
+    """Choosing the rail's last queue item leaves the focused
     selected-work header fully in view and clear of the masthead at 100, 150
     and 200% text, from the widest window to the narrowest phone (#1487).
 
@@ -4031,38 +4040,51 @@ def test_choosing_an_attention_item_keeps_the_focused_work_header_in_view() -> N
             ):
                 page = context.new_page()
                 _login(page, origin)
-                for width, height in ((1440, 900), (1200, 900), (390, 844), (320, 640)):
-                    for size in ("100%", "150%", "200%"):
-                        where = f"{size} text at {width}x{height}"
-                        page.set_viewport_size({"width": width, "height": height})
-                        page.goto(f"{origin}/library?lens=all&attention=open")
-                        set_root_text(page, size)
-                        rows = page.get_by_label("Attention queue", exact=True).locator(
-                            "button.attention-queue-item"
-                        )
-                        expect(rows.first).to_be_visible()
-                        chosen = rows.last
-                        work = chosen.get_attribute("data-attention-row")
+                for width, height, size, by in (
+                    (width, height, size, by)
+                    for width, height in (
+                        (1440, 900),
+                        (1200, 900),
+                        (390, 844),
+                        (320, 640),
+                    )
+                    for size in ("100%", "150%", "200%")
+                    # Back to works leads the work at phone widths, where a
+                    # pointer choice is checked too (#1530).
+                    for by in ("keyboard", "pointer")
+                    if by == "keyboard" or width <= 390
+                ):
+                    where = f"{size} text at {width}x{height} by {by}"
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.goto(f"{origin}/library?lens=all&attention=open")
+                    set_root_text(page, size)
+                    rows = page.get_by_label("Attention queue", exact=True).locator(
+                        "button.attention-queue-item"
+                    )
+                    expect(rows.first).to_be_visible()
+                    chosen = rows.last
+                    work = chosen.get_attribute("data-attention-row")
+                    if by == "keyboard":
                         chosen.focus()
                         page.keyboard.press("Enter")
-                        assert work is not None, where
-                        expect(page).to_have_url(
-                            re.compile(f"preview={re.escape(work.split(':')[0])}")
+                    else:
+                        chosen.click()
+                    assert work is not None, where
+                    expect(page).to_have_url(
+                        re.compile(f"preview={re.escape(work.split(':')[0])}")
+                    )
+                    try:
+                        page.wait_for_function(
+                            f"() => ({_CHOSEN_HEADER_IN_VIEW})()?.inView === true",
+                            timeout=5_000,
                         )
-                        try:
-                            page.wait_for_function(
-                                f"() => ({_CHOSEN_HEADER_IN_VIEW})()?.inView === true",
-                                timeout=5_000,
-                            )
-                        except PlaywrightTimeoutError:
-                            pytest.fail(
-                                f"{where}: {page.evaluate(_CHOSEN_HEADER_IN_VIEW)}"
-                            )
-                        # It stays there once the page settles.
-                        page.evaluate(_TWO_FRAMES)
-                        page.evaluate(_TWO_FRAMES)
-                        settled = page.evaluate(_CHOSEN_HEADER_IN_VIEW)
-                        assert settled and settled["inView"], (where, settled)
+                    except PlaywrightTimeoutError:
+                        pytest.fail(f"{where}: {page.evaluate(_CHOSEN_HEADER_IN_VIEW)}")
+                    # It stays there once the page settles.
+                    page.evaluate(_TWO_FRAMES)
+                    page.evaluate(_TWO_FRAMES)
+                    settled = page.evaluate(_CHOSEN_HEADER_IN_VIEW)
+                    assert settled and settled["inView"], (where, settled)
                 context.close()
             browser.close()
 
@@ -9565,7 +9587,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     assert parse_qs(urlsplit(page.url).query)["field"] == ["series"]
 
                 page.set_viewport_size({"width": 1280, "height": 844})
-                page.get_by_role("button", name="Clear", exact=True).click()
+                page.get_by_role("button", name="Clear search text", exact=True).click()
                 expect(row).to_have_count(0)
                 page.get_by_role("button", name="Next →", exact=True).click()
                 row.click()
@@ -10200,13 +10222,15 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
                             "radio", name="Choose proposed value: Ada Example"
                         )
                     ).to_have_count(0)
-                    page.get_by_text("Inspect context", exact=True).click()
-                    expect(page.get_by_text("Authors", exact=True)).to_be_visible()
                     expect(
-                        page.get_by_text(
-                            "No eligible change · Current Writer", exact=False
-                        )
-                    ).to_be_visible()
+                        page.locator(".automatic-resolution-details summary")
+                    ).to_contain_text(re.compile(r"No change: (?:[^,]+, )*Authors\b"))
+                    page.get_by_text("Show why", exact=True).click()
+                    row = page.locator(".automatic-resolution-row").filter(
+                        has_text="Authors"
+                    )
+                    expect(row).to_contain_text("Current Writer")
+                    expect(row).to_contain_text("No source offered a different value.")
                     context.close()
                     browser.close()
                     return
@@ -12964,7 +12988,7 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                 with page.expect_response(_lens_read("not_matched")):
                     lens.click()
                 expect(page).to_have_url(re.compile(r"lens=not_matched"))
-                expect(lens).to_have_attribute("aria-current", "page")
+                expect(lens).to_have_attribute("aria-current", "true")
                 works = page.get_by_label("Works", exact=True)
                 # A work's row is the button that carries its title.
                 listed = works.get_by_role("button").filter(has=page.locator("strong"))

@@ -85,6 +85,15 @@ brackets are GitHub issues.
 - Activity's header and summary say how many stopped changes wait on you,
   such as a description to restore in Audiobookshelf, instead of reading "No
   action required" (#1430).
+- The Works panel's lenses sit in one row that scrolls sideways, the pager
+  offers only the moves that exist (none for a single page), and search is a
+  rounded field with a × inside to clear it (#1520).
+- Library names one current page: the current lens is marked current within
+  it. Choosing an Attention item on a phone keeps Back to works in view, and at
+  enlarged text Attention's work titles no longer break mid-word (#1530).
+- A work's collapsed list of fields with nothing to decide is headed "No
+  change:" and their names, counts waiting or unavailable fields separately,
+  and says no source offered a different value (#1514).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

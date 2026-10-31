@@ -175,8 +175,10 @@ of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
 The lenses are All (the default), Needs attention, No attention needed and Not
-matched. Lens, search, cursors, selected work and field live in the URL, so
-deep links and Back and Forward work.
+matched, in one row that scrolls sideways when the panel is narrow. Lens,
+search, cursors, selected work and field live in the URL, so deep links and
+Back and Forward work. The pager offers only the moves that exist and is absent
+when the works fit on one page.
 
 Works needing a decision come first: those with complete provider evidence,
 then those with a limited lane, under **Provider evidence complete** and
@@ -245,6 +247,10 @@ The server classifies every field, and the tab status follows from it:
 - **No change:** context only. Keeping the current value is a choice only when
   an eligible alternative exists. Unsupported fields show their value and a
   reason, never a selectable `Not set`.
+
+Fields with nothing to decide sit in one collapsed panel headed `No change:`
+and their names, with any field waiting for a recovery or unavailable counted
+separately; each row gives its value and why nothing changed.
 
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An
@@ -446,7 +452,8 @@ otherwise; future times are never relative.
 - From 761 to 1199 pixels Attention is a drawer: everything behind it except
   the toolbar with the Attention toggle is inert, and Tab stays inside. At 760
   pixels and below, the list, the work and Attention are separate steps, and
-  choosing a work scrolls Back to works just below the masthead.
+  choosing a work, from the list or Attention, scrolls Back to works just below
+  the masthead.
 - No page scrolls horizontally at 1440, 884, 390 or 320 pixels in either
   theme. At 200% text, Library, Policy, Activity and Settings keep every
   control reachable inside its container at every width, and Activity rows
