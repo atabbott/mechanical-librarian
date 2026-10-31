@@ -11,7 +11,7 @@ nothing; see
 
 ## Delivered
 
-Checkpoints 0.1.0 to 0.29.0 built the product up to its current state:
+Checkpoints 0.1.0 to 0.29.1 built the product up to its current state:
 
 - read-only Audiobookshelf inventory, EPUB and audio evidence, and catalogue
   evidence from several providers;
@@ -21,14 +21,14 @@ Checkpoints 0.1.0 to 0.29.0 built the product up to its current state:
 - the authenticated owner workspace, Library (with Attention and work detail),
   Policy, Activity and Settings, and guided first run;
 - audiobook matching and decisions;
-- an optional AI cover reviewer and description advice.
+- an optional AI cover reviewer and description advice;
+- a workspace in plain words, built to WCAG 2.2 AA, that holds still on phones
+  and at 200% text.
 
 The [changelog](../../CHANGELOG.md) lists each user-visible change.
 
 ## In progress
 
-- **0.29.1 Clarity and accessibility.** The interface speaks the owner's
-  language, meets WCAG 2.2 AA and holds still on phones.
 - **0.29.2 Delivery reliability and hygiene.** Test, tracking and
   documentation corrections that make every later change cheaper.
 - **0.30.0 Audiobook matching and editions.** Audiobooks match the edition the
@@ -36,6 +36,8 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
 
 ## Next
 
+- **0.29.3 Review fixes and hygiene.** Bounded fixes left over from the 0.29.x
+  reviews, across Library, Activity, Settings, tests and the Codex reviewer.
 - **0.31.0 Coverage.** More of the evidence already retrieved is admitted
   safely, and covers are chosen by measured rules before any model helps.
 - **0.32.0 Series and structure.** One identity per series, and a read-only
@@ -47,6 +49,8 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
   items the library never indexed are reported, never changed.
 - **0.36.0 Standing owner instructions** and **0.36.1 Persistence health.**
 - **0.37.0 Provider economy.** Fewer provider requests for the same evidence.
+- **0.38.0 Owner-directed matching.** The owner can choose which provider
+  record is a work's book, and unmatched works become ordinary review cases.
 
 ## 1.0.0 first public release
 
