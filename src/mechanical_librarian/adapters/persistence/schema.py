@@ -854,8 +854,10 @@ def _same_policy_retirement_sql(connection: str, library: str, item: str) -> str
 # decide it, so an effect of an earlier generation still goes stale (#1568).
 # A malformed document is never deferred: the readers that validate it refuse
 # it as before.
+# COALESCE keeps the predicate two-valued: a document with no authority origin
+# is never deferred, so the readers that validate it still refuse it.
 _FIELD_EFFECT_DEFERRED_SQL = (
-    "(json_valid(effect.document) AND "
+    "COALESCE((json_valid(effect.document) AND "
     "((json_extract(effect.document,'$.plan.authority.origin')='automatic_policy' "
     "AND NOT " + _AUTOMATIC_POSTURE_SQL + ") OR "
     "(json_extract(effect.document,'$.plan.authority.origin')='human' "
@@ -872,7 +874,7 @@ _FIELD_EFFECT_DEFERRED_SQL = (
     + _same_policy_retirement_sql(
         "awaiting.connection_name", "awaiting.library_name", "awaiting.item_id"
     )
-    + "))))"
+    + ")))),0)"
 )
 
 # The scheduler's claim, the Activity page's waiting effect and description
