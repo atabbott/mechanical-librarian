@@ -6,7 +6,12 @@ import { useEffect, useRef, useState } from 'react'
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
 import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel, reviewerFailureCopy, reviewerStateLabels } from '../labels'
-import { ApiError, CsrfRenewedError, sessionRefreshedCopy } from '../api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  sessionRefreshedCopy,
+  uncertainWriteOutcome,
+} from '../api/http'
 import type {
   CodexDeviceAuthState,
   ReviewHttp,
@@ -181,8 +186,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         model: action.model,
       })
     },
-    onError: async (_error, action) => {
-      if (action.kind !== 'codex-clear' && action.kind !== 'codex-start') return
+    onError: async (error, action) => {
+      if (action.kind !== 'codex-clear' && action.kind !== 'codex-start') {
+        // The change may have been saved; reload the authoritative access.
+        if (uncertainWriteOutcome(error)) await query.refetch()
+        return
+      }
       // A credential side effect may have completed before mapping publication failed.
       // Reconcile read-only state before another owner command can be submitted.
       await Promise.allSettled([
@@ -282,10 +291,18 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       ? sessionRefreshedCopy
       : mutation.variables?.kind === 'codex-clear' || mutation.variables?.kind === 'codex-start'
         ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
-        : mutation.error instanceof ApiError
+        : // OpenRouter's probe raises these before anything is saved.
+          mutation.error instanceof ApiError &&
+            mutation.variables?.kind === 'openrouter' &&
+            (mutation.error.code === 'unreachable' || mutation.error.code === 'timed_out')
           ? (failureCopy[mutation.error.code] ??
             'The reviewer change was refused. Reload and try again.')
-          : 'The reviewer change was not applied. Reload and try again.'
+          : uncertainWriteOutcome(mutation.error)
+            ? 'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
+            : mutation.error instanceof ApiError
+              ? (failureCopy[mutation.error.code] ??
+                'The reviewer change was refused. Reload and try again.')
+              : 'The reviewer change was not applied. Reload and try again.'
   return (
     <div className="settings-reviewer">
       <div className="settings-field-row">
