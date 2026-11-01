@@ -5162,6 +5162,114 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
     assert callbacks == {"proposal": 1, "admission": 1, "projection": 1}
 
 
+def test_contended_guard_retries_the_same_claim_without_settling(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPipelineGuardContention,
+    )
+
+    events: list[str] = []
+    checks: list[tuple[PipelineAction, int]] = []
+
+    class Repository:
+        def guard_target_connection(self, action, checked_at):
+            checks.append((action, checked_at))
+            events.append("guard")
+            if len(checks) <= 3:
+                raise ReviewPipelineGuardContention()
+            return True
+
+        def begin_review_pipeline_output(self) -> None:
+            events.append("begin")
+
+        def rollback_review_pipeline_output(self) -> None:
+            events.append("rollback")
+
+    repository = Repository()
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "proposal",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        report_id="report-1",
+    )
+    times = iter(range(1, 100))
+    owned: list[tuple[PipelineAction, ...]] = []
+
+    def propose(*_args):
+        events.append("propose")
+        raise ReviewPipelineError("stale")
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=propose,
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: next(times),
+    )
+
+    def wait() -> None:
+        events.append("wait")
+        owned.append(pipeline.owned_claims)
+
+    pipeline._cooperative_wait = wait
+    settled: list[tuple[PipelineAction, str, bool]] = []
+    pipeline._fail = (  # type: ignore[method-assign]
+        lambda _repository, owned_action, code, retryable, *_rest: settled.append(
+            (owned_action, code, retryable)
+        )
+    )
+    pipeline._execute_claimed_action(
+        cast(ReviewPipelineRepository, repository), action, claim_next=False
+    )
+
+    # Each retry waits cooperatively and re-guards the same claim with a fresh
+    # check time; only then does the stage run.
+    assert events == ["guard", "wait"] * 3 + ["guard", "begin", "propose", "rollback"]
+    assert [checked for _, checked in checks] == [1, 2, 3, 4]
+    assert all(checked is action for checked, _ in checks)
+    assert owned == [(action,)] * 3
+    # Only the stage's own outcome settles the claim, never the contention.
+    assert [(owned_action, code) for owned_action, code, _ in settled] == [
+        (action, "stale")
+    ]
+    assert (
+        capsys.readouterr().err
+        == (
+            '{"code":"contention","event":"preparation_claim_contended",'
+            '"level":"warning"}\n'
+        )
+        * 3
+    )
+
+
+def test_guard_contention_is_a_value_free_pipeline_error() -> None:
+    from mechanical_librarian.application import review_pipeline
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPipelineGuardContention,
+    )
+
+    error = ReviewPipelineGuardContention()
+    assert isinstance(error, ReviewPipelineError)
+    assert error.code == "contention" and error.root is None
+    assert "ReviewPipelineGuardContention" in review_pipeline.__all__
+
+
 @pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
 def test_pipeline_output_transaction_rolls_back_baseexception(
     fault_type: type[BaseException],
@@ -11272,7 +11380,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     assert presentation.passage.failed == 0
     assert presentation.recent_completions[0].outcome == "ready"
     assert presentation.throughput_per_minute > 0
-    assert retained.schema_version == "metadata-report-v65"
+    assert retained.schema_version == "metadata-report-v66"
     assert retained.audio is not None
     assert retained.providers == ()
     # The evidence is what the owner browses: a report, not a terminal card.
@@ -11283,7 +11391,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     # And addressable by the identity of the package row that lists it, which
     # is the only route to an audiobook's evidence: it has no review case.
     assert addressed is not None
-    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v65"
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v66"
     assert browse_report(addressed)["audio"] is not None
     # No such work is a `None`, not a refusal: a store that cannot answer
     # raises, and the two must not read alike to the caller above.

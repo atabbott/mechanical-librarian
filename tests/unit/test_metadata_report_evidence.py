@@ -55,6 +55,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
+    EpubCoverFallback,
+    EpubCoverRecovery,
+    EpubCoverRecoveryRefusal,
     cover_source_id,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
@@ -1771,6 +1774,121 @@ def test_the_audio_section_must_match_the_selected_file(
 ) -> None:
     with pytest.raises(ReportValueError):
         _audio_report(audio=audio, file_format=file_format)
+
+
+_RECOVERY = EpubCoverRecovery(
+    (
+        EpubCoverFallback.GUIDE_COVER_REFERENCE,
+        EpubCoverFallback.COVER_IMAGE_WRAPPER,
+    ),
+    EpubCoverRecoveryRefusal.CONTRADICTORY_DECLARATION,
+)
+_ABSENT_EPUB_COVER = CoverSource(
+    cover_source_id(CoverSourceKind.EPUB, "absent"),
+    CoverSourceKind.EPUB,
+    CoverSourceState.ABSENT,
+)
+
+
+def _epub_report(recovery: EpubCoverRecovery | None) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Example")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+        cover_sources=(_ABSENT_EPUB_COVER,),
+        cover_recovery=recovery,
+    )
+
+
+def test_an_epub_report_round_trips_its_value_free_cover_recovery() -> None:
+    report = _epub_report(_RECOVERY)
+    reopened = MetadataReport.from_json(report.to_json())
+    assert reopened == report
+    assert reopened.cover_recovery == _RECOVERY
+    assert reopened.cover_sources == (_ABSENT_EPUB_COVER,)
+    local = json.loads(report.to_json())["local"]
+    assert local["cover_recovery"] == {
+        "authority": "shadow",
+        "fallbacks": ["guide_cover_reference", "cover_image_wrapper"],
+        "refusal": "contradictory_cover_declaration",
+    }
+    assert _epub_report(None).report_id != report.report_id
+    assert json.loads(_epub_report(None).to_json())["local"]["cover_recovery"] is None
+
+
+def test_only_an_epub_report_states_a_cover_recovery() -> None:
+    with pytest.raises(ReportValueError, match="cover recovery"):
+        MetadataReport.create(
+            target=TargetFacts(
+                "primary", "audio", "item-1", default_target_fields("Recorded title")
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=(),
+            local_reasons=("no_local_audio_claims",),
+            providers=(),
+            audio=_ONE_TRACK_AUDIO_FACTS,
+            cover_recovery=_RECOVERY,
+        )
+    with pytest.raises(ReportValueError, match="cover recovery"):
+        replace(
+            _epub_report(None),
+            cover_recovery=cast(EpubCoverRecovery, _RECOVERY.to_data()),
+        )
+
+
+@pytest.mark.parametrize(
+    "recovery",
+    (
+        {"authority": "shadow", "fallbacks": [], "refusal": "made_up"},
+        {
+            "authority": "shadow",
+            "fallbacks": ["guide_cover_reference"],
+            "refusal": None,
+            "href": "OEBPS/cover.xhtml",
+        },
+        "cover_image_wrapper",
+    ),
+    ids=("unknown_refusal", "extra_value", "bare_text"),
+)
+def test_a_report_refuses_an_open_cover_recovery(recovery: object) -> None:
+    document = json.loads(_epub_report(None).to_json())
+    document["local"]["cover_recovery"] = recovery
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(canonical_json(document))
+    del document["local"]["cover_recovery"]
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(canonical_json(document))
+
+
+def test_the_inspected_cover_recovery_reaches_the_published_report() -> None:
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    snapshot = TargetSnapshot("ebook", "Current title", (selected,))
+    repository = FakeReportRepository()
+    service = GenerateMetadataReport(
+        target=FakeTarget([snapshot, snapshot]),
+        inspector=FakeInspector(
+            InspectionResult(
+                "c" * 64, (), (_ABSENT_EPUB_COVER,), cover_recovery=_RECOVERY
+            )
+        ),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ()
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    )
+    report = MetadataReport.from_json(service.run("item-1", 0))
+    assert report.cover_recovery == _RECOVERY
+    assert report.cover_sources == (_ABSENT_EPUB_COVER,)
 
 
 def test_an_audio_report_round_trips_its_structured_section() -> None:

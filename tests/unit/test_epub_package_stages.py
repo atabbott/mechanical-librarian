@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _check_section_sequence,
     _consistency_warnings,
     _container_declarations,
+    _cover_fallback_plan,
     _cover_observations,
     _declared_resource_identity,
     _dublin_core_observations,
@@ -59,6 +60,8 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _tours_warnings,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    MAX_DECLARATIONS,
+    EpubCoverFallbackTarget,
     EpubInspectionOutcome,
     EpubObservationApplicability,
     EpubPackageCancellation,
@@ -72,7 +75,9 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageSource,
     EpubPackageUsage,
     EpubPackageWarning,
+    epub_resource_identity,
 )
+from mechanical_librarian.domain.cover_evidence import EpubCoverFallback
 from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.identifiers import (
@@ -915,6 +920,184 @@ def test_legacy_cover_naming_a_non_image_is_reported_and_dropped() -> None:
     )
     assert (observations, declarations) == ([], [])
     assert _codes(warnings) == ["invalid_cover_declaration"]
+
+
+def _fallback_manifest(**overrides: object) -> _Manifest:
+    def identity(name: str) -> str:
+        return epub_resource_identity(f"OEBPS/{name}")
+
+    values: dict[str, object] = {
+        "ids": {
+            "wrap": identity("wrap.xhtml"),
+            "img": identity("img.png"),
+            "pdf": identity("cover.pdf"),
+            "remote": "e" * 64,
+        },
+        "nodes": {
+            "wrap": _parse(b'<item id="wrap" properties="cover-image"/>'),
+            "img": _parse(b'<item id="img"/>'),
+            "pdf": _parse(b'<item id="pdf"/>'),
+            "remote": _parse(b'<item id="remote" properties="cover-image"/>'),
+        },
+        "media_types": {
+            "wrap": "application/xhtml+xml",
+            "img": "image/png",
+            "pdf": "application/pdf",
+            "remote": "application/xhtml+xml",
+        },
+        "local_ids": {"wrap", "img", "pdf"},
+    }
+    values.update(overrides)
+    return _Manifest(**values)  # type: ignore[arg-type]
+
+
+def _guide(references: str) -> list[EpubPackageDeclaration]:
+    root = _parse(_package(trailing=f"<guide>{references}</guide>"))
+    declarations, _warnings = _guide_declarations(
+        _request(),
+        _PACKAGE,
+        root,
+        _entries("OEBPS/img.png", "OEBPS/wrap.xhtml", "OEBPS/other.xhtml"),
+    )
+    return declarations
+
+
+@pytest.mark.parametrize(
+    "metadata,cover_ids",
+    (
+        ("", ["img"]),
+        ('<meta name="cover" content="img"/>', []),
+        ('<meta name="cover" content="img"/><meta name="cover" content="pdf"/>', []),
+    ),
+    ids=("valid_current", "valid_legacy", "valid_legacy_beside_invalid"),
+)
+def test_a_valid_cover_declaration_plans_no_fallback(
+    metadata: str, cover_ids: list[str]
+) -> None:
+    frame = _package_frame(_request(), _parse(_package(metadata=metadata)))
+    plan = _cover_fallback_plan(
+        _fallback_manifest(cover_ids=cover_ids),
+        frame.metadata_nodes,
+        _guide('<reference type="cover" href="wrap.xhtml"/>'),
+    )
+    assert plan == ()
+
+
+def test_contradictory_valid_legacy_covers_plan_no_fallback() -> None:
+    manifest = _fallback_manifest()
+    manifest.ids["img2"] = "f" * 64
+    manifest.media_types["img2"] = "image/jpeg"
+    manifest.local_ids.add("img2")
+    frame = _package_frame(
+        _request(),
+        _parse(
+            _package(
+                metadata='<meta name="cover" content="img"/>'
+                '<meta name="cover" content="img2"/>'
+            )
+        ),
+    )
+    assert _cover_fallback_plan(manifest, frame.metadata_nodes, []) == ()
+
+
+def test_fallback_plan_resolves_each_declaration_in_fixed_order() -> None:
+    manifest = _fallback_manifest()
+    frame = _package_frame(
+        _request(),
+        _parse(
+            _package(
+                metadata='<meta name="cover" content="wrap"/>'
+                '<meta name="cover" content="missing"/>'
+                '<meta name="cover" content="remote"/>'
+            )
+        ),
+    )
+    plan = _cover_fallback_plan(
+        manifest,
+        frame.metadata_nodes,
+        _guide(
+            '<reference type="cover" href="img.png"/>'
+            '<reference type="text" href="wrap.xhtml"/>'
+            '<reference type="cover" href="other.xhtml"/>'
+        ),
+    )
+    wrap, image = manifest.ids["wrap"], manifest.ids["img"]
+    meta = EpubCoverFallback.EPUB2_META_COVER_ITEM
+    guide = EpubCoverFallback.GUIDE_COVER_REFERENCE
+    wrapper = EpubCoverFallback.COVER_IMAGE_WRAPPER
+    assert plan == (
+        EpubCoverFallbackTarget(meta, wrap, "application/xhtml+xml"),
+        # The missing and the remote items collapse into one unresolved entry.
+        EpubCoverFallbackTarget(meta),
+        EpubCoverFallbackTarget(guide, image, "image/png"),
+        # The guide names an archive member that is not a manifest item.
+        EpubCoverFallbackTarget(guide),
+        EpubCoverFallbackTarget(wrapper, wrap, "application/xhtml+xml"),
+        EpubCoverFallbackTarget(wrapper),
+    )
+
+
+def test_a_package_without_any_cover_declaration_plans_nothing() -> None:
+    frame = _package_frame(_request(), _parse(_package()))
+    manifest = _fallback_manifest(
+        nodes={"img": _parse(b'<item id="img"/>')},
+    )
+    assert _cover_fallback_plan(manifest, frame.metadata_nodes, []) == ()
+
+
+def test_a_resource_named_by_several_items_is_planned_once_without_a_choice() -> None:
+    manifest = _fallback_manifest()
+    image = manifest.ids["img"]
+    for index in range(3_000):
+        identifier = f"dup{index}"
+        manifest.ids[identifier] = image
+        manifest.media_types[identifier] = "application/xhtml+xml"
+        manifest.local_ids.add(identifier)
+    frame = _package_frame(
+        _request(),
+        _parse(_package(metadata='<meta name="cover" content="dup7"/>')),
+    )
+    plan = _cover_fallback_plan(
+        manifest,
+        frame.metadata_nodes,
+        _guide('<reference type="cover" href="img.png"/>' * 3),
+    )
+    assert plan == (
+        EpubCoverFallbackTarget(EpubCoverFallback.EPUB2_META_COVER_ITEM, image),
+        EpubCoverFallbackTarget(EpubCoverFallback.GUIDE_COVER_REFERENCE, image),
+        EpubCoverFallbackTarget(
+            EpubCoverFallback.COVER_IMAGE_WRAPPER,
+            manifest.ids["wrap"],
+            "application/xhtml+xml",
+        ),
+        EpubCoverFallbackTarget(EpubCoverFallback.COVER_IMAGE_WRAPPER),
+    )
+
+
+def test_a_fallback_plan_beyond_the_report_bound_is_dropped() -> None:
+    count = MAX_DECLARATIONS + 1
+    manifest = _Manifest(
+        ids={f"w{index}": f"{index:064x}" for index in range(count)},
+        nodes={
+            f"w{index}": _parse(b'<item properties="cover-image"/>')
+            for index in range(count)
+        },
+        media_types={f"w{index}": "application/xhtml+xml" for index in range(count)},
+        local_ids={f"w{index}" for index in range(count)},
+    )
+    frame = _package_frame(_request(), _parse(_package()))
+    assert _cover_fallback_plan(manifest, frame.metadata_nodes, []) == ()
+
+
+def test_cover_fallback_targets_are_closed() -> None:
+    with pytest.raises(EvidenceValueError):
+        EpubCoverFallbackTarget(
+            EpubCoverFallback.GUIDE_COVER_REFERENCE, None, "image/png"
+        )
+    with pytest.raises(EvidenceValueError):
+        EpubCoverFallbackTarget(
+            EpubCoverFallback.GUIDE_COVER_REFERENCE, "not-a-digest", "image/png"
+        )
 
 
 # Stage: consistency warnings and final bounds accounting.

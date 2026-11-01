@@ -41,6 +41,10 @@ brackets are GitHub issues.
   descriptions in another language or script than the work's are no longer
   offered as choices. Those values still keep a change from being automatic, so
   a field may still ask you to choose, with fewer options (#1497).
+- **Clean rebuild required.** An EPUB whose cover declaration is malformed
+  now records, as shadow evidence only, whether its own cover could be
+  recovered from a legacy cover entry, a guide reference or a cover page. The
+  cover stays absent, and nothing is chosen or shown from it yet (#1357).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
@@ -152,6 +156,9 @@ brackets are GitHub issues.
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read
   "Closed safely", instead of "Stale" (#1542).
+- A preparation step that briefly loses the database write lock while
+  checking its library connection now waits and carries on, instead of
+  marking the work as could not finish (#1547).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

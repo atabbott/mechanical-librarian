@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.evidence_extractors.process import (
 from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
+    EpubCoverRecovery,
     cover_source_id,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
@@ -30,6 +31,8 @@ class DeclaredEpubCover:
     state: CoverSourceState | None
     media_type: str | None = None
     data: bytes | None = None
+    # Shadow evidence from the cover fallbacks; only ever beside ``absent``.
+    recovery: EpubCoverRecovery | None = None
 
 
 def _close_descriptor(descriptor: int) -> int:
@@ -129,10 +132,19 @@ def read_declared_cover(descriptor: int, expected_digest: str) -> DeclaredEpubCo
         state_value = value["state"]
         state = None if state_value == "declared" else CoverSourceState(state_value)
         if state is CoverSourceState.ABSENT:
+            if set(value) not in ({"state"}, {"state", "recovery"}):
+                raise ValueError
             return DeclaredEpubCover(
                 cover_source_id(CoverSourceKind.EPUB, "absent"),
                 state,
+                recovery=(
+                    EpubCoverRecovery.from_data(value["recovery"])
+                    if "recovery" in value
+                    else None
+                ),
             )
+        if "recovery" in value:
+            raise ValueError
         if state is CoverSourceState.OVERSIZED:
             return DeclaredEpubCover(
                 cover_source_id(CoverSourceKind.EPUB, "oversized"),

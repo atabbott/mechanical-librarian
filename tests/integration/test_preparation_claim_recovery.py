@@ -1778,3 +1778,272 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
             "reference": "prep-31c82ea5b1c9f5be",
             "restart_reference": "prep-d6a7008e59c62303",
         }
+
+
+def _guard_rows(root: SQLiteMetadataReportRepository) -> tuple[object, ...]:
+    return (
+        *_preparation_rows(root),
+        tuple(
+            root._connection.execute(
+                "SELECT * FROM review_preparation_connection_conditions ORDER BY 1"
+            )
+        ),
+    )
+
+
+def _catalogue_entry() -> CatalogueEntry:
+    return CatalogueEntry(
+        "primary",
+        "fiction",
+        "lib-1",
+        "item-1",
+        1,
+        "Synthetic work",
+        ("Example Author",),
+        True,
+        False,
+        "singular-supported",
+        _report().file.identity,
+        "/item-1.epub",
+        "epub",
+        "books",
+    )
+
+
+_GUARD_FAULTS = (
+    "busy",
+    "busy_at_commit",
+    "busy_snapshot",
+    "busy_recovery",
+    "locked",
+    "ioerr",
+    "busy_unreleased_scope",
+    "busy_open_connection_transaction",
+)
+
+
+@pytest.mark.parametrize("fault", _GUARD_FAULTS, ids=_GUARD_FAULTS)
+@pytest.mark.parametrize(
+    "stage", ("proposal", "discovery"), ids=("proposal", "discovery")
+)
+def test_guard_busy_retries_without_unknown_and_every_other_failure_settles_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stage: str,
+    fault: str,
+) -> None:
+    """#1547: a released plain busy guard keeps its claim; nothing else changes."""
+    from mechanical_librarian.adapters.persistence.transactions import (
+        TransactionScope,
+    )
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPipelineGuardContention,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    codes = {
+        "busy_snapshot": sqlite3.SQLITE_BUSY_SNAPSHOT,
+        "busy_recovery": sqlite3.SQLITE_BUSY_RECOVERY,
+        "locked": sqlite3.SQLITE_LOCKED,
+        "ioerr": sqlite3.SQLITE_IOERR,
+    }
+    contended = fault in {"busy", "busy_at_commit"}
+    path = tmp_path / "application.sqlite3"
+    root = open_repository(path)
+    root.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+    admission = OperationAdmission()
+    pipeline = _pipeline(root, path, admission=admission)
+    proposal = evaluate_report(_report())
+    pipeline._propose = lambda repository, _: (
+        cast("SQLiteMetadataReportRepository", repository).publish_proposal(proposal),
+        proposal.proposal_set_id,
+    )[1]
+    pipeline._discover = lambda *_: (1, "a" * 64, (_catalogue_entry(),))
+    if stage == "proposal":
+        discovery = root.claim_review_pipeline_action(2)
+        assert discovery is not None
+        root.complete_review_discovery(discovery, 1, "a" * 64, (_catalogue_entry(),), 3)
+        assert pipeline.run_next(maximum_actions=1)  # extraction
+        assert pipeline.run_next(maximum_actions=1)  # provider
+    capsys.readouterr()
+
+    # A real writer holding RESERVED makes the guard's BEGIN IMMEDIATE busy.
+    blocker = sqlite3.connect(path, timeout=0, isolation_level=None)
+    original_guard = SQLiteMetadataReportRepository.guard_target_connection
+    claimed: list[tuple[PipelineAction, tuple[object, ...]]] = []
+    guard_calls: list[PipelineAction] = []
+    contentions: list[ReviewPipelineGuardContention] = []
+    waits: list[tuple[object, ...]] = []
+
+    def guard(
+        repository: SQLiteMetadataReportRepository,
+        action: PipelineAction,
+        checked_at: int,
+    ) -> bool:
+        guard_calls.append(action)
+        if not claimed:
+            claimed.append((action, _guard_rows(root)))
+            if fault == "busy":
+                blocker.execute("BEGIN IMMEDIATE")
+        connection = repository._connection
+        (timeout,) = connection.execute("PRAGMA busy_timeout").fetchone()
+        # Only an attempt the blocker holds waits 1 ms instead of the
+        # production busy timeout.
+        if blocker.in_transaction:
+            connection.execute("PRAGMA busy_timeout=1")
+        try:
+            return original_guard(repository, action, checked_at)
+        except ReviewPipelineGuardContention as error:
+            contentions.append(error)
+            raise
+        finally:
+            connection.execute(f"PRAGMA busy_timeout={timeout}")
+
+    def cooperative_wait() -> None:
+        # While blocked: nothing durable changed, the same claim is owned and
+        # no admission or connection lock is held between retries.
+        waits.append(
+            (
+                _guard_rows(root),
+                pipeline.owned_claims,
+                admission.held,
+                _admission_free(admission),
+                repository_in_transaction(),
+            )
+        )
+        if len(waits) == 2 and blocker.in_transaction:
+            blocker.execute("ROLLBACK")
+
+    lanes: list[SQLiteMetadataReportRepository] = []
+    factory = pipeline._repository_factory
+
+    def tracked() -> SQLiteMetadataReportRepository:
+        lane = cast("SQLiteMetadataReportRepository", factory())
+        lanes.append(lane)
+        return lane
+
+    def repository_in_transaction() -> bool:
+        return lanes[-1]._connection.in_transaction
+
+    pipeline._repository_factory = tracked
+    pipeline._cooperative_wait = cooperative_wait
+
+    def guard_scope(scope: TransactionScope) -> bool:
+        return scope._savepoint.startswith("guard_target_connection_")
+
+    def failure() -> sqlite3.OperationalError:
+        error = sqlite3.OperationalError("database is locked")
+        error.sqlite_errorcode = codes.get(fault, sqlite3.SQLITE_BUSY)
+        return error
+
+    original_begin = TransactionScope.begin
+    original_commit = TransactionScope.commit
+    started = TransactionScope.started
+    faulted: list[bool] = []
+
+    def begin(scope: TransactionScope) -> None:
+        if fault == "busy_open_connection_transaction" and guard_scope(scope):
+            # BEGIN's own unwind could not be proven: the scope never started,
+            # but its connection is still inside a transaction.
+            scope._connection.execute("BEGIN")
+            raise failure()
+        original_begin(scope)
+
+    def commit(scope: TransactionScope, **kwargs: object) -> None:
+        if (
+            guard_scope(scope)
+            and fault not in {"busy", "busy_open_connection_transaction"}
+            and not (fault == "busy_at_commit" and faulted)
+        ):
+            faulted.append(True)
+            raise failure()
+        original_commit(scope, **kwargs)  # type: ignore[arg-type]
+
+    def unreleased(scope: TransactionScope) -> bool:
+        # A rollback whose release cannot be proven keeps the scope started.
+        return True if guard_scope(scope) else started.fget(scope)
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "guard_target_connection", guard
+    )
+    monkeypatch.setattr(TransactionScope, "begin", begin)
+    monkeypatch.setattr(TransactionScope, "commit", commit)
+    if fault == "busy_unreleased_scope":
+        monkeypatch.setattr(TransactionScope, "started", property(unreleased))
+    try:
+        assert pipeline.run_next(maximum_actions=1)
+    finally:
+        if blocker.in_transaction:
+            blocker.execute("ROLLBACK")
+        blocker.close()
+        monkeypatch.undo()
+
+    ((action, before),) = claimed
+    assert action.stage == stage
+    assert pipeline.recovery_incidents == ()
+    assert not pipeline.recovery_required
+    assert pipeline.owned_claims == ()
+    err = capsys.readouterr().err
+    if contended:
+        # Every retry re-guarded the same durable claim and attempt.
+        expected = 2 if fault == "busy" else 1
+        assert len(contentions) == expected
+        assert all(
+            isinstance(error.__cause__, sqlite3.OperationalError)
+            and error.__cause__.sqlite_errorcode == sqlite3.SQLITE_BUSY
+            for error in contentions
+        )
+        assert guard_calls == [action] * (expected + 1)
+        assert len(waits) == expected
+        for rows, owned, held, free, in_transaction in waits:
+            assert rows == before
+            assert owned == (action,)
+            assert not held and free and not in_transaction
+        assert err == (_CONTENTION_LOG + "\n") * expected
+        if stage == "proposal":
+            # The claim proceeded through its stage once the lock cleared.
+            assert root._connection.execute(
+                "SELECT stage,state,failure_code FROM review_preparation_work"
+            ).fetchone() == ("admission", "queued", None)
+        else:
+            assert root._connection.execute(
+                "SELECT state FROM review_preparation_scans"
+            ).fetchone() != ("discovering",)
+            assert root._connection.execute(
+                "SELECT stage,state FROM review_preparation_work"
+            ).fetchall() == [("extraction", "queued")]
+    else:
+        # Every other guard failure keeps today's unknown settlement with its
+        # value-free diagnostic.
+        assert contentions == [] and waits == []
+        assert guard_calls == [action]
+        (line,) = err.splitlines()
+        record = json.loads(line)
+        assert record["event"] == "preparation_unknown_failure"
+        assert record["code"] == "unknown"
+        assert record["execution_stage"] == record["owned_stage"] == stage
+        assert record["exceptions"] == [
+            {
+                "module": "mechanical_librarian.application.metadata_report",
+                "type": "MetadataReportError",
+            },
+            {"module": "sqlite3", "type": "OperationalError"},
+        ]
+        assert "database is locked" not in err
+        if fault == "busy_open_connection_transaction":
+            # The injected unreleased connection transaction also enclosed the
+            # lane's unknown settlement, which closing that connection discards,
+            # exactly as before #1547; it is never retried as contention.
+            assert _guard_rows(root) == before
+        elif stage == "proposal":
+            assert root._connection.execute(
+                "SELECT stage,state,failure_code FROM review_preparation_work"
+            ).fetchone() == ("proposal", "failed", "unknown")
+        else:
+            assert root._connection.execute(
+                "SELECT state FROM review_preparation_scans"
+            ).fetchone() == ("completed_with_failures",)
+    for lane in lanes:
+        lane.close()
+    root.close()
