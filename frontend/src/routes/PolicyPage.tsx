@@ -962,7 +962,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           ? {
               tone: 'warning',
               message:
-                'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+                'The policy change could not be confirmed. It may have been saved; the current policy state is shown. Check it before pressing again.',
             }
           : {
               tone: 'error',

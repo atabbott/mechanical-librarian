@@ -1864,7 +1864,7 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
   expect(
     await screen.findByText(
-      'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+      'The policy change could not be confirmed. It may have been saved; the current policy state is shown. Check it before pressing again.',
     ),
   ).toBeVisible()
   expect(screen.getByRole('button', { name: /Recover .*title.* suspension/iu })).toBeEnabled()
@@ -1904,7 +1904,7 @@ it('reports an unconfirmed automatic pause from refreshed state without resendin
 
   expect(
     await screen.findByText(
-      'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+      'The policy change could not be confirmed. It may have been saved; the current policy state is shown. Check it before pressing again.',
     ),
   ).toBeVisible()
   expect(await screen.findByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()

@@ -10845,7 +10845,7 @@ it.each(['Evidence', 'History'] as const)(
 it.each([
   [
     new ApiError(500, 'invalid_error_response'),
-    'Description preparation may have been requested. Reload the current case before retrying.',
+    'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
   ],
   [
     new ApiError(409, 'stale'),

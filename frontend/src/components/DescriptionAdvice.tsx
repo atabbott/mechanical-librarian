@@ -48,7 +48,7 @@ export const DescriptionAdvicePreparation = ({
       {retry.isError ? (
         <p role="alert">
           {uncertainWriteOutcome(retry.error)
-            ? 'Description preparation may have been requested. Reload the current case before retrying.'
+            ? 'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.'
             : refusalCopy(
                 retry.error,
                 'Description preparation could not be requested. Reload the current case and retry.',
