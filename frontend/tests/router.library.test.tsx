@@ -6545,6 +6545,77 @@ describe('Library route', () => {
       expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
     })
 
+    it('keeps a condition that only explains an optional choice (#1557)', async () => {
+      const user = userEvent.setup()
+      const reason =
+        'The proposed values only shorten or extend the current one, so no review is needed. You can still keep the current value or choose a proposed one.'
+      const description = {
+        ...asin,
+        destination: 'description' as const,
+        classificationReason: reason,
+        currentValue: 'A voyage reveals a hidden city. The crew must choose who returns home.',
+        proposedValues: [{ kind: 'text' as const, value: 'A voyage reveals a hidden city.' }],
+        notices: [
+          'competing_evidence',
+          'populated_subjective_field',
+          'insufficient_independent_corroboration',
+          'language_display_name',
+        ],
+        choiceContexts: [
+          {
+            alternativeId: null,
+            selection: 'current' as const,
+            rationale: '',
+            recommendation: 'no_recommendation' as const,
+            recommendationReason: '',
+            limitations: [],
+            evidence: [],
+          },
+          {
+            alternativeId: 'alternative-short',
+            selection: 'proposed' as const,
+            rationale: 'Open Library',
+            recommendation: 'no_recommendation' as const,
+            recommendationReason: '',
+            // The server lists the owner's own value as the choice's limitation.
+            limitations: ['populated_subjective_field'],
+            evidence: [
+              {
+                source: 'Open Library',
+                observation: 'Description: A voyage reveals a hidden city.',
+                role: 'external_observation' as const,
+              },
+            ],
+          },
+        ],
+      }
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...recording,
+          fields: [title, description],
+        })),
+      })
+      await user.click(await screen.findByRole('button', { name: /^Description/u }))
+      const canvas = document.querySelector('.decision-canvas')
+      if (!(canvas instanceof HTMLElement)) throw new Error('decision canvas missing')
+      await waitFor(() => expect(within(canvas).getByText(reason)).toBeVisible())
+      const box = within(canvas).getByRole('complementary', { name: 'Comparison condition' })
+      expect(box).toHaveTextContent('Not enough independent sources agree on this value')
+      // The respelling notice is what explains an optional language choice (#1496).
+      expect(box).toHaveTextContent(/accepting only changes how it is written/u)
+      // Its evidence does not ask either (#1557).
+      for (const evidence of within(canvas).getAllByRole('button', { name: /Evidence/u })) {
+        await user.click(evidence)
+      }
+      expect(
+        await within(canvas).findByText('Description: A voyage reveals a hidden city.'),
+      ).toBeVisible()
+      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toContain('so a change needs you')
+      expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
+    })
+
     it('is skipped when the field that needed review is decided', async () => {
       const user = userEvent.setup()
       const { decision, settled } = settle(title, 'keep_current')

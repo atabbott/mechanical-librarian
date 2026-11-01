@@ -24,6 +24,7 @@ import type { TargetDestination } from '../src/api/http'
 import {
   audioSurfaceLabels,
   candidateReference,
+  choiceRequestReasons,
   claimBasisLabels,
   claimKindLabels,
   coverHistoryLabels,
@@ -35,6 +36,8 @@ import {
   languageName,
   observationText,
   lookupLabels,
+  materialComparisonReasons,
+  materialReasonLabel,
   mediaHealthLabels,
   mediaKindLabels,
   preparationStageLabels,
@@ -198,5 +201,14 @@ describe('owner labels (#1286)', () => {
     // The page names the tag exactly as the field value beside it does.
     const tag = /^Language: ([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)(?=\.|$)/u.exec(text)?.[1]
     if (tag && !/^und$/iu.test(tag)) expect(shown).toContain(languageName(tag))
+  })
+})
+
+describe('optional choice conditions (#1557)', () => {
+  it('leaves off exactly the conditions that ask the owner to choose', () => {
+    const asking = materialComparisonReasons.filter((code) =>
+      /yourself|needs you/u.test(materialReasonLabel(code) ?? ''),
+    )
+    expect([...choiceRequestReasons].sort()).toEqual([...asking].sort())
   })
 })

@@ -130,7 +130,8 @@ brackets are GitHub issues.
 - An optional description or genre choice says once why no review is needed
   (the proposed values only shorten or extend the current one), instead of
   also showing a note that the sources disagree or that a change needs you
-  (#1450).
+  (#1450). Notes that only explain the choice, such as that accepting only
+  changes how a language is written, still show (#1557).
 - Activity's advice for finding a stopped change also says to clear filters
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read

@@ -138,6 +138,24 @@ export const materialReasonLabel = (code: string) =>
   Object.hasOwn(materialReasonLabels, code)
     ? materialReasonLabels[code as MaterialComparisonReason]
     : undefined
+export const materialComparisonReasons = Object.keys(
+  materialReasonLabels,
+) as readonly MaterialComparisonReason[]
+// The conditions whose words ask the owner to choose. An optional choice
+// already says no review is needed, so these are left off it; every other
+// condition still explains the choice (#1450, #1557).
+export const choiceRequestReasons: ReadonlySet<string> = new Set<MaterialComparisonReason>([
+  'isbn_title_material_conflict',
+  'bibliographic_combination_unresolved',
+  'competing_evidence',
+  'field_policy_conflict',
+  'populated_subjective_field',
+  'provider_consensus_title_colon_unused',
+  'decoration_tidy_series_unpreserved',
+  'decoration_equivalence_provider_dissent',
+  'decoration_equivalence_decorated_consensus',
+  'subtitle_segment_provider_dissent',
+])
 
 // A report's file format, as the owner calls the item.
 export const mediaKindLabels = {
