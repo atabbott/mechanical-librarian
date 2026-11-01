@@ -4139,8 +4139,14 @@ def test_a_skipped_catalogue_heading_opens_no_block(heading: str) -> None:
 
 @pytest.mark.parametrize(
     "label",
-    ("<p>eBook ISBN</p>", "<p>ISBN</p>", "<p>Print ISBN:</p>"),
-    ids=("ebook", "isbn", "print"),
+    (
+        "<p>eBook ISBN</p>",
+        "<p>ISBN</p>",
+        "<p>Print ISBN:</p>",
+        "<p>ISBN-10:</p>",
+        "<p>ISBN 10</p>",
+    ),
+    ids=("ebook", "isbn", "print", "isbn_10", "isbn_10_spaced"),
 )
 def test_a_catalogue_isbn_labelled_by_the_element_before_is_still_read(
     label: str,
@@ -4150,3 +4156,28 @@ def test_a_catalogue_isbn_labelled_by_the_element_before_is_still_read(
         "<p>Library of Congress Cataloging-in-Publication Data</p>"
         f"{label}<p>0306406152</p></section>"
     ) == ["0306406152"]
+
+
+def test_a_catalogue_isbn_10_beside_an_isbn_13_line_is_still_read() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>ISBN-13:</p><p>9780306406157</p><p>ISBN-10:</p><p>0306406152</p>"
+        "</section>"
+    ) == ["9780306406157", "0306406152"]
+
+
+@pytest.mark.parametrize(
+    "note",
+    ("<p>Also available as an ebook.</p>", "<p>Electronic edition by Example</p>"),
+    ids=("ebook_note", "electronic_note"),
+)
+def test_a_note_beside_a_catalogue_control_number_is_no_label(note: str) -> None:
+    assert (
+        _identifiers(
+            '<section epub:type="copyright-page">'
+            "<p>Library of Congress Cataloging-in-Publication Data</p>"
+            f"<p>2012345670</p>{note}</section>"
+        )
+        == []
+    )

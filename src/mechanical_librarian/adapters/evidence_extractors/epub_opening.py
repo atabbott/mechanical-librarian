@@ -2551,6 +2551,9 @@ def _catalogue_record_starts(
     return starts
 
 
+_ISBN_FORM_DESIGNATOR = re.compile(r"isbn[\s-]*1[03]")
+
+
 def _catalogue_neighbor_labels(
     elements: list[_Element],
     element: _Element,
@@ -2559,8 +2562,10 @@ def _catalogue_neighbor_labels(
     """Whether the element read just before or after is only an ISBN label.
 
     These are the neighbours the recognizer reads a label from, so a bare
-    run they label stays an ISBN inside a catalogue record. A neighbour with
-    digits of its own labels its own number, not this run (#1497).
+    run such a label names stays an ISBN inside a catalogue record. Only a
+    short line that names an ISBN and holds no number of its own counts, so
+    a note or another line's own ISBN never lets a control number back in
+    (#1497).
     """
     previous = next(
         (
@@ -2578,22 +2583,18 @@ def _catalogue_neighbor_labels(
         ),
         None,
     )
-    if previous is not None and any(
-        character.isdigit() for character in previous.exact_text
-    ):
-        previous = None
-    if following is not None and any(
-        character.isdigit() for character in following.exact_text
-    ):
-        following = None
-    previous_text = "" if previous is None else previous.exact_text.casefold()[-48:]
-    following_text = "" if following is None else following.exact_text.casefold()[:48]
-    return (
-        "isbn" in previous_text
-        or _EBOOK_LABEL.search(previous_text) is not None
-        or _PRINT_LABEL.search(previous_text) is not None
-        or _EBOOK_LABEL.search(following_text) is not None
-        or _PRINT_LABEL.search(following_text) is not None
+    return any(
+        neighbor is not None and _isbn_label_only(neighbor.exact_text)
+        for neighbor in (previous, following)
+    )
+
+
+def _isbn_label_only(text: str) -> bool:
+    label = " ".join(text.casefold().split())
+    if len(label) > 32 or "isbn" not in label:
+        return False
+    return not any(
+        character.isdigit() for character in _ISBN_FORM_DESIGNATOR.sub("", label)
     )
 
 
