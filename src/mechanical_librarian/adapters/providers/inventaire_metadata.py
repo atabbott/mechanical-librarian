@@ -697,7 +697,10 @@ class InventaireMetadataProvider:
         return self._result(
             lookup,
             status,
-            candidates,
+            # The search answers in relevance order and an observation holds
+            # its candidates in identity order, so two works whose identities
+            # sort the other way otherwise failed the whole lookup (#1498).
+            tuple(sorted(candidates, key=lambda value: value.identity)),
             references=references,
             dispatch_lineage=(
                 dispatch_lineage

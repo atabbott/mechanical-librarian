@@ -3285,3 +3285,67 @@ def test_an_audible_retry_rebuilds_the_carried_lane_from_the_source_claim() -> N
     statuses = {value.identity: value.status for value in successor.providers[0].lanes}
     assert ProviderStatus.NO_MATCH is statuses[lookup.identity]
     assert ProviderStatus.NO_MATCH is statuses[search.identity]
+
+
+@pytest.mark.parametrize(
+    ("where", "fault_class"),
+    (("observe", "report_validation"), ("factory", None), ("observe_os", None)),
+    ids=("adapter_observation", "provider_construction", "transport_error"),
+)
+def test_a_recovery_retry_names_only_its_adapters_own_fault(
+    retry: _Retry,
+    capsys: pytest.CaptureFixture[str],
+    where: str,
+    fault_class: str | None,
+) -> None:
+    """Only the adapter's own observation can fault it (#1498)."""
+    from mechanical_librarian.domain.metadata_report import ReportValueError
+
+    target = audio_target("Asserted Title", ("Ada Author",))
+    plan = audiobook_discovery_plan(
+        target,
+        (target_title_claim("Asserted Title"),),
+        audio=single_track_audio_facts(),
+    )
+    (lane,) = provider_discovery_lane_order(plan)
+    original = recorded_dispatch(
+        provider_observation(
+            "audible",
+            (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+            authority="audible_catalog",
+        )
+    )
+
+    class FaultingProvider:
+        def __init__(self) -> None:
+            if where == "factory":
+                raise ValueError("provider configuration is invalid")
+
+        def observe(self, plan, *, deadline=None):
+            if where == "observe_os":
+                raise OSError("connection reset")
+            raise ReportValueError("provider candidates are not canonical")
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding("audible", True, FaultingProvider, "audible_catalog"),
+        "audible_catalog",
+        2,
+    )
+    service = retry.service(configured)
+    selected = service._selected(plan, original, (lane.identity,))
+    capsys.readouterr()
+    with pytest.raises(ProviderRetrySuccessorError):
+        service._observe(
+            configured, plan, selected, original, retry.report.target, deadline=1e12
+        )
+
+    events = [
+        json.loads(line)
+        for line in capsys.readouterr().err.splitlines()
+        if '"provider_adapter_fault"' in line
+    ]
+    if fault_class is None:
+        assert [] == events
+    else:
+        (event,) = events
+        assert ("recovery", fault_class) == (event["phase"], event["fault_class"])

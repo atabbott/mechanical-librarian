@@ -108,7 +108,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v64'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v65'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -124,7 +124,7 @@ _REPORT_BROWSE_FACTS_SQL = (
     "title_key TEXT NOT NULL, format TEXT, format_key TEXT NOT NULL, "
     "provider_limited INTEGER NOT NULL CHECK(provider_limited IN (0,1)), "
     "provider_match_state TEXT NOT NULL CHECK(provider_match_state IN "
-    "('matched','refused','unavailable','no_match'))) WITHOUT ROWID"
+    "('matched','refused','unavailable','adapter_fault','no_match'))) WITHOUT ROWID"
 )
 _REPORT_BROWSE_AUTHORS_SQL = (
     "CREATE TABLE metadata_report_browse_authors ("
@@ -155,6 +155,16 @@ def _provider_lanes_sql(document: str) -> tuple[str, str]:
     return lanes, status
 
 
+# A lane the adapter itself failed: its own diagnostics, or an aggregate-only
+# observation's, name an adapter fault (#1498). No later attempt changes it,
+# so it never limits a lookup.
+_LANE_ADAPTER_FAULT_SQL = (
+    "EXISTS(SELECT 1 FROM json_each(COALESCE(lane.value,provider.value),"
+    "'$.diagnostics') diagnostic WHERE "
+    "json_extract(diagnostic.value,'$.category')='adapter_fault')"
+)
+
+
 def _provider_limited_sql(document: str) -> str:
     lanes, status = _provider_lanes_sql(document)
     return (
@@ -163,7 +173,9 @@ def _provider_limited_sql(document: str) -> str:
         + status
         + " IN ("
         + _LIMITING_PROVIDER_STATUSES_SQL
-        + "))"
+        + ") AND NOT "
+        + _LANE_ADAPTER_FAULT_SQL
+        + ")"
     )
 
 
@@ -171,8 +183,9 @@ def _report_provider_match_state_sql(document: str) -> str:
     """#1407: whether any provider returned candidates, and if none did, why.
 
     The owner's precedence: a lane whose candidates work-identity admission
-    refused, then a lookup a later attempt can change, then no match.
-    `empty_or_refused` cannot say which, so it is no match.
+    refused, then a lookup a later attempt can change, then a lane the adapter
+    itself failed (#1498), then no match. `empty_or_refused` cannot say which,
+    so it is no match.
     """
     lanes, status = _provider_lanes_sql(document)
     return (
@@ -187,7 +200,10 @@ def _report_provider_match_state_sql(document: str) -> str:
         "json_extract(diagnostic.value,'$.category')='work_identity_refused'))) "
         "THEN 'refused' WHEN "
         + _provider_limited_sql(document)
-        + " THEN 'unavailable' ELSE 'no_match' END"
+        + " THEN 'unavailable' WHEN EXISTS(SELECT 1 "
+        + lanes
+        + _LANE_ADAPTER_FAULT_SQL
+        + ") THEN 'adapter_fault' ELSE 'no_match' END"
     )
 
 

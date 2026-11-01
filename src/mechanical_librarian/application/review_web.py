@@ -3052,6 +3052,11 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
 # A lane whose candidates work-identity admission refused persists as no match,
 # so its dispatch says what happened, in the row's own words (#1407).
 _REFUSED_PROVIDER_REASON = "Found candidates, but none was this work."
+# A lane the adapter itself failed is not the provider's fault and is never
+# retried, so it does not say the source could not be reached (#1498).
+_ADAPTER_FAULT_REASON = (
+    "Failed inside Mechanical Librarian, so nothing was retained and it is not retried."
+)
 
 
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
@@ -3066,12 +3071,15 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             "provider_requests": lane.logical_requests,
             "lane_kind": lane.kind,
             "provider": _provider_label(lane.authority),
-            "reason": _REFUSED_PROVIDER_REASON
+            "reason": _ADAPTER_FAULT_REASON
+            if lane.adapter_fault
+            else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused"
             else _PROVIDER_OUTCOME_REASONS.get(
                 lane.status, "Ended in a bounded state this build cannot name."
             ),
-            "status": lane.status,
+            # Its own status, so Sources never labels it unavailable (#1498).
+            "status": "adapter_fault" if lane.adapter_fault else lane.status,
         }
         for lane in lanes
     ]
@@ -3227,7 +3235,7 @@ def _terminal_media_health(status: str, root: str | None) -> list[dict[str, obje
 # Why a work no provider matched, by the owner's precedence (#1407). A retry is
 # named only where the recovery store holds a job for it.
 _NOT_MATCHED_STATES = frozenset(
-    {"refused", "unavailable_scheduled", "unavailable", "no_match"}
+    {"refused", "unavailable_scheduled", "unavailable", "adapter_fault", "no_match"}
 )
 
 

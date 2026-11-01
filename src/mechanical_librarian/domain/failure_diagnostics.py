@@ -35,6 +35,7 @@ class FailureCategory(str, Enum):
     WORK_IDENTITY_REFUSED = "work_identity_refused"
     CURRENTNESS = "currentness"
     PERSISTENCE = "persistence"
+    ADAPTER_FAULT = "adapter_fault"
     UNKNOWN = "unknown"
 
 

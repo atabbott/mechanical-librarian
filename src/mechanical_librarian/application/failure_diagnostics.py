@@ -14,6 +14,7 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderIncompleteCause,
     ProviderOperationalEvidence,
 )
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.failure_diagnostics import (
     MAX_DIAGNOSTIC_COUNT,
     FailureCategory,
@@ -27,6 +28,7 @@ from mechanical_librarian.domain.metadata_report import (
     DispatchOutcome,
     ProviderObservation,
     ProviderStatus,
+    ReportValueError,
 )
 from mechanical_librarian.domain.provider_recovery import (
     MAX_RECOVERY_DELAY,
@@ -54,8 +56,13 @@ def provider_attempt_diagnostics(
     incomplete_causes: object = (),
     identity_conflict_only: bool = False,
     work_identity_refused_only: bool = False,
+    adapter_fault: bool = False,
 ) -> tuple[FailureDiagnostic, ...]:
-    """Discard attempt payload details and return deterministic bounded aggregates."""
+    """Discard attempt payload details and return deterministic bounded aggregates.
+
+    `adapter_fault` says the unavailable status is the adapter's own fault,
+    which its own diagnostic names, so it is not also counted as unknown.
+    """
 
     counts: Counter[tuple[FailureCategory, FailureStage, bool | None]] = Counter()
     if type(attempts) is tuple:
@@ -214,6 +221,7 @@ def provider_attempt_diagnostics(
             # stated by the lanes as refusals, not as an empty response.
             status == "no_match" and work_identity_refused_only
         )
+        and not (status == "unavailable" and adapter_fault)
         and not any(category is required[0] for category, _, _ in counts)
     ):
         counts[required] = 1
@@ -236,6 +244,41 @@ def provider_attempt_diagnostics(
             ),
         )
     )
+
+
+# The closed classes of a fault an adapter raised itself (#1498). The class is
+# read from the exception's type alone, never its text: a domain object refusing
+# what the adapter built from a response, or a programming error in the adapter.
+# Anything else -- a transport library's own error, say -- is not named a fault
+# and keeps the unavailable lane and its scheduled recovery.
+ADAPTER_FAULT_CLASSES = ("report_validation", "programming")
+ADAPTER_FAULT_DIAGNOSTIC = FailureDiagnostic(
+    FailureCategory.ADAPTER_FAULT,
+    FailureComponent.PROVIDER,
+    FailureStage.EXECUTION,
+    retryable=False,
+)
+
+
+def adapter_fault_class(error: BaseException) -> str | None:
+    """Name the closed class of an adapter's own fault, or None."""
+    cause = error.__cause__ if error.__cause__ is not None else error
+    if isinstance(cause, (ReportValueError, EvidenceValueError)):
+        return "report_validation"
+    if isinstance(
+        cause,
+        (
+            ArithmeticError,
+            AssertionError,
+            AttributeError,
+            LookupError,
+            RecursionError,
+            TypeError,
+            ValueError,
+        ),
+    ):
+        return "programming"
+    return None
 
 
 def merge_provider_diagnostics(
@@ -386,6 +429,8 @@ def provider_result_diagnostics(
             work_identity_refused_only=(
                 _work_identity_refusal_is_the_only_no_match_reason(observation)
             ),
+            adapter_fault=ADAPTER_FAULT_DIAGNOSTIC.category
+            in {value.category for value in observation.diagnostics},
         ),
     )
 
@@ -418,6 +463,7 @@ _PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
         "provider_throttled",
         "provider_deadline_stop",
         "provider_recovery_job",
+        "provider_adapter_fault",
     ),
     "level": one_of("info", "warning"),
     "adapter": one_of(*(value for value in PROVIDER_AUTHORITIES if value)),
@@ -434,6 +480,7 @@ _PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
         "retry", "exhausted", "terminal", "cancelled", "deadline_exhausted"
     ),
     "stop": one_of("before_dispatch", "in_flight"),
+    "fault_class": one_of(*ADAPTER_FAULT_CLASSES),
     "count": bounded_integer(1, MAX_DIAGNOSTIC_COUNT),
     "retry_after_ms": bounded_integer(0, MAX_RECOVERY_DELAY * 1000),
     "elapsed_ms": bounded_integer(0, _MAX_EVENT_MS),
@@ -606,6 +653,17 @@ def provider_dispatch_events(
         attempts[attempt_key] += 1
         delays[attempt_key] = _milliseconds(record.delay_seconds)
     events = []
+    if evidence.adapter_fault is not None:
+        # The adapter itself raised (#1498): one event names its closed class,
+        # never the exception or anything it carried.
+        value = event(
+            "provider_adapter_fault",
+            answered,
+            FailureCategory.ADAPTER_FAULT.value,
+            1,
+        )
+        value["fault_class"] = evidence.adapter_fault
+        events.append(value)
     for key, count in attempts.items():
         name, outcome, status, attempt = key
         value = event(name, answered, outcome, count)

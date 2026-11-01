@@ -144,6 +144,7 @@ _EXPECTED_PROVIDER_MAPPINGS: dict[
 
 def test_category_vocabulary_is_exact_and_closed() -> None:
     assert {
+        "adapter_fault",
         "authentication",
         "burst_throttle",
         "candidate_limit_exceeded",

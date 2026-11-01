@@ -36,3 +36,6 @@ class ProviderOperationalEvidence:
     accessed_at: str | None = None
     attempt_records: tuple[ProviderAttemptRecord, ...] | None = ()
     incomplete_causes: tuple[ProviderIncompleteCauseRecord, ...] | None = ()
+    # The closed class of a fault the adapter itself raised (#1498), named only
+    # in the process-local event and never persisted.
+    adapter_fault: str | None = None

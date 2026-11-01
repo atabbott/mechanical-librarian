@@ -187,6 +187,7 @@ export const workSummaryStates = [
   'not_matched_refused',
   'not_matched_unavailable_scheduled',
   'not_matched_unavailable',
+  'not_matched_adapter_fault',
   'not_matched_no_match',
 ] as const
 export type WorkSummaryState = (typeof workSummaryStates)[number]
@@ -313,6 +314,8 @@ export const PROVIDER_STATUSES = [
   'oversized',
   'candidate_limit_exceeded',
   'query_limit_exceeded',
+  // Not a provider status: the lane failed inside Mechanical Librarian (#1498).
+  'adapter_fault',
 ] as const
 export type ProviderStatus = (typeof PROVIDER_STATUSES)[number]
 export const CLAIM_KINDS = [

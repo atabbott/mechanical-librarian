@@ -898,13 +898,15 @@ class _ProviderOutcome(_ClosedModel):
 class _LibraryWorkSummary(_ClosedModel):
     fields: list[_TargetField]
     reason: str
-    # Closed: a work no provider matched says which of four reasons (#1407).
+    # Closed: a work no provider matched says which of five reasons (#1407,
+    # #1498).
     state: Literal[
         "no_decision_recorded",
         "preparation_failed",
         "not_matched_refused",
         "not_matched_unavailable_scheduled",
         "not_matched_unavailable",
+        "not_matched_adapter_fault",
         "not_matched_no_match",
     ]
 

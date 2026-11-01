@@ -25,6 +25,9 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.failure_diagnostics import (
+    ADAPTER_FAULT_DIAGNOSTIC,
+)
 from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ReportRepository,
@@ -254,6 +257,67 @@ def test_each_not_matched_work_names_one_reason_in_precedence(tmp_path: Path) ->
         )
         assert list(_items(clear)) == ["matched"]
         assert _items(clear)["matched"]["review_case_id"] is not None
+    finally:
+        repository.close()
+
+
+def _faulted(item: str, *others: ProviderStatus) -> MetadataReport:
+    """An ebook one of whose sources failed inside the adapter itself."""
+    report = _ebook(item, *others)
+    return replace_providers(
+        report,
+        (
+            *report.providers,
+            ProviderObservation(
+                "provider-fault",
+                ProviderStatus.UNAVAILABLE,
+                diagnostics=(ADAPTER_FAULT_DIAGNOSTIC,),
+            ),
+        ),
+    )
+
+
+def replace_providers(
+    report: MetadataReport, providers: tuple[ProviderObservation, ...]
+) -> MetadataReport:
+    return MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=providers,
+    )
+
+
+def test_an_adapter_fault_reads_as_its_own_reason_never_as_unavailable(
+    tmp_path: Path,
+) -> None:
+    """#1498: a lookup the adapter failed is not a provider outage."""
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        for report in (
+            _faulted("fault", ProviderStatus.NO_MATCH),
+            # A real outage beside the fault keeps its own reason.
+            _faulted("fault-and-unavailable", ProviderStatus.UNAVAILABLE),
+        ):
+            _publish(repository, report)
+        page = BrowseReviewLibrary(repository).library(
+            lens="not_matched", search=None, limit=50, cursor=None
+        )
+        items = _items(page)
+        assert {item: value["summary"]["state"] for item, value in items.items()} == {
+            "fault": "not_matched_adapter_fault",
+            "fault-and-unavailable": "not_matched_unavailable",
+        }
+        assert page["counts"]["not_matched"] == 2
+        statuses = {
+            (outcome["provider"], outcome["status"])
+            for outcome in cast(
+                "list[dict[str, object]]", items["fault"]["preparation_outcomes"]
+            )
+        }
+        assert ("Provider (name unavailable)", "adapter_fault") in statuses
+        assert all(status != "unavailable" for _, status in statuses)
     finally:
         repository.close()
 

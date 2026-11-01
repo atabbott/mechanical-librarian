@@ -185,7 +185,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v64"
+    assert report.schema_version == "metadata-report-v65"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -1459,7 +1459,7 @@ def test_complete_discovery_preserves_negative_only_creator_equivalence(
         1 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 0
     )
     assert observation.lanes
-    assert report.schema_version == "metadata-report-v64"
+    assert report.schema_version == "metadata-report-v65"
 
 
 @pytest.mark.parametrize(
@@ -1616,3 +1616,88 @@ def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
         for value in observation.lanes
     ]
     assert len(requests) == observation.request_accounting.logical_requests
+
+
+def test_works_found_out_of_identity_order_are_all_candidates() -> None:
+    """#1498: the search's relevance order is not an observation's order.
+
+    `wd:Q99` ranks first but its identity sorts after `wd:Q100`'s, so the
+    lookup once raised from inside the adapter and ended unavailable.
+    """
+
+    def work(uri: str) -> dict[str, Any]:
+        return {
+            "uri": uri,
+            "labels": {"en": "Example Book"},
+            "claims": {"wdt:P1476": ["Example Book"], "wdt:P50": ["wd:Q42"]},
+        }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if str(request.url).startswith(INVENTAIRE_SEARCH_URL):
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": "Q99", "type": "works", "uri": "wd:Q99"},
+                        {"id": "Q100", "type": "works", "uri": "wd:Q100"},
+                    ]
+                },
+            )
+        uris = request.url.params.get_list("uris")
+        if uris == ["wd:Q42"]:
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "wd:Q42": {
+                            "uri": "wd:Q42",
+                            "labels": {"en": "Ada Example"},
+                            "claims": {},
+                        }
+                    },
+                    "redirects": {},
+                },
+            )
+        assert uris == ["wd:Q99", "wd:Q100"]
+        return httpx.Response(
+            200,
+            json={"entities": {uri: work(uri) for uri in uris}, "redirects": {}},
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (_isbn(),),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+
+    observation = _provider(httpx.MockTransport(respond)).observe(lookup).observation
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    assert (
+        "inventaire-work-wd-Q100",
+        "inventaire-work-wd-Q99",
+    ) == tuple(value.identity for value in observation.candidates)
+
+
+def test_a_provider_503_is_still_unavailable_and_recovered() -> None:
+    """#1498: the provider being down is not an adapter fault."""
+    from mechanical_librarian.application.provider_recovery_policy import (
+        provider_recovery_decision,
+    )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        (_isbn(),),
+        title="Example Book",
+        authors=("Ada Example",),
+    )
+    provider = _provider(httpx.MockTransport(lambda _request: httpx.Response(503)))
+
+    observation = provider.observe(lookup).observation
+
+    assert observation.status is ProviderStatus.UNAVAILABLE
+    assert "adapter_fault" not in {
+        value.category.value for value in observation.diagnostics
+    }
+    assert ("transient", None) == provider_recovery_decision(observation, now=0)
