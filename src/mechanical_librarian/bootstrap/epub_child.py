@@ -247,12 +247,15 @@ _COVER_WRAPPER_MEDIA = frozenset({"application/xhtml+xml", "text/html"})
 _REFERENCE_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-def _member_names(archive: zipfile.ZipFile, identity: str) -> list[str]:
-    return [
-        info.filename
-        for info in archive.infolist()
-        if not info.is_dir() and epub_resource_identity(info.filename) == identity
-    ]
+def _member_index(archive: zipfile.ZipFile) -> dict[str, list[str]]:
+    """Map each resource identity to its archive file members, hashed once."""
+    index: dict[str, list[str]] = {}
+    for info in archive.infolist():
+        if not info.is_dir():
+            index.setdefault(epub_resource_identity(info.filename), []).append(
+                info.filename
+            )
+    return index
 
 
 def _wrapper_image(
@@ -261,9 +264,10 @@ def _wrapper_image(
     limits: EpubOpeningLimits,
     report: EpubPackageReport,
     wrapper: EpubCoverFallbackTarget,
+    members: dict[str, list[str]],
 ) -> str | EpubCoverRecoveryRefusal:
     """Read the one wrapper and return the single local image it names."""
-    names = _member_names(archive, cast(str, wrapper.resource_identity))
+    names = members.get(cast(str, wrapper.resource_identity), [])
     if len(names) != 1:
         return EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE
     try:
@@ -304,7 +308,7 @@ def _wrapper_image(
         if (
             len(media) != 1
             or media[0] not in _COVER_IMAGE_MEDIA
-            or len(_member_names(archive, identity)) != 1
+            or len(members.get(identity, [])) != 1
         ):
             return EpubCoverRecoveryRefusal.WRAPPER_NOT_MANIFEST_IMAGE
         images.append(identity)
@@ -356,7 +360,14 @@ def _cover_recovery(
     images: dict[str | None, str] = {}
     for wrapper_identity, wrapper in wrappers.items():
         try:
-            image = _wrapper_image(archive, package_request, limits, report, wrapper)
+            image = _wrapper_image(
+                archive,
+                package_request,
+                limits,
+                report,
+                wrapper,
+                _member_index(archive),
+            )
         except (OSError, LookupError, ValueError, RecursionError, zipfile.BadZipFile):
             # A wrapper failure stays a closed refusal; it never turns the
             # package's absent cover into a child failure.
@@ -412,7 +423,7 @@ def _selected_cover(
                 if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
                 and item.resource_identity == values[0]
             ]
-            names = _member_names(archive, values[0])
+            names = _member_index(archive).get(values[0], [])
             if len(media) != 1 or len(names) != 1:
                 return {"state": "invalid_declaration"}, None
             if media[0] not in {"image/jpeg", "image/png", "image/webp"}:

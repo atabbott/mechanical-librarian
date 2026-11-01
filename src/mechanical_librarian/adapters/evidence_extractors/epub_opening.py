@@ -553,6 +553,9 @@ class _Element:
     namespace: str = ""
     fragment_ids: tuple[str, ...] = ()
     invalid_attributes: frozenset[str] = frozenset()
+    # Every mapped attribute name the recovery parser saw more than once; the
+    # cover wrapper reader refuses rather than reading the kept value.
+    duplicate_attributes: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -758,7 +761,7 @@ def _recovery_namespaces(
 def _recovery_attributes(
     attributes: list[tuple[str, str]],
     namespaces: dict[str, str],
-) -> tuple[dict[str, str], tuple[str, ...], frozenset[str]]:
+) -> tuple[dict[str, str], tuple[str, ...], frozenset[str], frozenset[str]]:
     values: dict[str, list[str]] = {}
     for name, value in attributes:
         if name == "xmlns" or name.startswith("xmlns:"):
@@ -793,7 +796,10 @@ def _recovery_attributes(
     fragment_ids = tuple(
         mapped[name] for name in ("id", f"{{{_XML_NS}}}id") if mapped.get(name)
     )
-    return mapped, fragment_ids, frozenset(invalid)
+    duplicates = frozenset(
+        name for name, candidates in values.items() if len(candidates) > 1
+    )
+    return mapped, fragment_ids, frozenset(invalid), duplicates
 
 
 def _local(name: str) -> str:
@@ -1056,8 +1062,8 @@ class _RecoveryParser(HTMLParser):
                 nodes=len(self.elements),
                 text_characters=_projected_text_usage(self.events),
             )
-        mapped, fragment_ids, invalid_attributes = _recovery_attributes(
-            raw_attributes, namespaces
+        mapped, fragment_ids, invalid_attributes, duplicate_attributes = (
+            _recovery_attributes(raw_attributes, namespaces)
         )
         if _is_html_namespace(namespace):
             for opened, closing in _HTML_IMPLIED_CLOSE.items():
@@ -1097,6 +1103,7 @@ class _RecoveryParser(HTMLParser):
             namespace=namespace,
             fragment_ids=fragment_ids,
             invalid_attributes=invalid_attributes,
+            duplicate_attributes=duplicate_attributes,
         )
         self.elements.append(element)
         if local_name in {"br", "wbr"} and self.stack and not self.stack[-1].active:
@@ -4236,7 +4243,8 @@ def cover_wrapper_references(
     totals. Only HTML ``img/@src`` and SVG ``image/@href`` or
     ``image/@xlink:href`` count, on every element including hidden ones, in
     document order. Nothing is rendered or retained beyond the references, and
-    every failure is one closed refusal.
+    every failure is one closed refusal. A reference element with a repeated
+    or invalid reference attribute refuses as unreadable.
     """
     try:
         data = _read_member(
@@ -4275,6 +4283,12 @@ def cover_wrapper_references(
             names = ("href", f"{{{_XLINK_NS}}}href", f"{{{_UNDECLARED_XLINK}}}href")
         else:
             continue
+        # A repeated or withdrawn reference attribute is ambiguous: refuse it
+        # rather than read whichever value a parser kept. Strict parsing
+        # rejects a repeated attribute outright, so this only arises after
+        # recovery.
+        if set(names) & (element.duplicate_attributes | element.invalid_attributes):
+            raise CoverWrapperRefused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE)
         references.extend(
             element.attributes[name] for name in names if name in element.attributes
         )

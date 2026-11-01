@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -449,6 +450,12 @@ def test_malformed_cover_declarations_yield_shadow_recovery_only(
             '<img src="https://example.invalid/x"/><img src="../../x"/>',
             "external_reference",
         ),
+        ('<img src="other.jpg" src="cover.jpg"/>', "unreadable"),
+        (
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<image href="https://example.invalid/x.png" href="cover.jpg"/></svg>',
+            "unreadable",
+        ),
     ),
     ids=(
         "https_scheme",
@@ -466,6 +473,8 @@ def test_malformed_cover_declarations_yield_shadow_recovery_only(
         "two_images_one_hidden",
         "no_image",
         "first_failure_wins",
+        "duplicate_src",
+        "duplicate_svg_href",
     ),
 )
 def test_cover_wrapper_references_refuse_with_closed_codes(
@@ -585,3 +594,48 @@ def test_duplicate_items_under_repeated_guide_covers_refuse_without_a_choice(
         "fallbacks": [_GUIDE_FALLBACK],
         "refusal": "cover_recovery_unsupported_target",
     }
+
+
+def test_many_members_and_references_resolve_within_a_bounded_time(
+    tmp_path: Path,
+) -> None:
+    started = time.monotonic()
+    result = _read_cover(
+        tmp_path,
+        _cover_package(_WRAP_COVER),
+        (
+            # Each element carries an incompressible label so the archive's
+            # compression-ratio bound admits ten thousand identical references.
+            (
+                "EPUB/wrap.xhtml",
+                _wrapper(
+                    "".join(
+                        f'<img alt="{hashlib.sha256(str(index).encode()).hexdigest()}"'
+                        ' src="cover.jpg"/>'
+                        for index in range(10_000)
+                    )
+                ),
+            ),
+            *((f"EPUB/filler/{index}.bin", b"") for index in range(2_000)),
+        ),
+    )
+    assert time.monotonic() - started < 10.0
+    assert result.state is CoverSourceState.ABSENT
+    assert result.recovery is not None
+    assert result.recovery.to_data() == {
+        "authority": "shadow",
+        "fallbacks": [_WRAPPER_FALLBACK],
+        "refusal": None,
+    }
+
+
+def test_many_members_keep_the_declared_cover_selection(tmp_path: Path) -> None:
+    result = _read_cover(
+        tmp_path,
+        EPUB3_PACKAGE,
+        tuple((f"EPUB/filler/{index}.bin", b"") for index in range(2_000)),
+    )
+    assert result.state is None
+    assert result.media_type == "image/jpeg"
+    assert result.data == b"TRAP: cover bytes must remain opaque"
+    assert result.recovery is None

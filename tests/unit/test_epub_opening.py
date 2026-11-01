@@ -4183,3 +4183,55 @@ def test_cover_wrapper_honours_deadline_and_cancellation(
     with pytest.raises(opening.CoverWrapperRefused) as raised:
         _wrapper_references(_wrapper_document('<img src="a.png"/>'), request=request)
     assert raised.value.refusal.value == "cover_wrapper_timeout"
+
+
+@pytest.mark.parametrize(
+    "data,media_type",
+    (
+        (
+            _wrapper_document('<img src="other.jpg" src="cover.jpg"/>'),
+            "application/xhtml+xml",
+        ),
+        (
+            b"<html><body><img src='other.jpg' SRC='cover.jpg'></body></html>",
+            "text/html",
+        ),
+        (
+            _wrapper_document(
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                '<image href="https://example.invalid/x.png" href="cover.jpg"/></svg>'
+            ),
+            "application/xhtml+xml",
+        ),
+        (
+            b"<html><body><svg><image href='https://example.invalid/x.png' "
+            b"href='cover.jpg'></svg></body></html>",
+            "text/html",
+        ),
+        (
+            b"<html><body><svg><image xlink:href='other.jpg' "
+            b"xlink:href='cover.jpg'></svg></body></html>",
+            "text/html",
+        ),
+    ),
+    ids=(
+        "duplicate_src_xhtml",
+        "duplicate_src_html",
+        "duplicate_svg_href_xhtml",
+        "duplicate_svg_href_html",
+        "duplicate_svg_xlink_href_html",
+    ),
+)
+def test_cover_wrapper_refuses_a_repeated_reference_attribute(
+    data: bytes, media_type: str
+) -> None:
+    with pytest.raises(opening.CoverWrapperRefused) as raised:
+        _wrapper_references(data, media_type=media_type)
+    assert raised.value.refusal.value == "cover_wrapper_unreadable"
+
+
+def test_repeated_non_reference_attributes_leave_the_reference_readable() -> None:
+    assert _wrapper_references(
+        b"<html><body><img alt='a' alt='b' src='cover.jpg'></body></html>",
+        media_type="text/html",
+    ) == ("cover.jpg",)
