@@ -627,7 +627,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     outcome_row = self._connection.execute(
                         "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
                         "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
-                        "ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT 1",
+                        "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+                        "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
                         (
                             automatic.review_case_id,
                             automatic.report_id,
