@@ -145,6 +145,9 @@ brackets are GitHub issues.
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read
   "Closed safely", instead of "Stale" (#1542).
+- The Audiobookshelf field-effect canary composes the installed application
+  around one shared operation admission, as the product does, so its
+  preparation lanes queue instead of meeting at the database (#1561).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

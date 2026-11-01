@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import tempfile
 import threading
@@ -52,6 +53,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectConsent,
@@ -296,6 +298,10 @@ def test_installed_qualification_composes_application_before_fastapi(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     repository = Mock()
+    admission = object()
+    operation_lock = object()
+    repository.operation_admission = admission
+    repository.operation_lock = operation_lock
     review = SimpleNamespace(
         owner_password_hash_file="/synthetic/owner.hash",
         session_lifetime_seconds=600,
@@ -350,6 +356,10 @@ def test_installed_qualification_composes_application_before_fastapi(
     compose.assert_called_once()
     assert compose.call_args.kwargs["cover_considerations"] is cover_considerations
     assert compose.call_args.kwargs["reviewer_access"] is reviewer_access
+    # The review application queues at the root repository's admission and
+    # gate, as the product composes it, never a private pair (#1561).
+    assert compose.call_args.kwargs["admission"] is admission
+    assert compose.call_args.kwargs["operation_lock"] is operation_lock
     assert compose.call_args.kwargs["activity_projection"] is activity_projection
     compose.call_args.kwargs["close_activity_projection"]()
     close_activity_projection.assert_called_once_with()
@@ -358,6 +368,93 @@ def test_installed_qualification_composes_application_before_fastapi(
     )
     create.assert_called_once_with(application, review)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_installed_root_repository_opens_with_a_fresh_shared_admission(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "installed-application.sqlite3"
+    first = qualification._open_root_repository(database)
+    try:
+        first_admission = first.operation_admission
+        assert isinstance(first_admission, OperationAdmission)
+    finally:
+        first.close()
+    reopened = qualification._open_root_repository(database, create=False)
+    try:
+        assert isinstance(reopened.operation_admission, OperationAdmission)
+        assert reopened.operation_admission is not first_admission
+    finally:
+        reopened.close()
+
+
+_INSTALLED_PHASES = (
+    "_installed_continuous_qualification",
+    "_installed_automatic_series_qualification",
+)
+
+
+def _shared_admission_violations(module: ast.Module) -> list[str]:
+    """Name every installed-phase composition that bypasses the root admission."""
+    violations: list[str] = []
+
+    def keyword_source(call: ast.Call, name: str) -> str | None:
+        for keyword in call.keywords:
+            if (
+                keyword.arg == name
+                and isinstance(keyword.value, ast.Attribute)
+                and isinstance(keyword.value.value, ast.Name)
+            ):
+                return keyword.value.value.id + "." + keyword.value.attr
+        return None
+
+    functions = {
+        node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
+    }
+    for phase in _INSTALLED_PHASES:
+        for node in ast.walk(functions[phase]):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id == "open_repository":
+                violations.append(phase + ": bare open_repository")
+            if node.func.id == "create_review_pipeline":
+                source = keyword_source(node, "admission")
+                if source is None or not source.endswith(".operation_admission"):
+                    violations.append(phase + ": pipeline without root admission")
+    client = functions["_compose_review_client"]
+    composes = [
+        node
+        for node in ast.walk(client)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "compose_review_application"
+    ]
+    if not composes:
+        violations.append("_compose_review_client: no review application")
+    for call in composes:
+        if keyword_source(call, "admission") != "repository.operation_admission":
+            violations.append("_compose_review_client: private admission")
+        if keyword_source(call, "operation_lock") != "repository.operation_lock":
+            violations.append("_compose_review_client: private operation lock")
+    return violations
+
+
+def test_installed_phases_compose_around_the_root_admission() -> None:
+    source = Path(qualification.__file__).read_text(encoding="utf-8")
+    assert _shared_admission_violations(ast.parse(source)) == []
+
+    # Negative controls: dropping either keyword is caught.
+    for removed in ("admission", "operation_lock"):
+        module = ast.parse(source)
+        for node in ast.walk(module):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id
+                in {"compose_review_application", "create_review_pipeline"}
+            ):
+                node.keywords = [k for k in node.keywords if k.arg != removed]
+        assert _shared_admission_violations(module) != []
 
 
 @pytest.mark.parametrize(

@@ -73,7 +73,10 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+    open_repository,
+)
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
@@ -85,6 +88,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     authority_from_decision,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -295,6 +299,21 @@ def _installed_consent_grants(
     return grants
 
 
+def _open_root_repository(
+    database: Path, *, create: bool = True
+) -> SQLiteMetadataReportRepository:
+    """Open an installed phase's root repository as the product does (#1561).
+
+    The root owns one operation admission that preparation, the scheduler and
+    the review application all queue at, as in `bootstrap/composition.py`.
+    Without it each lane met the others at raw SQLite and its busy timeout, a
+    contention topology the product never ships.
+    """
+    return open_repository(
+        database, create=create, cross_thread=True, admission=OperationAdmission()
+    )
+
+
 def _compose_review_client(
     repository: object,
     review: object,
@@ -326,6 +345,8 @@ def _compose_review_client(
         case_store=repository,
         decision_store=repository,
         library_store=repository,
+        admission=repository.operation_admission,
+        operation_lock=repository.operation_lock,
         policy_store=repository,
         verify_password=password_binding[0],
         session_digest=password_binding[1],
@@ -1686,7 +1707,7 @@ def _installed_continuous_qualification(
     database = root / "installed-application.sqlite3"
     catalogue = root / "installed-catalogue.sqlite3"
     artifacts = root / "installed-artifacts"
-    repository = open_repository(database, cross_thread=True)
+    repository = _open_root_repository(database)
     open_catalogue(catalogue, create=True).close()
 
     def composed_client(bound_repository) -> tuple[TestClient, object]:
@@ -1704,6 +1725,7 @@ def _installed_continuous_qualification(
             reviewer_access,
             bound_repository.authority,
             provider_recovery=provider_recovery,
+            admission=bound_repository.operation_admission,
         )
         continuous = compose_continuous_guarded_application(
             configuration,
@@ -2587,7 +2609,7 @@ def _installed_continuous_qualification(
     restart_cover_patch.start()
     try:
         repository.close()
-        repository = open_repository(database, create=False, cross_thread=True)
+        repository = _open_root_repository(database, create=False)
         restarted, _ = composed_client(repository)
     except Exception:
         restart_cover_patch.stop()
@@ -2689,7 +2711,7 @@ def _installed_automatic_series_qualification(
     database = phase / "application.sqlite3"
     catalogue = phase / "catalogue.sqlite3"
     artifacts = phase / "artifacts"
-    repository = open_repository(database, cross_thread=True)
+    repository = _open_root_repository(database)
     open_catalogue(catalogue, create=True).close()
     observations: dict[str, int] = {}
     series_requests: list[str] = []
@@ -2723,6 +2745,7 @@ def _installed_automatic_series_qualification(
                 access,
                 repository.authority,
                 provider_recovery=recovery,
+                admission=repository.operation_admission,
             )
             continuous = compose_continuous_guarded_application(
                 configuration,
