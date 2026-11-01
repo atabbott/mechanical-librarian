@@ -28,6 +28,7 @@ import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
 import type {
   AutomaticOutcome,
+  ChoiceContextView,
   DecisionCommand,
   DecisionOutcome,
   LibraryLens,
@@ -46,6 +47,7 @@ import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useRouteReadyFocus } from '../focus'
 import {
   audioSurfaceLabels,
+  choiceRequestReasons,
   claimBasisLabels,
   claimKindLabels,
   destinationLabel,
@@ -689,19 +691,36 @@ const completionOutcome = (field: ReviewField) =>
         : field.humanDecision?.outcome === 'accept'
           ? 'Proposed value selected'
           : 'Recorded outcome'
-const choiceContext = (field: ReviewField, alternativeId: string | null) =>
-  field.choiceContexts.find((context) => context.alternativeId === alternativeId)
-// An optional choice's reason is its one statement: a condition worded as
-// asking the owner would contradict "no review is needed", so none is shown
-// beside it (#1450).
+// An optional choice already says no review is needed, so a limitation worded
+// as asking the owner to choose is left off its evidence too (#1557).
+const ownerContext = (field: ReviewField, context: ChoiceContextView) =>
+  field.classification === 'owner_choosable'
+    ? {
+        ...context,
+        limitations: context.limitations.filter(
+          (limitation) => !choiceRequestReasons.has(limitation),
+        ),
+      }
+    : context
+const choiceContext = (field: ReviewField, alternativeId: string | null) => {
+  const context = field.choiceContexts.find((item) => item.alternativeId === alternativeId)
+  return context && ownerContext(field, context)
+}
+// An optional choice already says no review is needed, so a condition worded
+// as asking the owner to choose is left off it (#1450). Other conditions still
+// explain the choice, such as a language respelling (#1496, #1557).
 const comparisonNotices = (field: ReviewField) =>
-  field.classification === 'owner_choosable' ||
   field.choiceContexts.some((context) =>
-    context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
+    ownerContext(field, context).limitations.some(
+      (limitation) => materialReasonLabel(limitation) !== undefined,
+    ),
   )
     ? []
     : field.notices.filter(
-        (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
+        (notice) =>
+          materialReasonLabel(notice) !== undefined &&
+          !restatesReason(field, notice) &&
+          !(field.classification === 'owner_choosable' && choiceRequestReasons.has(notice)),
       )
 // A comparison condition in words; differing source tag lists or synopses are
 // named as such rather than as a disagreement.
@@ -1573,7 +1592,7 @@ function RecordedOutcome({
               .map((item, index) => (
                 <ChoiceEvidencePanel
                   key={item.alternativeId ?? 'current'}
-                  context={item}
+                  context={ownerContext(field, item)}
                   evidenceId={`${evidenceId}-${String(index)}`}
                   label={
                     item.selection === 'current'
