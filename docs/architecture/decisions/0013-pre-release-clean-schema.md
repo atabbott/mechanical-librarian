@@ -302,6 +302,13 @@ report records. The report browse facts gain an `adapter_fault` match state, so
 such a work reads as its own Not matched reason, never as unavailable. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
 
+Issue #1499 also takes the clean-rebuild branch. An ebook titled with its
+bracketed series name now admits the series-stripped work (ADR-0067), and an
+ebook WORK lane that admits nothing records the rungs it sent as
+`exhausted_dispatch`, so an earlier report's matches and lane records are not
+what this code prepares. The report schema is unchanged; no adoption is
+supplied.
+
 Issue #1357 also takes the clean-rebuild branch. `metadata-report-v66` adds the
 EPUB report's `local.cover_recovery`, the closed fallback and refusal codes of
 a cover recovered from a malformed declaration as shadow evidence, so a v65

@@ -47,15 +47,24 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     default_target_fields,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
+    work_query_ladder,
 )
 from tests.support.audiobook_providers import alternative_work_plan
+from tests.support.ebook_ladder import (
+    SERIES_TITLED_AUTHOR,
+    SERIES_TITLED_EBOOK,
+    reloaded,
+    series_titled_ebook_plan,
+)
 
 
 def _isbn(value: str = "9780306406157") -> LocalClaim:
@@ -2081,3 +2090,60 @@ def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
         for value in observation.lanes
     ]
     assert len(requests) == observation.request_accounting.logical_requests
+
+
+def _series_titled_google_books(
+    sent: list[str], *, refuse_first: bool
+) -> GoogleBooksMetadataProvider:
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.params["q"])
+        volume = _volume()
+        volume["volumeInfo"]["title"] = "Different Book"
+        volume["volumeInfo"].pop("subtitle")
+        found = refuse_first and len(sent) == 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 1, "items": [volume]} if found else {"totalItems": 0},
+        )
+
+    return GoogleBooksMetadataProvider(
+        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    )
+
+
+@pytest.mark.parametrize("refuse_first", (False, True), ids=("empty", "refused"))
+def test_a_google_books_ebook_lane_records_every_search_it_sent(
+    refuse_first: bool,
+) -> None:
+    """#1499: an ebook WORK lane that admits nothing keeps its ladder."""
+    plan = series_titled_ebook_plan()
+    sent: list[str] = []
+    observation = (
+        _series_titled_google_books(sent, refuse_first=refuse_first)
+        .observe(plan)
+        .observation
+    )
+
+    ladder = work_query_ladder(SERIES_TITLED_EBOOK, (SERIES_TITLED_AUTHOR,))
+    assert 2 == len(ladder)
+    # A rung whose products admission refused ends the ladder there.
+    walked = ladder[:1] if refuse_first else ladder
+    assert len(walked) == len(sent)
+    assert all(
+        f'intitle:"{query.title}"' in value
+        for query, value in zip(walked, sent, strict=True)
+    )
+    (lane,) = (
+        lane for lane in observation.lanes if lane.kind is ProviderQueryKind.WORK
+    )
+    assert ProviderStatus.NO_MATCH is lane.status
+    assert (
+        tuple(WorkDispatchLineage.from_query(query) for query in walked)
+        == lane.exhausted_dispatch
+    )
+    expected = (
+        work_ladder_diagnostics(0, 1) if refuse_first else work_ladder_diagnostics(2, 0)
+    )
+    assert expected == lane.diagnostics
+    assert observation == reloaded(plan, observation)

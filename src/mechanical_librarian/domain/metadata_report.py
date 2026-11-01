@@ -3544,6 +3544,21 @@ def provider_candidate_work_identity_admission(
             )
         ),
         provider_series_memberships=memberships,
+        # Each stated series name no position claim directly follows.
+        provider_series_names=tuple(
+            claim.value
+            for index, claim in enumerate(ordered)
+            if claim.kind is ClaimKind.SERIES
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and not (
+                index + 1 < len(ordered)
+                and ordered[index + 1].kind is ClaimKind.SERIES_SEQUENCE
+                and ordered[index + 1].scope is ClaimScope.WORK
+                and ordered[index + 1].raw_order == claim.raw_order + 1
+            )
+        ),
         audiobook=audiobook,
         runtime_tight=runtime_tight,
         leading_number=leading_number,
@@ -4273,6 +4288,38 @@ def lane_work_ladder(
     )
 
 
+def _ebook_ladder_record(
+    payload: WorkLanePayload, lane: ProviderLaneObservation
+) -> tuple[WorkDispatchLineage, ...] | None:
+    """The rungs an exhausted ebook WORK lane must record (#1499).
+
+    Every rung when all were empty; otherwise the rungs up to the first one
+    with products, which work-identity admission refused.
+    """
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(payload.title, payload.authors)
+    )
+    refused = any(
+        value.category is FailureCategory.WORK_IDENTITY_REFUSED
+        for value in lane.diagnostics
+    )
+    if not refused:
+        return ladder
+    sent = len(lane.exhausted_dispatch)
+    empty = next(
+        (
+            value.count
+            for value in lane.diagnostics
+            if value.category is FailureCategory.EMPTY_NO_MATCH
+        ),
+        0,
+    )
+    if not 1 <= sent <= len(ladder) or empty != sent - 1:
+        return None
+    return ladder[:sent]
+
+
 def provider_candidate_set_exact_work_identity_admission(
     candidates: tuple[ProviderCandidate, ...],
     local_title: str,
@@ -4538,6 +4585,19 @@ class MetadataReport:
                 )
             }
         )
+        # An ebook plan has one WORK lane, its own title, and only an
+        # exhausted lane's record replays from it (#1499).
+        ebook_planned = (
+            {
+                payload.identity: payload
+                for payload in work_discovery_lane_payloads(
+                    self.target.fields, self.local_claims
+                )
+            }
+            if self.audio is None
+            and any(lane.exhausted_dispatch for p in self.providers for lane in p.lanes)
+            else {}
+        )
         asserted = next(
             (
                 identity
@@ -4747,17 +4807,29 @@ class MetadataReport:
                         "provider work identity lineage is inconsistent"
                     )
             # An exhausted lane walked its own title's whole audiobook ladder,
-            # in ladder order, so its lineages replay from the plan alone.
+            # in ladder order, so its lineages replay from the plan alone. An
+            # ebook ladder ends at its first rung with products, so its record
+            # is the whole ladder when every rung was empty, and otherwise the
+            # ladder up to the one refused rung (#1499).
             for lane in provider.lanes:
                 if not lane.exhausted_dispatch:
                     continue
-                payload = planned.get(lane.identity)
+                payload = (planned if is_audio else ebook_planned).get(lane.identity)
                 if (
-                    not is_audio
-                    or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-                    or payload is None
-                    or lane.exhausted_dispatch
-                    != lane_work_ladder(provider.authority, payload)
+                    payload is None
+                    or (
+                        is_audio
+                        and (
+                            provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                            or lane.exhausted_dispatch
+                            != lane_work_ladder(provider.authority, payload)
+                        )
+                    )
+                    or (
+                        not is_audio
+                        and lane.exhausted_dispatch
+                        != _ebook_ladder_record(payload, lane)
+                    )
                 ):
                     raise ReportValueError(
                         "provider exhausted dispatch is inconsistent"

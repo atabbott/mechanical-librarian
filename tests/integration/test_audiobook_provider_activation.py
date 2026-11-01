@@ -2496,17 +2496,40 @@ def _ebook_flow(root: Path) -> tuple[MetadataReport, tuple[object, ...], list[st
     return MetadataReport.from_json(serialized), state, asked
 
 
-def test_an_ebook_with_a_decorated_title_stays_unchanged(tmp_path: Path) -> None:
-    """The ladder still asks the plain title, and its work is still refused."""
+def test_an_ebook_with_a_decorated_title_matches_the_plain_work(
+    tmp_path: Path,
+) -> None:
+    """The ladder asks the plain title, and its work is now admitted (#1499).
+
+    No running time is compared for an ebook: the series-stripped title and
+    the same authors admit it.
+    """
     report, work, asked = _ebook_flow(tmp_path)
 
     assert report.audio is None
     assert ["Plain Work"] == asked
     (provider,) = report.providers
-    assert ProviderStatus.NO_MATCH is provider.status
-    assert not provider.candidates
-    assert all(lane.transformation_lineage is None for lane in provider.lanes)
+    assert ProviderStatus.CANDIDATES is provider.status
+    assert provider.candidates
+    (lane,) = provider.lanes
+    assert lane.transformation_lineage is not None
+    assert "band_parenthesized_series_name" == lane.transformation_lineage.production
     assert ("proposal", "queued", None) == work
+    # One provider's plain title is a choice for the owner, never selected
+    # automatically, and nothing proposes dropping the series (#1499 G3).
+    from mechanical_librarian.domain.metadata_report import TargetDestination
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalOutcome,
+        evaluate_report,
+    )
+
+    results = {result.destination: result for result in evaluate_report(report).results}
+    assert ProposalOutcome.UNRESOLVED_CHOICE is results[TargetDestination.TITLE].outcome
+    assert (
+        TargetDestination.SERIES not in results
+        or ProposalOutcome.PROPOSE_CHANGE
+        is not results[TargetDestination.SERIES].outcome
+    )
 
 
 # #1258: one audiobook whose lanes end in every dispatch outcome, over the real
