@@ -4045,6 +4045,11 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
       const bounds = document.activeElement.getBoundingClientRect();
       return bounds.top >= -1 && bounds.bottom <= innerHeight + 1;
     }"""
+    clear_of_masthead = """node => {
+      const bounds = node.getBoundingClientRect();
+      const masthead = document.querySelector('.masthead').getBoundingClientRect();
+      return bounds.top >= masthead.bottom - 1 && bounds.bottom <= innerHeight + 1;
+    }"""
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
@@ -4079,6 +4084,12 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
                 toggle.click()
                 expect(heading).to_be_focused()
                 assert page.evaluate(in_view), f"{where}: heading out of view"
+                if not drawer:
+                    # Outside the drawer the page scrolls the heading clear of
+                    # the masthead and into the viewport (#1567).
+                    assert heading.evaluate(clear_of_masthead), (
+                        f"{where}: heading under the masthead or below the viewport"
+                    )
                 assert page.evaluate(inert) == (
                     [".masthead", ".library-works", ".workspace-detail"]
                     if drawer
