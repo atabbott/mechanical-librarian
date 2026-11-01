@@ -534,3 +534,55 @@ def test_a_lone_candidate_for_an_empty_field_names_the_unoffered_dissent(
 
     assert expected is _lone_candidate_for_empty(field)
     assert "isn\u2019t offered" in _UNOFFERED_DISSENT_TEXT
+
+
+def test_a_left_out_title_keeps_its_title_and_series_duplication_veto():
+    # The combinations are worked out with the left-out title, so a series
+    # that duplicates it is still refused rather than filled (#1497).
+    open_library = _provider(
+        "open_library",
+        "open_library-1",
+        (
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.TITLE,
+                "Пример",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.SERIES,
+                "Пример",
+                scope=ClaimScope.WORK,
+                order=1,
+            ),
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.SERIES_SEQUENCE,
+                "1",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _report(
+        title="Voyage",
+        local_claims=(consensus_local_title("Voyage"), _language("en")),
+        providers=(open_library,),
+    )
+    proposal = evaluate_report(MetadataReport.from_json(report.to_json()))
+    results = {result.destination: result for result in proposal.results}
+
+    assert not proposal.bibliographic_combinations
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        ("no_safe_bibliographic_combination",),
+    ) == (
+        results[TargetDestination.SERIES].outcome,
+        results[TargetDestination.SERIES].reasons,
+    )
+    assert "Пример" not in _offered(results[TargetDestination.TITLE])

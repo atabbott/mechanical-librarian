@@ -233,3 +233,23 @@ def test_a_name_that_is_not_a_rotation_is_still_offered():
     assert ("Henry Jameson",) in [
         value.value.value for value in results[TargetDestination.AUTHORS].alternatives
     ]
+
+
+def test_a_coauthor_does_not_carry_a_rotated_name_back_in():
+    report = MetadataReport.from_json(
+        isbn_title_report(
+            titles=("Example Title",),
+            local_authors=("Henry James", "Ada Example"),
+            target_authors=("Henry James", "Ada Example"),
+            provider_authors=("James Henry", "Ada Example"),
+        ).to_json()
+    )
+    authors = next(
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.AUTHORS
+    )
+
+    assert ("James Henry", "Ada Example") not in [
+        value.value.value for value in authors.alternatives
+    ]

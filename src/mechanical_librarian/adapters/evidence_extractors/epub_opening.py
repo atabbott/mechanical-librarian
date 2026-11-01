@@ -2514,10 +2514,15 @@ def _catalogue_record_starts(elements: list[_Element]) -> dict[int, int]:
     blocks: list[tuple[int, int | None]] = []
     for ordinal in sorted(headings - ancestors_of_headings):
         node = by_ordinal[ordinal]
+        if not _is_html_namespace(node.namespace):
+            # Foreign content is isolated as elsewhere: a heading stated only
+            # inside it opens no block, and neither do its HTML ancestors.
+            continue
         chain = [node]
         while (
             node.ancestors
             and (parent := by_ordinal.get(node.ancestors[-1])) is not None
+            and _is_html_namespace(parent.namespace)
             and parent.exact_text.strip() == node.exact_text.strip()
         ):
             node = parent

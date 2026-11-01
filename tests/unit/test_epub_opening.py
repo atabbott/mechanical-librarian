@@ -4115,3 +4115,19 @@ def test_a_long_whitespace_run_after_a_control_number_label_is_linear() -> None:
     started = time.monotonic()
     assert opening._LCCN_LABELLED.search("LCCN" + " " * 20000 + "x") is None
     assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        '<f:p xmlns:f="urn:foreign">'
+        "Library of Congress Cataloging-in-Publication Data</f:p>",
+        '<div><f:p xmlns:f="urn:foreign">'
+        "Library of Congress Cataloging-in-Publication Data</f:p></div>",
+    ),
+    ids=("foreign", "foreign_in_html_wrapper"),
+)
+def test_a_foreign_catalogue_heading_opens_no_block(heading: str) -> None:
+    assert _identifiers(
+        f'<section epub:type="copyright-page">{heading}<p>0306406152</p></section>'
+    ) == ["0306406152"]
