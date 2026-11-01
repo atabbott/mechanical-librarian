@@ -81,10 +81,10 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   const locked = view.authority === 'file'
   const stale = view.document.revision !== base.revision
   const changed = JSON.stringify(draft) !== JSON.stringify(base.description_advice)
-  const reload = useMutation({
-    // `owner` is the Reload button; `unconfirmed` is the reload after a save
-    // that may have committed, whose message must outlive it.
-    mutationFn: (_source: 'owner' | 'unconfirmed') => http.getSettings(),
+  // `owner` is the Reload button; `unconfirmed` is the reload after a save
+  // that may have committed, whose message must outlive it.
+  const reload = useMutation<SettingsView, Error, 'owner' | 'unconfirmed'>({
+    mutationFn: () => http.getSettings(),
     retry: false,
     onSuccess: (fresh, source) => {
       cache.setQueryData(['settings'], fresh)
