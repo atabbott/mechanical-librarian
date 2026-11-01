@@ -1,5 +1,6 @@
 import {
   invalidateBackgroundQueries,
+  invalidateForegroundQueries,
   prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
@@ -15,7 +16,13 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { ComponentPropsWithRef, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  displayValue,
+  sessionRefreshedCopy,
+  uncertainWriteOutcome,
+} from '../api/http'
 import type {
   DecisionCommand,
   LibraryLens,
@@ -441,7 +448,7 @@ export default function LibraryPage({
   // when the Library said it changed; the refetch that follows can unmount it.
   const ownerEngaged = useRef<string | null>(null)
   const [automaticResults, setAutomaticResults] = useState<
-    Readonly<Record<string, 'success' | 'error' | 'refreshed'>>
+    Readonly<Record<string, 'success' | 'error' | 'refreshed' | 'uncertain'>>
   >({})
   const staleCoverRecoveryButton = useRef<HTMLButtonElement>(null)
   const [staleCoverReview, setStaleCoverReview] = useState<{
@@ -1186,11 +1193,23 @@ export default function LibraryPage({
     onSuccess: (_value, request) => {
       setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
     },
-    onError: (error, request) =>
+    onError: async (error, request) => {
+      const uncertain = uncertainWriteOutcome(error)
       setAutomaticResults((current) => ({
         ...current,
-        [request.key]: error instanceof CsrfRenewedError ? 'refreshed' : 'error',
-      })),
+        [request.key]: uncertain
+          ? 'uncertain'
+          : error instanceof CsrfRenewedError
+            ? 'refreshed'
+            : 'error',
+      }))
+      // The checks may have been requested: show the case as it now stands.
+      if (uncertain)
+        await invalidateForegroundQueries(queryClient, {
+          queryKey: ['review-case', selectedReviewCaseId],
+          exact: true,
+        })
+    },
   })
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
@@ -1625,7 +1644,10 @@ export default function LibraryPage({
     const closingKey = automaticPanel
     restoreAutomaticTrigger.current = true
     setAutomaticPanel(null)
-    if (closingKey && ['error', 'refreshed'].includes(automaticResults[closingKey] ?? ''))
+    if (
+      closingKey &&
+      ['error', 'refreshed', 'uncertain'].includes(automaticResults[closingKey] ?? '')
+    )
       setAutomaticResults((current) => {
         return Object.fromEntries(Object.entries(current).filter(([key]) => key !== closingKey))
       })
@@ -2785,6 +2807,11 @@ export default function LibraryPage({
                           ) : automaticResult === 'error' ? (
                             <p role="alert">
                               Fresh checks could not be requested. Manual handling is unchanged.
+                            </p>
+                          ) : automaticResult === 'uncertain' ? (
+                            <p role="alert">
+                              Fresh checks could not be confirmed. They may have been requested; the
+                              current case was reloaded. Check it before trying again.
                             </p>
                           ) : automaticResult === 'refreshed' ? (
                             <p role="alert">{sessionRefreshedCopy}</p>

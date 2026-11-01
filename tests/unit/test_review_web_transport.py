@@ -13,12 +13,13 @@ import os
 import re
 import sqlite3
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -924,6 +925,263 @@ def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(
     assert accepted.status_code == 204, accepted.text
 
 
+def _signed_in(web: ReviewWebContext[FakeReviewRepository]) -> dict[str, str]:
+    """Sign in, then send no build identity unless a row adds it."""
+    login = web.login()
+    del web.client.headers["x-ml-build-identity"]
+    return {
+        **web.origin,
+        "x-csrf-token": str(login["csrf_token"]),
+        "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+    }
+
+
+def _signed_in_updates(
+    web: ReviewWebContext[FakeReviewRepository], headers: dict[str, str]
+) -> object:
+    _signed_in(web)
+    # A closed channel ends an admitted stream at once, so the read is finite.
+    web.client.app.state.review_application.updates.close()
+    return web.client.get("/api/v1/updates", headers=headers)
+
+
+def _expired_read(web: ReviewWebContext[FakeReviewRepository]) -> object:
+    _signed_in(web)
+    web.now += 601
+    return web.client.get("/api/v1/library")
+
+
+def _settings_patch(
+    web: ReviewWebContext[FakeReviewRepository], headers: dict[str, str]
+) -> object:
+    return web.client.patch("/api/v1/settings", json={}, headers=headers)
+
+
+# Each row: what the request does, its exact status, and its code (None when
+# the body is not an error envelope).
+_IDENTITY_PRESENT: dict[str, tuple[Callable[..., object], int, str | None]] = {
+    "sync_read": (
+        lambda web: (
+            _signed_in(web),
+            web.client.get("/api/v1/review-preparation"),
+        )[1],
+        200,
+        None,
+    ),
+    "async_read": (
+        lambda web: (_signed_in(web), web.client.get("/api/v1/library"))[1],
+        200,
+        None,
+    ),
+    "handled_404": (
+        lambda web: (
+            _signed_in(web),
+            web.client.get("/api/v1/review-cases/not-a-case/successor"),
+        )[1],
+        404,
+        "not_found",
+    ),
+    "unmatched_404": (
+        lambda web: (_signed_in(web), web.client.get("/api/v1/no-such-route"))[1],
+        404,
+        None,
+    ),
+    "build_mismatch_409": (
+        lambda web: _settings_patch(
+            web, {**_signed_in(web), "x-ml-build-identity": "b" * 64}
+        ),
+        409,
+        "browser_build_mismatch",
+    ),
+    "missing_csrf_header_422": (
+        lambda web: _settings_patch(
+            web,
+            {
+                key: value
+                for key, value in _signed_in(web).items()
+                if key != "x-csrf-token"
+            },
+        ),
+        422,
+        "invalid",
+    ),
+    "bad_csrf_403": (
+        lambda web: web.client.post(
+            "/api/v1/reviewer-access/openrouter/refresh",
+            headers={**_signed_in(web), "x-csrf-token": "bad"},
+        ),
+        403,
+        "csrf",
+    ),
+    "policy_missing_csrf_403": (
+        lambda web: web.client.post(
+            "/api/v1/metadata-policy/validate",
+            json={},
+            headers={
+                key: value
+                for key, value in _signed_in(web).items()
+                if key != "x-csrf-token"
+            },
+        ),
+        403,
+        "csrf",
+    ),
+    "unavailable_503": (
+        lambda web: (_signed_in(web), web.client.get("/api/v1/reviewer-access"))[1],
+        503,
+        "reviewer_access_unavailable",
+    ),
+    "updates_stream": (
+        lambda web: _signed_in_updates(web, web.origin),
+        200,
+        None,
+    ),
+    "updates_cross_origin_403": (
+        lambda web: _signed_in_updates(web, {"Origin": "https://x.test"}),
+        403,
+        "origin",
+    ),
+}
+
+_IDENTITY_ABSENT: dict[str, tuple[Callable[..., object], int, str | None]] = {
+    "no_cookie_401": (
+        lambda web: web.client.get("/api/v1/library"),
+        401,
+        "unauthorized",
+    ),
+    "no_cookie_unmatched_404": (
+        lambda web: web.client.get("/api/v1/no-such-route"),
+        404,
+        None,
+    ),
+    "invalid_cookie_401": (
+        lambda web: web.client.get(
+            "/api/v1/library", headers={"cookie": "ml_session=" + "x" * 43}
+        ),
+        401,
+        "unauthorized",
+    ),
+    "invalid_cookie_unmatched_404": (
+        lambda web: web.client.get(
+            "/api/v1/no-such-route", headers={"cookie": "ml_session=" + "x" * 43}
+        ),
+        404,
+        None,
+    ),
+    "login_200": (
+        lambda web: web.client.post(
+            "/api/v1/session/login",
+            headers=web.origin,
+            json={"password": "correct horse"},
+        ),
+        200,
+        None,
+    ),
+    "signed_in_login_401": (
+        lambda web: (
+            _signed_in(web),
+            web.client.post(
+                "/api/v1/session/login",
+                headers=web.origin,
+                json={"password": "wrong horse"},
+            ),
+        )[1],
+        401,
+        "invalid_credentials",
+    ),
+    "expired_session_401": (
+        _expired_read,
+        401,
+        "unauthorized",
+    ),
+    "invalid_origin_400": (
+        lambda web: (
+            _signed_in(web),
+            web.client.get("/api/v1/library", headers={"host": "other.test"}),
+        )[1],
+        400,
+        "invalid_origin",
+    ),
+    "early_origin_403": (
+        lambda web: _settings_patch(
+            web, {**_signed_in(web), "Origin": "https://x.test"}
+        ),
+        403,
+        "origin",
+    ),
+    "body_limit_413": (
+        lambda web: web.client.post(
+            "/api/v1/review-preparation/dismiss",
+            content=b"{" + b" " * 4096 + b"}",
+            headers={**_signed_in(web), "content-type": "application/json"},
+        ),
+        413,
+        "body_too_large",
+    ),
+}
+
+
+def _identity_row(
+    web: ReviewWebContext[FakeReviewRepository],
+    row: tuple[Callable[..., object], int, str | None],
+) -> object:
+    request, status, code = row
+    response = cast("Any", request(web))
+    assert response.status_code == status, response.text
+    if code is not None:
+        assert response.json()["error"]["code"] == code
+    return response
+
+
+@pytest.mark.parametrize("row", tuple(_IDENTITY_PRESENT), ids=tuple(_IDENTITY_PRESENT))
+def test_build_identity_header_is_sent_to_authenticated_api_responses(
+    web: ReviewWebContext[FakeReviewRepository], row: str
+) -> None:
+    response = cast("Any", _identity_row(web, _IDENTITY_PRESENT[row]))
+
+    assert response.headers["x-ml-build-identity"] == TEST_REACT_BUILD_IDENTITY
+
+
+@pytest.mark.parametrize("row", tuple(_IDENTITY_ABSENT), ids=tuple(_IDENTITY_ABSENT))
+def test_build_identity_header_is_never_sent_without_an_authenticated_session(
+    web: ReviewWebContext[FakeReviewRepository], row: str
+) -> None:
+    response = cast("Any", _identity_row(web, _IDENTITY_ABSENT[row]))
+
+    assert "x-ml-build-identity" not in response.headers
+
+
+def test_build_identity_header_is_withheld_in_asset_recovery_mode(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
+
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+            react_asset_loader=cast(
+                "Any", SimpleNamespace(load=lambda: ReactAssetRecovery())
+            ),
+        ),
+        base_url="https://review.test",
+    )
+    web.login()
+
+    response = web.client.get("/api/v1/library")
+
+    assert response.status_code == 200, response.text
+    assert "x-ml-build-identity" not in response.headers
+
+
 def test_decision_authentication_precedes_required_input_validation(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1703,6 +1961,143 @@ def test_closed_admission_on_reviewer_routes_is_a_structured_unavailability(
 
     assert response.status_code == 503, response.text
     assert response.json()["error"]["code"] == "reviewer_access_unavailable"
+
+
+class _SavedKeyOpenRouter:
+    """A synthetic provider that accepts every key and model it is given."""
+
+    def __init__(self, _key: str, model: str) -> None:
+        self._model = model
+
+    def probe(self) -> object:
+        from mechanical_librarian.application.reviewer_contracts import (
+            OpenRouterAccountStatus,
+        )
+
+        return OpenRouterAccountStatus(
+            tier="free",
+            model=self._model,
+            input_modalities=("text", "image"),
+            output_modalities=("text",),
+            structured_outputs=True,
+            observed_at=1,
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _real_reviewer_access_client(
+    web: ReviewWebContext[FakeReviewRepository],
+    root: Path,
+    passive_status: Mock,
+) -> tuple[TestClient, object, object]:
+    """Serve real reviewer access over a real store; 500s are answered, not raised."""
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessOperations,
+    )
+    from mechanical_librarian.application.reviewer_contracts import (
+        ReviewerProvisioningStatus,
+    )
+    from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+
+    repository = open_repository(root / "reviewer.sqlite", cross_thread=True)
+    store = repository.reviewer_access_store()
+    access = ReviewerAccessOperations(
+        store,
+        codex_auth=Mock(passive_status=passive_status),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
+        ),
+        codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+        codex_binding=Mock(),
+        openrouter_factory=_SavedKeyOpenRouter,
+    )
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+            reviewer_access=access,
+        ),
+        base_url="https://review.test",
+        raise_server_exceptions=False,
+    )
+    return web.client, store, repository
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ("view_validation", "codex_status_value_error"),
+    ids=["view_validation", "codex_status_value_error"],
+)
+def test_committed_openrouter_key_with_a_failed_view_is_a_server_error(
+    web: ReviewWebContext[FakeReviewRepository],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+        CodexDeviceAuthState,
+    )
+    from mechanical_librarian.application import reviewer_access as module
+
+    passive_status = Mock(return_value=CodexDeviceAuthState("ready"))
+    client, store, repository = _real_reviewer_access_client(
+        web, tmp_path, passive_status
+    )
+    try:
+        login = web.login()
+        headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+        # Both faults fire only after `replace` committed the key: the view's
+        # own status construction, and a plain `ValueError` from the passive
+        # Codex status read the view makes.
+        if failure == "view_validation":
+            real_status = module.ReviewerEngineStatus
+
+            def status(**fields: object) -> object:
+                if fields.get("state") == "usable":
+                    return real_status.model_validate({**fields, "engine": "unknown"})
+                return real_status(**fields)
+
+            monkeypatch.setattr(module, "ReviewerEngineStatus", status)
+        else:
+            passive_status.side_effect = ValueError("embedded null character")
+
+        refused = client.put(
+            "/api/v1/reviewer-access/openrouter",
+            headers=headers,
+            json={
+                "api_key": "bearer-synthetic",
+                "expected_revision": 1,
+                "model": "a/b",
+            },
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["code"] == "reviewer_access_invalid"
+        document, key = store.snapshot()
+        assert (document.revision, key) == (1, None)
+
+        response = client.put(
+            "/api/v1/reviewer-access/openrouter",
+            headers=headers,
+            json={"api_key": "synthetic-key", "expected_revision": 1, "model": "a/b"},
+        )
+
+        assert response.status_code == 500, response.text
+        document, key = store.snapshot()
+        assert (document.revision, key) == (2, "synthetic-key")
+        assert document.cover_observation is not None
+        assert document.cover_observation.model == "a/b"
+    finally:
+        repository.close()
 
 
 def test_preparation_dismissal_rejects_declared_and_streamed_oversized_bodies(

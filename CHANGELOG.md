@@ -176,6 +176,11 @@ brackets are GitHub issues.
 - A cover advisory retry or comparison whose result cannot be confirmed now
   reloads the case and says it may have been requested, instead of saying it
   failed safely (#1572).
+- A tab left open on the previous build after an upgrade now shows the reload
+  notice on its next read, not only on a write, and offers to reload instead
+  of "Try again". Saving a policy snapshot, changing the description adviser,
+  resuming automatic handling and signing out now say a result that cannot be
+  confirmed may have taken effect, and reload the current state (#1577).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

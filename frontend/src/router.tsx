@@ -1178,7 +1178,11 @@ const Shell = () => {
       window.location.assign('/login')
     } catch (error) {
       if (!(error instanceof BuildMismatchError))
-        setShellError(refusalCopy(error, 'Sign out failed. Try again.'))
+        setShellError(
+          uncertainWriteOutcome(error)
+            ? 'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.'
+            : refusalCopy(error, 'Sign out failed. Try again.'),
+        )
     }
   }
   return (
@@ -1284,7 +1288,16 @@ const RouteFailure = ({
   title?: string
 }) => {
   const router = useRouter()
-  return error instanceof ChunkRecoveryError && error.exhausted ? (
+  // A different build cannot be fixed by loading the route again: only a
+  // reload brings this tab onto the build the server is running.
+  return error instanceof BuildMismatchError ? (
+    <section className="route-state">
+      <p className="eyebrow">Application updated</p>
+      <h1>This page is from a different application build.</h1>
+      <p role="alert">Reload once to continue with the current application.</p>
+      <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
+    </section>
+  ) : error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
       <p className="eyebrow">Application update unavailable</p>
       <h1>The current workspace assets could not be loaded.</h1>

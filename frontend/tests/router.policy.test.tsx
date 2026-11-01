@@ -212,6 +212,59 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()
   })
 
+  describe('a failed snapshot save', () => {
+    const run = async (failing: string, failure: Error) => {
+      const user = userEvent.setup()
+      const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(
+        async (path) => {
+          if (path === failing) throw failure
+          return {}
+        },
+      )
+      const http: ReviewHttp = { ...createHttp(), policyCommand: policyCommand as never }
+      renderRoute('/policy?section=curation', http)
+      const tags = await screen.findByRole('region', { name: 'Tags' })
+      await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
+      const readsBefore = vi.mocked(http.getPolicyState).mock.calls.length
+      await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+      return { http, policyCommand, readsBefore }
+    }
+
+    it('says a snapshot that may have been saved could not be confirmed', async () => {
+      const { http, readsBefore } = await run('drafts', new ApiError(503, 'persistence'))
+
+      expect(
+        await screen.findByText(
+          'The snapshot could not be confirmed. It may have been saved; the current policy state is refreshing. Check it before saving again.',
+        ),
+      ).toBeVisible()
+      expect(screen.queryByText(/snapshot was not saved/u)).toBeNull()
+      // The authoritative state is read again rather than assumed.
+      await waitFor(() =>
+        expect(vi.mocked(http.getPolicyState).mock.calls.length).toBeGreaterThan(readsBefore),
+      )
+    })
+
+    it('keeps the invalid-draft copy for a refused snapshot', async () => {
+      await run('drafts', new ApiError(422, 'policy_validation'))
+
+      expect(
+        await screen.findByText('The draft is not valid. Review its field choices and try again.'),
+      ).toBeVisible()
+    })
+
+    it('keeps the nothing-saved copy when validation itself is unavailable', async () => {
+      const { policyCommand } = await run('validate', new ApiError(503, 'persistence'))
+
+      expect(
+        await screen.findByText(
+          'The complete draft could not be validated. Nothing was saved or activated; try again.',
+        ),
+      ).toBeVisible()
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
+    })
+  })
+
   it('opens Automatic for the ASIN only once an audiobook record qualifies it', async () => {
     // The inert summary the API states today leaves every audiobook tranche
     // unqualified, so the page reads exactly the ebook records and the ASIN

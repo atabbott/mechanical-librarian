@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError, CsrfRenewedError } from '../src/api/http'
+import { ApiError, BuildMismatchError, CsrfRenewedError } from '../src/api/http'
 import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
@@ -1457,6 +1457,59 @@ describe('Application shell', () => {
       expect(trigger).toHaveAttribute('aria-expanded', 'true')
       expect(screen.getByRole('region', { name: 'Background activity' })).toBeVisible()
     })
+  })
+
+  it('offers a reload, not another try, when a route read meets a different build', async () => {
+    const http = createHttp()
+    http.getActivity = vi.fn<ReviewHttp['getActivity']>(async () => {
+      throw new BuildMismatchError()
+    })
+    renderRoute('/activity', http)
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'This page is from a different application build.',
+      }),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('says a sign-out that may have taken effect could not be confirmed', async () => {
+    const user = userEvent.setup()
+    const assign = vi.fn()
+    const { href, origin, pathname, search } = window.location
+    vi.stubGlobal('location', { assign, href, origin, pathname, search, reload: vi.fn() })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      logout: vi.fn(async () => {
+        throw new ApiError(503, 'persistence')
+      }),
+    }
+    renderRoute('/library?lens=all', http)
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.',
+    )
+    expect(screen.queryByText('Sign out failed. Try again.')).toBeNull()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('keeps the refreshed-session copy for a sign-out refused by a renewed token', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      logout: vi.fn(async () => {
+        throw new CsrfRenewedError()
+      }),
+    }
+    renderRoute('/library?lens=all', http)
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your session was refreshed. Press again.',
+    )
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {

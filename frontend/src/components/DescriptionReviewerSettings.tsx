@@ -4,7 +4,8 @@ import { useState } from 'react'
 
 import { ModelPicker } from './ModelPicker'
 
-import { refusalCopy } from '../api/http'
+import { refusalCopy, uncertainWriteOutcome } from '../api/http'
+import { invalidateForegroundQueries } from '../queryWork'
 import { reviewerStateLabels } from '../labels'
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
@@ -23,6 +24,12 @@ export const DescriptionReviewerSettings = ({
   )
   const [key, setKey] = useState('')
   const [metadata, setMetadata] = useState<DescriptionModelMetadata | null>(null)
+  // A selection or refresh may have been saved although it answered a failure:
+  // reload reviewer access instead of leaving the earlier state on screen.
+  const reloadIfUncertain = async (error: unknown) => {
+    if (uncertainWriteOutcome(error))
+      await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
+  }
   const test = useMutation({
     mutationFn: () =>
       http.testDescriptionModel({ expected_revision: view.revision, api_key: key, model }),
@@ -45,11 +52,13 @@ export const DescriptionReviewerSettings = ({
       setMetadata(null)
       cache.setQueryData(['reviewer-access'], saved)
     },
+    onError: reloadIfUncertain,
   })
   const refresh = useMutation({
     mutationFn: () => http.refreshOpenRouter(undefined, 'description_rewrite'),
     retry: false,
     onSuccess: (saved) => cache.setQueryData(['reviewer-access'], saved),
+    onError: reloadIfUncertain,
   })
   const contained = useMutation({
     mutationFn: () => http.describeContainedDescription(),
@@ -229,10 +238,12 @@ export const DescriptionReviewerSettings = ({
           ) : null}
           {contained.isError || test.isError || selection.isError || refresh.isError ? (
             <p role="alert">
-              {refusalCopy(
-                contained.error ?? test.error ?? selection.error ?? refresh.error,
-                'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
-              )}
+              {uncertainWriteOutcome(selection.error ?? refresh.error)
+                ? 'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
+                : refusalCopy(
+                    contained.error ?? test.error ?? selection.error ?? refresh.error,
+                    'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
+                  )}
             </p>
           ) : null}
         </div>

@@ -228,6 +228,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           message:
             'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
         })
+      // A snapshot is content-addressed, so saving the same draft again is
+      // harmless; the refreshed state shows whether this one was kept.
+      else if (phase === 'drafts' && uncertainWriteOutcome(error))
+        setStatus({
+          tone: 'warning',
+          message:
+            'The snapshot could not be confirmed. It may have been saved; the current policy state is refreshing. Check it before saving again.',
+        })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })
       else if (error instanceof ApiError && error.status === 422)
