@@ -1,8 +1,6 @@
 name: Public repository gate
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   push:
     branches: [main]
 
