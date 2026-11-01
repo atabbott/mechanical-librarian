@@ -1486,6 +1486,15 @@ describe('Library route', () => {
     await user.click(
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
+    // Opening the detail moves route focus to its heading; let that settle
+    // before pressing Dismiss so the focus assertions measure the dismissal.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('heading', { name: 'Preparation completed with failures' })
+          .closest('[data-route-focus]'),
+      ).toHaveFocus(),
+    )
     await screen.findByRole('button', { name: 'Dismiss preparation' })
     const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
 
@@ -1529,6 +1538,15 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
     await user.click(
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    // Opening the detail moves route focus to its heading; let that settle
+    // before pressing Dismiss so the focus assertions measure the dismissal.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('heading', { name: 'Preparation completed with failures' })
+          .closest('[data-route-focus]'),
+      ).toHaveFocus(),
     )
     await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
     const pending = await screen.findByRole('button', { name: 'Dismissing…' })
