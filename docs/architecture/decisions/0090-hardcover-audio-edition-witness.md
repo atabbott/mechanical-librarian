@@ -85,6 +85,16 @@ from Audible.
    `audio_editions` in `metadata-report-v64`. They are never read for admission
    or as field evidence. The cold-start report counts each witness outcome per
    library.
+8. **Leads.** When the witness is `challenged` or `unmatched`, the counted
+   editions' ASINs (`hardcover_edition_leads`) join the phase-two ASIN feed,
+   after carried, promoted and asserted ASINs and before the ASINs of products
+   the search returned and the recording-lookup hints, inside the unchanged
+   cap of four lanes. A lead obtains evidence only: the identifier-lane gate
+   admits the product only on an exact work match inside the tight runtime
+   band, and the owner reviews the ASIN and narrators it proposes. The
+   challenged match itself already proposes nothing, because the runtime veto
+   keeps it out. An edition ASIN may be ISBN-shaped, as some Audible
+   productions are; the work-level Hardcover ASIN rule is unchanged.
 
 ## Consequences
 
@@ -105,14 +115,12 @@ from Audible.
 
 ### Neutral or deferred
 
-- What a challenge or an unmatched edition then does is a later #962 slice.
-  - A challenged match is to go to review with the edition's ASIN, verified
-    across the configured marketplaces as ADR-0088 verifies a carried edition,
-    offered as the replacement. The owner's current ASIN is never withheld.
-  - An unmatched edition is to fill an empty narrator through ordinary review
-    and give an ASIN lead.
-  - This slice only records the witness.
-- `metadata-report-v64` is a clean rebuild under ADR-0013.
+- A counted edition with no ASIN gives no lead and fills nothing. Under
+  decision 2, its narrator would be Audible's word repeated, so a recording
+  is only offered once Audible confirms one. The owner's current ASIN is
+  never withheld.
+- `metadata-report-v64` is a clean rebuild under ADR-0013. Decision 8 adds no
+  persisted field.
 
 ## Alternatives considered
 
@@ -156,6 +164,9 @@ Rejected: it would measure Audible against itself.
 - `tests/unit/test_hardcover_edition_witness.py` covers every witness outcome,
   including the same-narrator and minute-floor agreements, the edition
   provenance bounds and the report round trip.
+- `tests/unit/test_hardcover_asin_leads.py` covers which witness outcomes
+  give leads, their place in the feed and the cap, and end to end that a lead
+  Audible confirms is proposed while one outside the band proposes nothing.
 - Before release, the cold-start report on a real library gives the measured
   witness counts. The re-cut expects about 5 challenges in 42 checked
   audiobooks.

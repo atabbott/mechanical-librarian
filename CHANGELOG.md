@@ -63,6 +63,10 @@ brackets are GitHub issues.
   matched audiobook work and compared with the file. The report records when
   an edition with a different narrator matches the file and the Audible match
   does not. A Hardcover edition never counts as a second source (#962).
+- When Hardcover's audio editions say the Audible match is the wrong recording,
+  or Audible found no recording, Audible is asked about the editions' ASINs.
+  A product that matches the work and the file's running time is offered in
+  review with its ASIN and narrators; Hardcover itself fills nothing (#962).
 
 - **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
   filled under the default option (a cut-off one only by its own full text),
