@@ -13429,7 +13429,9 @@ describe('a focused field decision (#1519)', () => {
   it('keeps the language respelling notice beside another withheld reason', async () => {
     // An audiobook's regional tag stays the owner's for its own reason, so the
     // respelling notice is what says the choice only changes the spelling (#1496).
-    const reason = 'Automatic is not qualified for this change.'
+    // The reason is the server's text for that state (#1593).
+    const reason =
+      'The current value names the same language with a region. Dropping the region is never done for you on audiobooks; choose the plain language yourself if you want it.'
     open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
     expect(await screen.findByText(reason)).toBeVisible()
     expect(screen.getByLabelText('Comparison condition')).toHaveTextContent(
