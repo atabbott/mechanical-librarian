@@ -192,10 +192,10 @@ any other bracketed suffix abstains.
 Hardcover author names collapse their whitespace runs. A name equal to a book
 author name stays as it is; otherwise it is put in display order only when
 Hardcover marks it inverted, as one personal `Family, Given` comma (not an
-organisation, joined names or a name suffix). A Hardcover name that is a book
-author name only with its words rotated, such as `Example Ada` beside the book's
-`Ada Example`, keeps its order as creator evidence and is not offered as an
-author.
+organisation, joined names or a name suffix). A Hardcover author list whose
+names are all the book's own, with at least one only with its words rotated
+(such as `Example Ada` beside the book's `Ada Example`), is not offered; its
+names stay creator evidence as stated.
 
 ### Series
 
