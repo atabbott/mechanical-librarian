@@ -1636,6 +1636,17 @@ def test_band_title_production_refusals(
         ("Plain Work (Box Set)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Omnibus)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Study Guide)", "Plain Work", {"series": ()}, False),
+        # A query-shaped author spelling still admits the same names (#1499).
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {
+                "local_authors": ("Jean\N{NON-BREAKING HYPHEN}Paul Example",),
+                "provider_authors": ("Jean\N{NON-BREAKING HYPHEN}Paul Example",),
+            },
+            True,
+        ),
+        ("Plain Work (II)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Trilogy)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Workbook)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Collected Stories 2)", "Plain Work", {"series": ()}, False),
@@ -1668,6 +1679,8 @@ def test_band_title_production_refusals(
         "box_set",
         "omnibus",
         "study_guide",
+        "query_shaped_author",
+        "bare_roman",
         "trilogy",
         "workbook",
         "collected_stories",

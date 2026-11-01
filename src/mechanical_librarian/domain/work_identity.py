@@ -1179,7 +1179,6 @@ def replay_provider_work_identity_admission(
         )
         if (
             rung is not None
-            and rung.authors == local_authors
             and (
                 exact := admit_provider_work_identity(
                     local_title=rung.title,
@@ -2116,11 +2115,7 @@ def _ebook_series_decoration(
     return bool(tokens) and not (
         any(token in _EBOOK_PART_WORDS for token in tokens)
         or (position is None and tokens[-1].isdigit())
-        or (
-            position is None
-            and len(tokens) > 1
-            and _ROMAN_NUMERAL.fullmatch(tokens[-1]) is not None
-        )
+        or (position is None and _ROMAN_NUMERAL.fullmatch(tokens[-1]) is not None)
         or (position is None and tokens[-1] in _NUMBER_WORDS)
     )
 
