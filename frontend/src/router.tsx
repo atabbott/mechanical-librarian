@@ -463,7 +463,7 @@ export const ConnectionNotice = ({
         {condition.state === 'recovered' ? 'Dismiss' : action}
       </button>
       {error ? (
-        <p role="alert">
+        <p>
           {uncertainWriteOutcome(error)
             ? 'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.'
             : refusalCopy(
