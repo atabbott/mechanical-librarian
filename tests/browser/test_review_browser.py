@@ -9591,7 +9591,8 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                       };
                     }""")
                     assert placement["alert"], (width, placement)
-                    assert 0 <= placement["gap"] <= placement["rem"], (width, placement)
+                    # Clear of the focused retry's ring, and still directly under it.
+                    assert 4 <= placement["gap"] <= placement["rem"], (width, placement)
                     assert placement["scroll"] <= width, (width, placement)
                 page.set_viewport_size({"width": 1280, "height": 720})
                 retry.click()
