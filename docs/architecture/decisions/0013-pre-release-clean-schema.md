@@ -308,3 +308,10 @@ ebook WORK lane that admits nothing records the rungs it sent as
 `exhausted_dispatch`, so an earlier report's matches and lane records are not
 what this code prepares. The report schema is unchanged; no adoption is
 supplied.
+
+Issue #1357 also takes the clean-rebuild branch. `metadata-report-v66` adds the
+EPUB report's `local.cover_recovery`, the closed fallback and refusal codes of
+a cover recovered from a malformed declaration as shadow evidence, so a v65
+report cannot state what a v66 report records. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.

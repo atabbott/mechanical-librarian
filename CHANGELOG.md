@@ -34,6 +34,10 @@ brackets are GitHub issues.
   Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
   `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
   automatically (#1496).
+- **Clean rebuild required.** An EPUB whose cover declaration is malformed
+  now records, as shadow evidence only, whether its own cover could be
+  recovered from a legacy cover entry, a guide reference or a cover page. The
+  cover stays absent, and nothing is chosen or shown from it yet (#1357).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
@@ -145,6 +149,9 @@ brackets are GitHub issues.
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read
   "Closed safely", instead of "Stale" (#1542).
+- A preparation step that briefly loses the database write lock while
+  checking its library connection now waits and carries on, instead of
+  marking the work as could not finish (#1547).
 - The Audiobookshelf field-effect canary composes the installed application
   around one shared operation admission, as the product does, so its
   preparation lanes queue instead of meeting at the database (#1561).

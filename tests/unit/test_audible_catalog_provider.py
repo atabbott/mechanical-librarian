@@ -2896,7 +2896,7 @@ def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> Non
     previous.pop("report_id")
     previous["report_id"] = d.report_content_address(previous)
 
-    assert "metadata-report-v65" == report.schema_version
+    assert "metadata-report-v66" == report.schema_version
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(d.canonical_json(previous))
 

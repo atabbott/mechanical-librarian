@@ -1037,6 +1037,7 @@ class _IsolatedEpubInspector:
                 tuple(claims),
                 covers,
                 inspection.rear_resource_limit,
+                declared.recovery,
             )
         except ArtifactAuthorityError:
             raise

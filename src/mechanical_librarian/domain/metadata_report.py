@@ -43,6 +43,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
     CoverTruncationReason,
+    EpubCoverRecovery,
     publication_ready,
 )
 from mechanical_librarian.domain.epub_inspection import (
@@ -95,7 +96,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v65"
+REPORT_SCHEMA = "metadata-report-v66"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -4468,6 +4469,9 @@ class MetadataReport:
     # Every admission read of this report applies them, so they travel with it.
     library_languages: tuple[str, ...] = ()
     companion: CompanionEbook | None = None
+    # Shadow evidence of a cover recovered from a malformed EPUB declaration
+    # (#1357). It is never a cover source and only an EPUB report states one.
+    cover_recovery: EpubCoverRecovery | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -4490,6 +4494,11 @@ class MetadataReport:
             type(self.companion) is not CompanionEbook or self.audio is None
         ):
             raise ReportValueError("companion ebook does not match the selected file")
+        if self.cover_recovery is not None and (
+            type(self.cover_recovery) is not EpubCoverRecovery
+            or self.file.format != "epub"
+        ):
+            raise ReportValueError("cover recovery does not match the selected file")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
         if self.comparison_version != COMPARISON_VERSION:
@@ -5139,6 +5148,7 @@ class MetadataReport:
         audio: AudioFacts | None = None,
         companion: CompanionEbook | None = None,
         library_languages: tuple[str, ...] = (),
+        cover_recovery: EpubCoverRecovery | None = None,
     ) -> Self:
         local_status = (
             "candidate"
@@ -5219,6 +5229,7 @@ class MetadataReport:
             audio,
             companion,
             library_languages,
+            cover_recovery,
         )
         data.pop("report_id")
         return cls(
@@ -5235,6 +5246,7 @@ class MetadataReport:
             audio=audio,
             companion=companion,
             library_languages=library_languages,
+            cover_recovery=cover_recovery,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -5257,6 +5269,7 @@ class MetadataReport:
             self.audio,
             self.companion,
             self.library_languages,
+            self.cover_recovery,
         )
 
     def to_json(self) -> str:
@@ -6741,6 +6754,7 @@ def _report_data(
     audio: AudioFacts | None = None,
     companion: CompanionEbook | None = None,
     library_languages: tuple[str, ...] = (),
+    cover_recovery: EpubCoverRecovery | None = None,
 ) -> dict[str, object]:
     return {
         "audio": None if audio is None else audio.to_data(),
@@ -6751,6 +6765,9 @@ def _report_data(
         "identifier_evidence": [value.to_data() for value in identifier_evidence],
         "local": {
             "claims": [value.to_data() for value in local_claims],
+            "cover_recovery": (
+                None if cover_recovery is None else cover_recovery.to_data()
+            ),
             "reasons": list(local_reasons),
             "status": local_status,
         },
@@ -6800,7 +6817,7 @@ def _report_from_data(value: object) -> MetadataReport:
     file = _object(
         root["file"], {"content_digest", "format", "identity", "selected_index"}
     )
-    local = _object(root["local"], {"claims", "reasons", "status"})
+    local = _object(root["local"], {"claims", "cover_recovery", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
     field_results = tuple(
@@ -6839,6 +6856,9 @@ def _report_from_data(value: object) -> MetadataReport:
         _audio_facts_from_data(root["audio"]),
         tuple(_strings(root["library_languages"])),
         _companion_from_data(root["companion"]),
+        None
+        if local["cover_recovery"] is None
+        else EpubCoverRecovery.from_data(local["cover_recovery"]),
     )
 
 
