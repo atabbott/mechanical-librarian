@@ -5,6 +5,7 @@ served composition.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import html
 import json
@@ -1368,6 +1369,92 @@ def test_decision_replay_after_post_commit_failure_confirms_the_recorded_decisio
     assert replay.status_code == 200, replay.text
     assert replay.json()["decision_id"] == json.loads(recorded)["decision_id"]
     assert len(web.repository.decisions) == 1
+
+
+def test_pre_call_code_is_raised_only_by_the_session_dependency() -> None:
+    # The browser treats an unsafe 5xx as an uncertain outcome unless its code
+    # is proven to be raised before any handler body runs. This pins that
+    # proof for the one allow-listed code, react_assets_unavailable.
+    source = Path(__file__).resolve().parents[2] / "src"
+    web = source / "mechanical_librarian" / "interfaces" / "web"
+    hits = sorted(
+        path.relative_to(source).as_posix()
+        for path in source.rglob("*.py")
+        if "react_assets_unavailable" in path.read_text(encoding="utf-8")
+    )
+    assert hits == ["mechanical_librarian/interfaces/web/react_assets.py"]
+
+    tree = ast.parse((web / "app.py").read_text(encoding="utf-8"))
+    functions = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+
+    def references(node: ast.AST, name: str) -> bool:
+        return any(
+            isinstance(child, ast.Name) and child.id == name for child in ast.walk(node)
+        )
+
+    def own_nodes(function: ast.FunctionDef) -> Iterator[ast.AST]:
+        # The function's own body, not the bodies of functions nested in it.
+        pending: list[ast.AST] = list(function.body)
+        while pending:
+            node = pending.pop()
+            yield node
+            if not isinstance(node, ast.FunctionDef):
+                pending.extend(ast.iter_child_nodes(node))
+
+    def get_page(node: ast.FunctionDef) -> bool:
+        # A GET route outside /api/v1, which no unsafe request reaches.
+        return any(
+            isinstance(decorator, ast.Call)
+            and ast.unparse(decorator.func) == "app.get"
+            and isinstance(decorator.args[0], ast.Constant)
+            and not str(decorator.args[0].value).startswith("/api/")
+            for decorator in node.decorator_list
+        )
+
+    consumers = {
+        name
+        for name, node in functions.items()
+        if references(node, "ReactAssetRecovery")
+        and not any(
+            inner is not node
+            and isinstance(inner, ast.FunctionDef)
+            and references(inner, "ReactAssetRecovery")
+            for inner in ast.walk(node)
+        )
+    }
+    assert "authenticated_session_cookie" in consumers
+    dependency = functions["authenticated_session_cookie"]
+    (guard,) = (
+        node
+        for node in ast.walk(dependency)
+        if isinstance(node, ast.If)
+        and references(node, "ReactAssetRecovery")
+        and "request.method" in ast.unparse(node.test)
+    )
+    guard_source = ast.unparse(guard.test)
+    assert "startswith('/api/v1/')" in guard_source
+    assert "request.method not in {'GET', 'HEAD', 'OPTIONS'}" in guard_source
+    for name in consumers - {"authenticated_session_cookie"}:
+        node = functions[name]
+        assert not any(
+            isinstance(child, ast.Attribute) and child.attr == "code"
+            for child in ast.walk(node)
+        ), name
+        callers = [
+            caller
+            for caller in functions.values()
+            if any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == name
+                for call in own_nodes(caller)
+            )
+        ]
+        assert get_page(node) or (
+            callers and all(get_page(caller) for caller in callers)
+        ), name
 
 
 def _preparation_presentation(state: PreparationRunState) -> PreparationPresentation:
