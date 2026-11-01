@@ -1668,6 +1668,28 @@ it('saves description preferences independently next to Cover guidance and keeps
   expect(within(region).getByRole('link')).toHaveAttribute('href', '/settings?group=reviewer')
 })
 
+it('says unconfirmed description preferences may have been saved and offers a reload', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+    throw new ApiError(503, 'settings_unavailable')
+  })
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Description advice' })
+  const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
+  await userEvent.setup().click(within(marketing).getByRole('button', { name: 'Off' }))
+  await userEvent
+    .setup()
+    .click(within(region).getByRole('button', { name: 'Save description preferences' }))
+
+  expect(await within(region).findByRole('alert')).toHaveTextContent(
+    'Description preferences may have been saved. Reload the saved preferences and check them before saving again.',
+  )
+  expect(
+    within(region).getByRole('button', { name: 'Reload description preferences' }),
+  ).toBeVisible()
+})
+
 it('shows locked description cleanup preferences without enabling edits', async () => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => view('file'))
@@ -1824,7 +1846,11 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
     ),
   ).toBeVisible()
   await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
-  expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
+  expect(
+    await screen.findByText(
+      'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+    ),
+  ).toBeVisible()
   expect(screen.getByRole('button', { name: /Recover .*title.* suspension/iu })).toBeEnabled()
   fail = false
   await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
@@ -1834,6 +1860,65 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   expect(summary).toHaveFocus()
   expect(screen.getByRole('button', { name: /Recover .*publisher.* suspension/iu })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+})
+
+it('reports an unconfirmed automatic pause from refreshed state without resending it', async () => {
+  const user = userEvent.setup()
+  let paused = false
+  const command = vi.fn(async () => {
+    // The pause committed; only its response failed.
+    paused = true
+    throw new ApiError(503, 'persistence')
+  })
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getAutomaticSafety: vi.fn(async () => ({
+      paused,
+      global_suspension: null,
+      category_suspensions: {},
+    })),
+    policyCommand: <T,>() => command() as Promise<T>,
+  }
+  renderRoute('/policy', http)
+  await screen.findByRole('heading', { name: 'Library policy' })
+  const summary = screen.getByText('Safety').closest('summary')
+  if (!summary) throw new Error('Safety summary missing')
+  await user.click(summary)
+  await user.click(screen.getByRole('button', { name: 'Pause automatic decisions' }))
+
+  expect(
+    await screen.findByText(
+      'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+    ),
+  ).toBeVisible()
+  expect(await screen.findByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+  expect(screen.queryByText(/Nothing changed/u)).toBeNull()
+  expect(command).toHaveBeenCalledOnce()
+})
+
+it('keeps a refused Automatic confirmation as nothing changed', async () => {
+  const user = userEvent.setup()
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+      schema_version: 'shadow-posture-v1',
+      posture: 'preview',
+      authority: 'none',
+      can_leave_preview: false,
+    })),
+    policyCommand: vi.fn(async () => {
+      throw new ApiError(422, 'automatic_unavailable')
+    }),
+  }
+  renderRoute('/policy', http)
+  await screen.findByRole('heading', { name: 'Library policy' })
+  const summary = screen.getByText('Safety').closest('summary')
+  if (!summary) throw new Error('Safety summary missing')
+  await user.click(summary)
+  await user.click(screen.getByRole('button', { name: 'Turn on Automatic' }))
+
+  expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
+  expect(http.policyCommand).toHaveBeenCalledWith('shadow/confirm-automatic', undefined)
 })
 
 it('names a provider-consensus title suspension by its destination (#1286)', async () => {

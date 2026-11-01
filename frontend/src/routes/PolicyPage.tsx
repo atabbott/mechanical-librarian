@@ -14,6 +14,7 @@ import {
   refusalCopy,
   sessionRefreshedCopy,
   TARGET_DESTINATIONS,
+  uncertainWriteOutcome,
 } from '../api/http'
 import type {
   PolicyActivationView,
@@ -957,7 +958,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       if (action.endsWith('/retry')) setRetried(true)
     } catch (error) {
       setStatus(
-        error instanceof AmbiguousMutationError
+        uncertainWriteOutcome(error)
           ? {
               tone: 'warning',
               message:
