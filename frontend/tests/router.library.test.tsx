@@ -6328,7 +6328,14 @@ describe('Library route', () => {
   })
 
   it.each([
-    [new ApiError(503, 'persistence'), 'The decision was not recorded. Your choice is unchanged.'],
+    [
+      new ApiError(503, 'persistence'),
+      'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.',
+    ],
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.',
+    ],
     [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
   ])(
     'retries the embedded Library decision after %s with the exact preserved command and idempotency key',
@@ -7005,7 +7012,9 @@ describe('Library route', () => {
         await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
       )
       expect(
-        await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
+        await screen.findByText(
+          'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.',
+        ),
       ).toBeVisible()
       scrollTo.mockClear()
       const authors = screen.getByRole('button', { name: /Authors.*Needs you/u })
