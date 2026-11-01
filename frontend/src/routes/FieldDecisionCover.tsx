@@ -5,6 +5,7 @@ import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { CoverObservationView, CoverCandidateView, DecisionCommand } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
+import type { CoverPrepareFailure, RecordCoverPrepareFailure } from '../coverChoices'
 import {
   coverNoteLabel,
   coverReviewerLabel,
@@ -30,6 +31,21 @@ const coverStateLabels = {
   excluded: 'Excluded',
   recommended: 'Recommended',
 } satisfies Record<CoverCandidateView['state'], string>
+// The press that failed picks the copy, whichever layout the reload shows.
+const coverPrepareFailureCopy = ({ action, error }: CoverPrepareFailure) =>
+  action === 'prepare'
+    ? uncertainWriteOutcome(error)
+      ? 'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.'
+      : refusalCopy(
+          error,
+          'The comparison could not be prepared. The existing cover remains unchanged.',
+        )
+    : uncertainWriteOutcome(error)
+      ? 'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.'
+      : refusalCopy(
+          error,
+          'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+        )
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
     ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
@@ -67,6 +83,7 @@ export function LibraryCoverChoices(props: {
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
+  prepareFailure: { failure: CoverPrepareFailure | null; record: RecordCoverPrepareFailure }
 }) {
   return (
     <LibraryCoverChoicesContent
@@ -230,6 +247,7 @@ function LibraryCoverChoicesContent({
   progress,
   revealEvidence,
   choose,
+  prepareFailure,
 }: {
   reviewCaseId: string
   mediaKind: string
@@ -242,6 +260,7 @@ function LibraryCoverChoicesContent({
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
+  prepareFailure: { failure: CoverPrepareFailure | null; record: RecordCoverPrepareFailure }
 }) {
   const { http } = useReviewContext()
   const access = useQuery({
@@ -262,7 +281,8 @@ function LibraryCoverChoicesContent({
       'unreachable',
       'malformed_response',
     ].includes(currentReviewer.state)
-  const cover = useCoverChoiceData(reviewCaseId)
+  const cover = useCoverChoiceData(reviewCaseId, prepareFailure.record)
+  const failure = prepareFailure.failure
   const consideration = field.coverConsideration
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
@@ -275,20 +295,11 @@ function LibraryCoverChoicesContent({
         <button
           type="button"
           disabled={disabled || cover.prepare.isPending}
-          onClick={() => cover.prepare.mutate()}
+          onClick={() => cover.prepare.mutate('prepare')}
         >
           Prepare cover comparison
         </button>
-        {cover.prepare.isError ? (
-          <p role="alert">
-            {uncertainWriteOutcome(cover.prepare.error)
-              ? 'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.'
-              : refusalCopy(
-                  cover.prepare.error,
-                  'The comparison could not be prepared. The existing cover remains unchanged.',
-                )}
-          </p>
-        ) : null}
+        {failure ? <p role="alert">{coverPrepareFailureCopy(failure)}</p> : null}
       </section>
     )
   const candidates = consideration.candidates
@@ -552,21 +563,12 @@ function LibraryCoverChoicesContent({
           className="secondary-action"
           type="button"
           disabled={disabled || cover.prepare.isPending}
-          onClick={() => cover.prepare.mutate()}
+          onClick={() => cover.prepare.mutate('retry')}
         >
           Retry advisory review
         </Button>
       ) : null}
-      {cover.prepare.isError ? (
-        <p role="alert">
-          {uncertainWriteOutcome(cover.prepare.error)
-            ? 'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.'
-            : refusalCopy(
-                cover.prepare.error,
-                'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
-              )}
-        </p>
-      ) : null}
+      {failure ? <p role="alert">{coverPrepareFailureCopy(failure)}</p> : null}
       {expanded && incumbent ? (
         <div
           className="library-cover-pinned"

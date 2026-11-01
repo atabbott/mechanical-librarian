@@ -5719,6 +5719,258 @@ describe('Library route', () => {
     expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
   })
 
+  // A retry-capable reviewer for the #1595 cover alert tests below.
+  const retryAccess: ReviewerAccessView = {
+    schema_version: 'reviewer-access-view-v2',
+    cover_metadata: null,
+    cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+    revision: 9,
+    mapping: { engine: 'codex' },
+    description_mapping: null,
+    description_metadata: null,
+    description: null,
+    openrouter_key_configured: false,
+    codex: {
+      engine: 'codex',
+      state: 'failed',
+      reason: null,
+      model: null,
+      tier: null,
+      host_headroom_bytes: null,
+    },
+    openrouter: {
+      engine: 'openrouter',
+      state: 'unconfigured',
+      reason: null,
+      model: null,
+      tier: null,
+      host_headroom_bytes: null,
+    },
+    recommendations: [],
+    candidates: [],
+    free_tier_caveat: '',
+    data_use_caveat: '',
+  }
+  const reloadedCover = (
+    letter: string,
+    rationale: string,
+    reviewerStatus: 'completed' | 'failed' = 'failed',
+  ): NonNullable<CaseDetailView['fields'][number]['coverConsideration']> => {
+    const cover = retryableCover(reviewerStatus)
+    const [current, proposed] = cover.choiceContexts
+    if (!current || !proposed) throw new Error('cover fixture requires two contexts')
+    return {
+      ...cover,
+      id: `cover_consideration_${letter.repeat(64)}`,
+      choiceContexts: [current, { ...proposed, rationale }],
+    }
+  }
+  const coverField = (
+    coverConsideration: ReturnType<typeof retryableCover> | null,
+  ): CaseDetailView['fields'][number] => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    return {
+      ...base,
+      destination: 'cover' as const,
+      proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+      coverConsideration,
+    }
+  }
+
+  it.each([
+    [
+      'retry',
+      new ApiError(500, 'invalid_error_response'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      'retry',
+      new ApiError(503, 'persistence'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      'retry',
+      new ApiError(409, 'stale_cover'),
+      'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+    ],
+    [
+      'prepare',
+      new ApiError(500, 'invalid_error_response'),
+      'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
+    ],
+  ] as const)(
+    'keeps a failed cover %s alert when the reload brings a new consideration (%s)',
+    async (action, failure, copy) => {
+      let reloaded = false
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [
+            coverField(
+              reloaded
+                ? reloadedCover('s', 'Reloaded retained cover.', 'completed')
+                : action === 'retry'
+                  ? reloadedCover('r', 'Selectable retained cover.')
+                  : null,
+            ),
+          ],
+        })),
+        getReviewerAccess: vi.fn(async () => retryAccess),
+        retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+          reloaded = true
+          throw failure
+        }),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      await userEvent.setup().click(
+        await screen.findByRole('button', {
+          name: action === 'retry' ? 'Retry advisory review' : 'Prepare cover comparison',
+        }),
+      )
+
+      // The reload remounts the comparison with the new consideration.
+      expect(await screen.findByText('Reloaded retained cover.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Choose a cover')).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(screen.getByRole('alert')).toHaveTextContent(copy)
+      expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+      expect(http.recordDecision).not.toHaveBeenCalled()
+    },
+  )
+
+  it('restores a failed cover retry alert after a failed reload recovers', async () => {
+    const user = userEvent.setup()
+    let detailFails = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+        if (detailFails) throw new Error('case detail unavailable')
+        return { ...detail, fields: [coverField(retryableCover('failed'))] }
+      }),
+      getReviewerAccess: vi.fn(async () => retryAccess),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        detailFails = true
+        throw new ApiError(500, 'invalid_error_response')
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+
+    expect(await screen.findByText(/Selected work could not be loaded\./u)).toBeVisible()
+    expect(screen.queryByText(/The advisory retry could not be confirmed/u)).toBeNull()
+    detailFails = false
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    )
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('clears a failed cover retry alert while the next retry is pending', async () => {
+    const user = userEvent.setup()
+    let settle: (() => void) | undefined
+    const retryCoverConsideration = vi
+      .fn<ReviewHttp['retryCoverConsideration']>()
+      .mockRejectedValueOnce(new ApiError(500, 'invalid_error_response'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            settle = () => resolve(retryableCover('failed'))
+          }),
+      )
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [coverField(retryableCover('failed'))],
+      })),
+      getReviewerAccess: vi.fn(async () => retryAccess),
+      retryCoverConsideration,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const retry = await screen.findByRole('button', { name: 'Retry advisory review' })
+    await user.click(retry)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /The advisory retry could not be confirmed/u,
+    )
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+
+    await user.click(screen.getByRole('button', { name: 'Retry advisory review' }))
+    await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).toBeNull()
+    await act(async () => {
+      settle?.()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it.each(['before', 'after'] as const)(
+    'clears a cover retry alert that settles %s the owner moves to another work and back',
+    async (settles) => {
+      const user = userEvent.setup()
+      const baseWork = library.works[0]
+      if (!baseWork) throw new Error('cover reset fixture requires a work')
+      const twoWorks: LibraryView = {
+        ...library,
+        works: [
+          { ...baseWork, title: 'Work A' },
+          { ...baseWork, id: 'case-2', reviewCaseId: 'case-2', title: 'Work B' },
+        ],
+      }
+      let reject: (() => void) | undefined
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getLibrary: vi.fn(async () => twoWorks),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) => ({
+          ...detail,
+          id,
+          fields: [coverField(reloadedCover(id === 'case-1' ? 'r' : 's', `Cover for ${id}.`))],
+        })),
+        getReviewerAccess: vi.fn(async () => retryAccess),
+        retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(
+          () =>
+            new Promise((_, refuse) => {
+              reject = () => refuse(new ApiError(500, 'invalid_error_response'))
+            }),
+        ),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+      await waitFor(() => expect(http.retryCoverConsideration).toHaveBeenCalledOnce())
+      if (settles === 'before') {
+        await act(async () => {
+          reject?.()
+          await Promise.resolve()
+        })
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          /The advisory retry could not be confirmed/u,
+        )
+      }
+
+      await user.click(screen.getByRole('button', { name: /^Work B\./u }))
+      expect(await screen.findByText('Cover for case-2.')).toBeInTheDocument()
+      if (settles === 'after')
+        await act(async () => {
+          reject?.()
+          await Promise.resolve()
+        })
+      expect(screen.queryByRole('alert')).toBeNull()
+      await user.click(screen.getByRole('button', { name: /^Work A\./u }))
+      expect(await screen.findByText('Cover for case-1.')).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+      expect(http.recordDecision).not.toHaveBeenCalled()
+    },
+  )
+
   it('offers only preparation for an authenticated historical cover comparison', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')

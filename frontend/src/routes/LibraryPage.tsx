@@ -69,6 +69,7 @@ import {
 import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import { useCoverPrepareFailure } from '../coverChoices'
 import {
   AsinAutomaticStatement,
   ContextValue,
@@ -1006,6 +1007,7 @@ export default function LibraryPage({
         ) ?? null)
       : null
   const nextWorkError = attention.isError
+  const coverPrepareFailure = useCoverPrepareFailure(selectedReviewCaseId)
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
     fields: detail.data?.fields ?? [],
@@ -2633,6 +2635,7 @@ export default function LibraryPage({
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                         revealEvidence={toggleChoiceEvidence}
+                        prepareFailure={coverPrepareFailure}
                       />
                     ) : (
                       <section

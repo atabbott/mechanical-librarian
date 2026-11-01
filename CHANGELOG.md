@@ -180,7 +180,9 @@ brackets are GitHub issues.
   preparation lanes queue instead of meeting at the database (#1561).
 - A cover advisory retry or comparison whose result cannot be confirmed now
   reloads the case and says it may have been requested, instead of saying it
-  failed safely (#1572).
+  failed safely (#1572). The warning for a failed retry or comparison stays
+  shown when the reload brings a new comparison, or fails and then recovers,
+  until the next press, a success, or a move to another work (#1595).
 - Reviewer access, description preference and description advice buttons
   keep focus while their request runs, look disabled and ignore a second
   press, instead of dropping focus to the page. A reviewer access or Library
