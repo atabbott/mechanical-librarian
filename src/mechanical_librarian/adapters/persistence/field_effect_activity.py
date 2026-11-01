@@ -619,9 +619,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         expand_cover_consideration(*consideration_row),
                     )
                 else:
+                    # A decision authorizes a write only against its case's
+                    # newest outcome set. Leaving Automatic with the policy
+                    # unchanged projects the same case again under a new
+                    # generation (#1568), so an earlier generation's decision
+                    # fails its binding here whatever order rows are read in.
                     outcome_row = self._connection.execute(
                         "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
-                        "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                        "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+                        "ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT 1",
                         (
                             automatic.review_case_id,
                             automatic.report_id,

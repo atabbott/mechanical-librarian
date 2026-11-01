@@ -52,7 +52,10 @@ from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
-from mechanical_librarian.domain.field_effect import FieldEffectOperation
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectError,
+    FieldEffectOperation,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
@@ -468,9 +471,16 @@ def test_an_automatic_decision_writes_only_in_the_automatic_posture(
     target.seed(planned[owner.decision_id].plan)
     assert service.apply(planned[owner.decision_id].plan.plan_id).state == "verified"
 
-    # Confirming Automatic again makes the unchanged decision pending again.
+    # Confirming Automatic again makes the unchanged decision pending again,
+    # but it is bound to its own generation's outcome set, not the case's
+    # newest, so it still authorizes no write.
     library.root.activate_qualified_automatic(40)
     assert automatic.decision_id in library.pending()
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        PersistedFieldEffectAuthority(library.root).resolve(automatic)
+    library.now[0] = 41
+    scheduler.schedule()
+    assert automatic.decision_id not in _planned(library)
 
 
 def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
