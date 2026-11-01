@@ -1,6 +1,5 @@
 import {
   invalidateBackgroundQueries,
-  invalidateForegroundQueries,
   prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
@@ -10,59 +9,27 @@ import {
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
-import { CountPhrases } from '../components/CountPhrases'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
-import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ComponentPropsWithRef, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import {
-  ApiError,
-  CsrfRenewedError,
-  displayValue,
-  sessionRefreshedCopy,
-  uncertainWriteOutcome,
-} from '../api/http'
+import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
 import type {
   DecisionCommand,
   LibraryLens,
   LibrarySearch,
   MediaKind,
   LibraryView,
-  LibraryCoverView,
   LibraryWorkView,
-  PreparationView,
   ProviderOutcomeView,
-  TargetDestination,
   WorkSummaryState,
 } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { drawerQuery, useAttentionRail } from '../attentionRail'
-import { useRouteReadyFocus } from '../focus'
-import {
-  audioSurfaceLabels,
-  claimBasisLabels,
-  claimKindLabels,
-  destinationLabel,
-  fieldStateLabels,
-  languageName,
-  lookupLabels,
-  mediaKindLabels,
-  preparationOutcomes,
-  preparationStageLabels,
-  preparationStatusLabels,
-  sourceStatusLabels,
-} from '../labels'
+import { focusFieldHeading, useRouteReadyFocus } from '../focus'
+import { destinationLabel, mediaKindLabels, sourceStatusLabels } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
@@ -83,45 +50,54 @@ import {
   choiceAvailable,
   requestKey,
   useReviewDecisionController,
-  writtenRefusal,
 } from '../reviewDecisionController'
 import { emptyUnproposed, ownerChoiceCount, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
-import { formatRunningTime } from '../dates'
 
 import {
+  authoredOwnerRecorded,
+  completionOutcome,
+  decisionValue,
+  valueText,
   shownAdvice,
-  coverNames,
   effectSummary,
-  sameSelectedValue,
   commandSelected,
   choiceSelected,
   isLongDescription,
   decisionQuestion,
 } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
-import {
-  ChoiceEvidencePanel,
-  DescriptionText,
-  RecordedFieldObservations,
-  MetadataChoice,
-} from './FieldDecisionChoices'
+import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
 import {
+  AsinAutomaticStatement,
+  ContextValue,
+  DescriptionAutomaticStatement,
+  NarratorsAutomaticStatement,
+  ProviderConsensusAutomaticStatement,
+  RecordedOutcome,
+  SeriesAutomaticStatement,
+  VerifiedManifestationIsbnAutomaticStatement,
+} from './FieldDecisionOutcome'
+import { OwnerControls } from './FieldDecisionOwner'
+import { PreparationDetail, PreparationSummary } from './PreparationDetail'
+import {
+  librarySearchIdentity,
+  usePreparationChange,
+  usePreparationDismissal,
+} from '../libraryPreparation'
+import { WorkSources, WorkSummary } from './WorkSummary'
+import { BookMark } from '../components/BookMark'
+import { authorLine, reportEvidenceUrl } from '../libraryWork'
+import {
+  choiceContext,
   combinedAutomaticTags,
   comparisonNotices,
   fieldReason,
   noticeText,
   questionReason,
-  ownerContext,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-const authoredOwnerRecorded = (field: ReviewField) =>
-  field.descriptionAdvice?.selection?.origin === 'human' &&
-  Boolean(
-    field.descriptionAdvice.selected_advice?.current === true ||
-    field.descriptionAdvice.application_outcome,
-  )
 const searchNavigationDelay = 150
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
@@ -131,32 +107,6 @@ const prefetchIntentDelay = 50
 // with the next bounded page read, but never treat a frame as selection
 // authority.
 const maxCoalescedSuccessorCandidates = 50
-const librarySearchIdentity = (search: object) =>
-  JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
-const authorLine = (work: LibraryWorkView) =>
-  work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
-// A work with a review case opens that case; one with only a published report
-// is addressed by the report itself, and the server names which rather than
-// leaving it to be read off the URL's shape -- a prefix sniff would silently
-// re-orphan this evidence the next time a route is renamed. Deciding it once
-// here keeps the row and the panel agreeing on what is openable.
-const reportEvidenceUrl = (work: LibraryWorkView) =>
-  work.detailKind === 'report' ? work.detailUrl : null
-const chapterSpan = (start: number, end: number) => {
-  const clock = (value: number) => {
-    const seconds = Math.floor(value / 1000)
-    const parts = [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60]
-    return parts.map((part) => String(part).padStart(2, '0')).join(':')
-  }
-  return `${clock(start)} – ${clock(end)}`
-}
-// A claim's role is the source's own words, shown as written; a role the
-// source supplied as unsafe or oversized text reads as such, never as its digest.
-// A language value reads by its name beside its code, `English (en)` (#1286).
-const valueText = (destination: TargetDestination, value: string) =>
-  destination === 'language' ? languageName(value) : value
-const claimRole = (role: string) =>
-  /^(?:unsafe|oversized)-source-text-sha256:/u.test(role) ? 'role not shown' : role
 const lensLabels = {
   all: 'All',
   needs_attention: 'Needs attention',
@@ -169,134 +119,6 @@ const lensLabels = {
 const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
   <a {...props} aria-current={props['aria-current'] ? 'true' : undefined} />
 ))
-// The first letter of each of the first two words that have one, so a
-// bracket or an ampersand never stands for a word (#1290).
-const initials = (title: string) =>
-  title
-    .split(/\s+/u)
-    .map((word) => /\p{L}/u.exec(word)?.[0])
-    .filter((letter): letter is string => letter !== undefined)
-    .slice(0, 2)
-    .map((letter) => letter.toUpperCase())
-    .join('') || 'ML'
-// A work's mark: the cover the library holds when its report retained one,
-// contained whole and never setting the row's height, else its spine of
-// initials. A cover that fails to load falls back to the spine (#1290).
-function BookMark({ title, cover }: { title: string; cover: LibraryCoverView | undefined }) {
-  const [failedUrl, setFailedUrl] = useState<string | null>(null)
-  const shown = cover !== undefined && failedUrl !== cover.url
-  return (
-    <span
-      className={shown ? 'library-book-mark has-cover' : 'library-book-mark'}
-      aria-hidden="true"
-    >
-      {shown ? (
-        <img
-          src={cover.url}
-          alt=""
-          width={cover.width}
-          height={cover.height}
-          loading="lazy"
-          decoding="async"
-          onError={() => {
-            setFailedUrl(cover.url)
-          }}
-        />
-      ) : (
-        initials(title)
-      )}
-    </span>
-  )
-}
-type PreparationPresentation = NonNullable<PreparationView['presentation']>
-// The run's works as they stand now, in the masthead's words (#1366). The
-// latched passage is first-finish history and is labelled Prepared instead.
-const runOutcomes = (presentation: PreparationPresentation) =>
-  preparationOutcomes(presentation.now ?? null)
-// What the run is doing now, said in the counts the owner is waiting on rather
-// than in the store's state name. A terminal run states its own outcome here
-// because that is the line a reader looks at first.
-const preparationStateLine = (presentation: PreparationPresentation) => {
-  switch (presentation.state) {
-    case 'starting':
-      return 'Preparation is starting'
-    case 'running':
-      return 'Preparation continues'
-    case 'blocked':
-      return 'Paused until the reported connection issue is resolved'
-    case 'completed_clean':
-    case 'completed_with_failures':
-      return (
-        <>
-          Finished · <CountPhrases phrases={runOutcomes(presentation)} />
-        </>
-      )
-    case 'dismissed':
-      return 'Preparation dismissed'
-  }
-}
-const preparationTriggerCopy: Record<
-  PreparationPresentation['triggers'][number]['trigger'],
-  string
-> = {
-  initial_setup: 'Started by initial setup',
-  manual_scan: 'Started by an owner scan',
-  library_added: 'Started when a library was added',
-  title_recovery: 'Title recovery requested',
-}
-// A request accepted once is just how the run began; a number there would be
-// noise on every ordinary run. Repeats are the case worth counting, so only
-// they carry one.
-// Initial setup records one acceptance per library, which is not a repeated
-// owner request, so it never carries a count.
-const preparationRepeatedTriggerCopy: Record<
-  Exclude<PreparationPresentation['triggers'][number]['trigger'], 'initial_setup'>,
-  string
-> = {
-  manual_scan: 'Owner scan requested',
-  library_added: 'Library addition requested',
-  title_recovery: 'Title recovery requested',
-}
-const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][number]) =>
-  trigger.accepted_count > 1 && trigger.trigger !== 'initial_setup'
-    ? `${preparationRepeatedTriggerCopy[trigger.trigger]} ${String(trigger.accepted_count)} times`
-    : preparationTriggerCopy[trigger.trigger]
-// The scope every count on this page reconciles to: one run, whose books are
-// either ready, unable to finish, or still moving.
-/**
- * The display name, bounded to what the search route and the backend accept.
- *
- * The two bounds count differently: the route's ``bounded`` (router.tsx) tests
- * ``value.length``, which is UTF-16 units, while the backend's `max_length=128`
- * counts characters. At most 128 units therefore satisfies both, and bounding
- * by characters does not -- 127 ASCII plus one astral character is 128
- * characters but 129 units, which the route drops entirely. So the slice is by
- * units, and a trailing high surrogate left behind by it is dropped rather than
- * sent as half a character.
- */
-const boundedSearchName = (name: string) => {
-  const bounded = name.slice(0, 128)
-  const last = bounded.charCodeAt(bounded.length - 1)
-  return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
-}
-
-// A separator never starts a line (#1013).
-const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) => (
-  <CountPhrases
-    phrases={[
-      ...runOutcomes(presentation),
-      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'retained' : 'in progress'}`,
-    ]}
-    separator={'\u00a0· '}
-  />
-)
-const preparationPassage = [
-  ['read', 'Read from library'],
-  ['searches_finished', 'Searches finished'],
-  ['compared', 'Candidates compared'],
-  ['checked', 'Metadata checked'],
-] as const
-
 // The compact layout, where the selected work replaces the list.
 const compactWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
@@ -313,329 +135,6 @@ const lensMatching = {
   preparation_failed: ['failed', 'that could not finish'],
 } as const
 
-const PreparationSummary = ({
-  presentation,
-  reconnecting,
-  recoveryRequired,
-  selected,
-  onSelect,
-}: {
-  presentation: PreparationPresentation
-  reconnecting: boolean
-  recoveryRequired: boolean
-  selected: boolean
-  onSelect: () => void
-}) => {
-  const active = presentation.active_books.length + presentation.active_overflow
-  let title: string
-  // What follows the run's outcomes on the summary line.
-  let rest: string
-  switch (presentation.state) {
-    case 'starting':
-      title = 'Preparation is starting'
-      rest = ` · ${String(active)} active`
-      break
-    case 'running':
-      title = 'Preparing your library'
-      rest = ` · ${String(active)} active`
-      break
-    case 'blocked':
-      title = 'Preparation needs attention'
-      rest = ` · ${String(active)} active`
-      break
-    case 'completed_clean':
-      title = 'Preparation complete'
-      rest = ''
-      break
-    case 'completed_with_failures':
-      title = 'Preparation completed with failures'
-      rest = ''
-      break
-    case 'dismissed':
-      title = 'Preparation dismissed'
-      rest = ''
-      break
-  }
-  if (recoveryRequired) {
-    title = 'Preparation stopped'
-    rest = ' · Service restart required'
-  }
-  return (
-    <button
-      type="button"
-      className={`preparation-summary state-${presentation.state}${selected ? ' active' : ''}`}
-      aria-current={selected ? 'true' : undefined}
-      onClick={onSelect}
-    >
-      <span className="preparation-summary-mark" aria-hidden="true" />
-      <span>
-        <strong>{title}</strong>
-        <small>
-          {reconnecting && !recoveryRequired ? (
-            'Reconnecting · last confirmed progress shown'
-          ) : (
-            <>
-              This run: <CountPhrases phrases={runOutcomes(presentation)} />
-              {rest}
-            </>
-          )}
-        </small>
-      </span>
-    </button>
-  )
-}
-
-const PreparationDetail = ({
-  presentation,
-  reconnecting,
-  recoveryRequired,
-  animateChange,
-  dismissing,
-  uncertain,
-  onDismiss,
-}: {
-  presentation: PreparationPresentation
-  reconnecting: boolean
-  recoveryRequired: boolean
-  animateChange: boolean
-  dismissing: boolean
-  uncertain: boolean
-  onDismiss: () => void
-}) => {
-  const outcomeTotal = presentation.passage.ready + presentation.passage.failed
-  let heading: string
-  let introduction: string
-  switch (presentation.state) {
-    case 'starting':
-      heading = 'Preparation is starting'
-      introduction = 'The run is open and waiting for preparation work to begin or resume.'
-      break
-    case 'running':
-      heading = 'Preparing your library'
-      introduction = 'Prepared works remain selectable while the rest of this run finishes.'
-      break
-    case 'blocked':
-      heading = 'Preparation needs attention'
-      introduction = 'Preparation is paused until the reported issue is resolved.'
-      break
-    case 'completed_clean':
-      heading = 'Preparation complete'
-      introduction = 'This run finished without a reported failure.'
-      break
-    case 'completed_with_failures':
-      heading = 'Preparation completed with failures'
-      introduction =
-        'This run finished with reported failures; prepared books remain available and the failed outcomes stay visible.'
-      break
-    case 'dismissed':
-      heading = 'Preparation dismissed'
-      introduction = 'This preparation record has been dismissed.'
-      break
-  }
-  if (recoveryRequired) {
-    heading = 'Preparation stopped'
-    introduction =
-      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Prepared books remain available.'
-  }
-  return (
-    <div className="preparation-detail">
-      <header>
-        <div>
-          <h2 tabIndex={-1} data-route-focus="true">
-            {heading}
-          </h2>
-          <p>{introduction}</p>
-        </div>
-        <strong>
-          {presentation.now ? String(presentation.now.ready) : '…'} ready to browse in this run
-        </strong>
-      </header>
-      <p
-        className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
-        role="status"
-      >
-        {recoveryRequired
-          ? 'Service restart required · last saved progress shown'
-          : reconnecting
-            ? 'Reconnecting · showing the last confirmed state'
-            : preparationStateLine(presentation)}
-      </p>
-      <p className="preparation-provenance">
-        {presentation.triggers.map(preparationTriggerLine).join(' · ')}
-      </p>
-      <section aria-labelledby="now-preparing-title">
-        <div className="preparation-section-heading">
-          <h3 id="now-preparing-title">{recoveryRequired ? 'Retained work' : 'Now preparing'}</h3>
-          <span>
-            {String(presentation.active_books.length + presentation.active_overflow)}{' '}
-            {recoveryRequired ? 'retained' : 'active'}
-          </span>
-        </div>
-        {presentation.active_books.length ? (
-          <ol className="preparation-active-books">
-            {presentation.active_books.map((book, index) => (
-              <li key={`${book.name}:${String(index)}`}>
-                <span className="library-book-mark" aria-hidden="true">
-                  {initials(book.name)}
-                </span>
-                <span>
-                  <strong>{book.name}</strong>
-                  <small>{book.stage}</small>
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p>
-            {recoveryRequired
-              ? 'No work is retained at the last confirmed refresh.'
-              : 'No book is active at the last confirmed refresh.'}
-          </p>
-        )}
-        {presentation.active_overflow ? (
-          <p>
-            {String(presentation.active_overflow)} more {recoveryRequired ? 'retained' : 'active'}{' '}
-            books follow in this run.
-          </p>
-        ) : null}
-        {presentation.active_books.length ? (
-          <small className="activity-backup-note">
-            A book appears in Works once it is prepared.
-          </small>
-        ) : null}
-      </section>
-      <section aria-labelledby="preparation-progress-title">
-        <div className="preparation-section-heading">
-          <div>
-            <h3 id="preparation-progress-title">Preparation progress</h3>
-            <p>
-              Each stage counts the books that first reached it in this run, and a book that could
-              not finish stops at its last stage; In this run counts them as they stand now.
-            </p>
-          </div>
-          {/*
-           * A rate is only a fact while the run is moving. A finished, paused
-           * or dismissed run has no current rate, and a reconnected page has
-           * no current anything -- printing 0.0 books/min there read as a
-           * performance fault rather than as silence.
-           */}
-          {!recoveryRequired &&
-          !reconnecting &&
-          (presentation.state === 'starting' || presentation.state === 'running') ? (
-            <strong>
-              {presentation.throughput_per_minute > 0
-                ? `${presentation.throughput_per_minute.toFixed(1)} books/min over the last five minutes`
-                : 'No book finished in the last five minutes'}
-            </strong>
-          ) : null}
-        </div>
-        <dl className="preparation-passage">
-          {preparationPassage.map(([field, label]) => (
-            <div key={field}>
-              <dt>{label}</dt>
-              <dd>
-                <progress
-                  aria-label={`${label}: ${String(presentation.passage[field])} of ${String(presentation.total)}`}
-                  max={Math.max(presentation.total, 1)}
-                  value={presentation.passage[field]}
-                />
-                <strong>
-                  {String(presentation.passage[field])} of {String(presentation.total)}
-                </strong>
-              </dd>
-            </div>
-          ))}
-          <div className="preparation-outcomes">
-            <dt>In this run</dt>
-            <dd>
-              <strong>{preparationScope(presentation, recoveryRequired)}</strong>
-            </dd>
-          </div>
-        </dl>
-      </section>
-      <section aria-labelledby="recent-completions-title">
-        <div className="preparation-section-heading">
-          <h3 id="recent-completions-title">Recent completions</h3>
-          <span>{String(outcomeTotal)} outcomes</span>
-        </div>
-        {presentation.recent_completions.length ? (
-          <ul className="preparation-completions">
-            {presentation.recent_completions.map((completion, index) => (
-              <li key={`${completion.name}:${String(completion.completed_at)}:${String(index)}`}>
-                <span>
-                  {completion.name}{' '}
-                  {/*
-                   * The link sits inside the name so it wraps with it, and the
-                   * name shown is the only thing this row has to search with.
-                   */}
-                  <Link
-                    to="/library"
-                    search={{ lens: 'all', q: boundedSearchName(completion.name) }}
-                  >
-                    Find in Works
-                  </Link>
-                </span>
-                <strong>
-                  {completion.outcome === 'ready' ? 'Prepared' : 'Stopped before finishing'}
-                </strong>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No terminal book has been reported yet.</p>
-        )}
-        {presentation.passage.failed > 0 ? (
-          <small className="activity-backup-note">
-            A book that could not finish is listed in Works under its library title, with its stage,
-            reason, next step and reference. If its library record has since changed, it is listed
-            as Preparation unavailable.
-          </small>
-        ) : null}
-      </section>
-      {presentation.dismissible ? (
-        // A pending dismissal is aria-disabled, not disabled, so focus stays on it
-        // while the command settles; recovery disables it outright.
-        <button
-          type="button"
-          disabled={recoveryRequired}
-          aria-disabled={dismissing || undefined}
-          aria-busy={dismissing || undefined}
-          onClick={() => {
-            if (!dismissing) onDismiss()
-          }}
-        >
-          {dismissing ? 'Dismissing…' : 'Dismiss preparation'}
-        </button>
-      ) : null}
-      {uncertain ? (
-        <p role="alert">
-          Dismissal could not be confirmed. This preparation is still shown as current; dismiss it
-          again if you still want to.
-        </p>
-      ) : null}
-    </div>
-  )
-}
-const decisionValue = (field: ReviewField) => {
-  if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
-    return field.descriptionAdvice.selected_advice.candidate.output.description
-  // A hold carried from an earlier case keeps the library's value (ADR-0085).
-  const selected = (field.humanDecision ?? (field.manualHold ? null : field.automaticDecision))
-    ?.selected_value
-  if (field.destination === 'cover') {
-    const candidates = field.coverConsideration?.candidates ?? []
-    const candidate = candidates.find((item) => item.artifactId === selected?.value)
-    return candidate?.incumbent || !selected
-      ? 'Current cover'
-      : candidate
-        ? (coverNames(candidates).get(candidate.reference) ?? 'Selected cover')
-        : 'Selected cover'
-  }
-  return valueText(
-    field.destination,
-    selected === null || selected === undefined ? field.currentValue : displayValue(selected.value),
-  )
-}
 // A recording's settled fill stays choosable without asking for review (#1249).
 const optionalChoice = (field: ReviewField) =>
   field.classification === 'owner_choosable' && choiceAvailable(field)
@@ -670,21 +169,6 @@ const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
   `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting for a recovery' : 'unavailable'}`
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
   outcome === 'owner_entered' || outcome === 'withdraw'
-const completionOutcome = (field: ReviewField) =>
-  authoredOwnerRecorded(field)
-    ? 'Advised description selected'
-    : field.humanDecision?.outcome === 'reject'
-      ? 'No action recorded'
-      : field.humanDecision?.outcome === 'keep_current'
-        ? 'Current value retained'
-        : field.humanDecision?.outcome === 'accept'
-          ? 'Proposed value selected'
-          : 'Recorded outcome'
-const choiceContext = (field: ReviewField, alternativeId: string | null) => {
-  const context = field.choiceContexts.find((item) => item.alternativeId === alternativeId)
-  return context && ownerContext(field, context)
-}
-
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
   'authentication',
@@ -726,793 +210,6 @@ const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
   return [...counts]
     .map(([label, count]) => (count > 1 ? `${String(count)} sources: ${label}` : label))
     .join(' · ')
-}
-
-// Two surfaces, one disclosure. The review comparison carries the protected
-// evidence footer -- one line, no subtitle -- while the work summary, which is
-// not a comparison, keeps naming what it consulted.
-function WorkSources({
-  outcomes,
-  comparison = false,
-}: {
-  outcomes: readonly ProviderOutcomeView[]
-  comparison?: boolean
-}) {
-  if (!outcomes.length) return null
-  const ledgerLabel = `${String(outcomes.length)} ${outcomes.length === 1 ? 'lookup recorded' : 'lookups recorded'} for this work`
-  return (
-    <details className="work-sources">
-      <summary>
-        {comparison ? (
-          <span>{ledgerLabel}</span>
-        ) : (
-          <>
-            <span>Sources</span>
-            <small>{ledgerLabel}</small>
-          </>
-        )}
-      </summary>
-      <ul>
-        {outcomes.map((outcome, index) => (
-          <li key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}>
-            <strong>{outcome.provider}</strong>
-            <b>{sourceStatusLabels[outcome.status]}</b>
-            <span>{outcome.reason}</span>
-            <small>
-              {lookupLabels[outcome.laneKind]} · {String(outcome.providerRequests)}{' '}
-              {outcome.providerRequests === 1 ? 'request' : 'requests'}
-            </small>
-          </li>
-        ))}
-      </ul>
-    </details>
-  )
-}
-
-// The evidence a work with no review case carries. It is recorded, retained,
-// and -- until this read -- reachable from nowhere in the browser: an audiobook
-// acquires no case, so `detail_url` on its row is the only route it has.
-// Read-only by construction: nothing here proposes, decides, or writes.
-function WorkEvidence({ detailUrl }: { detailUrl: string }) {
-  const { http } = useReviewContext()
-  const report = useQuery({
-    queryKey: ['library-report', detailUrl],
-    queryFn: (queryContext) =>
-      http.getReportDetail(detailUrl, queryContext.signal, queryWorkClass(queryContext)),
-    staleTime: 15_000,
-    retry: false,
-  })
-  if (report.isPending)
-    return (
-      <p role="status" className="library-work-summary-reason">
-        Loading recorded evidence…
-      </p>
-    )
-  if (report.isError)
-    return (
-      <p role="alert" className="library-work-summary-reason">
-        Recorded evidence could not be loaded.{' '}
-        <button type="button" onClick={() => void report.refetch()}>
-          Try again
-        </button>
-      </p>
-    )
-  const data = report.data
-  return (
-    <section className="library-work-evidence" aria-label="Recorded evidence">
-      <h3>Recorded evidence</h3>
-      <RecordingIdentityBasis
-        value={data.recordingIdentityBasis}
-        scope={data.audiobookReviewScope}
-        offered={[]}
-      />
-      {data.evidence.length === 0 ? (
-        <p role="status">No local evidence was recorded for this work.</p>
-      ) : (
-        <dl className="library-work-values">
-          {data.evidence.map((claim, index) => (
-            <div key={`${claim.kind}-${claim.basis}-${String(index)}`}>
-              <dt>
-                {claimKindLabels[claim.kind]}
-                {claim.role ? ` · ${claimRole(claim.role)}` : ''}
-              </dt>
-              <dd>
-                {/* Only a valid running time reads in hours and minutes; any
-                    other claim keeps its recorded text. */}
-                {(claim.kind === 'duration' && claim.state === 'valid'
-                  ? formatRunningTime(claim.value)
-                  : null) ?? claim.value}
-                {/* An oversized value is retained as its beginning only, so it
-                    says so rather than reading as the whole (#1290). */}
-                {claim.state === 'oversized' ? '…' : null}
-                <small>
-                  {claimBasisLabels[claim.basis]}
-                  {claim.state === 'valid' ? '' : ` · ${fieldStateLabels[claim.state]}`}
-                  {claim.state === 'oversized' ? ' · Only the beginning is shown' : null}
-                </small>
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {data.evidenceTruncated ? (
-        <p role="status">
-          Only the first {String(data.evidence.length)} recorded observations are shown.
-        </p>
-      ) : null}
-      <MediaHealth observations={data.mediaHealth} />
-      <p className="library-work-cover-presence">
-        {data.coverPresent
-          ? `Embedded cover art is present${
-              data.coverSurface ? ` (${audioSurfaceLabels[data.coverSurface]})` : ''
-            }.`
-          : 'No embedded cover art was recorded.'}
-      </p>
-      {data.chapters.length ? (
-        <details className="library-work-chapters">
-          <summary>
-            Chapters ({String(data.chapters.length)}
-            {data.chaptersTruncated ? ', truncated' : ''})
-          </summary>
-          <ol>
-            {data.chapters.map((chapter) => (
-              <li key={chapter.ordinal}>
-                {chapter.title ?? `Chapter ${String(chapter.ordinal)}`}
-                <small>{chapterSpan(chapter.startMilliseconds, chapter.endMilliseconds)}</small>
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
-    </section>
-  )
-}
-
-function WorkSummary({ work }: { work: LibraryWorkView }) {
-  const summary = work.summary
-  const evidenceUrl = reportEvidenceUrl(work)
-  return (
-    <>
-      <header className="selected-work-header" tabIndex={-1} data-route-focus="true">
-        <BookMark title={work.title} cover={work.cover} />
-        <div>
-          <h2>{work.title}</h2>
-          <p>
-            {authorLine(work)} · {work.libraryDisplayName ?? work.library} ·{' '}
-            {mediaKindLabels[work.mediaKind]}
-          </p>
-        </div>
-      </header>
-      <p className="library-work-summary-reason" role="status">
-        {summary?.reason ?? 'No review decision is recorded for this work.'}
-      </p>
-      {work.preparation ? (
-        <aside className="comparison-notice" aria-label="Preparation condition">
-          <p>
-            <strong>
-              {preparationStatusLabels[work.preparation.status]}{' '}
-              {preparationStageLabels[work.preparation.stage]}
-            </strong>
-          </p>
-          <p>
-            {work.preparation.reason} {work.preparation.recovery}
-          </p>
-        </aside>
-      ) : null}
-      {summary?.fields.length ? (
-        <dl className="library-work-values">
-          {summary.fields.map((field) => (
-            <div key={field.destination}>
-              <dt>{destinationLabel(field.destination)}</dt>
-              <dd>
-                {field.state === 'value' ? valueText(field.destination, field.value) : field.value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-      {evidenceUrl ? <WorkEvidence detailUrl={evidenceUrl} /> : null}
-      <WorkSources outcomes={work.preparationOutcomes} />
-    </>
-  )
-}
-
-function ContextValue({
-  field,
-  expanded,
-  toggle,
-}: {
-  field: ReviewField
-  expanded: boolean
-  toggle: () => void
-}) {
-  const context = choiceContext(field, null)
-  const evidenceId = `context-evidence-${field.destination}`
-  return (
-    <section
-      className="context-value"
-      aria-label={`${destinationLabel(field.destination)} current value`}
-    >
-      <dl>
-        <div>
-          <dt>Current value</dt>
-          <dd>
-            {field.destination === 'description' ? (
-              <DescriptionText key={field.currentValue} value={field.currentValue} />
-            ) : (
-              valueText(field.destination, field.currentValue)
-            )}
-          </dd>
-        </div>
-      </dl>
-      <button
-        type="button"
-        className="context-evidence-toggle"
-        aria-controls={evidenceId}
-        aria-expanded={expanded}
-        onClick={toggle}
-      >
-        {expanded ? 'Hide evidence' : 'Evidence'}
-      </button>
-      {expanded ? (
-        <ChoiceEvidencePanel
-          context={context}
-          evidenceId={evidenceId}
-          label={`${destinationLabel(field.destination)} current value`}
-        />
-      ) : null}
-    </section>
-  )
-}
-
-function emptyCurrentValue(field: ReviewField) {
-  return field.currentRaw == null || (Array.isArray(field.currentRaw) && !field.currentRaw.length)
-}
-
-function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
-  const decision = field.automaticDecision
-  if (
-    field.humanDecision !== null ||
-    decision?.outcome !== 'candidate' ||
-    !field.notices.includes('provider_consensus_contributor_display')
-  ) {
-    return null
-  }
-  return (
-    <p>
-      Providers chose {decisionValue(field)}; normalized from {field.currentValue}.
-    </p>
-  )
-}
-
-function DescriptionAutomaticStatement({ field }: { field: ReviewField }) {
-  const decision = field.automaticDecision
-  if (
-    field.humanDecision !== null ||
-    field.destination !== 'description' ||
-    decision?.outcome !== 'candidate' ||
-    field.proposedValues.length < 2
-  ) {
-    return null
-  }
-  const providers = field.automaticSelectionSources ?? []
-  if (!providers.length) return null
-  return (
-    <p>Selected automatically from {providers.join(' and ')} after matching the target work.</p>
-  )
-}
-
-function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewField }) {
-  if (
-    field.humanDecision !== null ||
-    field.destination !== 'isbn' ||
-    field.automaticDecision?.outcome !== 'candidate' ||
-    !field.notices.includes('verified_manifestation_isbn')
-  ) {
-    return null
-  }
-  return <p>Deterministic identity evidence bound this ISBN to this file&apos;s work.</p>
-}
-
-function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
-  const providers = field.automaticSelectionSources ?? []
-  if (
-    field.humanDecision !== null ||
-    field.destination !== 'series' ||
-    field.automaticDecision?.outcome !== 'candidate' ||
-    !providers.length ||
-    !emptyCurrentValue(field)
-  ) {
-    return null
-  }
-  const memberships = field.automaticDecision.selected_value?.value
-  const hasNumber =
-    Array.isArray(memberships) &&
-    memberships.some(
-      (membership: unknown) =>
-        typeof membership === 'object' &&
-        membership !== null &&
-        'sequence' in membership &&
-        typeof membership.sequence === 'string',
-    )
-  return (
-    <p>
-      Selected from {providers.join(' and ')} to fill an empty Series field under a qualified
-      automatic policy.{' '}
-      {hasNumber
-        ? 'Numbering is supplied by the provider and is not independently verified for this book.'
-        : 'No series number was supplied.'}
-    </p>
-  )
-}
-
-function NarratorsAutomaticStatement({ field }: { field: ReviewField }) {
-  const providers = field.automaticSelectionSources ?? []
-  if (
-    field.humanDecision !== null ||
-    field.destination !== 'narrators' ||
-    field.automaticDecision?.outcome !== 'candidate' ||
-    !providers.length ||
-    !emptyCurrentValue(field)
-  ) {
-    return null
-  }
-  return (
-    <p>
-      Selected from {providers.join(' and ')} — the same cast in each — to fill an empty Narrators
-      field under a qualified automatic policy.
-    </p>
-  )
-}
-
-function AsinAutomaticStatement({ field }: { field: ReviewField }) {
-  const providers = field.automaticSelectionSources ?? []
-  if (
-    field.humanDecision !== null ||
-    field.destination !== 'asin' ||
-    field.automaticDecision?.outcome !== 'candidate' ||
-    !providers.length ||
-    !emptyCurrentValue(field)
-  ) {
-    return null
-  }
-  return (
-    <p>
-      Selected from {providers.join(' and ')} to fill an empty ASIN field under a qualified
-      automatic policy; the runtime gate corroborated that this recording is that product.
-    </p>
-  )
-}
-
-// F59's owner controls (ADR-0085): enter a value, choose genres and withdraw a
-// decision. Going back to an earlier value is choosing it again, from the same
-// suggestions. Each is offered only where the store would accept it now; the
-// store still decides, and a refusal is said here, beside the control used.
-type OwnerOutcome = 'owner_entered' | 'withdraw'
-// The open field's heading, the place focus returns to when the control that
-// was used is gone.
-const focusFieldHeading = () => {
-  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h3')
-  heading?.setAttribute('tabindex', '-1')
-  heading?.focus({ preventScroll: true })
-}
-const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
-const quotedValue = (value: { value: unknown } | null | undefined) =>
-  value ? `“${displayValue(value.value)}”` : 'nothing'
-const withdrawCopy = {
-  automatic_hold:
-    'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
-  in_progress:
-    'This decision is being written to your library. You can change it once the write finishes.',
-  written: writtenRefusal,
-} as const
-
-function OwnerControls({
-  field,
-  disabled,
-  progress,
-  status,
-  failed,
-  submit,
-}: {
-  field: ReviewField
-  disabled: boolean
-  progress: { command: DecisionCommand; phase: 'recording' | 'confirmed' | 'failed' } | null
-  status: string
-  failed: boolean
-  submit: (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => string
-}) {
-  const control = field.ownerControl ?? null
-  const label = destinationLabel(field.destination)
-  const [mode, setMode] = useState<'idle' | 'entry' | 'subset'>('idle')
-  const [draft, setDraft] = useState('')
-  const [typed, setTyped] = useState(false)
-  const [chosen, setChosen] = useState<readonly string[]>([])
-  const [problem, setProblem] = useState('')
-  // The notice or refusal the owner has moved past by opening or closing a
-  // form; it stays unsaid until the next command.
-  const [dismissed, setDismissed] = useState<string | null>(null)
-  const inputId = useId()
-  const countId = useId()
-  const problemId = useId()
-  const input = useRef<HTMLInputElement>(null)
-  const subsetGroup = useRef<HTMLFieldSetElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const recorded = useRef<HTMLParagraphElement>(null)
-  const notice = useRef<HTMLParagraphElement>(null)
-  const statusLine = useRef<HTMLParagraphElement>(null)
-  const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
-  const busy = progress?.phase === 'recording'
-  const decision = field.humanDecision
-  // Any standing decision is changed, not entered afresh (D5).
-  const changing = decision !== null && decision.outcome !== 'withdraw'
-  const refocus = useRef<RefObject<HTMLButtonElement | null> | null>(null)
-  useEffect(() => {
-    if (mode === 'entry') input.current?.focus()
-    if (mode === 'subset') subsetGroup.current?.querySelector('input')?.focus()
-    if (mode === 'idle') refocus.current?.current?.focus({ preventScroll: true })
-    refocus.current = null
-  }, [mode])
-  // A settled command leaves focus on something named: the recorded value,
-  // the withdrawal's own outcome line where its controls were (#1365), or,
-  // when a refusal removed the control that was used, the refusal itself.
-  useEffect(() => {
-    const command = sent.current
-    if (!command) return
-    const own = progress?.command.idempotencyKey === command.key ? progress : null
-    if (own?.phase === 'recording') return
-    sent.current = null
-    if (own?.phase !== 'confirmed') {
-      requestAnimationFrame(() => {
-        if (!document.activeElement || document.activeElement === document.body)
-          notice.current?.focus({ preventScroll: true })
-      })
-      return
-    }
-    setMode('idle')
-    requestAnimationFrame(() => {
-      ;(command.outcome === 'withdraw'
-        ? statusLine.current
-        : (recorded.current ?? notice.current)
-      )?.focus({ preventScroll: true })
-    })
-  }, [progress])
-  if (!control) return null
-  const { entry, subset } = control
-  const writing = control.withdraw === 'in_progress'
-  const blocked = disabled || busy
-  const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => {
-    // The ref is the guard a second press meets before React re-renders.
-    if (blocked || sent.current !== null) return
-    setProblem('')
-    setDismissed(null)
-    sent.current = { key: submit(outcome, value), outcome }
-  }
-  const close = (target: RefObject<HTMLButtonElement | null>) => {
-    refocus.current = target
-    setMode('idle')
-    setProblem('')
-    setDismissed(status)
-  }
-  const escape = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    close(trigger)
-  }
-  const openEntry = () => {
-    const recordedText = decision?.selected_value?.value
-    setDraft(changing && typeof recordedText === 'string' ? recordedText : '')
-    setTyped(false)
-    setProblem('')
-    setDismissed(status)
-    setMode('entry')
-  }
-  const openSubset = () => {
-    const recordedList = decision?.selected_value?.value
-    setChosen(
-      changing && Array.isArray(recordedList)
-        ? (recordedList as string[])
-        : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? []),
-    )
-    setProblem('')
-    setDismissed(status)
-    setMode('subset')
-  }
-  const recordEntry = (event: SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!entry || blocked) return
-    const value = ownerText(draft)
-    setDraft(value)
-    if (!value) setProblem('Enter a value first.')
-    else if (Array.from(value).length > entry.maxCharacters)
-      setProblem(`Use up to ${String(entry.maxCharacters)} characters.`)
-    else if (value === field.currentRaw) setProblem('That is already the current value.')
-    else send('owner_entered', { kind: 'text', value })
-  }
-  const recordSubset = (event: SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!subset || blocked) return
-    // Raw values in the store's union order, never display text.
-    const value = subset.options
-      .map((option) => option.value)
-      .filter((option) => chosen.includes(option))
-    const current = Array.isArray(field.currentRaw) ? (field.currentRaw as unknown[]) : []
-    if (!value.length) setProblem('Choose at least one genre.')
-    else if (value.length > subset.maxItems)
-      setProblem(`Choose up to ${String(subset.maxItems)} genres.`)
-    else if (value.length === current.length && value.every((item, i) => item === current[i]))
-      setProblem('Those are already the current genres.')
-    else send('owner_entered', { kind: 'list', value })
-  }
-  const recordedCopy =
-    decision?.outcome === 'owner_entered'
-      ? Array.isArray(decision.selected_value?.value)
-        ? `You chose ${String(decision.selected_value.value.length)} ${decision.selected_value.value.length === 1 ? 'genre' : 'genres'}.`
-        : `You entered ${quotedValue(decision.selected_value)}.`
-      : null
-  // A refusal is said in one place: beside the input while a form is open,
-  // and at the end of the section otherwise. Each place is mounted empty.
-  const shown = status === dismissed ? '' : status
-  const refusal = problem || (failed ? shown : '')
-  const refusalNotice = (
-    <p ref={notice} id={problemId} tabIndex={-1} className="owner-notice" role="alert">
-      {refusal}
-    </p>
-  )
-  return (
-    <section className="owner-controls" aria-label={`Your value for ${label}`}>
-      {recordedCopy ? (
-        <p ref={recorded} tabIndex={-1} className="owner-recorded">
-          {recordedCopy}
-        </p>
-      ) : null}
-      {writing ? <p className="owner-note">{withdrawCopy.in_progress}</p> : null}
-      {entry && mode !== 'entry' && !writing ? (
-        <button ref={trigger} type="button" className="owner-trigger" onClick={openEntry}>
-          {changing ? 'Change' : 'Enter a value'}
-        </button>
-      ) : null}
-      {subset && mode !== 'subset' && !writing ? (
-        <button ref={trigger} type="button" className="owner-trigger" onClick={openSubset}>
-          {changing ? 'Change' : 'Choose genres'}
-        </button>
-      ) : null}
-      {entry && mode === 'entry' ? (
-        <form className="owner-entry" onSubmit={recordEntry} onKeyDown={escape} noValidate>
-          <label htmlFor={inputId}>{`Your value for ${label}`}</label>
-          <input
-            ref={input}
-            id={inputId}
-            type="text"
-            value={draft}
-            autoComplete="off"
-            aria-invalid={refusal ? true : undefined}
-            aria-describedby={`${countId} ${problemId}`}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setTyped(true)
-            }}
-            onBlur={() => setDraft((value) => ownerText(value))}
-          />
-          <small id={countId} className="owner-count" aria-live="polite">
-            {typed
-              ? `${String(Array.from(draft).length)} of ${String(entry.maxCharacters)} characters`
-              : ''}
-          </small>
-          {refusalNotice}
-          {entry.suggestions.length ? (
-            <div className="owner-suggestions">
-              {entry.suggestions.map((suggestion) => (
-                <button
-                  key={suggestion.rule}
-                  type="button"
-                  onClick={() => {
-                    setDraft(suggestion.value)
-                    setTyped(true)
-                    input.current?.focus()
-                  }}
-                >
-                  {suggestion.rule === 'previous' ? 'Use previous value ' : 'Use '}
-                  {/* Library text may break anywhere; the copy around it never does. */}
-                  <span className="owner-suggestion-value">“{suggestion.value}”</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="owner-actions">
-            <button type="submit" aria-disabled={blocked}>
-              {busy ? 'Recording…' : 'Record this value'}
-            </button>
-            <button type="button" onClick={() => close(trigger)}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : null}
-      {subset && mode === 'subset' ? (
-        <form className="owner-entry" onSubmit={recordSubset} onKeyDown={escape} noValidate>
-          <fieldset ref={subsetGroup} className="owner-subset" aria-describedby={problemId}>
-            <legend>Choose genres</legend>
-            {subset.options.map((option) => (
-              <label key={option.value} className="owner-option">
-                <input
-                  type="checkbox"
-                  checked={chosen.includes(option.value)}
-                  onChange={(event) => {
-                    const checked = event.target.checked
-                    setChosen((values) =>
-                      checked
-                        ? [...values, option.value]
-                        : values.filter((value) => value !== option.value),
-                    )
-                  }}
-                />
-                <span>{option.value}</span>
-                {/* One unit, so a narrow row wraps its tags together. */}
-                <span className="owner-tags">
-                  {option.current ? <StatusPill>Current</StatusPill> : null}
-                  {option.proposed ? <StatusPill>Proposed</StatusPill> : null}
-                  {option.previous ? <StatusPill>Previous</StatusPill> : null}
-                </span>
-              </label>
-            ))}
-          </fieldset>
-          {refusalNotice}
-          <div className="owner-actions">
-            <button type="submit" aria-disabled={blocked}>
-              {busy ? 'Recording…' : 'Record these genres'}
-            </button>
-            <button type="button" onClick={() => close(trigger)}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : null}
-      {control.withdraw === 'available' ? (
-        <button
-          type="button"
-          className="owner-trigger"
-          aria-disabled={blocked}
-          onClick={() => send('withdraw', null)}
-        >
-          {busy && progress.command.outcome === 'withdraw' ? 'Withdrawing…' : 'Withdraw'}
-        </button>
-      ) : control.withdraw &&
-        control.withdraw !== 'in_progress' &&
-        // The refusal already says it in the same words.
-        !(control.withdraw === 'written' && refusal === writtenRefusal) ? (
-        <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
-      ) : null}
-      {mode === 'idle' ? refusalNotice : null}
-      <p ref={statusLine} tabIndex={-1} className="owner-status" role="status">
-        {refusal || failed ? '' : shown}
-      </p>
-    </section>
-  )
-}
-
-function RecordedOutcome({
-  field,
-  mediaKind,
-  expanded,
-  toggle,
-}: {
-  field: ReviewField
-  mediaKind: string
-  expanded: boolean
-  toggle: () => void
-}) {
-  const decision = field.humanDecision ?? field.automaticDecision
-  if (!decision) return null
-  const proposed = field.proposedValues.findIndex((value) =>
-    sameSelectedValue(value, decision.selected_value),
-  )
-  const selectedProposed =
-    (decision.outcome === 'accept' || decision.outcome === 'candidate') && proposed >= 0
-  const context = selectedAutomaticLanguageForm(field)
-    ? field.choiceContexts.find((item) => item.recommendation === 'recommended')
-    : selectedProposed
-      ? choiceContext(
-          field,
-          field.choiceContexts.filter((item) => item.selection === 'proposed')[proposed]
-            ?.alternativeId ?? null,
-        )
-      : choiceContext(field, null)
-  const combinedTags = combinedAutomaticTags(field, mediaKind)
-  const evidenceId = `recorded-evidence-${field.destination}`
-  const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
-  return (
-    <section
-      className="recorded-outcome"
-      aria-label={`${destinationLabel(field.destination)} recorded outcome`}
-    >
-      <p>
-        <strong>
-          {field.humanDecision === null && field.automaticDecision !== null && !field.manualHold
-            ? 'Resolved automatically'
-            : completionOutcome(field)}
-        </strong>
-      </p>
-      <dl>
-        {accepted ? (
-          <div>
-            <dt>Chosen value</dt>
-            <dd>
-              {field.destination === 'description' ? (
-                <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
-              ) : (
-                decisionValue(field)
-              )}
-            </dd>
-          </div>
-        ) : (
-          <div>
-            <dt>
-              {decision.outcome === 'keep_current'
-                ? 'Retained value'
-                : decision.outcome === 'owner_entered'
-                  ? 'Your value'
-                  : 'Current value'}
-            </dt>
-            <dd>
-              {field.destination === 'description' ? (
-                <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
-              ) : (
-                decisionValue(field)
-              )}
-            </dd>
-          </div>
-        )}
-      </dl>
-      {selectedAutomaticLanguageForm(field) ? (
-        <p>The policy chose this observed form of the equivalent language evidence.</p>
-      ) : null}
-      {combinedTags ? (
-        <p>Compatible source tags were combined, retaining any existing tags.</p>
-      ) : null}
-      <ProviderConsensusAutomaticStatement field={field} />
-      <DescriptionAutomaticStatement field={field} />
-      <SeriesAutomaticStatement field={field} />
-      <NarratorsAutomaticStatement field={field} />
-      <AsinAutomaticStatement field={field} />
-      <VerifiedManifestationIsbnAutomaticStatement field={field} />
-      <button
-        type="button"
-        className="context-evidence-toggle"
-        aria-controls={evidenceId}
-        aria-expanded={expanded}
-        onClick={toggle}
-      >
-        {expanded ? 'Hide evidence' : 'Evidence'}
-      </button>
-      {expanded ? (
-        combinedTags ? (
-          <div id={evidenceId}>
-            {field.choiceContexts
-              .filter((item) => item.evidence.length > 0)
-              .map((item, index) => (
-                <ChoiceEvidencePanel
-                  key={item.alternativeId ?? 'current'}
-                  context={ownerContext(field, item)}
-                  evidenceId={`${evidenceId}-${String(index)}`}
-                  label={
-                    item.selection === 'current'
-                      ? 'Retained tags'
-                      : `Source tags ${String(index + 1)}`
-                  }
-                />
-              ))}
-          </div>
-        ) : (
-          <ChoiceEvidencePanel
-            context={context}
-            evidenceId={evidenceId}
-            label={`${destinationLabel(field.destination)} recorded outcome`}
-          />
-        )
-      ) : null}
-    </section>
-  )
 }
 
 export default function LibraryPage({
@@ -1560,118 +257,8 @@ export default function LibraryPage({
       ? null
       : (preparationState.data?.presentation ?? null)
   const preparationSelected = presentation !== null && search.preparation === presentation.run_id
-  const presentationVersion = presentation
-    ? JSON.stringify({
-        run_id: presentation.run_id,
-        state: presentation.state,
-        triggers: presentation.triggers.map(({ trigger, accepted_count }) => ({
-          trigger,
-          accepted_count,
-        })),
-        passage: presentation.passage,
-        active_books: presentation.active_books,
-        active_overflow: presentation.active_overflow,
-        recent_completions: presentation.recent_completions.map(({ name, outcome }) => ({
-          name,
-          outcome,
-        })),
-        total: presentation.total,
-        dismissible: presentation.dismissible,
-        now: presentation.now,
-      })
-    : null
-  const adoptedPresentationVersion = useRef<string | null>(null)
-  const [animatedPresentationVersion, setAnimatedPresentationVersion] = useState<string | null>(
-    null,
-  )
-  useEffect(() => {
-    if (presentationVersion === null) return
-    if (adoptedPresentationVersion.current === null) {
-      adoptedPresentationVersion.current = presentationVersion
-      return
-    }
-    if (adoptedPresentationVersion.current === presentationVersion) return
-    adoptedPresentationVersion.current = presentationVersion
-    if (!preparationSelected) return
-    let timer: number | null = null
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      setAnimatedPresentationVersion(presentationVersion)
-      timer = window.setTimeout(() => setAnimatedPresentationVersion(null), 400)
-    })
-    return () => {
-      cancelled = true
-      if (timer !== null) window.clearTimeout(timer)
-    }
-  }, [preparationSelected, presentationVersion])
+  const animateChange = usePreparationChange(presentation, preparationSelected)
   const currentSearch = useRef(search)
-  const routeNavigationGeneration = useRef(0)
-  const mounted = useRef(false)
-  useLayoutEffect(() => {
-    mounted.current = true
-    const unsubscribe = router.subscribe('onBeforeNavigate', () => {
-      routeNavigationGeneration.current += 1
-    })
-    return () => {
-      mounted.current = false
-      unsubscribe()
-    }
-  }, [router])
-  const dismissalCleanupSuppression = useRef<{
-    runId: string
-    navigationGeneration: number
-    locationRevision: string
-    searchIdentity: string
-  } | null>(null)
-  const dismissPreparation = useMutation({
-    mutationFn: (request: {
-      runId: string
-      navigationGeneration: number
-      locationRevision: string
-      searchIdentity: string
-    }) => http.dismissPreparation(request.runId),
-    retry: false,
-    // An uncertain dismissal may still have committed, so the preparation read
-    // decides; a refusal changed nothing and keeps the confirmed state.
-    onError: (error) =>
-      uncertainWriteOutcome(error)
-        ? invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
-        : undefined,
-    onSuccess: async (value, request) => {
-      dismissalCleanupSuppression.current = request
-      if (!preparationState.adoptDismissal(request.runId, value)) {
-        if (dismissalCleanupSuppression.current === request)
-          dismissalCleanupSuppression.current = null
-        return
-      }
-      const currentLocation = router.state.location
-      const currentSearch = currentLocation.search as LibrarySearch
-      if (
-        !mounted.current ||
-        routeNavigationGeneration.current !== request.navigationGeneration ||
-        (currentLocation.state.__TSR_key ?? currentLocation.state.key ?? currentLocation.href) !==
-          request.locationRevision ||
-        librarySearchIdentity(currentSearch) !== request.searchIdentity ||
-        currentSearch.preparation !== request.runId
-      ) {
-        if (dismissalCleanupSuppression.current === request)
-          dismissalCleanupSuppression.current = null
-        return
-      }
-      await navigate({
-        replace: true,
-        search: (current) => {
-          if (current.preparation !== request.runId) return current
-          const next = { ...current }
-          delete next.preparation
-          return next
-        },
-      })
-      if (dismissalCleanupSuppression.current === request)
-        dismissalCleanupSuppression.current = null
-    },
-  })
   const pendingSearchQuery = useRef<{ q: string | null; attention?: boolean } | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
   const searchCommitTimer = useRef<number | null>(null)
@@ -1880,16 +467,17 @@ export default function LibraryPage({
     select: (state) =>
       state.location.state.__TSR_key ?? state.location.state.key ?? state.location.href,
   })
-  useLayoutEffect(() => {
-    const suppression = dismissalCleanupSuppression.current
-    if (
-      suppression !== null &&
-      (suppression.locationRevision !== locationRevision ||
-        suppression.searchIdentity !== searchIdentity ||
-        suppression.runId !== search.preparation)
-    )
-      dismissalCleanupSuppression.current = null
-  }, [locationRevision, search.preparation, searchIdentity])
+  const preparationDismissal = usePreparationDismissal({
+    http,
+    queryClient,
+    router,
+    navigate,
+    adoptDismissal: preparationState.adoptDismissal,
+    preparation: search.preparation,
+    locationRevision,
+    searchIdentity,
+  })
+  const { cleaningUp } = preparationDismissal
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   useEffect(() => {
@@ -1952,7 +540,7 @@ export default function LibraryPage({
   }, [unresolvableWork, navigate])
   useEffect(() => {
     if (!search.preparation || preparationSelected || !preparationState.confirmed) return
-    if (dismissalCleanupSuppression.current?.runId === search.preparation) return
+    if (cleaningUp(search.preparation)) return
     void navigate({
       replace: true,
       search: (current) => {
@@ -1961,7 +549,7 @@ export default function LibraryPage({
         return next
       },
     })
-  }, [navigate, preparationSelected, preparationState.confirmed, search.preparation])
+  }, [cleaningUp, navigate, preparationSelected, preparationState.confirmed, search.preparation])
   const hasSelection = preparationSelected || Boolean(search.preview) || selectedWork !== undefined
   const selectedLibraryWork = search.preview
     ? currentWorks.find((work) => work.reviewCaseId === search.preview)
@@ -3678,21 +2266,10 @@ export default function LibraryPage({
               presentation={presentation}
               reconnecting={preparationState.reconnecting}
               recoveryRequired={preparationState.data?.recovery_required ?? false}
-              animateChange={animatedPresentationVersion === presentationVersion}
-              dismissing={dismissPreparation.isPending}
-              uncertain={
-                dismissPreparation.isError &&
-                dismissPreparation.variables.runId === presentation.run_id &&
-                uncertainWriteOutcome(dismissPreparation.error)
-              }
-              onDismiss={() =>
-                dismissPreparation.mutate({
-                  runId: presentation.run_id,
-                  navigationGeneration: routeNavigationGeneration.current,
-                  locationRevision,
-                  searchIdentity,
-                })
-              }
+              animateChange={animateChange}
+              dismissing={preparationDismissal.dismissing}
+              uncertain={preparationDismissal.uncertain(presentation.run_id)}
+              onDismiss={() => preparationDismissal.dismiss(presentation.run_id)}
             />
           ) : selectedWork ? (
             <WorkSummary work={selectedWork} />

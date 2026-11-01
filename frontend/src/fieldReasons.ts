@@ -148,3 +148,7 @@ export const selectedAutomaticLanguageForm = (field: ReviewField) =>
   !field.proposedValues.some((value) =>
     sameSelectedValue(value, field.automaticDecision?.selected_value),
   )
+export const choiceContext = (field: ReviewField, alternativeId: string | null) => {
+  const context = field.choiceContexts.find((item) => item.alternativeId === alternativeId)
+  return context && ownerContext(field, context)
+}
