@@ -3287,7 +3287,7 @@ export default function LibraryPage({
           className="attention-toggle"
           type="button"
           aria-expanded={search.attention === 'open'}
-          onClick={() => changeAttention(search.attention !== 'open')}
+          onClick={() => (search.attention === 'open' ? closeAttention() : changeAttention(true))}
         >
           Attention
           {summaryAttention !== undefined || !summary.isError ? (

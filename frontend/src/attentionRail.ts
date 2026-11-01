@@ -39,8 +39,28 @@ export const useAttentionRail = (
         // At 760px and below closing over a selected work reveals that work,
         // so focus stays on its header there rather than the toggle above it.
         if (opened) {
-          heading.current?.focus({ preventScroll: true })
-          heading.current?.scrollIntoView({ block: 'nearest' })
+          const target = heading.current
+          target?.focus({ preventScroll: true })
+          // The page scrolls itself rather than through scrollIntoView: in
+          // headless Chromium a close that lands about a frame after the
+          // heading's scrollIntoView can stall the renderer (#1567). This is
+          // the same nearest reveal, clear of the page's scroll padding and so
+          // of the masthead. A drawer is fixed with its heading at its top,
+          // where a page scroll cannot reach it.
+          if (
+            target &&
+            !(typeof window.matchMedia === 'function' && window.matchMedia(drawerQuery).matches)
+          ) {
+            const bounds = target.getBoundingClientRect()
+            const padding = getComputedStyle(document.documentElement)
+            const top = parseFloat(padding.scrollPaddingTop) || 0
+            const bottom = parseFloat(padding.scrollPaddingBottom) || 0
+            const reveal =
+              bounds.top < top
+                ? bounds.top - top
+                : Math.max(0, bounds.bottom - (window.innerHeight - bottom))
+            if (reveal) window.scrollBy({ top: reveal })
+          }
         } else if (
           !active ||
           active === document.body ||
