@@ -23,7 +23,9 @@ unkilled.
 `f`, `C.m` selects method `m` of class `C`, and a bare `C` selects every method
 of `C`. A name that matches no mutant the run scanned is refused, so a typo
 cannot pass as a function with nothing to kill. `--dry-run` prints the
-selection and runs nothing.
+selection, before `--limit` and before skipping recorded verdicts, and runs
+nothing. Names are not tied to a module: narrow with `--only` when two
+modules define the same name.
 """
 
 from __future__ import annotations
@@ -201,7 +203,7 @@ def main() -> int:
         scanned.extend((module, name) for name in MUTANT.findall(source))
 
     if arguments.functions:
-        names = {name.strip() for name in arguments.functions.split(",") if name}
+        names = {n.strip() for n in arguments.functions.split(",") if n.strip()}
         # Names are checked against every scanned mutant, before
         # `--survivors-from` narrows the list: a sample holding no survivor of
         # a named function is not a misspelt name.

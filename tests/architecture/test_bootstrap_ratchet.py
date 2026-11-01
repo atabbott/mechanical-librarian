@@ -795,9 +795,9 @@ def test_def_counts_are_exact_both_ways() -> None:
     ]
 
 
-def test_passing_the_review_band_fails_until_the_owner_resets_it() -> None:
-    assert review_band_problems(4871, 4571, 300) == []
-    (problem,) = review_band_problems(4872, 4571, 300)
+def test_passing_the_review_band_fails_until_an_owner_review() -> None:
+    assert review_band_problems(4872, 4572, 300) == []
+    (problem,) = review_band_problems(4873, 4572, 300)
     assert "owner review required" in problem
 
 
