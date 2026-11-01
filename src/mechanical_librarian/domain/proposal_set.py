@@ -1384,7 +1384,6 @@ def evaluate_report(
     targets = canonical_target_fields(report.target.fields)
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
-    decided_title_kept = False
     title_associations: dict[str, str] = {}
     work_only = report.audio is not None and not admitted_audiobook_identity(report)
     for destination in TargetDestination:
@@ -1559,16 +1558,17 @@ def evaluate_report(
             result = _narrator_corroboration_guard(report, result)
         # Values that never name this item still decide the outcome above, so
         # leaving them out can only narrow it; they are just not offered (#1497).
-        if destination is TargetDestination.TITLE:
-            # Combinations read whether the title was kept as decided, before
-            # anything was left out, so a series fill cannot ride on it.
-            decided_title_kept = (
-                _apply_policy_destination(result, ignored).outcome
-                is ProposalOutcome.KEEP
-            )
         unoffered = _unoffered_references(report, destination)
         if unoffered:
-            result = _withhold_unoffered(result, unoffered, targets[destination])
+            # The bibliographic combinations below read whether the title is
+            # kept, so a title left with only its current value is kept only
+            # after them; nothing can ride on that keep (#1497).
+            result = _withhold_unoffered(
+                result,
+                unoffered,
+                targets[destination],
+                keep_alone=destination is not TargetDestination.TITLE,
+            )
             if destination in observed_by_destination:
                 observed_by_destination[destination] = tuple(
                     value
@@ -1587,7 +1587,10 @@ def evaluate_report(
     # A title the evidence keeps lets a same-name series stand beside it, even
     # where the work route masks that title below (#1253); an ignored title
     # leaves the current one in place, so it counts as kept.
-    title_kept = decided_title_kept or TargetDestination.TITLE in ignored
+    title_kept = (
+        results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+        or TargetDestination.TITLE in ignored
+    )
     if work_only:
         # Book evidence answers only the book's own fields; the subtitle stays
         # out because a recording's subtitle is edition evidence, and a title
@@ -1634,6 +1637,10 @@ def evaluate_report(
         result = results[destination]
         if result.alternatives and result.reasons != (EVIDENCE_LED_TITLE_REASON,):
             results[destination] = _bibliographic_unresolved(result)
+    results[TargetDestination.TITLE] = _keep_alone_title(
+        results[TargetDestination.TITLE],
+        _unoffered_references(report, TargetDestination.TITLE),
+    )
     ordered = tuple(results[value] for value in TargetDestination)
     if resolved_policy_id is None:
         # The production default is a real resolved built-in profile for this
@@ -1760,8 +1767,38 @@ def _rotated_local_author(value: str, local: set[str]) -> bool:
     )
 
 
+def _keep_alone_title(
+    result: ProposalResult, unoffered: frozenset[str]
+) -> ProposalResult:
+    """Keep a title whose only choice left is its current value (#1497)."""
+    if (
+        not unoffered
+        or result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or result.reasons
+        not in {("competing_evidence",), ("isbn_title_material_conflict",)}
+        or not result.alternatives
+        or any(
+            value.assessment is not ProposalAssessment.PRESERVES_TARGET
+            for value in result.alternatives
+        )
+    ):
+        return result
+    return ProposalResult(
+        result.destination,
+        ProposalOutcome.KEEP,
+        result.alternatives,
+        None,
+        ("positive_preservation_evidence",),
+        result.dependencies,
+    )
+
+
 def _withhold_unoffered(
-    result: ProposalResult, unoffered: frozenset[str], target: TargetField
+    result: ProposalResult,
+    unoffered: frozenset[str],
+    target: TargetField,
+    *,
+    keep_alone: bool = True,
 ) -> ProposalResult:
     """Leave out alternatives only unoffered claims support, never widening."""
     kept = tuple(
@@ -1790,6 +1827,17 @@ def _withhold_unoffered(
     ):
         # Nothing else is left to choose: the current value stays, which is
         # no write (#1497).
+        if kept and not keep_alone:
+            return ProposalResult(
+                result.destination,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                kept,
+                None,
+                result.reasons
+                if result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+                else ("competing_evidence",),
+                result.dependencies,
+            )
         if kept:
             return ProposalResult(
                 result.destination,

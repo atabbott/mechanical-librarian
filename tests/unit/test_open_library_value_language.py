@@ -451,10 +451,36 @@ def test_a_correct_title_is_kept_when_nothing_else_is_left_to_choose(values):
     )
 
 
-def test_a_title_kept_only_after_leaving_a_value_out_lets_no_series_fill_through():
+@pytest.mark.parametrize(
+    "subtitle", (None, "A Novel", "Stories"), ids=("none", "a_novel", "stories")
+)
+def test_a_title_kept_only_after_leaving_a_value_out_lets_no_series_fill_through(
+    subtitle,
+):
     # The combinations read the title as decided with the left-out value, so
     # a same-name series fill stays blocked as before (#1497).
     base = same_name_series_report("ebook")
+    generic = (
+        ()
+        if subtitle is None
+        else (
+            _provider(
+                "google_books",
+                "google_books-1",
+                (
+                    _claim(
+                        "google_books",
+                        "google_books-1",
+                        ClaimKind.SUBTITLE,
+                        subtitle,
+                        scope=ClaimScope.EDITION,
+                        applicability="ebook",
+                    ),
+                ),
+                authority="google_books",
+            ),
+        )
+    )
     open_library = _provider(
         "open_library",
         "open_library-1",
@@ -472,7 +498,7 @@ def test_a_title_kept_only_after_leaving_a_value_out_lets_no_series_fill_through
     report = _report(
         fields=base.target.fields,
         local_claims=(*base.local_claims, _language("en")),
-        providers=(*base.providers, open_library),
+        providers=(*base.providers, *generic, open_library),
     )
     proposal = evaluate_report(MetadataReport.from_json(report.to_json()))
     results = {result.destination: result for result in proposal.results}
