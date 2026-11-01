@@ -25,17 +25,9 @@ import {
 import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import {
-  ApiError,
-  CsrfRenewedError,
-  displayValue,
-  EMPTY_TARGET_TEXT,
-  sessionRefreshedCopy,
-} from '../api/http'
+import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
 import type {
-  AutomaticOutcome,
   DecisionCommand,
-  DecisionOutcome,
   LibraryLens,
   LibrarySearch,
   MediaKind,
@@ -44,7 +36,6 @@ import type {
   LibraryWorkView,
   PreparationView,
   ProviderOutcomeView,
-  ProposalOutcome,
   TargetDestination,
   WorkSummaryState,
 } from '../api/http'
@@ -58,9 +49,7 @@ import {
   fieldStateLabels,
   languageName,
   lookupLabels,
-  materialReasonLabel,
   mediaKindLabels,
-  opaqueSource,
   preparationOutcomes,
   preparationStageLabels,
   preparationStatusLabels,
@@ -101,7 +90,6 @@ import {
   choiceSelected,
   isLongDescription,
   decisionQuestion,
-  audioFileFormat,
 } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import {
@@ -111,6 +99,14 @@ import {
   MetadataChoice,
 } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import {
+  combinedAutomaticTags,
+  comparisonNotices,
+  fieldReason,
+  noticeText,
+  questionReason,
+  selectedAutomaticLanguageForm,
+} from '../fieldReasons'
 const authoredOwnerRecorded = (field: ReviewField) =>
   field.descriptionAdvice?.selection?.origin === 'human' &&
   Boolean(
@@ -593,8 +589,6 @@ const PreparationDetail = ({
     </div>
   )
 }
-const bounded = (value: string, fallback: string) =>
-  opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
   if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
     return field.descriptionAdvice.selected_advice.candidate.output.description
@@ -647,42 +641,6 @@ const contextKind = (field: ReviewField) =>
     : ('unchanged' as const)
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
   `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting for a recovery' : 'unavailable'}`
-// Why a field reads as it does when the server gives no reason of its own.
-const humanReasons = {
-  accept: 'You chose a proposed value for this field.',
-  keep_current: 'You kept the current value for this field.',
-  reject: 'You declined the proposed change for this field.',
-  owner_entered: 'You entered a value for this field.',
-  withdraw: 'You withdrew your decision for this field.',
-} satisfies Record<DecisionOutcome, string>
-const automaticReasons = {
-  candidate: 'Automatic policy chose a proposed value.',
-  keep_current: 'Automatic policy kept the current value.',
-  ignore: 'Automatic policy leaves this field unchanged.',
-} satisfies Record<AutomaticOutcome, string>
-const dispositionReasons = {
-  reject: 'The proposed change was set aside; compare the values yourself.',
-  propose_change: 'A change is proposed; compare it with the current value.',
-  acceptable_choice: 'More than one value is acceptable; choose the one this work should use.',
-  unresolved_choice: 'The sources do not settle one value; compare the values yourself.',
-  keep: 'The current value is proposed to stay; compare the alternatives.',
-  defer: 'This field waits for your comparison of the values.',
-  ineligible: 'None of these values can be applied for you; compare them yourself.',
-} satisfies Record<ProposalOutcome, string>
-const fieldReason = (field: ReviewField) =>
-  bounded(
-    field.humanDecision
-      ? field.classificationReason || humanReasons[field.humanDecision.outcome]
-      : field.automaticDecision
-        ? field.classificationReason || automaticReasons[field.automaticDecision.outcome]
-        : actionable(field)
-          ? field.classificationReason || dispositionReasons[field.disposition]
-          : field.classificationReason &&
-              !/needs (?:your )?review/iu.test(field.classificationReason)
-            ? field.classificationReason
-            : 'No eligible owner decision is available.',
-    'Retained reviewer notice',
-  )
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
   outcome === 'owner_entered' || outcome === 'withdraw'
 const completionOutcome = (field: ReviewField) =>
@@ -697,62 +655,6 @@ const completionOutcome = (field: ReviewField) =>
           : 'Recorded outcome'
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
-// An optional choice's reason is its one statement: a condition worded as
-// asking the owner would contradict "no review is needed", so none is shown
-// beside it (#1450).
-const comparisonNotices = (field: ReviewField) =>
-  field.classification === 'owner_choosable' ||
-  field.choiceContexts.some((context) =>
-    context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
-  )
-    ? []
-    : field.notices.filter(
-        (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
-      )
-// A comparison condition in words; differing source tag lists or synopses are
-// named as such rather than as a disagreement.
-const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
-  notice === 'competing_evidence' && combinedAutomaticTags(field, mediaKind)
-    ? 'Different source tag lists'
-    : notice === 'competing_evidence' && selectedAutomaticSynopsis(field, mediaKind)
-      ? 'Different source descriptions'
-      : notice === 'competing_evidence' && loneCandidateForEmpty(field)
-        ? UNOFFERED_DISSENT_TEXT
-        : materialReasonLabel(notice)
-const UNOFFERED_DISSENT_TEXT =
-  'Another source gave a value that isn’t offered here; choose whether to use this one'
-// One candidate for an empty field shows no disagreement: the value it
-// disagrees with is not offered, such as one in another language (#1497).
-const loneCandidateForEmpty = (field: ReviewField) =>
-  field.proposedValues.length === 1 && field.currentValue === EMPTY_TARGET_TEXT
-// A notice that says again what the reason under the question already says is
-// left out: the condition that is that line (#1519).
-const restatesReason = (field: ReviewField, notice: string) =>
-  notice === questionNotice(field) ||
-  (field.automaticWithheldReason !== null &&
-    (`${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason ||
-      (notice === 'competing_evidence' &&
-        loneCandidateForEmpty(field) &&
-        field.automaticWithheldReason === `${UNOFFERED_DISSENT_TEXT}.`)))
-// Under an actionable field's question, one line gives its own reason: why it
-// was withheld, else its first comparison condition, else its disposition. The
-// classification sentence, the same on every field, is only the last fallback
-// (#1519).
-const questionNotice = (field: ReviewField) =>
-  actionable(field) && field.automaticWithheldReason === null
-    ? field.notices.find((notice) => materialReasonLabel(notice) !== undefined)
-    : undefined
-const questionReason = (field: ReviewField, mediaKind: string) => {
-  const notice = questionNotice(field)
-  const label = notice === undefined ? undefined : noticeText(field, notice, mediaKind)
-  return (
-    field.automaticWithheldReason ??
-    (label
-      ? `${label}.`
-      : ((dispositionReasons as Partial<Record<string, string>>)[field.disposition] ??
-        fieldReason(field)))
-  )
-}
 
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
@@ -1152,32 +1054,6 @@ function AsinAutomaticStatement({ field }: { field: ReviewField }) {
     </p>
   )
 }
-
-const combinedAutomaticTags = (field: ReviewField, mediaKind: string) =>
-  audioFileFormat(mediaKind) &&
-  field.humanDecision === null &&
-  field.destination === 'tags' &&
-  field.automaticDecision?.outcome === 'candidate' &&
-  !field.proposedValues.some((value) =>
-    sameSelectedValue(value, field.automaticDecision?.selected_value),
-  )
-
-const selectedAutomaticSynopsis = (field: ReviewField, mediaKind: string) =>
-  audioFileFormat(mediaKind) &&
-  field.destination === 'description' &&
-  field.humanDecision === null &&
-  field.automaticDecision?.outcome === 'candidate' &&
-  field.proposedValues.some((value) =>
-    sameSelectedValue(value, field.automaticDecision?.selected_value),
-  )
-
-const selectedAutomaticLanguageForm = (field: ReviewField) =>
-  field.destination === 'language' &&
-  field.humanDecision === null &&
-  field.automaticDecision?.outcome === 'candidate' &&
-  !field.proposedValues.some((value) =>
-    sameSelectedValue(value, field.automaticDecision?.selected_value),
-  )
 
 // F59's owner controls (ADR-0085): enter a value, choose genres and withdraw a
 // decision. Going back to an earlier value is choosing it again, from the same
