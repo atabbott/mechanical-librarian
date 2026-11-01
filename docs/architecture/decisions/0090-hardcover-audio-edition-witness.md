@@ -93,7 +93,11 @@ from Audible.
    admits the product only on an exact work match inside the tight runtime
    band, and the owner reviews what it proposes, as for any admitted recording. The
    challenged match itself already proposes nothing, because the runtime veto
-   keeps it out. An edition ASIN may be ISBN-shaped, as some Audible
+   keeps it out. Leads are judged on phase-one observations only, so a retry
+   that rebuilds the feed from a saved report asks the same leads. Once a lead
+   is confirmed, the report-level witness reads `agrees`, so the cold-start
+   count of `challenged` is of challenges still unresolved. An edition ASIN may
+   be ISBN-shaped, as some Audible
    productions are; the work-level Hardcover ASIN rule is unchanged.
 
 ## Consequences
@@ -168,5 +172,5 @@ Rejected: it would measure Audible against itself.
   give leads, their place in the feed and the cap, and end to end that a lead
   Audible confirms is proposed while one outside the band proposes nothing.
 - Before release, the cold-start report on a real library gives the measured
-  witness counts. The re-cut expects about 5 challenges in 42 checked
+  witness counts, before any lead resolves them. The re-cut expects about 5 challenges in 42 checked
   audiobooks.

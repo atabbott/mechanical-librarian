@@ -245,3 +245,75 @@ def test_a_lead_outside_the_band_proposes_nothing() -> None:
 
     assert _LEAD not in asins
     assert ProposalOutcome.PROPOSE_CHANGE is not narrators
+
+
+def test_a_confirmed_lead_is_asked_again_when_its_feed_is_retried() -> None:
+    # A retry rebuilds the feed from the saved report, which now holds the
+    # feed's own answer. Leads are judged on phase one, so the confirmed
+    # lead and its unanswered siblings are asked again rather than dropped.
+    claims = _claims(carried=None, narrator=None)
+    catalogue = _wrong_match(claims)
+    hardcover = _hardcover(
+        _edition(3, _LOCAL + 30, _NARRATOR, _LEAD),
+        _edition(4, _LOCAL, _NARRATOR, _ISBN_SHAPED),
+    )
+    plan = _plan(claims)
+    first = audiobook_asin_feed_plan(_snapshot(), plan, (catalogue, hardcover))
+    assert first is not None
+    lane = next(value for value in first.lanes if value.canonical_asin == _LEAD)
+    fed = provider_observation(
+        "enrichment",
+        (
+            _lane_result(
+                first,
+                lane,
+                "enrichment",
+                "audnexus",
+                (_candidate("enrichment", (_LEAD,)),),
+            ),
+        ),
+        authority="audnexus",
+    )
+    saved = _report(claims, (catalogue, fed, hardcover))
+    assert HardcoverEditionWitness.AGREES is hardcover_edition_witness(saved)
+
+    again = audiobook_asin_feed_plan(_snapshot(), plan, saved.providers)
+
+    assert again is not None
+    assert first.lanes == again.lanes
+
+
+def test_a_lead_the_target_also_asserts_is_one_lane_naming_both() -> None:
+    claims = (
+        *_claims(carried=None, narrator=None),
+        LocalClaim.create(
+            kind=ClaimKind.ASIN,
+            observed=_LEAD,
+            canonical=_LEAD,
+            excerpt=_LEAD,
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            occurrence=0,
+            scope=ClaimScope.EDITION,
+        ),
+    )
+    catalogue = _wrong_match(claims)
+    hardcover = _hardcover(_edition(3, _LOCAL, _NARRATOR, _LEAD))
+    plan = _plan(claims, asin=_LEAD)
+
+    asserted = audiobook_asin_feed_plan(_snapshot(_LEAD), plan, (catalogue,))
+    both = audiobook_asin_feed_plan(_snapshot(_LEAD), plan, (catalogue, hardcover))
+
+    assert asserted is not None
+    assert both is not None
+    (alone,) = (value for value in asserted.lanes if value.canonical_asin == _LEAD)
+    (merged,) = (value for value in both.lanes if value.canonical_asin == _LEAD)
+    work = next(
+        value.input_references
+        for value in plan.lanes
+        if value.kind is ProviderQueryKind.WORK
+    )
+    assert set(alone.input_references) < set(merged.input_references)
+    assert set(merged.input_references) == set(alone.input_references) | set(work)

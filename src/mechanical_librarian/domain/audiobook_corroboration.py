@@ -2010,8 +2010,26 @@ def hardcover_edition_leads(
     Audible; the identifier-lane gate still decides whether the product it
     names is this recording, and the owner reviews what it proposes. The
     edition itself never becomes evidence (ADR-0090, decision B).
+
+    Leads are judged on phase-one evidence only. An observation that holds
+    nothing but ASIN lanes is a feed's answer, so a retry that rebuilds the
+    feed from a saved report asks the same leads its first feed did, even
+    after one of them was confirmed.
     """
-    witness, editions = _edition_witness(local_claims, audio, observations)
+    if (
+        type(local_claims) is not tuple
+        or (audio is not None and type(audio) is not AudioFacts)
+        or type(observations) is not tuple
+        or any(type(value) is not ProviderObservation for value in observations)
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    phase_one = tuple(
+        observation
+        for observation in observations
+        if not observation.lanes
+        or any(lane.kind is not ProviderQueryKind.ASIN for lane in observation.lanes)
+    )
+    witness, editions = _edition_witness(local_claims, audio, phase_one)
     if witness not in {
         HardcoverEditionWitness.CHALLENGED,
         HardcoverEditionWitness.UNMATCHED,
