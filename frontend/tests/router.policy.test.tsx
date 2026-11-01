@@ -1877,7 +1877,7 @@ it('reports an unconfirmed automatic pause from refreshed state without resendin
       global_suspension: null,
       category_suspensions: {},
     })),
-    policyCommand: <T,>() => command() as Promise<T>,
+    policyCommand: command,
   }
   renderRoute('/policy', http)
   await screen.findByRole('heading', { name: 'Library policy' })

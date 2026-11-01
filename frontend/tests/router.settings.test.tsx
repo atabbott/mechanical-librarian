@@ -707,7 +707,7 @@ describe('owner settings route', () => {
     expect(await screen.findByText(copy)).toBeVisible()
     const readAfterFailure = () =>
       Math.max(...vi.mocked(http.getReviewerAccess).mock.invocationCallOrder) >
-      vi.mocked(http.configureOpenRouter).mock.invocationCallOrder[0]!
+      (vi.mocked(http.configureOpenRouter).mock.invocationCallOrder[0] ?? Infinity)
     if (reloads) await waitFor(() => expect(readAfterFailure()).toBe(true))
     expect(http.configureOpenRouter).toHaveBeenCalledOnce()
   })
