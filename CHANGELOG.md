@@ -186,6 +186,9 @@ brackets are GitHub issues.
   press, instead of dropping focus to the page. A reviewer access or Library
   decision failure now shows directly under the button it describes, and a
   failed connection check is announced once (#1584).
+- An audiobook whose language is a regional tag such as en-GB, left to you
+  under Automatic, says that dropping the region is never done for you on
+  audiobooks, instead of "no more specific reason is known" (#1593).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
