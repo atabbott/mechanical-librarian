@@ -1,0 +1,102 @@
+{
+  "body": {
+    "candidates": [
+      {
+        "evidence": "catalogue_capability_only",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "qualified": false,
+        "requests_per_day": "50 before $10 lifetime purchases; 1000 after",
+        "requests_per_minute": 20,
+        "tier": "free"
+      }
+    ],
+    "codex": {
+      "engine": "codex",
+      "host_headroom_bytes": 2147483648,
+      "model": "gpt-5.6-sol",
+      "reason": null,
+      "state": "usable",
+      "tier": null
+    },
+    "cost_evidence": {
+      "models": [
+        {
+          "distinct_images": 0,
+          "measured_run": {
+            "cohort_sha256": "90dc7d10d2e174a5c69dd925100fc6632b2c3cf49316f419822cbb4cc1d81911",
+            "observed_at": 1790929488,
+            "source_head": "4f9264a1e8759d55a40bb58129ab0820d9bfe142"
+          },
+          "model": "openai/gpt-6-luna",
+          "per_1000_usd": "0.1713055000",
+          "requests_attempted": 50,
+          "requests_completed": 50,
+          "requests_failed": 0,
+          "requests_selected": 50,
+          "task": "description",
+          "total_cost_usd": "0.008565275",
+          "works": 50
+        },
+        {
+          "distinct_images": 270,
+          "measured_run": {
+            "cohort_sha256": "36e3ed083b420fb6d45406734227f6434b0b4d69a78390bb00a5a8b8ce49774d",
+            "observed_at": 1791924850,
+            "source_head": "3ac47aea8cd97364b1d2ebda935d455209debebb"
+          },
+          "model": "openai/gpt-6-luna",
+          "per_1000_usd": "0.636415000",
+          "requests_attempted": 100,
+          "requests_completed": 100,
+          "requests_failed": 0,
+          "requests_selected": 100,
+          "task": "cover",
+          "total_cost_usd": "0.063641500",
+          "works": 100
+        }
+      ],
+      "schema_version": "reviewer-cost-evidence-v2"
+    },
+    "cover_metadata": {
+      "completion_price": null,
+      "image_price": null,
+      "model": "example/vision",
+      "observed_at": 1,
+      "prompt_price": null,
+      "request_price": null
+    },
+    "data_use_caveat": "Cover requests deny provider data collection and allow retention; zero data retention is not required. Review provider data policies before use.",
+    "description": {
+      "engine": "codex",
+      "host_headroom_bytes": 2147483648,
+      "model": "gpt-5.6-sol",
+      "reason": null,
+      "state": "usable",
+      "tier": null
+    },
+    "description_mapping": {
+      "engine": "codex"
+    },
+    "description_metadata": null,
+    "free_tier_caveat": "OpenRouter currently documents free-model caps of 20 requests/minute and 50 requests/day before $10 in lifetime purchases, or 1,000/day after; provider limits may change.",
+    "mapping": {
+      "engine": "openrouter",
+      "model": "example/vision"
+    },
+    "openrouter": {
+      "engine": "openrouter",
+      "host_headroom_bytes": null,
+      "model": "example/vision",
+      "reason": null,
+      "state": "usable",
+      "tier": "free"
+    },
+    "openrouter_key_configured": true,
+    "recommendations": ["openai/gpt-6-luna"],
+    "revision": 3,
+    "schema_version": "reviewer-access-view-v2"
+  },
+  "method": "PUT",
+  "path": "/api/v1/reviewer-access/openrouter",
+  "status": 200
+}

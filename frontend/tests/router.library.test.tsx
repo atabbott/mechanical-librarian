@@ -11106,7 +11106,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     name: 'Choose advised value: Authored synthetic description.',
   })
   expect(option).toHaveTextContent('Advised · Authored content')
-  expect(option).toHaveTextContent('codex · synthetic-model')
+  expect(option).toHaveTextContent('codex · gpt-5.6-sol')
   const chooser = option.closest('section.direct-choice')
   if (!(chooser instanceof HTMLElement)) throw new Error('description choice area is missing')
   expect(

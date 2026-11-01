@@ -1,0 +1,1382 @@
+{
+  "body": {
+    "audiobook_qualification": [
+      {
+        "automatic_available": true,
+        "destination": "asin",
+        "field": "asin",
+        "identity": "asin:preserve_exact:audiobook_asin_fill",
+        "operation": "fill",
+        "option": "preserve_exact",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "asin",
+        "field": "asin",
+        "identity": "asin:preserve_exact:audiobook_asin_preserve",
+        "operation": "preserve",
+        "option": "preserve_exact",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "asin",
+        "field": "asin",
+        "identity": "asin:preserve_exact:audiobook_asin_normalize",
+        "operation": "normalize",
+        "option": "preserve_exact",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "asin",
+        "field": "asin",
+        "identity": "asin:preserve_exact:audiobook_asin_replace_invalid",
+        "operation": "replace_invalid",
+        "option": "preserve_exact",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "asin",
+        "field": "asin",
+        "identity": "asin:preserve_exact:audiobook_asin_replace_recording",
+        "operation": "replace_recording",
+        "option": "preserve_exact",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:preserve:audiobook_authors_fill",
+        "operation": "fill",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:preserve:audiobook_authors_preserve",
+        "operation": "preserve",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:preserve:audiobook_authors_normalize",
+        "operation": "normalize",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:preserve:audiobook_authors_add",
+        "operation": "add",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:preserve:audiobook_authors_replace",
+        "operation": "replace",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_authors_fill",
+        "operation": "fill",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_authors_preserve",
+        "operation": "preserve",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_authors_normalize",
+        "operation": "normalize",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_authors_add",
+        "operation": "add",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "authors",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_authors_replace",
+        "operation": "replace",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "cover",
+        "field": "cover_order",
+        "identity": "cover_order:fixed_source_order:audiobook_cover_fill",
+        "operation": "fill",
+        "option": "fixed_source_order",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "cover",
+        "field": "cover_order",
+        "identity": "cover_order:fixed_source_order:audiobook_cover_preserve",
+        "operation": "preserve",
+        "option": "fixed_source_order",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "cover",
+        "field": "cover_order",
+        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_fill",
+        "operation": "fill",
+        "option": "replace_if_strictly_better",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "cover",
+        "field": "cover_order",
+        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_preserve",
+        "operation": "preserve",
+        "option": "replace_if_strictly_better",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "cover",
+        "field": "cover_order",
+        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_normalize",
+        "operation": "normalize",
+        "option": "replace_if_strictly_better",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "cover",
+        "field": "cover_order",
+        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_replace",
+        "operation": "replace",
+        "option": "replace_if_strictly_better",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "description",
+        "field": "description_fill",
+        "identity": "description_fill:safe_plain_text:audiobook_description_fill",
+        "operation": "fill",
+        "option": "safe_plain_text",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "description",
+        "field": "description_fill",
+        "identity": "description_fill:safe_plain_text:audiobook_description_preserve",
+        "operation": "preserve",
+        "option": "safe_plain_text",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "description",
+        "field": "description_fill",
+        "identity": "description_fill:replace_safe_plain_text:audiobook_description_fill",
+        "operation": "fill",
+        "option": "replace_safe_plain_text",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "description",
+        "field": "description_fill",
+        "identity": "description_fill:replace_safe_plain_text:audiobook_description_preserve",
+        "operation": "preserve",
+        "option": "replace_safe_plain_text",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "description",
+        "field": "description_fill",
+        "identity": "description_fill:replace_safe_plain_text:audiobook_description_normalize",
+        "operation": "normalize",
+        "option": "replace_safe_plain_text",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "description",
+        "field": "description_fill",
+        "identity": "description_fill:replace_safe_plain_text:audiobook_description_replace",
+        "operation": "replace",
+        "option": "replace_safe_plain_text",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "explicit",
+        "field": "explicit",
+        "identity": "explicit:adult_product:audiobook_explicit_fill",
+        "operation": "fill",
+        "option": "adult_product",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "explicit",
+        "field": "explicit",
+        "identity": "explicit:adult_product:audiobook_explicit_preserve",
+        "operation": "preserve",
+        "option": "adult_product",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "explicit",
+        "field": "explicit",
+        "identity": "explicit:adult_product:audiobook_explicit_normalize",
+        "operation": "normalize",
+        "option": "adult_product",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "explicit",
+        "field": "explicit",
+        "identity": "explicit:adult_product:audiobook_explicit_replace",
+        "operation": "replace",
+        "option": "adult_product",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:fill_empty:audiobook_genres_fill",
+        "operation": "fill",
+        "option": "fill_empty",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:fill_empty:audiobook_genres_preserve",
+        "operation": "preserve",
+        "option": "fill_empty",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:add:audiobook_genres_fill",
+        "operation": "fill",
+        "option": "add",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:add:audiobook_genres_preserve",
+        "operation": "preserve",
+        "option": "add",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:add:audiobook_genres_normalize",
+        "operation": "normalize",
+        "option": "add",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:add:audiobook_genres_add",
+        "operation": "add",
+        "option": "add",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:replace:audiobook_genres_fill",
+        "operation": "fill",
+        "option": "replace",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:replace:audiobook_genres_preserve",
+        "operation": "preserve",
+        "option": "replace",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:replace:audiobook_genres_normalize",
+        "operation": "normalize",
+        "option": "replace",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:replace:audiobook_genres_add",
+        "operation": "add",
+        "option": "replace",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "genres",
+        "field": "genres",
+        "identity": "genres:replace:audiobook_genres_replace",
+        "operation": "replace",
+        "option": "replace",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:preserve_exact:audiobook_isbn_fill",
+        "operation": "fill",
+        "option": "preserve_exact",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:preserve_exact:audiobook_isbn_preserve",
+        "operation": "preserve",
+        "option": "preserve_exact",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:preserve_exact:audiobook_isbn_normalize",
+        "operation": "normalize",
+        "option": "preserve_exact",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:preserve_exact:audiobook_isbn_replace",
+        "operation": "replace",
+        "option": "preserve_exact",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:prefer_isbn13:audiobook_isbn_fill",
+        "operation": "fill",
+        "option": "prefer_isbn13",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:prefer_isbn13:audiobook_isbn_preserve",
+        "operation": "preserve",
+        "option": "prefer_isbn13",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:prefer_isbn13:audiobook_isbn_normalize",
+        "operation": "normalize",
+        "option": "prefer_isbn13",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "isbn",
+        "field": "isbn_form",
+        "identity": "isbn_form:prefer_isbn13:audiobook_isbn_replace",
+        "operation": "replace",
+        "option": "prefer_isbn13",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "language",
+        "field": "language_rendering",
+        "identity": "language_rendering:display_name:audiobook_language_fill",
+        "operation": "fill",
+        "option": "display_name",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "language",
+        "field": "language_rendering",
+        "identity": "language_rendering:display_name:audiobook_language_preserve",
+        "operation": "preserve",
+        "option": "display_name",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "language",
+        "field": "language_rendering",
+        "identity": "language_rendering:display_name:audiobook_language_normalize",
+        "operation": "normalize",
+        "option": "display_name",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "language",
+        "field": "language_rendering",
+        "identity": "language_rendering:display_name:audiobook_language_replace",
+        "operation": "replace",
+        "option": "display_name",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "narrators",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_narrators_fill",
+        "operation": "fill",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "narrators",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_narrators_preserve",
+        "operation": "preserve",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "narrators",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_narrators_normalize",
+        "operation": "normalize",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "narrators",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_narrators_add",
+        "operation": "add",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "narrators",
+        "field": "contributor_names",
+        "identity": "contributor_names:canonical:audiobook_narrators_replace",
+        "operation": "replace",
+        "option": "canonical",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:year:audiobook_publisheddate_fill",
+        "operation": "fill",
+        "option": "year",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:year:audiobook_publisheddate_preserve",
+        "operation": "preserve",
+        "option": "year",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:year:audiobook_publisheddate_normalize",
+        "operation": "normalize",
+        "option": "year",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:year:audiobook_publisheddate_replace",
+        "operation": "replace",
+        "option": "year",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:full_date:audiobook_publisheddate_fill",
+        "operation": "fill",
+        "option": "full_date",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:full_date:audiobook_publisheddate_preserve",
+        "operation": "preserve",
+        "option": "full_date",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:full_date:audiobook_publisheddate_normalize",
+        "operation": "normalize",
+        "option": "full_date",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publishedDate",
+        "field": "date_precision",
+        "identity": "date_precision:full_date:audiobook_publisheddate_replace",
+        "operation": "replace",
+        "option": "full_date",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:publisher:audiobook_publisher_fill",
+        "operation": "fill",
+        "option": "publisher",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:publisher:audiobook_publisher_preserve",
+        "operation": "preserve",
+        "option": "publisher",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:publisher:audiobook_publisher_normalize",
+        "operation": "normalize",
+        "option": "publisher",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:publisher:audiobook_publisher_replace",
+        "operation": "replace",
+        "option": "publisher",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:imprint:audiobook_publisher_fill",
+        "operation": "fill",
+        "option": "imprint",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:imprint:audiobook_publisher_preserve",
+        "operation": "preserve",
+        "option": "imprint",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:imprint:audiobook_publisher_normalize",
+        "operation": "normalize",
+        "option": "imprint",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "publisher",
+        "field": "publisher_preference",
+        "identity": "publisher_preference:imprint:audiobook_publisher_replace",
+        "operation": "replace",
+        "option": "imprint",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:primary_narrative:audiobook_series_fill",
+        "operation": "fill",
+        "option": "primary_narrative",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:primary_narrative:audiobook_series_preserve",
+        "operation": "preserve",
+        "option": "primary_narrative",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:source_order:audiobook_series_fill",
+        "operation": "fill",
+        "option": "source_order",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:source_order:audiobook_series_preserve",
+        "operation": "preserve",
+        "option": "source_order",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:all_qualified:audiobook_series_fill",
+        "operation": "fill",
+        "option": "all_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:all_qualified:audiobook_series_preserve",
+        "operation": "preserve",
+        "option": "all_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:add_qualified:audiobook_series_fill",
+        "operation": "fill",
+        "option": "add_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:add_qualified:audiobook_series_preserve",
+        "operation": "preserve",
+        "option": "add_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:add_qualified:audiobook_series_normalize",
+        "operation": "normalize",
+        "option": "add_qualified",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:add_qualified:audiobook_series_add",
+        "operation": "add",
+        "option": "add_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:replace_qualified:audiobook_series_fill",
+        "operation": "fill",
+        "option": "replace_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:replace_qualified:audiobook_series_preserve",
+        "operation": "preserve",
+        "option": "replace_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:replace_qualified:audiobook_series_normalize",
+        "operation": "normalize",
+        "option": "replace_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:replace_qualified:audiobook_series_add",
+        "operation": "add",
+        "option": "replace_qualified",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "series",
+        "field": "series",
+        "identity": "series:replace_qualified:audiobook_series_replace",
+        "operation": "replace",
+        "option": "replace_qualified",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:fill_empty:audiobook_subtitle_fill",
+        "operation": "fill",
+        "option": "fill_empty",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:fill_empty:audiobook_subtitle_preserve",
+        "operation": "preserve",
+        "option": "fill_empty",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:corroborated_split:audiobook_subtitle_fill",
+        "operation": "fill",
+        "option": "corroborated_split",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:corroborated_split:audiobook_subtitle_preserve",
+        "operation": "preserve",
+        "option": "corroborated_split",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:replace_descriptive:audiobook_subtitle_fill",
+        "operation": "fill",
+        "option": "replace_descriptive",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:replace_descriptive:audiobook_subtitle_preserve",
+        "operation": "preserve",
+        "option": "replace_descriptive",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:replace_descriptive:audiobook_subtitle_normalize",
+        "operation": "normalize",
+        "option": "replace_descriptive",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "subtitle",
+        "field": "subtitle",
+        "identity": "subtitle:replace_descriptive:audiobook_subtitle_replace",
+        "operation": "replace",
+        "option": "replace_descriptive",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:fill_empty:audiobook_tags_fill",
+        "operation": "fill",
+        "option": "fill_empty",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:fill_empty:audiobook_tags_preserve",
+        "operation": "preserve",
+        "option": "fill_empty",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:add:audiobook_tags_fill",
+        "operation": "fill",
+        "option": "add",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:add:audiobook_tags_preserve",
+        "operation": "preserve",
+        "option": "add",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:add:audiobook_tags_normalize",
+        "operation": "normalize",
+        "option": "add",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:add:audiobook_tags_add",
+        "operation": "add",
+        "option": "add",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:replace:audiobook_tags_fill",
+        "operation": "fill",
+        "option": "replace",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:replace:audiobook_tags_preserve",
+        "operation": "preserve",
+        "option": "replace",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:replace:audiobook_tags_normalize",
+        "operation": "normalize",
+        "option": "replace",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:replace:audiobook_tags_add",
+        "operation": "add",
+        "option": "replace",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": false,
+        "destination": "tags",
+        "field": "tags",
+        "identity": "tags:replace:audiobook_tags_replace",
+        "operation": "replace",
+        "option": "replace",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:preserve:audiobook_title_fill",
+        "operation": "fill",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:preserve:audiobook_title_preserve",
+        "operation": "preserve",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:preserve:audiobook_title_normalize",
+        "operation": "normalize",
+        "option": "preserve",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:preserve:audiobook_title_replace",
+        "operation": "replace",
+        "option": "preserve",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:title_and_subtitle:audiobook_title_fill",
+        "operation": "fill",
+        "option": "title_and_subtitle",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": true,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:title_and_subtitle:audiobook_title_preserve",
+        "operation": "preserve",
+        "option": "title_and_subtitle",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      },
+      {
+        "automatic_available": false,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:title_and_subtitle:audiobook_title_normalize",
+        "operation": "normalize",
+        "option": "title_and_subtitle",
+        "record_sha256": null
+      },
+      {
+        "automatic_available": true,
+        "destination": "title",
+        "field": "title_layout",
+        "identity": "title_layout:title_and_subtitle:audiobook_title_replace",
+        "operation": "replace",
+        "option": "title_and_subtitle",
+        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
+      }
+    ],
+    "policy_id": "policy_c1280edcaffc78aa739aad98249e425e850797ba513f223af594a97e10f555a9",
+    "profile": {
+      "destinations": {
+        "asin": "ask",
+        "contributor_names": "automatic",
+        "cover_order": "automatic",
+        "date_precision": "automatic",
+        "description_fill": "automatic",
+        "explicit": "unsupported",
+        "genres": "automatic",
+        "isbn_form": "automatic",
+        "language_rendering": "automatic",
+        "publisher_preference": "automatic",
+        "series": "automatic",
+        "subtitle": "automatic",
+        "tags": "ask",
+        "title_layout": "automatic"
+      },
+      "name": "Built-in policy",
+      "options": {
+        "asin": "preserve_exact",
+        "contributor_names": "canonical",
+        "cover_order": "fixed_source_order",
+        "date_precision": "year",
+        "description_fill": "safe_plain_text",
+        "explicit": "unsupported",
+        "genres": "fill_empty",
+        "isbn_form": "preserve_exact",
+        "language_rendering": "display_name",
+        "publisher_preference": "publisher",
+        "series": "primary_narrative",
+        "subtitle": "fill_empty",
+        "tags": "off",
+        "title_layout": "title_and_subtitle"
+      },
+      "schema_version": "metadata-policy-profile-v3"
+    },
+    "rich_qualification": [
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "title_layout",
+        "operation_scope": "fill_or_replace",
+        "option": "preserve"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "title_layout",
+        "operation_scope": "fill_or_replace",
+        "option": "title_and_subtitle"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "date_precision",
+        "operation_scope": "fill_or_replace",
+        "option": "year"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "date_precision",
+        "operation_scope": "fill_or_replace",
+        "option": "full_date"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "language_rendering",
+        "operation_scope": "fill_or_respell",
+        "option": "display_name"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "contributor_names",
+        "operation_scope": "fill_or_replace",
+        "option": "preserve"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "contributor_names",
+        "operation_scope": "fill_or_replace",
+        "option": "canonical"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "publisher_preference",
+        "operation_scope": "fill_or_replace",
+        "option": "publisher"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "publisher_preference",
+        "operation_scope": "none",
+        "option": "imprint"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "subtitle",
+        "operation_scope": "fill",
+        "option": "fill_empty"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "not_qualified",
+        "field": "subtitle",
+        "operation_scope": "none",
+        "option": "corroborated_split"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "subtitle",
+        "operation_scope": "none",
+        "option": "replace_descriptive"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "series",
+        "operation_scope": "fill",
+        "option": "primary_narrative"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "series",
+        "operation_scope": "fill",
+        "option": "source_order"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "series",
+        "operation_scope": "fill",
+        "option": "all_qualified"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "series",
+        "operation_scope": "none",
+        "option": "add_qualified"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "series",
+        "operation_scope": "none",
+        "option": "replace_qualified"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "genres",
+        "operation_scope": "fill",
+        "option": "fill_empty"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "genres",
+        "operation_scope": "add",
+        "option": "add"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "genres",
+        "operation_scope": "replace",
+        "option": "replace"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "policy_only",
+        "field": "tags",
+        "operation_scope": "none",
+        "option": "off"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "tags",
+        "operation_scope": "fill",
+        "option": "fill_empty"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "tags",
+        "operation_scope": "add",
+        "option": "add"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "tags",
+        "operation_scope": "replace",
+        "option": "replace"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "description_fill",
+        "operation_scope": "fill",
+        "option": "safe_plain_text"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "not_qualified",
+        "field": "description_fill",
+        "operation_scope": "none",
+        "option": "google_visible_text"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "description_fill",
+        "operation_scope": "none",
+        "option": "replace_safe_plain_text"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "isbn_form",
+        "operation_scope": "fill",
+        "option": "preserve_exact"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "isbn_form",
+        "operation_scope": "fill",
+        "option": "prefer_isbn13"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457",
+        "disposition": "pass",
+        "field": "cover_order",
+        "operation_scope": "fill_or_replace",
+        "option": "fixed_source_order"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457",
+        "disposition": "pass",
+        "field": "cover_order",
+        "operation_scope": "fill",
+        "option": "replace_if_strictly_better"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "insufficient_coverage",
+        "field": "asin",
+        "operation_scope": "none",
+        "option": "preserve_exact"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "insufficient_coverage",
+        "field": "asin",
+        "operation_scope": "none",
+        "option": "ebook_manifestation"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_human_only",
+        "field": "explicit",
+        "operation_scope": "none",
+        "option": "unsupported"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "explicit",
+        "operation_scope": "none",
+        "option": "adult_product"
+      }
+    ],
+    "schema_version": "metadata-policy-notebook-v1"
+  },
+  "method": "GET",
+  "path": "/api/v1/metadata-policy/state",
+  "status": 200
+}

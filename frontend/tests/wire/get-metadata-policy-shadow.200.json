@@ -1,0 +1,11 @@
+{
+  "body": {
+    "authority": "none",
+    "can_leave_preview": false,
+    "posture": "preview",
+    "schema_version": "shadow-posture-v1"
+  },
+  "method": "GET",
+  "path": "/api/v1/metadata-policy/shadow",
+  "status": 200
+}
