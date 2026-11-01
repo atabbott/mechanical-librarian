@@ -213,8 +213,8 @@ brackets are GitHub issues.
 - Settings and setup no longer show Codex as ready to sign in after its
   sign-in failed, expired, was cancelled or interrupted, or when its sign-in
   cannot be read, while Codex is not selected. They show that outcome and
-  offer to restart sign-in, and a completed sign-in reads as ready to use
-  (#1598).
+  offer to restart sign-in, and a completed sign-in can be used without
+  signing in again (#1598).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

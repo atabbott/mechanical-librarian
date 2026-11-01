@@ -240,7 +240,7 @@ def test_generic_read_reports_terminal_flow_without_credential_work(
     reason: str | None,
 ) -> None:
     operations, auth, _openrouter, codex = _operations()
-    auth.passive_status = lambda: CodexDeviceAuthState(flow, failure=failure)  # type: ignore[method-assign]
+    auth.passive_status = lambda: CodexDeviceAuthState(flow, failure=failure)  # type: ignore[method-assign]  # reason: the fake's passive status is the seam each case sets
     if not host_available:
         operations._codex_host = lambda: ReviewerHostStatus(
             False, "headroom_below_1_gib", None
