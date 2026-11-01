@@ -301,3 +301,10 @@ failed instead of `unknown` (ADR-0017), so a v64 report cannot state what a v65
 report records. The report browse facts gain an `adapter_fault` match state, so
 such a work reads as its own Not matched reason, never as unavailable. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
+
+Issue #1357 also takes the clean-rebuild branch. `metadata-report-v66` adds the
+EPUB report's `local.cover_recovery`, the closed fallback and refusal codes of
+a cover recovered from a malformed declaration as shadow evidence, so a v65
+report cannot state what a v66 report records. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.
