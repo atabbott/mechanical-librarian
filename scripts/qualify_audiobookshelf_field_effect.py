@@ -1334,6 +1334,11 @@ def _qualification_hardcover_client(
     **__: object,
 ) -> httpx.Client:
     """Return an isolated provider boundary backed by request-local evidence."""
+    # One record per distinct question, as a real catalogue names each edition
+    # once: a work with ISBNs in several families must not see one record
+    # answer for different ISBNs, an identity conflict that drops every
+    # lane (#1545).
+    record_ids: dict[str, int] = {}
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -1349,17 +1354,33 @@ def _qualification_hardcover_client(
                 "variables"
             )
             values = _mapping(variables, "installed_provider_request_invalid")
+            request_local_id = record_ids.setdefault(
+                json.dumps(values, sort_keys=True), len(record_ids) + 1
+            )
             if "isbns" in values:
                 observations["isbn"] = observations.get("isbn", 0) + 1
-                request_local_id = 1
                 raw_isbns = values.get("isbns")
                 if (
                     type(raw_isbns) is not list
                     or not raw_isbns
-                    or type(raw_isbns[0]) is not str
-                    or len(raw_isbns[0]) not in {10, 13}
-                    or not raw_isbns[0].isdigit()
+                    or any(type(value) is not str for value in raw_isbns)
                 ):
+                    raise QualificationError("installed_provider_isbn_invalid")
+                if isbn_titles:
+                    # An operator work also carries its own opening-matter
+                    # ISBNs. The catalogue holds only the ISBN the canary
+                    # injected; any other is no match, as a real catalogue
+                    # answers for an edition it lacks, so it cannot split the
+                    # work's evidence (#1545).
+                    held = [value for value in raw_isbns if value in isbn_titles]
+                    if not held:
+                        return httpx.Response(
+                            200,
+                            json={"data": {"editions": [], "books": [], "tags": []}},
+                            request=request,
+                        )
+                    raw_isbns = held
+                if len(raw_isbns[0]) not in {10, 13} or not raw_isbns[0].isdigit():
                     raise QualificationError("installed_provider_isbn_invalid")
                 requested_isbn = raw_isbns[0]
                 requested_title = isbn_titles.get(
@@ -1375,7 +1396,6 @@ def _qualification_hardcover_client(
                 contribution_authors = tuple(authors)
             else:
                 observations["title"] = observations.get("title", 0) + 1
-                request_local_id = 2
                 requested_isbn = "9780306406157"
                 requested_title = _string(
                     values.get("title"), "installed_provider_title_invalid"
