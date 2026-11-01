@@ -23,6 +23,7 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessView,
 )
 from mechanical_librarian.application.reviewer_contracts import (
+    DeviceAuthFailure,
     DeviceAuthStatus,
     OpenRouterFailure,
     OpenRouterReviewerError,
@@ -199,6 +200,57 @@ def test_generic_read_reports_an_existing_flow_without_credential_work() -> None
 
     assert view.mapping is None
     assert view.codex.state == "waiting"
+    assert auth.status_calls == 0
+    assert auth.current_calls == 0
+    assert codex == []
+
+
+@pytest.mark.parametrize(
+    ("flow", "failure", "host_available", "state", "reason"),
+    (
+        ("failed", "permission_or_profile", True, "failed", "permission_or_profile"),
+        ("failed", "permission_or_process", True, "failed", "permission_or_process"),
+        ("failed", "protocol_or_process", True, "failed", "protocol_or_process"),
+        ("expired", None, True, "expired", None),
+        ("cancelled", None, True, "cancelled", None),
+        (
+            "interrupted",
+            "restart_interrupted",
+            True,
+            "interrupted",
+            "restart_interrupted",
+        ),
+        ("usable", None, True, "usable", None),
+        ("ready", None, True, "ready", None),
+        ("configured", None, True, "ready", None),
+        (
+            "failed",
+            "permission_or_profile",
+            False,
+            "host_unsupported",
+            "headroom_below_1_gib",
+        ),
+    ),
+)
+def test_generic_read_reports_terminal_flow_without_credential_work(
+    flow: DeviceAuthStatus,
+    failure: DeviceAuthFailure | None,
+    host_available: bool,
+    state: str,
+    reason: str | None,
+) -> None:
+    operations, auth, _openrouter, codex = _operations()
+    auth.passive_status = lambda: CodexDeviceAuthState(flow, failure=failure)  # type: ignore[method-assign]
+    if not host_available:
+        operations._codex_host = lambda: ReviewerHostStatus(
+            False, "headroom_below_1_gib", None
+        )
+
+    view = operations.read()
+
+    assert view.mapping is None
+    assert view.codex.state == state
+    assert view.codex.reason == reason
     assert auth.status_calls == 0
     assert auth.current_calls == 0
     assert codex == []
