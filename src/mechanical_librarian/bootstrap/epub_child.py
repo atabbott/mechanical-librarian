@@ -431,6 +431,13 @@ def _selected_cover(
             names = _member_index(archive).get(values[0], [])
             if len(media) != 1 or len(names) != 1:
                 return {"state": "invalid_declaration"}, None
+            encrypted = {
+                item.resource_identity
+                for item in report.declarations
+                if item.kind is EpubPackageDeclarationKind.ENCRYPTION
+            }
+            if values[0] in encrypted:
+                return {"state": "unsupported_format"}, None
             if media[0] not in {"image/jpeg", "image/png", "image/webp"}:
                 return {"state": "unsupported_format"}, None
             with archive.open(names[0]) as member:
