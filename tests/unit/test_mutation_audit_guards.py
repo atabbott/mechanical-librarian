@@ -130,3 +130,96 @@ def test_consumers_dispatch_markerless_package_mutants(
         assert single.main() == 0
 
     assert dispatched == [(mutant, node)]
+
+
+_SCANNED = [
+    "x_f__mutmut_1",
+    "x_f__mutmut_2",
+    "x_fg__mutmut_1",
+    "xǁCǁm__mutmut_1",
+    "xǁCǁn__mutmut_1",
+    "xǁCDǁm__mutmut_1",
+]
+
+
+@pytest.mark.parametrize(
+    ("names", "selected", "unmatched"),
+    [
+        pytest.param(
+            {"f"}, ["x_f__mutmut_1", "x_f__mutmut_2"], set(), id="function-not-prefix"
+        ),
+        pytest.param({"C.m"}, ["xǁCǁm__mutmut_1"], set(), id="one-method"),
+        pytest.param(
+            {"C"}, ["xǁCǁm__mutmut_1", "xǁCǁn__mutmut_1"], set(), id="class-not-prefix"
+        ),
+        pytest.param({"fg", "nope"}, ["x_fg__mutmut_1"], {"nope"}, id="unmatched"),
+        pytest.param({"C.x"}, [], {"C.x"}, id="unknown-method"),
+    ],
+)
+def test_functions_select_exact_qualnames(
+    names: set[str], selected: list[str], unmatched: set[str]
+) -> None:
+    assert audit.select_functions(_SCANNED, names) == (selected, unmatched)
+
+
+def _functions_tree(root: Path, survivors: Path) -> None:
+    subject = build_tree(root)
+    subject.write_text("", encoding="utf-8")
+    os.utime(subject, (BEFORE, BEFORE))
+    package = root / "mutants" / "src" / "subject" / "__init__.py"
+    package.parent.mkdir(parents=True)
+    package.write_text(
+        "".join(f"def {name}(): pass\n" for name in _SCANNED), encoding="utf-8"
+    )
+    snapshot = root / "mutants" / "mutmut-stats.json"
+    snapshot.write_text(
+        json.dumps({"tests_by_mangled_function_name": {"subject.x_f": ["t"]}}),
+        encoding="utf-8",
+    )
+    os.utime(snapshot, (SNAPSHOT_TIME, SNAPSHOT_TIME))
+    # An earlier pass whose only survivor is a mutant of `f`.
+    survivors.write_text(
+        json.dumps({"mutant": "subject.x_f__mutmut_1", "status": "survived"}) + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("functions", "code", "printed"),
+    [
+        # `C` has no survivor in the sample, but it is a real name: checked
+        # against every scanned mutant, it is not refused.
+        pytest.param("f,C", 0, {"mutants": 1, "functions": {"f": 1}}, id="sampled"),
+        pytest.param("f,nope", 2, None, id="misspelt"),
+    ],
+)
+def test_functions_check_names_against_every_scanned_mutant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    functions: str,
+    code: int,
+    printed: dict[str, object] | None,
+) -> None:
+    survivors = tmp_path / "pass1.jsonl"
+    _functions_tree(tmp_path, survivors)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "audit",
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out.jsonl"),
+            "--survivors-from",
+            str(survivors),
+            "--functions",
+            functions,
+            "--dry-run",
+        ],
+    )
+
+    assert audit.main() == code
+    if printed is not None:
+        assert json.loads(capsys.readouterr().out) == printed
+    assert not (tmp_path / "out.jsonl").exists()

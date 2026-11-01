@@ -18,6 +18,12 @@ is not safe for `survived`, because the killer may be one of the tests the
 truncation dropped. `--survivors-from` re-runs exactly the survivors of an
 earlier pass with no cap, which is the only verdict this driver will call
 unkilled.
+
+`--functions` narrows a run to named functions: `f` selects module function
+`f`, `C.m` selects method `m` of class `C`, and a bare `C` selects every method
+of `C`. A name that matches no mutant the run scanned is refused, so a typo
+cannot pass as a function with nothing to kill. `--dry-run` prints the
+selection and runs nothing.
 """
 
 from __future__ import annotations
@@ -49,6 +55,34 @@ def module_dotted(path: Path, root: Path) -> str:
 
 def mangled(module: str, mutant: str) -> str:
     return f"{module}.{mutant.rsplit('__mutmut_', 1)[0]}"
+
+
+def qualname(mutant: str) -> str:
+    """The source qualname behind a mutmut 3 mutant name.
+
+    mutmut names a module function's mutants `x_f__mutmut_N` and a method's
+    `xǁCǁm__mutmut_N`.
+    """
+
+    base = mutant.rsplit("__mutmut_", 1)[0]
+    if base.startswith("xǁ"):
+        return ".".join(base[2:].split("ǁ"))
+    return base.removeprefix("x_")
+
+
+def select_functions(mutants: list[str], names: set[str]) -> tuple[list[str], set[str]]:
+    """The mutants of the named functions, and the names that matched none."""
+
+    selected: list[str] = []
+    matched: set[str] = set()
+    for mutant in mutants:
+        name = qualname(mutant)
+        # A method answers to its own qualname and to its bare class name.
+        hits = {name, name.split(".", 1)[0]} & names
+        if hits:
+            selected.append(mutant)
+            matched |= hits
+    return selected, names - matched
 
 
 def load_lines(path: Path) -> dict[str, dict[str, object]]:
@@ -95,6 +129,12 @@ def main() -> int:
     parser.add_argument("--max-tests", type=int, default=40, help="0 means no cap")
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--only", default="")
+    parser.add_argument(
+        "--functions",
+        default="",
+        help="comma-separated qualnames: f, C.m, or C for every method of C",
+    )
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--survivors-from",
         default="",
@@ -152,18 +192,44 @@ def main() -> int:
             if record["status"] in ("survived", "timeout")
         }
 
-    work: list[tuple[str, str, list[str]]] = []
+    scanned: list[tuple[str, str]] = []
     for path in sorted((mutants_root / "src").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
         module = module_dotted(path, root)
         if arguments.only and arguments.only not in module:
             continue
-        for name in MUTANT.findall(source):
-            full = f"{module}.{name}"
-            if wanted is not None and full not in wanted:
-                continue
-            key = mangled(module, name)
-            work.append((full, key, sorted(tests_by_function.get(key, ()))))
+        scanned.extend((module, name) for name in MUTANT.findall(source))
+
+    if arguments.functions:
+        names = {name.strip() for name in arguments.functions.split(",") if name}
+        # Names are checked against every scanned mutant, before
+        # `--survivors-from` narrows the list: a sample holding no survivor of
+        # a named function is not a misspelt name.
+        chosen, unmatched = select_functions([name for _, name in scanned], names)
+        if unmatched or not chosen:
+            print(
+                f"--functions names no scanned mutant: {sorted(unmatched) or names}",
+                file=sys.stderr,
+            )
+            return 2
+        keep = set(chosen)
+        scanned = [(module, name) for module, name in scanned if name in keep]
+
+    work: list[tuple[str, str, list[str]]] = []
+    for module, name in scanned:
+        full = f"{module}.{name}"
+        if wanted is not None and full not in wanted:
+            continue
+        key = mangled(module, name)
+        work.append((full, key, sorted(tests_by_function.get(key, ()))))
+
+    if arguments.dry_run:
+        functions: dict[str, int] = {}
+        for full, _, _ in work:
+            name = qualname(full.rsplit(".", 1)[1])
+            functions[name] = functions.get(name, 0) + 1
+        print(json.dumps({"mutants": len(work), "functions": functions}, indent=1))
+        return 0
 
     if arguments.limit:
         work = work[: arguments.limit]
