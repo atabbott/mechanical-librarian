@@ -8,11 +8,13 @@ import pytest
 
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
+    ReviewerAccessStoreError,
 )
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthState,
 )
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterAccountStatus
+from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
@@ -279,6 +281,10 @@ def test_configuration_preserves_closed_value_free_provider_failure(
         )
     assert caught.value.code == public_code
     assert "secret-key" not in str(caught.value)
+    # Every probe failure, `unreachable` and `timed_out` included, is refused
+    # before the write, so the browser may report it as nothing saved.
+    document, key = operations._repository.snapshot()
+    assert (document.revision, key) == (1, None)
 
 
 def test_failed_openrouter_dispatch_never_falls_back_to_codex() -> None:
@@ -1091,3 +1097,76 @@ def test_present_invalid_description_request_fee_is_refused_without_mutation(
     assert after.description_mapping is None
     assert operations._repository.openrouter_key() == "secret"
     assert not any(kind == "run" for kind, _ in calls)
+
+
+def test_committed_openrouter_key_is_answered_when_the_later_revision_check_locks() -> (
+    None
+):
+    operations, _auth, _calls, _codex = _operations()
+    store = cast("ReviewerAccessStore", operations._repository)
+    real_replace = store.replace
+
+    def locked(_revision: int) -> bool:
+        raise ReviewerAccessStoreError("reviewer access is unavailable")
+
+    def replace_then_lock(*args, **kwargs):
+        result = real_replace(*args, **kwargs)
+        store.revision_is_current = locked  # type: ignore[method-assign]
+        return result
+
+    store.replace = replace_then_lock  # type: ignore[method-assign]
+
+    view = operations.configure_openrouter(
+        expected_revision=1, api_key="secret-key", model="example/vision"
+    )
+
+    document, key = store.snapshot()
+    assert (document.revision, key) == (2, "secret-key")
+    assert view.revision == 2
+    assert view.openrouter_key_configured is True
+    assert view.openrouter.state == "usable"
+
+
+def _refusing_hook(operations: ReviewerAccessOperations) -> list[str]:
+    calls: list[str] = []
+
+    def changed() -> None:
+        calls.append("changed")
+        raise ReviewPipelineError("preparation_restart_required")
+
+    operations.attach_changes(changed)
+    return calls
+
+
+def test_committed_openrouter_key_is_answered_when_the_change_hook_refuses() -> None:
+    operations, _auth, _calls, _codex = _operations()
+    hook = _refusing_hook(operations)
+
+    view = operations.configure_openrouter(
+        expected_revision=1, api_key="secret-key", model="example/vision"
+    )
+
+    document, key = operations._repository.snapshot()
+    assert (document.revision, key) == (2, "secret-key")
+    assert view.revision == 2
+    assert hook == ["changed"]
+
+
+@pytest.mark.parametrize("command", ("select_none", "clear_openrouter"))
+def test_committed_reviewer_change_is_answered_when_the_change_hook_refuses(
+    command: Literal["select_none", "clear_openrouter"],
+) -> None:
+    operations, _auth, _calls, _codex = _operations()
+    operations.configure_openrouter(
+        expected_revision=1, api_key="secret-key", model="example/vision"
+    )
+    hook = _refusing_hook(operations)
+
+    view = getattr(operations, command)(expected_revision=2)
+
+    document, key = operations._repository.snapshot()
+    assert document.revision == view.revision == 3
+    assert document.cover_observation is None
+    assert view.mapping is None
+    assert (key is None) is (command == "clear_openrouter")
+    assert hook == ["changed"]
