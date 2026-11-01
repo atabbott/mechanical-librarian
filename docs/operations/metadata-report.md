@@ -391,6 +391,18 @@ fetching. Identical bytes share storage. Raw cover URLs and private paths are
 never stored. For audiobooks, Audible is the only provider whose cover is
 fetched, behind its own `cover_enabled` switch, and that cover stays evidence.
 
+An EPUB whose cover declaration is malformed keeps an `absent` cover source.
+When it declares a cover another way, `local.cover_recovery` records the
+attempt as shadow evidence: `authority` is `shadow`, `fallbacks` names the
+fallbacks that resolved, in the order `epub2_meta_cover_item`,
+`guide_cover_reference`, `cover_image_wrapper`, and `refusal` is null when
+they agree on one local image or else one closed code (for example
+`cover_recovery_unresolved`, `cover_wrapper_multiple_images` or
+`contradictory_cover_declaration`). It holds no reference, member name or
+image, and no cover comparison, packet or decision reads it. It is null on
+every other EPUB report and on audiobooks; the boundary is in
+[security](../architecture/security.md#parsers-and-hostile-input).
+
 ## After the report
 
 An ebook, or an audiobook whose report admitted a recording, goes on to a

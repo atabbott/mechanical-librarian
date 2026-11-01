@@ -25,6 +25,10 @@ brackets are GitHub issues.
   Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
   `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
   automatically (#1496).
+- **Clean rebuild required.** An EPUB whose cover declaration is malformed
+  now records, as shadow evidence only, whether its own cover could be
+  recovered from a legacy cover entry, a guide reference or a cover page. The
+  cover stays absent, and nothing is chosen or shown from it yet (#1357).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -347,6 +347,7 @@ class GenerateProviderRetrySuccessor:
                 # library languages it was prepared under (#1315).
                 audio=source.audio,
                 library_languages=source.library_languages,
+                cover_recovery=source.cover_recovery,
             )
 
             def currentness() -> bool:

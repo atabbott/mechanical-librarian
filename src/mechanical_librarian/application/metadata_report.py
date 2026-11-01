@@ -67,6 +67,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
+    EpubCoverRecovery,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
@@ -1611,6 +1612,8 @@ class InspectionResult:
     claims: tuple[LocalClaim, ...]
     cover_sources: tuple[CoverSource, ...] = ()
     rear_resource_limit: bool = False
+    # Shadow evidence only: never a cover source, candidate or verification.
+    cover_recovery: EpubCoverRecovery | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3304,6 +3307,7 @@ class GenerateMetadataReport:
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
+                cover_recovery=local.cover_recovery,
             )
         except Exception as error:
             # Cleanup only: the report assembly spans domain construction over

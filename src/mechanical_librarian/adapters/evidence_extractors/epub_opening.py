@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     epub_file_lineage,
     epub_resource_identity,
 )
+from mechanical_librarian.domain.cover_evidence import EpubCoverRecoveryRefusal
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -4198,4 +4199,92 @@ class EpubOpeningExtractor:
                 raise
 
 
-__all__ = ["EpubOpeningExtractor", "OpeningField"]
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+# Recovery parsing maps an undeclared ``xlink:`` prefix to this namespace,
+# which is how HTML serializes SVG ``xlink:href`` without declaring it.
+_UNDECLARED_XLINK = _unknown_namespace("xlink", "missing")
+
+
+class CoverWrapperRefused(Exception):
+    """A cover wrapper could not be read; carries one closed refusal."""
+
+    def __init__(self, refusal: EpubCoverRecoveryRefusal) -> None:
+        self.refusal = refusal
+
+
+@dataclass
+class CoverWrapperUsage:
+    """One cover selection's accumulated work, capped at the opening totals."""
+
+    expanded_bytes: int = 0
+    nodes: int = 0
+    text_characters: int = 0
+
+
+def cover_wrapper_references(
+    archive: zipfile.ZipFile,
+    request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
+    member_name: str,
+    media_type: str,
+    usage: CoverWrapperUsage,
+) -> tuple[str, ...]:
+    """Read one cover wrapper under the opening rules and list its image references.
+
+    The wrapper is read and parsed exactly as an opening resource is, under
+    the per-resource bounds and charged to ``usage`` against the per-selection
+    totals. Only HTML ``img/@src`` and SVG ``image/@href`` or
+    ``image/@xlink:href`` count, on every element including hidden ones, in
+    document order. Nothing is rendered or retained beyond the references, and
+    every failure is one closed refusal.
+    """
+    try:
+        data = _read_member(
+            archive, member_name, limits.expanded_bytes_per_resource, request
+        )
+        usage.expanded_bytes += len(data)
+        if usage.expanded_bytes > limits.expanded_bytes_per_selection:
+            raise _ResourceRejected
+        projection = _parse(data, media_type, limits, request)
+        usage.nodes += projection.work_nodes
+        usage.text_characters += projection.work_text_characters
+        if (
+            usage.nodes > limits.nodes_per_selection
+            or usage.text_characters > limits.text_characters_per_selection
+        ):
+            raise _ResourceRejected
+    except _AggregateRejected as rejected:
+        raise CoverWrapperRefused(
+            EpubCoverRecoveryRefusal.WRAPPER_RESOURCE_LIMIT
+            if rejected.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
+            else EpubCoverRecoveryRefusal.WRAPPER_TIMEOUT
+        ) from None
+    except _ResourceRejected:
+        raise CoverWrapperRefused(
+            EpubCoverRecoveryRefusal.WRAPPER_RESOURCE_LIMIT
+        ) from None
+    except (ValueError, RecursionError):
+        # ``_MalformedMarkup`` and its unsafe-construct and encoding refusals
+        # are ``ValueError``s, as is a member that could not be read.
+        raise CoverWrapperRefused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE) from None
+    references: list[str] = []
+    for element in projection.elements:
+        if element.name == "img" and _is_html_namespace(element.namespace):
+            names: tuple[str, ...] = ("src",)
+        elif element.name == "image" and element.namespace == _SVG_NS:
+            names = ("href", f"{{{_XLINK_NS}}}href", f"{{{_UNDECLARED_XLINK}}}href")
+        else:
+            continue
+        references.extend(
+            element.attributes[name] for name in names if name in element.attributes
+        )
+    return tuple(references)
+
+
+__all__ = [
+    "CoverWrapperRefused",
+    "CoverWrapperUsage",
+    "EpubOpeningExtractor",
+    "OpeningField",
+    "cover_wrapper_references",
+]

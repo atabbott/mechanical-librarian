@@ -2370,6 +2370,8 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
         provider["audio_editions"] = []
     # v63 added the companion ebook section (#1319).
     document["companion"] = None
+    # The EPUB cover recovery (#1357) is null for a producer that tried none.
+    document["local"]["cover_recovery"] = None
     document.pop("report_id")
     document["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(document).encode()).hexdigest()

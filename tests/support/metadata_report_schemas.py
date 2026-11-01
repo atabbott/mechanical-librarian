@@ -266,6 +266,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
+    data["local"]["cover_recovery"] = None
     for provider in data["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []

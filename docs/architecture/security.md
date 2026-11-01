@@ -306,6 +306,21 @@ revalidates file content and target identity inside the publication
 transaction, so a replaced file is refused. Digits inside non-ISBN schemes
 and URIs never become ISBNs.
 
+When neither the EPUB 3 `cover-image` nor the legacy `meta name="cover"` is
+valid, the child tries three cover fallbacks in a fixed order: a legacy meta
+naming a non-image item, a guide `cover` reference, and `cover-image` on a
+non-image item. It reads at most one wrapper page, with the opening reader's
+document rules and per-resource bounds, charged to the selection totals and
+the child's deadline; the page is never rendered, stored or sent. Only HTML
+`img/@src` and SVG `image/@href` or `@xlink:href` count, and each must resolve
+through the package's member-name normalisation to exactly one local manifest
+image, one hop only. A remote, `data:` or fragment-only reference, a traversal,
+a directory, a self or wrapper reference, a second image, or fallbacks that
+name different images is a closed refusal, never a choice. A recovery is
+shadow evidence only: the cover source stays `absent`, no image byte is read,
+and it is neither a candidate nor verification of the current cover. No bound
+is raised, and the report keeps only closed fallback and refusal codes.
+
 **Audiobooks.** `ffprobe` runs as an isolated child over a passed descriptor
 ([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
 inherited `PATH`, a minimal environment, its own session, and CPU, memory,

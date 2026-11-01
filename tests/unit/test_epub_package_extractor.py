@@ -24,6 +24,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageRequest,
     EpubPackageSource,
 )
+from mechanical_librarian.domain.cover_evidence import EpubCoverFallback
 from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -2139,10 +2140,21 @@ def test_common_noncanonical_packaging_preserves_trustworthy_evidence(
     )
 
 
-def test_configured_archive_xml_and_compression_bounds_fail_without_partial_success() -> (
-    None
-):
-    ordinary = epub_bytes()
+@pytest.mark.parametrize(
+    "package",
+    (
+        None,
+        EPUB3_PACKAGE.replace(
+            b'media-type="image/jpeg" properties="cover-image"',
+            b'media-type="application/xhtml+xml" properties="cover-image"',
+        ),
+    ),
+    ids=("declared_cover", "wrapper_fallback"),
+)
+def test_configured_archive_xml_and_compression_bounds_fail_without_partial_success(
+    package: bytes | None,
+) -> None:
+    ordinary = epub_bytes(package=package)
     entry_limited = EpubPackageExtractor().extract(
         request_with_limits(ordinary, EpubPackageLimits(archive_entries=2))
     )
@@ -2150,7 +2162,8 @@ def test_configured_archive_xml_and_compression_bounds_fail_without_partial_succ
         request_with_limits(ordinary, EpubPackageLimits(xml_nodes_per_document=2))
     )
     ratio_bomb = epub_bytes(
-        extra_entries=(("EPUB/opaque.bin", b"0" * 100_000, zipfile.ZIP_DEFLATED),)
+        package=package,
+        extra_entries=(("EPUB/opaque.bin", b"0" * 100_000, zipfile.ZIP_DEFLATED),),
     )
     ratio_limited = EpubPackageExtractor().extract(
         request_with_limits(
@@ -2160,9 +2173,11 @@ def test_configured_archive_xml_and_compression_bounds_fail_without_partial_succ
     for report in (entry_limited, node_limited, ratio_limited):
         assert report.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
         assert not (report.observations or report.declarations)
+        assert report.cover_fallbacks == ()
 
     aggregate = epub_bytes(
-        extra_entries=(("EPUB/large-opaque.bin", b"x" * 1_000, zipfile.ZIP_STORED),)
+        package=package,
+        extra_entries=(("EPUB/large-opaque.bin", b"x" * 1_000, zipfile.ZIP_STORED),),
     )
     aggregate_report = EpubPackageExtractor().extract(
         request_with_limits(
@@ -2170,6 +2185,12 @@ def test_configured_archive_xml_and_compression_bounds_fail_without_partial_succ
         )
     )
     assert aggregate_report.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
+    assert aggregate_report.cover_fallbacks == ()
+    # Below every bound, the same package succeeds and only a malformed
+    # declaration carries a fallback plan.
+    assert bool(EpubPackageExtractor().extract(request(ordinary)).cover_fallbacks) is (
+        package is not None
+    )
 
 
 def test_live_monotonic_deadline_source_io_and_allocator_failures_are_typed() -> None:
@@ -2215,3 +2236,79 @@ def test_live_monotonic_deadline_source_io_and_allocator_failures_are_typed() ->
     ):
         exhausted = EpubPackageExtractor().extract(request(value))
     assert exhausted.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
+
+
+_WRAPPER_ITEM = (
+    b'<item id="wrap" href="wrap.xhtml" media-type="application/xhtml+xml"/></manifest>'
+)
+_WRAPPER_ENTRY = (("EPUB/wrap.xhtml", b"wrapper", zipfile.ZIP_DEFLATED),)
+
+
+@pytest.mark.parametrize(
+    "package",
+    (
+        # A valid EPUB3 cover wins outright over a disagreeing wrapper.
+        EPUB3_PACKAGE.replace(b"</manifest>", _WRAPPER_ITEM)
+        .replace(b"</metadata>", b'<meta name="cover" content="wrap"/></metadata>')
+        .replace(
+            b"</spine>",
+            b'</spine><guide><reference type="cover" href="wrap.xhtml"/></guide>',
+        ),
+        # A valid legacy cover keeps today's selection.
+        EPUB2_PACKAGE.replace(b"</manifest>", _WRAPPER_ITEM).replace(
+            b'type="text" title="Start" href="chapter.xhtml#start"',
+            b'type="cover" href="wrap.xhtml"',
+        ),
+        # Contradictory valid EPUB3 covers select nothing and plan nothing.
+        EPUB3_PACKAGE.replace(
+            b"</manifest>",
+            b'<item id="other" href="other.jpg" media-type="image/jpeg" '
+            b'properties="cover-image"/>' + _WRAPPER_ITEM,
+        ).replace(
+            b"</spine>",
+            b'</spine><guide><reference type="cover" href="wrap.xhtml"/></guide>',
+        ),
+    ),
+    ids=("valid_current_cover", "valid_legacy_cover", "contradictory_valid_covers"),
+)
+def test_a_valid_cover_declaration_leaves_no_fallback_plan(package: bytes) -> None:
+    report = EpubPackageExtractor().extract(
+        request(
+            epub_bytes(
+                package=package,
+                extra_entries=(
+                    *_WRAPPER_ENTRY,
+                    ("EPUB/other.jpg", b"other", zipfile.ZIP_STORED),
+                ),
+            )
+        )
+    )
+    assert report.outcome is EpubInspectionOutcome.SUCCESS
+    assert report.cover_fallbacks == ()
+
+
+def test_a_non_image_cover_image_item_is_planned_without_new_evidence() -> None:
+    wrong_cover = EPUB3_PACKAGE.replace(
+        b'media-type="image/jpeg" properties="cover-image"',
+        b'media-type="application/xhtml+xml" properties="cover-image"',
+    )
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=wrong_cover)))
+    assert report.outcome is EpubInspectionOutcome.SUCCESS
+    assert [(item.fallback, item.media_type) for item in report.cover_fallbacks] == [
+        (EpubCoverFallback.COVER_IMAGE_WRAPPER, "application/xhtml+xml")
+    ]
+    assert not any(item.field is EpubPackageField.COVER for item in report.observations)
+    assert not any(
+        item.kind is EpubPackageDeclarationKind.COVER for item in report.declarations
+    )
+    assert "invalid_cover_declaration" in {item.code for item in report.warnings}
+
+
+def test_a_guide_cover_outside_the_package_still_rejects_the_package() -> None:
+    package = EPUB3_PACKAGE.replace(b' properties="cover-image"', b"").replace(
+        b"</spine>",
+        b'</spine><guide><reference type="cover" href="../../cover.jpg"/></guide>',
+    )
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
+    assert report.outcome is EpubInspectionOutcome.MALFORMED
+    assert report.cover_fallbacks == ()

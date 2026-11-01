@@ -25,7 +25,10 @@ Where each store lives is in [SQLite topology](sqlite-topology.md).
   identities, the closed set of rich evidence kinds, lane identities and
   normalized ISBN families, and aggregate diagnostics;
 - cover outcomes with opaque identities, an allow-listed edition context,
-  digests, dimensions and media type.
+  digests, dimensions and media type;
+- for an EPUB with a malformed cover declaration, the closed fallback and
+  refusal codes of its shadow cover recovery, never a reference or member
+  name.
 
 Cover originals and previews are stored once per digest in the artifact store.
 
