@@ -268,6 +268,18 @@ describe('emitted decoders', () => {
       )
   })
 
+  it('embeds schema text that could end a script or a line as plain data', async () => {
+    const odd = '</script>\u2028\u2029<!--'
+    const emitted = await load(
+      synthetic(
+        { Odd: closed({ [odd]: { type: 'string', enum: [odd, 'y'] } }) },
+        { '/odd': { get: { operationId: 'odd', responses: { '200': json(ref('Odd')) } } } },
+      ),
+    )
+    expect(emitted.d_Odd?.({ [odd]: odd }, '')).toEqual({ [odd]: odd })
+    expect(failure(() => emitted.d_Odd?.({ [odd]: 'x' }, ''))).toContain('enum@')
+  })
+
   it('rebuild a valid value as a new object and route literal paths first', async () => {
     const emitted = await richModule()
     const decoded = emitted.d_Item?.(item, '')

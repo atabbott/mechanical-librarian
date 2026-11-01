@@ -263,8 +263,12 @@ export const anyOf =
 const rt = <O extends keyof operations, St extends keyof operations[O]['responses']>(d: D<Body<O, St>>) => d
 `
 
+// JSON text made safe to embed as JavaScript source: escapes the characters
+// that could close a script context or end a line inside a string literal.
+const js = (value) =>
+  JSON.stringify(value).replace(/[<>/\u2028\u2029]/gu, (c) => `\\u${c.codePointAt(0).toString(16).padStart(4, '0')}`)
 const ident = (name) => name.replace(/[^A-Za-z0-9_]/gu, (c) => `$${c.codePointAt(0)}`)
-const key = (name) => (name === '__proto__' ? '["__proto__"]' : JSON.stringify(name))
+const key = (name) => (name === '__proto__' ? '["__proto__"]' : js(name))
 const args = (...values) => {
   while (values.length && values.at(-1) === undefined) values.pop()
   return values.map((value) => (value === undefined ? 'undefined' : value)).join(', ')
@@ -291,16 +295,16 @@ export function emitDecoders(document) {
       const mapping = Object.entries(node.discriminator.mapping)
         .map(([tag, ref]) => `${key(tag)}: ref(() => d_${ident(ref.slice(PREFIX.length))})`)
         .join(', ')
-      return `tagged(${JSON.stringify(node.discriminator.propertyName)}, { ${mapping} })`
+      return `tagged(${js(node.discriminator.propertyName)}, { ${mapping} })`
     }
     if ('anyOf' in node) {
       const others = node.anyOf.filter((branch) => branch.type !== 'null')
       if (others.length === 1 && others.length < node.anyOf.length) return `nullable(${expr(others[0])})`
-      return `anyOf(${node.anyOf.map((branch) => `[${JSON.stringify(kind(branch))}, ${expr(branch)}]`).join(', ')})`
+      return `anyOf(${node.anyOf.map((branch) => `[${js(kind(branch))}, ${expr(branch)}]`).join(', ')})`
     }
     if ('const' in node || 'enum' in node) {
       const literals = 'const' in node ? [node.const] : node.enum
-      return `lit(${[JSON.stringify(node.type ?? null), ...literals.map((value) => JSON.stringify(value))].join(', ')})`
+      return `lit(${[js(node.type ?? null), ...literals.map((value) => js(value))].join(', ')})`
     }
     switch (node.type) {
       case 'string':
@@ -318,7 +322,7 @@ export function emitDecoders(document) {
       case 'object': {
         if (plain(node.additionalProperties)) {
           const names = node.propertyNames && ('const' in node.propertyNames ? [node.propertyNames.const] : node.propertyNames.enum)
-          return `map(${args(expr(node.additionalProperties), node.maxProperties, names && JSON.stringify(names))})`
+          return `map(${args(expr(node.additionalProperties), node.maxProperties, names && js(names))})`
         }
         return 'open'
       }
@@ -332,18 +336,18 @@ export function emitDecoders(document) {
     const skip = omitted.get(name) ?? []
     const fields = Object.entries(schema.properties ?? {}).map(([property, value]) => {
       const d = expr(value)
-      const field = !skip.includes(property) ? `req(${d})` : 'default' in value ? `dflt(${d}, () => (${JSON.stringify(value.default)}))` : `opt(${d})`
+      const field = !skip.includes(property) ? `req(${d})` : 'default' in value ? `dflt(${d}, () => (${js(value.default)}))` : `opt(${d})`
       return `  ${key(property)}: ${field},`
     })
-    body.push(`export const d_${ident(name)}: D<S[${JSON.stringify(name)}]> = obj<S[${JSON.stringify(name)}]>({\n${fields.join('\n')}\n})`)
+    body.push(`export const d_${ident(name)}: D<S[${js(name)}]> = obj<S[${js(name)}]>({\n${fields.join('\n')}\n})`)
   }
   const byKey = new Map()
   for (const entry of entries) {
     const decoders = byKey.get(entry.key) ?? []
-    decoders.push(`    ${JSON.stringify(entry.status)}: rt<${JSON.stringify(entry.id)}, ${entry.status}>(${expr(entry.schema)}),`)
+    decoders.push(`    ${js(entry.status)}: rt<${js(entry.id)}, ${entry.status}>(${expr(entry.schema)}),`)
     byKey.set(entry.key, decoders)
   }
-  body.push(`export const responseDecoders = {\n${[...byKey].map(([k, d]) => `  ${JSON.stringify(k)}: {\n${d.join('\n')}\n  },`).join('\n')}\n} as const`)
+  body.push(`export const responseDecoders = {\n${[...byKey].map(([k, d]) => `  ${js(k)}: {\n${d.join('\n')}\n  },`).join('\n')}\n} as const`)
   body.push('export type OperationKey = keyof typeof responseDecoders')
   const routes = [...byKey.keys()]
     .map((k) => {
@@ -354,13 +358,13 @@ export function emitDecoders(document) {
     .sort((a, b) => a.params - b.params || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
   body.push(
     `const ROUTES: readonly (readonly [OperationKey, string, RegExp])[] = [\n${routes
-      .map(({ k, source }) => `  [${JSON.stringify(k)}, ${JSON.stringify(k.slice(0, k.indexOf(' ')))}, new RegExp(${JSON.stringify(source)}, 'u')],`)
+      .map(({ k, source }) => `  [${js(k)}, ${js(k.slice(0, k.indexOf(' ')))}, new RegExp(${js(source)}, 'u')],`)
       .join('\n')}\n]`,
     `export const matchOperation = (method: string, url: string): OperationKey | undefined => {
   const path = new URL(url, 'http://local').pathname
   return ROUTES.find(([, verb, pattern]) => verb === method.toUpperCase() && pattern.test(path))?.[0]
 }`,
   )
-  const hoisted = [...patterns].map(([source, name]) => `const ${name} = new RegExp(${JSON.stringify(source)}, 'u')`)
+  const hoisted = [...patterns].map(([source, name]) => `const ${name} = new RegExp(${js(source)}, 'u')`)
   return `${PRELUDE}${hoisted.join('\n')}\n\n${body.join('\n\n')}\n`
 }
