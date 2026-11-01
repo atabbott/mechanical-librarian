@@ -38,6 +38,11 @@ brackets are GitHub issues.
   now records, as shadow evidence only, whether its own cover could be
   recovered from a legacy cover entry, a guide reference or a cover page. The
   cover stays absent, and nothing is chosen or shown from it yet (#1357).
+- A browser change that may have been saved although its response failed is
+  no longer reported as failed or refused: the page reloads the current state
+  and asks you to check it before pressing again, and a decision offers a
+  same-key Retry that cannot record it twice. A saved reviewer-access change
+  now answers with its saved view (#1571).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
