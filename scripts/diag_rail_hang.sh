@@ -24,8 +24,7 @@ run() {  # label, seconds, pytest args...
 }
 uv pip install py-spy >/dev/null 2>&1 || true
 LOG='for (const [target, name] of [[window, "scrollTo"], [window, "scrollBy"], [Element.prototype, "scrollIntoView"], [HTMLElement.prototype, "focus"]]) { const original = target[name]; target[name] = function (...args) { console.log("CALL " + name + " " + JSON.stringify(args) + " y=" + Math.round(scrollY) + " t=" + Math.round(performance.now())); const result = original.apply(this, args); console.log("DONE " + name + " y=" + Math.round(scrollY)); return result; }; }'
-for i in $(seq 1 40); do
-  export DIAG_INIT="$LOG"; run "log-$i" 30 "$TEST"
-  export DIAG_INIT="window.scrollTo = function () {};"; run "noscrollto-$i" 30 "$TEST"
-  export DIAG_INIT="window.scrollBy = function () {}; Element.prototype.scrollIntoView = function () {};"; run "noscrollby-$i" 30 "$TEST"
+for i in $(seq 1 50); do
+  export DIAG_INIT="$LOG" DIAG_WAITFOCUS=; run "base-$i" 30 "$TEST"
+  export DIAG_INIT="$LOG" DIAG_WAITFOCUS=1; run "waitfocus-$i" 30 "$TEST"
 done

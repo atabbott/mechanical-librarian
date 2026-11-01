@@ -4068,6 +4068,8 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 _diag(f"{where}: open toggle")
                 toggle.click()
                 expect(toggle).to_have_attribute("aria-expanded", "true")
+                if os.environ.get("DIAG_WAITFOCUS"):
+                    expect(rail.get_by_role("heading", name="Attention")).to_be_focused()
                 _diag(f"{where}: click closer")
                 control.click()
                 _diag(f"{where}: rail gone")
