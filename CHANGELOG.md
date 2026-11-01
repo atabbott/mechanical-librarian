@@ -173,6 +173,9 @@ brackets are GitHub issues.
 - The Audiobookshelf field-effect canary composes the installed application
   around one shared operation admission, as the product does, so its
   preparation lanes queue instead of meeting at the database (#1561).
+- A cover advisory retry or comparison whose result cannot be confirmed now
+  reloads the case and says it may have been requested, instead of saying it
+  failed safely (#1572).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
