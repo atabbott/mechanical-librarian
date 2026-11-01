@@ -1453,6 +1453,7 @@ def _band_replay(
     provider_title: str,
     *,
     series: tuple[tuple[str, str | None], ...] = _BAND_SERIES,
+    names: tuple[str, ...] = (),
     family: WorkTitleTransformationFamily | None = None,
     local_authors: tuple[str, ...] = _BAND_AUTHORS,
     provider_authors: tuple[str, ...] = _BAND_AUTHORS,
@@ -1477,6 +1478,7 @@ def _band_replay(
         provider_work_identity="work-1",
         dispatch_lineage=dispatch,
         provider_series_memberships=series,
+        provider_series_names=names,
         audiobook=audiobook,
         runtime_tight=runtime_tight,
     )
@@ -1558,7 +1560,6 @@ _RECORDING_FORMAT_TERMS = (
         ),
         ("Plain Work (Translated)", "Plain Work", {}),
         ("Plain Work (Example Saga)", "Plain Work: Abridged Edition", {}),
-        ("Plain Work (Example Saga)", "Plain Work", {"audiobook": False}),
         (
             "Plain Work (Example Saga)",
             "Plain Work",
@@ -1582,7 +1583,6 @@ _RECORDING_FORMAT_TERMS = (
         ),
         "translated",
         "provider_variant_marker",
-        "ebook",
         "lineage_the_ladder_never_emits",
     ),
 )
@@ -1590,6 +1590,150 @@ def test_band_title_production_refusals(
     local_title: str, provider_title: str, kwargs: dict[str, object]
 ) -> None:
     assert None is _band_replay(local_title, provider_title, **kwargs)  # type: ignore[arg-type]  # reason: parametrized keyword overrides
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title", "kwargs", "admitted"),
+    (
+        ("Plain Work (Example Saga)", "Plain Work", {}, True),
+        # No series corroboration or runtime band is read for an ebook.
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"series": (), "runtime_tight": False},
+            True,
+        ),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {
+                "local_authors": ("Ada Example", "Bea Example"),
+                "provider_authors": ("Bea Example", "Ada Example"),
+            },
+            True,
+        ),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {
+                "local_authors": ("Ada Example", "Bea Example"),
+                "provider_authors": ("Ada Example",),
+            },
+            False,
+        ),
+        ("Plain Work (Example Saga)", "Plain Work: Abridged Edition", {}, False),
+        ("Plain Work (Example Saga)", "Other Work", {}, False),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"family": WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE},
+            False,
+        ),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", {}, False),
+        ("Plain Work (Translated)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Abridged)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Volume 2)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Volume II)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Part Two)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Box Set)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Omnibus)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Study Guide)", "Plain Work", {"series": ()}, False),
+        # A query-shaped author spelling still admits the same names (#1499).
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {
+                "local_authors": ("Jean\N{NON-BREAKING HYPHEN}Paul Example",),
+                "provider_authors": ("Jean\N{NON-BREAKING HYPHEN}Paul Example",),
+            },
+            True,
+        ),
+        ("Plain Work (II)", "Plain Work", {"series": ()}, False),
+        # A series stated with no position must still be this one (#1499).
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"series": (), "names": ("Other Saga",)},
+            False,
+        ),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"series": (), "names": ("Example Saga",)},
+            True,
+        ),
+        # Another series' position does not hide this one's name.
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"series": (("Other Saga", "2"),), "names": ("Example Saga",)},
+            True,
+        ),
+        # A positioned membership of this series must state this position.
+        (
+            "Plain Work (Example Saga, #2)",
+            "Plain Work",
+            {"series": (("Example Saga", "3"),), "names": ()},
+            False,
+        ),
+        ("Plain Work (Trilogy)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Workbook)", "Plain Work", {"series": ()}, False),
+        ("Plain Work (Collected Stories 2)", "Plain Work", {"series": ()}, False),
+        # A narrowed retry admits the same work (#1499 G4).
+        ("Plain Work (Example Saga)", "Plain Work", {"narrowing": True}, True),
+        ("Plain Work (Example Saga, #2)", "Plain Work", {"series": ()}, True),
+        ("Plain Work (Example Saga Book 2)", "Plain Work", {"series": ()}, True),
+        # A product that states its series must state this one.
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"series": (("Other Saga", None),)},
+            False,
+        ),
+    ),
+    ids=(
+        "stripped_series_name",
+        "uncorroborated",
+        "reordered_authors",
+        "author_subset",
+        "provider_variant_marker",
+        "different_title",
+        "lineage_the_ladder_never_emits",
+        "order_inverted_prefix",
+        "translated",
+        "abridged",
+        "volume_number",
+        "volume_roman",
+        "part_word",
+        "box_set",
+        "omnibus",
+        "study_guide",
+        "query_shaped_author",
+        "bare_roman",
+        "other_unpositioned_series",
+        "same_unpositioned_series",
+        "unpositioned_beside_other_positioned",
+        "positioned_wrong_position",
+        "trilogy",
+        "workbook",
+        "collected_stories",
+        "narrowed_retry",
+        "series_and_number",
+        "series_book_number",
+        "other_stated_series",
+    ),
+)
+def test_an_ebook_admits_its_title_without_the_bracketed_series_name(
+    local_title: str, provider_title: str, kwargs: dict[str, object], admitted: bool
+) -> None:
+    """An ebook "Title (Series Name)" is the work its provider calls "Title" (#1499)."""
+    expected = "band_parenthesized_series_name" if admitted else None
+    assert expected == _band_replay(
+        local_title,
+        provider_title,
+        audiobook=False,
+        **kwargs,  # type: ignore[arg-type]  # reason: parametrized keyword overrides
+    )
 
 
 @pytest.mark.parametrize(

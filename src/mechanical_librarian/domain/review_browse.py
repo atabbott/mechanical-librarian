@@ -193,6 +193,9 @@ class ProviderLaneFacts:
     dispatch: str | None
     # The adapter itself failed this lane, not the provider (#1498).
     adapter_fault: bool = False
+    # Work-identity admission refused every product the lane found, which an
+    # ebook lane states by its diagnostics alone (#1499).
+    identity_refused: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +247,10 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
             any(
                 value.category is FailureCategory.ADAPTER_FAULT for value in diagnostics
             ),
+            any(
+                value.category is FailureCategory.WORK_IDENTITY_REFUSED
+                for value in diagnostics
+            ),
         )
         for provider in report.providers
         for kind, status, dispatch, diagnostics in (
@@ -258,10 +265,15 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
 
 def _adapter_faulted(diagnostics: object) -> bool:
     """Read only whether a stored diagnostic list names an adapter fault."""
+    return _names_category(diagnostics, FailureCategory.ADAPTER_FAULT)
+
+
+def _names_category(diagnostics: object, category: FailureCategory) -> bool:
+    """Read only whether a stored diagnostic list names one category."""
     if type(diagnostics) is not list:
         raise ValueError
     return any(
-        type(value) is dict and value.get("category") == "adapter_fault"
+        type(value) is dict and value.get("category") == category.value
         for value in diagnostics
     )
 
@@ -312,11 +324,14 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                         lane["dispatch"]
                     ).outcome.value,
                     _adapter_faulted(lane["diagnostics"]),
+                    _names_category(
+                        lane["diagnostics"], FailureCategory.WORK_IDENTITY_REFUSED
+                    ),
                 )
                 for lane in provider["lanes"]
             ]
             if any(
-                lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _, _, _ in pairs
+                lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _, _, _, _ in pairs
             ):
                 raise ValueError
             lanes.extend(
@@ -327,9 +342,18 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     state.value,
                     dispatch,
                     fault,
+                    refused,
                 )
-                for value, state, dispatch, fault in pairs
-                or [(kind, status, None, _adapter_faulted(provider["diagnostics"]))]
+                for value, state, dispatch, fault, refused in pairs
+                or [
+                    (
+                        kind,
+                        status,
+                        None,
+                        _adapter_faulted(provider["diagnostics"]),
+                        False,
+                    )
+                ]
             )
         covers = report["covers"]
         if type(covers) is not list:

@@ -44,13 +44,25 @@ from mechanical_librarian.domain.metadata_report import (
     DispatchOutcome,
     FileFacts,
     MetadataReport,
+    ProviderLaneObservation,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     TargetFacts,
     default_target_fields,
+    work_discovery_lane_payloads,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from tests.support.audiobook_providers import work_plan
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_query_ladder,
+)
+from tests.support.audiobook_providers import (
+    audio_target,
+    target_title_claim,
+    work_plan,
+)
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     audio_local_claims,
@@ -832,5 +844,67 @@ def test_a_later_terminal_failure_over_an_unmatched_report_is_counted_as_failed(
         progress = repository.review_pipeline_progress("primary", _RECOVERY)
         assert progress is not None
         assert (progress.blocked, progress.not_matched) == (1, 0)
+    finally:
+        repository.close()
+
+
+def _refused_ebook(item: str) -> MetadataReport:
+    """An ebook whose Open Library lane found one product admission refused."""
+    title = "Ember Tide Protocol (The Tide Cycle)"
+    fields = audio_target(title, ("Corin Halloway",)).fields
+    claim = target_title_claim(title)
+    (payload,) = work_discovery_lane_payloads(fields, (claim,))
+    ladder = work_query_ladder(payload.title, payload.authors)
+    lane = ProviderLaneObservation(
+        payload.identity,
+        ProviderQueryKind.WORK,
+        ProviderStatus.NO_MATCH,
+        (claim.reference,),
+        diagnostics=work_ladder_diagnostics(0, 1),
+        exhausted_dispatch=(WorkDispatchLineage.from_query(ladder[0]),),
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", item, fields),
+        file=FileFacts(0, "f" * 64, "d" * 64),
+        local_claims=(claim,),
+        local_reasons=("target_metadata_title",),
+        providers=(
+            ProviderObservation(
+                "open_library",
+                ProviderStatus.NO_MATCH,
+                lane.input_references,
+                query_kind=ProviderQueryKind.WORK,
+                authority="open_library",
+                lanes=(lane,),
+                accessed_at="2023-11-14T22:13:20.000000Z",
+                diagnostics=lane.diagnostics,
+            ),
+        ),
+    )
+
+
+def test_an_ebook_lane_refusal_reads_as_a_refusal_in_library_and_report(
+    tmp_path: Path,
+) -> None:
+    """An ebook lane states a refusal by its diagnostics alone (#1499)."""
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        _publish(repository, _refused_ebook("refused-ebook"))
+        browse = BrowseReviewLibrary(repository)
+        detail = browse.report_detail("primary", "ebooks", "refused-ebook")
+        assert [
+            (source["provider"], source["status"], source["reason"])
+            for source in cast("list[dict[str, object]]", detail["provider_sources"])
+        ] == [("Open Library", "no_match", "Found candidates, but none was this work.")]
+        row = _items(
+            browse.library(lens="not_matched", search=None, limit=50, cursor=None)
+        )["refused-ebook"]
+        assert (
+            cast("dict[str, object]", row["summary"])["state"] == "not_matched_refused"
+        )
+        assert [
+            outcome["reason"]
+            for outcome in cast("list[dict[str, object]]", row["preparation_outcomes"])
+        ] == ["Found candidates, but none was this work."]
     finally:
         repository.close()

@@ -243,7 +243,10 @@ A work lane asks at most three rungs — normalized, subtitle-stripped,
 punctuation-folded — and stops on `candidates`. `candidate_limit_exceeded`
 triggers one narrowing retry and ends the ladder. On an audiobook plan a fully
 refused rung moves on, and an exhausted lane records each rung as
-`exhausted_dispatch`. Query text is never stored.
+`exhausted_dispatch`. An ebook plan stops at the first rung with products; when
+nothing is admitted, Open Library, Google Books, Inventaire and iTunes record
+the rungs sent as `exhausted_dispatch`, the refused rung last. Query text is
+never stored.
 
 Every shaping family is query-only:
 
@@ -263,7 +266,7 @@ never from its families alone:
 | Production | Families | Admission |
 | --- | --- | --- |
 | `author_prefix_then_underscores` | first-author filename prefix, then underscores | admission-enabled |
-| `band_parenthesized_series_name` | parenthesized series name, alone | tight band only |
+| `band_parenthesized_series_name` | parenthesized series name, alone | tight band only; on an ebook, the exact series-stripped title by the same authors |
 | `band_order_inverted_series_prefix` | order-inverted series prefix, alone | tight band only |
 | `band_initials_fold` | dotted initials folded | tight band only |
 | `band_corroborated_title_relation` | corroborated title relation, alone | tight band, plus narrator or series agreement |

@@ -828,8 +828,15 @@ def test_an_ebook_plan_still_stops_at_the_first_store_rung_with_results() -> Non
 
     assert 1 == len(seen)
     assert ProviderStatus.NO_MATCH is observation.status
-    assert () == observation.lanes[0].exhausted_dispatch
-    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _categories(observation)
+    # The one rung it sent is recorded, so the miss shows what was searched
+    # (#1499).
+    assert (
+        WorkDispatchLineage.from_query(
+            work_query_ladder(_SUBTITLED, ("Corin Halloway",))[0]
+        ),
+    ) == observation.lanes[0].exhausted_dispatch
+    # Its products were refused, not missing, and the lane now says so.
+    assert ((FailureCategory.WORK_IDENTITY_REFUSED, 1),) == _categories(observation)
 
 
 def _alternative_plan(*, collapsed: bool = False) -> MetadataDiscoveryPlan:
@@ -877,3 +884,28 @@ def test_a_series_collapsed_plan_sends_the_store_no_work_lane() -> None:
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.observation.status
     assert [] == seen
+
+
+def test_an_ebook_titled_with_its_series_matches_the_store_work_without_it() -> None:
+    """The bare-tier EPUB of #1499: the series-stripped rung's answer is admitted."""
+    title = "Ember Tide Protocol (The Tide Cycle)"
+    ladder = work_query_ladder(title, ("Corin Halloway",))
+    pages = [_page() for _ in ladder]
+    stripped = next(
+        index
+        for index, query in enumerate(ladder)
+        if query.transformations
+        == (WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,)
+    )
+    pages[stripped] = _page(_work("Ember Tide Protocol"))
+    seen, handle = _pages(*pages)
+    observation = observe_provider(
+        "itunes", "itunes_search", _provider(handle), work_plan(title=title)
+    ).observation
+
+    (lane,) = observation.lanes
+    assert stripped + 1 == len(seen)
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert WorkDispatchLineage.from_query(ladder[stripped]) == lane.dispatch_lineage
+    assert lane.transformation_lineage is not None
+    assert "band_parenthesized_series_name" == lane.transformation_lineage.production
