@@ -1,5 +1,6 @@
 import activityV2Predecessor from './activityV2Predecessor.json'
 import currentActivity from './descriptionAdviceActivityFixture.json'
+import { reportDetail } from './wireFixtures'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -19,6 +20,8 @@ import {
   policyAutomaticQualification,
   SessionExpiredError,
   refusalCopy,
+  PRE_CALL_SERVER_CODES,
+  uncertainWriteOutcome,
   mapLibrary,
   mapEvidence,
   mapHistory,
@@ -3132,36 +3135,7 @@ describe('ReviewApiClient', () => {
 })
 
 describe('mapReportDetail', () => {
-  const detail = (overrides: Record<string, unknown> = {}) => ({
-    chapters: [],
-    chapters_truncated: false,
-    connection: 'primary',
-    embedded_cover: { present: false, surface: null },
-    evidence: [],
-    evidence_truncated: false,
-    item: 'item-9',
-    library: 'audio',
-    media_health: [
-      {
-        bound: 'The declared track sequence runs without a hole.',
-        cited: ['track 1 declares sequence 1', 'track 2 declares sequence 3'],
-        expected: null,
-        kind: 'track_sequence_gap',
-        observed: null,
-        tracks: [1, 2],
-      },
-    ],
-    media_kind: 'm4b',
-    provider_sources: [],
-    provider_evidence: [],
-    provider_evidence_truncated: false,
-    report_id: `report_${'a'.repeat(64)}`,
-    schema_version: 'review-report-detail-v5',
-    audiobook_review_scope: null,
-    recording_identity_basis: null,
-    title: 'Recorded work',
-    ...overrides,
-  })
+  const detail = reportDetail
 
   it('refuses an evidence kind, basis or state, or a cover surface, outside its closed set (#1286 C6)', () => {
     const claim = {
@@ -3781,9 +3755,12 @@ describe('Activity check group (#1281)', () => {
   const key = `report_${'c'.repeat(64)}`
   const withGroup = (value: unknown) => ({
     ...currentActivity,
-    events: currentActivity.events.map((event) =>
-      value === undefined ? event : { ...event, check_group: value },
-    ),
+    events: currentActivity.events.map((event) => {
+      // The captured events carry the key; the absent case removes it.
+      const copy: Record<string, unknown> = { ...event }
+      delete copy.check_group
+      return value === undefined ? copy : { ...copy, check_group: value }
+    }),
   })
   it.each([
     ['absent', undefined, null],
@@ -3799,8 +3776,10 @@ describe('Activity check group (#1281)', () => {
       new ApiError(502, 'invalid_activity_check_group'),
     )
   })
-  it('maps the recorded fixture, which carries no key', () => {
-    expect(currentActivity.events.some((event) => 'check_group' in event)).toBe(false)
+  it('maps the captured fixture, whose events all carry the key', () => {
+    expect(currentActivity.events.every((event) => 'check_group' in event)).toBe(true)
+    const events = mapActivity(currentActivity).events
+    expect(events.length).toBe(currentActivity.events.length)
   })
 })
 
@@ -3925,5 +3904,32 @@ describe('signInLocation', () => {
       '/login?next=%2Freview%2Fcase-1%3Ffield%3Dtitle',
     )
     expect(signInLocation({ pathname: '/library', search: '' })).toBe('/login?next=%2Flibrary')
+  })
+})
+
+describe('uncertainWriteOutcome', () => {
+  it.each([
+    ['a lost or unreadable response', new AmbiguousMutationError()],
+    ["Starlette's text 500", new ApiError(500, 'invalid_error_response')],
+    ['503 persistence', new ApiError(503, 'persistence')],
+    ['503 unavailable', new ApiError(503, 'unavailable')],
+    ['503 reviewer_access_unavailable', new ApiError(503, 'reviewer_access_unavailable')],
+    ['a client mapper refusal after a 2xx write', new ApiError(502, 'invalid_x')],
+  ])('treats %s as possibly committed', (_name, error) => {
+    expect(uncertainWriteOutcome(error)).toBe(true)
+  })
+
+  it.each([
+    ['the pre-call build refusal', new ApiError(503, 'react_assets_unavailable')],
+    ['a renewed CSRF token', new CsrfRenewedError()],
+    ['a stale refusal', new ApiError(409, 'stale')],
+    ['a validation refusal', new ApiError(422, 'automatic_unavailable')],
+    ['a plain error', new Error('network')],
+  ])('treats %s as nothing changed', (_name, error) => {
+    expect(uncertainWriteOutcome(error)).toBe(false)
+  })
+
+  it('allow-lists only the code the session dependency raises before a handler runs', () => {
+    expect([...PRE_CALL_SERVER_CODES]).toEqual(['react_assets_unavailable'])
   })
 })

@@ -29,3 +29,10 @@ export const useRouteReadyFocus = (identity: string, preserveFocusedSearch = fal
     return () => cancelAnimationFrame(frame)
   }, [identity, preserveFocusedSearch])
 }
+// The open field's heading, the place focus returns to when the control that
+// was used is gone.
+export const focusFieldHeading = () => {
+  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h3')
+  heading?.setAttribute('tabindex', '-1')
+  heading?.focus({ preventScroll: true })
+}

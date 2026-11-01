@@ -1,0 +1,9 @@
+{
+  "body": {
+    "policy_id": "policy_da8453b5de7a86fc671ca7f64159cd87cbf35f42e1651e921821032b2b4c4dd9",
+    "schema_version": "metadata-policy-profile-v3"
+  },
+  "method": "POST",
+  "path": "/api/v1/metadata-policy/drafts",
+  "status": 201
+}

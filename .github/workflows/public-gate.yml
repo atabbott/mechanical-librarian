@@ -90,9 +90,11 @@ jobs:
           test "$(node --version)" = "v$(node -p 'require("./package.json").engines.node')"
           test "$(npm --version)" = "$(node -p 'require("./package.json").engines.npm')"
           npm ci --ignore-scripts --no-audit --no-fund
-          npm run generate -- --output "$RUNNER_TEMP/review-api-a.d.ts"
-          npm run generate -- --output "$RUNNER_TEMP/review-api-b.d.ts"
-          cmp "$RUNNER_TEMP/review-api-a.d.ts" "$RUNNER_TEMP/review-api-b.d.ts"
+          npm run generate -- --output "$RUNNER_TEMP/a/review-api.d.ts" --response-output "$RUNNER_TEMP/a/review-api-response.d.ts" --decoders "$RUNNER_TEMP/a/review-decoders.ts"
+          npm run generate -- --output "$RUNNER_TEMP/b/review-api.d.ts" --response-output "$RUNNER_TEMP/b/review-api-response.d.ts" --decoders "$RUNNER_TEMP/b/review-decoders.ts"
+          cmp "$RUNNER_TEMP/a/review-api.d.ts" "$RUNNER_TEMP/b/review-api.d.ts"
+          cmp "$RUNNER_TEMP/a/review-api-response.d.ts" "$RUNNER_TEMP/b/review-api-response.d.ts"
+          cmp "$RUNNER_TEMP/a/review-decoders.ts" "$RUNNER_TEMP/b/review-decoders.ts"
           npm run generate
           npm run typecheck
           npm run lint

@@ -1,0 +1,11 @@
+{
+  "body": {
+    "authority": "none",
+    "items": [],
+    "next_cursor": null,
+    "schema_version": "shadow-outcome-sample-v1"
+  },
+  "method": "GET",
+  "path": "/api/v1/metadata-policy/shadow/outcomes",
+  "status": 200
+}

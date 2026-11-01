@@ -136,7 +136,9 @@ counts, and marks a library outside the current run. At idle it reads
 deferred provider lookups keep their schedule. The popover fits the window
 below the masthead, scrolling inside itself when it must. `Escape` closes it and
 returns focus to its trigger. Pending commands are disabled, not removed, so
-focus stays put and a second press sends nothing.
+focus stays put and a second press sends nothing. When a command's result
+cannot be confirmed, the popover shows the refreshed state, says the change may
+have been saved, and does not offer to try again.
 
 Retry-shaped controls differ:
 

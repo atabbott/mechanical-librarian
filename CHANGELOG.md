@@ -44,9 +44,16 @@ brackets are GitHub issues.
 - **Clean rebuild required.** An EPUB whose cover declaration is malformed
   now records, as shadow evidence only, whether its own cover could be
   recovered from a legacy cover entry, a guide reference or a cover page. The
-  cover stays absent, and nothing is chosen or shown from it yet (#1357).
+  cover stays absent, and nothing is chosen or shown from it yet. A declared
+  cover the EPUB lists as encrypted is never read and shows as an unsupported
+  image format (#1357, #1569).
 - Closing the Attention queue right after opening it no longer moves focus to
   the closing queue or scrolls the page to it first (#1563).
+- A browser change that may have been saved although its response failed is
+  no longer reported as failed or refused: the page reloads the current state
+  and asks you to check it before pressing again. A decision offers Try the
+  same decision again, which cannot record it twice. A saved reviewer-access
+  change now answers with its saved view (#1571).
 - Closing the Attention queue with its toolbar toggle keeps focus on the
   toggle, as Close and Escape do (#1566).
 

@@ -323,3 +323,9 @@ a cover recovered from a malformed declaration as shadow evidence, so a v65
 report cannot state what a v66 report records. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
+
+Issue #1569 also takes the clean-rebuild branch. The EPUB cover child refuses
+a declared cover that `encryption.xml` lists, before reading it, as
+`unsupported_format`. The report schema is unchanged, but a report carries forward while
+its file and configuration fingerprints are unchanged, so a stored report would
+keep the earlier cover outcome. No adoption is supplied.

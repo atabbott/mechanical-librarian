@@ -304,7 +304,9 @@ persistence parses one bounded immutable snapshot
 ([ADR-0011](decisions/0011-isolated-epub-inspector.md)). The parent
 revalidates file content and target identity inside the publication
 transaction, so a replaced file is refused. Digits inside non-ISBN schemes
-and URIs never become ISBNs.
+and URIs never become ISBNs. A declared cover that `encryption.xml` lists is
+refused as `unsupported_format` before any of its bytes is read, and no member
+name reaches a report.
 
 When neither the EPUB 3 `cover-image` nor the legacy `meta name="cover"` is
 valid, the child tries three cover fallbacks in a fixed order: a legacy meta

@@ -1463,6 +1463,169 @@ describe('Library route', () => {
     expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
   })
 
+  it.each([
+    ['committed', true],
+    ['not committed', false],
+  ])('refreshes preparation after an unconfirmed dismissal that %s', async (_name, committed) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    const confirmed = terminalPreparation(runId)
+    let current: PreparationView = confirmed
+    http.getPreparation = vi.fn(async () => current)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+      // Only the response was lost; the write may or may not have committed.
+      if (committed)
+        current = {
+          ...confirmed,
+          presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+        }
+      throw new ApiError(503, 'persistence')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    // Opening the detail moves route focus to its heading; let that settle
+    // before pressing Dismiss so the focus assertions measure the dismissal.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('heading', { name: 'Preparation completed with failures' })
+          .closest('[data-route-focus]'),
+      ).toHaveFocus(),
+    )
+    await screen.findByRole('button', { name: 'Dismiss preparation' })
+    const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+
+    await waitFor(() =>
+      expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(
+        readsBeforeDismissal,
+      ),
+    )
+    if (committed) {
+      // The refreshed state no longer holds the run, so its detail and the
+      // control close; nothing claims the dismissal failed.
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+      )
+      const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+      expect(dismiss).not.toHaveAttribute('aria-disabled', 'true')
+      expect(dismiss).toHaveFocus()
+    }
+    expect(http.dismissPreparation).toHaveBeenCalledOnce()
+  })
+
+  it('keeps focus on a pending dismissal through an unconfirmed failure', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    let fail!: (error: unknown) => void
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        }),
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    // Opening the detail moves route focus to its heading; let that settle
+    // before pressing Dismiss so the focus assertions measure the dismissal.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('heading', { name: 'Preparation completed with failures' })
+          .closest('[data-route-focus]'),
+      ).toHaveFocus(),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    const pending = await screen.findByRole('button', { name: 'Dismissing…' })
+    expect(pending).not.toBeDisabled()
+    expect(pending).toHaveAttribute('aria-disabled', 'true')
+    expect(pending).toHaveFocus()
+    await user.click(pending)
+    expect(http.dismissPreparation).toHaveBeenCalledOnce()
+
+    await act(async () => fail(new ApiError(503, 'persistence')))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+    )
+    expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toHaveFocus()
+  })
+
+  it('disables Dismiss while preparation needs a restart', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    http.getPreparation = vi.fn(async () => ({
+      ...terminalPreparation(runId),
+      recovery_required: true,
+    }))
+    renderRoute(`/library?lens=all&preparation=${runId}`, http)
+    expect(await screen.findByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
+    const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+    expect(dismiss).toBeDisabled()
+
+    await user.click(dismiss)
+    fireEvent.click(dismiss)
+    expect(http.dismissPreparation).not.toHaveBeenCalled()
+  })
+
+  it('does not carry an unconfirmed dismissal over to a later run', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const first = terminalPreparation(`preparation_run_${'e'.repeat(64)}`)
+    const later = terminalPreparation(`preparation_run_${'f'.repeat(64)}`, 102)
+    let current: PreparationView = first
+    http.getPreparation = vi.fn(async () => current)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+      current = later
+      throw new ApiError(503, 'persistence')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    expect(await screen.findByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
+    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+  })
+
+  it('keeps a refused dismissal silent', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    http.dismissPreparation = vi
+      .fn<ReviewHttp['dismissPreparation']>()
+      .mockRejectedValue(new ApiError(409, 'stale'))
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
+    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+  })
+
   it('retries a failed live confirmation until authoritative HTTP succeeds', async () => {
     const http = createHttp()
     const updates = createLiveStream()
@@ -6324,7 +6487,14 @@ describe('Library route', () => {
   })
 
   it.each([
-    [new ApiError(503, 'persistence'), 'The decision was not recorded. Your choice is unchanged.'],
+    [
+      new ApiError(503, 'persistence'),
+      'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
+    ],
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
+    ],
     [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
   ])(
     'retries the embedded Library decision after %s with the exact preserved command and idempotency key',
@@ -7001,7 +7171,9 @@ describe('Library route', () => {
         await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
       )
       expect(
-        await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
+        await screen.findByText(
+          'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
+        ),
       ).toBeVisible()
       scrollTo.mockClear()
       const authors = screen.getByRole('button', { name: /Authors.*Needs you/u })
@@ -10901,6 +11073,32 @@ it.each(['Evidence', 'History'] as const)(
   },
 )
 
+it.each([
+  [
+    new ApiError(500, 'invalid_error_response'),
+    'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+  ],
+  [
+    new ApiError(409, 'stale'),
+    'Description preparation could not be requested. Reload the current case and retry.',
+  ],
+])('reports a description advice retry failing with %s', async (failure, copy) => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.retryDescriptionAdvice = vi.fn(async () => {
+    throw failure
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent
+    .setup()
+    .click(await screen.findByRole('button', { name: 'Retry description advice' }))
+
+  expect(await screen.findByText(copy)).toBeVisible()
+  await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
@@ -10967,7 +11165,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     name: 'Choose advised value: Authored synthetic description.',
   })
   expect(option).toHaveTextContent('Advised · Authored content')
-  expect(option).toHaveTextContent('codex · synthetic-model')
+  expect(option).toHaveTextContent('codex · gpt-5.6-sol')
   const chooser = option.closest('section.direct-choice')
   if (!(chooser instanceof HTMLElement)) throw new Error('description choice area is missing')
   expect(

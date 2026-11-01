@@ -252,6 +252,10 @@ recorded mutants. A capped `killed` verdict is sound; a capped
 `survived` is not, so only pass 2's survivors are unkilled. `first_failure`
 names one killer, not all; to prove a test kills nothing, run it alone with
 `scripts/mutation_kills_for_test.py`.
+`--functions f,C.m,C` narrows a run to module function `f`, method `C.m` and
+every method of class `C`; a name matching no scanned mutant is refused, and
+`--dry-run` prints the selection without running it. Names are not tied to a
+module, so pair `--functions` with `--only`.
 
 A non-Linux coverage run leaves Linux-only branches unexecuted. Tests that read
 source as text cannot kill mutants, and code reached only through a subprocess,
