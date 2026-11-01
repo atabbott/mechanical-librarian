@@ -2211,7 +2211,7 @@ def _report_title(report: dict[str, object]) -> str:
 # value it disagrees with is not offered, such as one in another language
 # (#1497).
 _UNOFFERED_DISSENT_TEXT = (
-    "Another source gave a value that isn't offered here; "
+    "Another source gave a value that isn\u2019t offered here; "
     "choose whether to use this one."
 )
 

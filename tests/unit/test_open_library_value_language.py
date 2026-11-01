@@ -533,4 +533,4 @@ def test_a_lone_candidate_for_an_empty_field_names_the_unoffered_dissent(
     }
 
     assert expected is _lone_candidate_for_empty(field)
-    assert "isn't offered" in _UNOFFERED_DISSENT_TEXT
+    assert "isn\u2019t offered" in _UNOFFERED_DISSENT_TEXT

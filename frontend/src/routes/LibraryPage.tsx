@@ -728,7 +728,8 @@ const loneCandidateForEmpty = (field: ReviewField) =>
 const restatesReason = (field: ReviewField, notice: string) =>
   notice === questionNotice(field) ||
   (field.automaticWithheldReason !== null &&
-    `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason)
+    (`${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason ||
+      (notice === 'competing_evidence' && loneCandidateForEmpty(field))))
 // Under an actionable field's question, one line gives its own reason: why it
 // was withheld, else its first comparison condition, else its disposition. The
 // classification sentence, the same on every field, is only the last fallback
