@@ -193,6 +193,9 @@ brackets are GitHub issues.
   audiobooks, instead of "no more specific reason is known" (#1593).
 - Sign out always lands on the sign-in page, instead of sometimes on a
   sign-in page that offers to return to where you were (#1588).
+- Settings' reviewer access no longer fails to load after a Codex sign-in when
+  the Codex auth store cannot be read; a contained profile whose paths contain
+  a NUL character is reported as unreadable (#1597).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
