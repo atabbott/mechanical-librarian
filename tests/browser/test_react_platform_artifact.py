@@ -3984,15 +3984,26 @@ def test_attention_beside_a_work_never_clips_its_choices() -> None:
         expect(heading).to_be_in_viewport()
 
 
+def _diag(label: str) -> None:
+    import sys, time
+    print(f"DIAG {time.time():.3f} {label}", file=sys.__stderr__, flush=True)
+
+
 def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
     """Closing the Attention rail over a compact selection, with its Close or
     the toolbar's toggle, brings the workspace's top, where Back to works leads
     it, back into view (#1284)."""
+    _diag("enter")
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
+        _diag("playwright started")
         browser = playwright.chromium.launch(headless=True)
-        stack.callback(browser.close)
+        _diag("launched")
+        stack.callback(lambda: (_diag("closing browser"), browser.close(), _diag("browser closed")))
         page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.on("crash", lambda _: _diag("PAGE CRASH"))
+
+        page.on("pageerror", lambda e: _diag(f"pageerror {e}"))
         _serve_cohort(
             page,
             stylesheet=lambda: "html { font-size: 200% !important; }",
@@ -4007,23 +4018,38 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         for closer, control in closers.items():
             for width in (390, 320):
                 where = f"{closer}, 200% text at {width}px"
+                _diag(f"{where}: set_viewport_size")
                 page.set_viewport_size({"width": width, "height": 844})
+                _diag(f"{where}: goto")
                 page.goto("https://react-platform.invalid/library?lens=all")
                 rows = page.locator("button.library-work-row")
+                _diag(f"{where}: rows visible")
                 expect(rows.first).to_be_visible()
                 last = rows.nth(rows.count() - 1)
+                _diag(f"{where}: scroll last")
                 last.scroll_into_view_if_needed()
+                _diag(f"{where}: click last")
                 last.click()
+                _diag(f"{where}: wait back")
                 page.locator(".compact-workspace-back").wait_for()
+                _diag(f"{where}: open toggle")
                 toggle.click()
                 expect(toggle).to_have_attribute("aria-expanded", "true")
+                _diag(f"{where}: click closer")
                 control.click()
+                _diag(f"{where}: rail gone")
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
+                _diag(f"{where}: two frames")
                 page.evaluate(_TWO_FRAMES)
+                _diag(f"{where}: back in view")
                 back = page.evaluate(_BACK_IN_VIEW)
+                _diag(f"{where}: back={back}")
                 assert back["visible"], f"{where}: {back}"
                 assert not page.evaluate(_FOCUS_ON_BODY), where
+                _diag(f"{where}: done")
+        _diag("body done")
+    _diag("exit")
 
 
 def test_attention_drawer_holds_focus_and_returns_it() -> None:

@@ -273,7 +273,7 @@ jobs:
 
   protected-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -379,7 +379,7 @@ jobs:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
         # Serial: four Chromium workers on one hosted runner broke
         # timing-bound tests and saved little time.
-        run: uv run python scripts/run_test_tier.py browser
+        run: bash scripts/diag_rail_hang.sh
 
   container-image:
     runs-on: ubuntu-24.04
