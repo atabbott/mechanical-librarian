@@ -22,9 +22,11 @@ brackets are GitHub issues.
   automatically (#1496).
 - **Clean rebuild required.** A Library of Congress control number in an
   EPUB's opening pages is no longer read as an ISBN, Hardcover author names
-  arrive tidied and in display order, and Open Library titles or descriptions
-  in another language or script than the work's are no longer offered as
-  choices (#1497).
+  that differ from the book's only by spacing, a `Family, Given` comma or word
+  order are no longer offered as other authors, and Open Library titles or
+  descriptions in another language or script than the work's are no longer
+  offered as choices. Those values still keep a change from being automatic, so
+  a field may still ask you to choose, with fewer options (#1497).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

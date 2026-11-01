@@ -259,7 +259,7 @@ needs a clean rebuild; no adoption is supplied.
 
 Issue #1497 also takes the clean-rebuild branch. A Library of Congress
 control number in opening matter is no longer an ISBN-10 (extractor
-`epub-opening-v5`), Hardcover author names arrive in display order, and an
+`epub-opening-v5`), Hardcover author names are tidied or left unoffered, and an
 Open Library title or description that contradicts the work's language is no
 longer an alternative, so report contents change and the proposal policy moves
 to `fixed-conservative-v43`. The report schema is unchanged; no adoption is

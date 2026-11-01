@@ -125,6 +125,7 @@ POLICY_VERSION = "fixed-conservative-v43"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
+HARDCOVER_AUTHORITY = "hardcover"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _PROPOSAL_SET_ID = re.compile(r"^proposal_set_[0-9a-f]{64}$")
@@ -1555,6 +1556,17 @@ def evaluate_report(
             ProposalOutcome.ACCEPTABLE_CHOICE,
         }:
             result = _narrator_corroboration_guard(report, result)
+        # Values that never name this item still decide the outcome above, so
+        # leaving them out can only narrow it; they are just not offered (#1497).
+        unoffered = _unoffered_references(report, destination)
+        if unoffered:
+            result = _withhold_unoffered(result, unoffered, targets[destination])
+            if destination in observed_by_destination:
+                observed_by_destination[destination] = tuple(
+                    value
+                    for value in observed_by_destination[destination]
+                    if not unoffered.issuperset(value.references)
+                )
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1676,6 +1688,147 @@ def _bound_immaterial_work_alternatives(
     )
 
 
+def _unoffered_references(
+    report: MetadataReport, destination: TargetDestination
+) -> frozenset[str]:
+    """Return claims whose values are never offered for this destination (#1497).
+
+    An Open Library title or description that contradicts the work's
+    established language, and a Hardcover author name that is one of the
+    book's own author names only with its words rotated.
+    """
+    if destination in {TargetDestination.TITLE, TargetDestination.DESCRIPTION}:
+        languages = established_work_languages(report)
+        if not languages:
+            return frozenset()
+        kind = (
+            ClaimKind.TITLE
+            if destination is TargetDestination.TITLE
+            else ClaimKind.DESCRIPTION
+        )
+        return frozenset(
+            claim.reference
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+            if claim.kind is kind
+            and claim.state is FieldState.VALID
+            and type(claim.value) is str
+            and open_library_value_exclusion(
+                provider.authority, candidate, destination, claim.value, languages
+            )
+            is not None
+        )
+    if destination is not TargetDestination.AUTHORS:
+        return frozenset()
+    local = {
+        " ".join(claim.canonical.split()).casefold()
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.state is FieldState.VALID
+        and type(claim.canonical) is str
+    }
+    return frozenset(
+        claim.reference
+        for provider in report.providers
+        if provider.authority == HARDCOVER_AUTHORITY
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+        and _rotated_local_author(claim.value, local)
+    )
+
+
+def _rotated_local_author(value: str, local: set[str]) -> bool:
+    words = value.casefold().split()
+    return (
+        len(words) <= 16
+        and " ".join(words) not in local
+        and any(
+            " ".join((*words[index:], *words[:index])) in local
+            for index in range(1, len(words))
+        )
+    )
+
+
+def _withhold_unoffered(
+    result: ProposalResult, unoffered: frozenset[str], target: TargetField
+) -> ProposalResult:
+    """Leave out alternatives only unoffered claims support, never widening."""
+    kept = tuple(
+        value
+        for value in result.alternatives
+        if value.assessment is ProposalAssessment.PRESERVES_TARGET
+        or not unoffered.issuperset(value.evidence_references)
+    )
+    if len(kept) == len(result.alternatives):
+        return result
+    if result.outcome not in {
+        ProposalOutcome.PROPOSE_CHANGE,
+        ProposalOutcome.ACCEPTABLE_CHOICE,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+    }:
+        return ProposalResult(
+            result.destination,
+            result.outcome,
+            kept,
+            None,
+            result.reasons,
+            result.dependencies,
+        )
+    if not any(
+        value.assessment is not ProposalAssessment.PRESERVES_TARGET for value in kept
+    ):
+        # Nothing else is left to choose: the current value stays, which is
+        # no write (#1497).
+        if kept:
+            return ProposalResult(
+                result.destination,
+                ProposalOutcome.KEEP,
+                kept,
+                None,
+                ("positive_preservation_evidence",),
+                result.dependencies,
+            )
+        defer = target.state is TargetFieldState.VALUE
+        return ProposalResult(
+            result.destination,
+            ProposalOutcome.DEFER if defer else ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            (
+                "no_positive_preservation_evidence"
+                if defer
+                else "no_supported_evidence",
+            ),
+            result.dependencies,
+        )
+    selected = result.selected_alternative_id
+    if selected is not None and selected not in {
+        value.alternative_id for value in kept
+    }:
+        return ProposalResult(
+            result.destination,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            kept,
+            None,
+            ("competing_evidence",),
+            result.dependencies,
+        )
+    return ProposalResult(
+        result.destination,
+        result.outcome,
+        kept,
+        selected,
+        result.reasons,
+        result.dependencies,
+    )
+
+
 def _observations(
     report: MetadataReport,
     destination: TargetDestination,
@@ -1770,11 +1923,6 @@ def _observations(
     withheld = carried_asin_precedence(report) if edition_asins else frozenset()
     current_asin = target_current_asin(report) if edition_asins else None
     carried_asin = verified_carried_asin(report) if edition_asins else None
-    languages = (
-        established_work_languages(report)
-        if destination in {TargetDestination.TITLE, TargetDestination.DESCRIPTION}
-        else frozenset()
-    )
     for provider in report.providers:
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
@@ -1824,14 +1972,6 @@ def _observations(
                     )
                     and not _generic_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
-                    and open_library_value_exclusion(
-                        provider.authority,
-                        candidate,
-                        destination,
-                        claim.value,
-                        languages,
-                    )
-                    is None
                     and (
                         destination is not TargetDestination.TITLE
                         or _provider_title_is_unambiguous(

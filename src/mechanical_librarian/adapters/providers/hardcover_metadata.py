@@ -2276,9 +2276,10 @@ def _author_name(value: object, local: tuple[LocalClaim, ...]) -> object:
 
     Whitespace runs collapse. A name equal to one of the book's own author
     names is kept as it is. Otherwise it is reordered only when Hardcover marks
-    it inverted, as one personal `Family, Given` comma, or when moving its
-    leading words to the end gives exactly one of the book's own author names.
-    Any other value, and every value another source states, is left as it is.
+    it inverted, as one personal `Family, Given` comma. A name that is one of
+    the book's own only with its words rotated keeps its order here: it stays
+    creator evidence as stated, and the proposal set just does not offer it.
+    Every value another source states is left as it is.
     """
     if type(value) is not str or len(value) > MAX_SCALAR_CHARACTERS:
         return value
@@ -2296,14 +2297,7 @@ def _author_name(value: object, local: tuple[LocalClaim, ...]) -> object:
     if comma_inverted_name(name) is not None:
         family, given = (part.strip() for part in name.split(",", 1))
         return f"{given} {family}"
-    words = name.split(" ")
-    reordered = {
-        candidate
-        for index in range(1, len(words))
-        if (candidate := " ".join((*words[index:], *words[:index]))).casefold()
-        in local_names
-    }
-    return reordered.pop() if len(reordered) == 1 else name
+    return name
 
 
 def _field_local_author(

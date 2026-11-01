@@ -2,8 +2,9 @@
 
 Open Library groups every translation of a work under one record, so an
 English ebook's candidates can carry a title or description from a French or
-Russian edition. Those values never name this item, so they leave the title
-and description alternatives with one closed reason each.
+Russian edition. Those values never name this item, so they are not offered
+as title or description alternatives. The two closed cases below say why one
+is left out; the proposal set still decides the outcome with it.
 
 The work's established language comes from its package's language claims and
 its target's current language value; with neither, from one language that

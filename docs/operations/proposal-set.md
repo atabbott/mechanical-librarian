@@ -51,15 +51,18 @@ assessment, stable evidence references and hashed correlation groups. It never
 copies report excerpts, raw provider responses, URLs, paths or image bytes.
 Provider access times stay in the referenced report.
 
-An Open Library title or description never becomes an alternative when it
-contradicts the work's established language, which is its package and target
+An Open Library title or description is never offered as an alternative when
+it contradicts the work's established language, which is its package and target
 languages or, with neither, one language that two provider authorities state.
-It leaves with one of two closed reasons: `edition_language_contradicted`
-when its edition states only other languages, and `value_script_contradicted`
-when a work in Latin-script languages only gets a value written mostly in
-another script. With no established language nothing leaves, and the same
-value from any other provider stays. On the ISBN route such a title still
-counts against the title election; it is only no longer offered.
+That is the case when its edition states only other languages, or when a work in
+Latin-script languages gets a value written mostly in another script. The
+proposal set records no reason for a value it leaves out. With no established
+language nothing is left out, and the same value from any other provider stays.
+Such a value still counts when the outcome is decided, so leaving it out never
+makes a change automatic: two descriptions still ask you to choose with only one
+of them offered, and on the ISBN route such a title still counts against the
+title election. When the current value is then the only one left, it is kept
+rather than offered as a choice with nothing to choose.
 
 ### Bibliographic combinations
 
@@ -185,12 +188,13 @@ only equivalent dissent; the local claims stay as provenance. A bracketed
 source suffix grants election authority only when it is exactly `[retail]`;
 any other bracketed suffix abstains.
 
-Hardcover author names collapse their whitespace runs. A name equal to a
-package author name stays as it is; otherwise it is put in display order only
-when Hardcover marks it inverted, as one personal `Family, Given` comma (not an
-organisation, joined names or a name suffix), or when rotating its words gives
-exactly one of the package's author names; so `Example  Ada` beside a package `Ada Example`
-is the same author, not a competing value.
+Hardcover author names collapse their whitespace runs. A name equal to a book
+author name stays as it is; otherwise it is put in display order only when
+Hardcover marks it inverted, as one personal `Family, Given` comma (not an
+organisation, joined names or a name suffix). A Hardcover name that is a book
+author name only with its words rotated, such as `Example Ada` beside the book's
+`Ada Example`, keeps its order as creator evidence and is not offered as an
+author.
 
 ### Series
 

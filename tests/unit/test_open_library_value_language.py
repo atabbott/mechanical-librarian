@@ -359,3 +359,92 @@ def test_fullwidth_latin_is_latin():
         )
         is None
     )
+
+
+def test_a_left_out_description_still_stops_an_automatic_choice():
+    # Leaving the value out only narrows: the outcome is decided with it, so
+    # no description write becomes possible that was not before (#1497).
+    result = _synopsis("fre", "en")
+
+    assert (ProposalOutcome.UNRESOLVED_CHOICE, ("competing_evidence",)) == (
+        result.outcome,
+        result.reasons,
+    )
+
+
+def test_a_left_out_title_still_stops_an_automatic_choice_off_the_isbn_route():
+    report = _report(
+        title="Synthetic_Voyage",
+        local_claims=(
+            consensus_local_title("Synthetic_Voyage"),
+            _language("en"),
+        ),
+        providers=(
+            _provider(
+                "hardcover",
+                "hardcover-1",
+                (
+                    _claim(
+                        "hardcover",
+                        "hardcover-1",
+                        ClaimKind.TITLE,
+                        "Synthetic Voyage",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority="hardcover",
+            ),
+            _provider(
+                "open_library",
+                "open_library-1",
+                (
+                    _claim(
+                        "open_library",
+                        "open_library-1",
+                        ClaimKind.TITLE,
+                        "Синтетическое путешествие",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority="open_library",
+            ),
+        ),
+    )
+    result = next(
+        value
+        for value in evaluate_report(MetadataReport.from_json(report.to_json())).results
+        if value.destination is TargetDestination.TITLE
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE is not result.outcome
+    assert "Синтетическое путешествие" not in _offered(result)
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        {"titles": ("Example Title", "Пример заглавия"), "local_language": "en"},
+        {
+            "titles": ("Example Title", "Titre Exemple"),
+            "provider_languages": (None, "fre"),
+            "local_language": "en",
+        },
+    ),
+    ids=("script", "edition_language"),
+)
+def test_a_correct_title_is_kept_when_nothing_else_is_left_to_choose(values):
+    # Asking the owner to choose with only the current value left would be a
+    # choice with nothing to choose (#1497).
+    report = MetadataReport.from_json(
+        isbn_title_report(current="Example Title", **values).to_json()
+    )
+    result = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.TITLE
+    )
+
+    assert (ProposalOutcome.KEEP, {"Example Title"}) == (
+        result.outcome,
+        _offered(result),
+    )
