@@ -159,6 +159,9 @@ brackets are GitHub issues.
 - A preparation step that briefly loses the database write lock while
   checking its library connection now waits and carries on, instead of
   marking the work as could not finish (#1547).
+- The Audiobookshelf field-effect canary composes the installed application
+  around one shared operation admission, as the product does, so its
+  preparation lanes queue instead of meeting at the database (#1561).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
