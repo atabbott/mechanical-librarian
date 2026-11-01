@@ -75,19 +75,22 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
     onError: (error) => {
       if (!uncertainWriteOutcome(error)) return
       setUnconfirmed(true)
-      reload.mutate()
+      reload.mutate('unconfirmed')
     },
   })
   const locked = view.authority === 'file'
   const stale = view.document.revision !== base.revision
   const changed = JSON.stringify(draft) !== JSON.stringify(base.description_advice)
   const reload = useMutation({
-    mutationFn: () => http.getSettings(),
+    // `owner` is the Reload button; `unconfirmed` is the reload after a save
+    // that may have committed, whose message must outlive it.
+    mutationFn: (_source: 'owner' | 'unconfirmed') => http.getSettings(),
     retry: false,
-    onSuccess: (fresh) => {
+    onSuccess: (fresh, source) => {
       cache.setQueryData(['settings'], fresh)
       setBase(fresh.document)
       setDraft(fresh.document.description_advice)
+      if (source === 'owner') setUnconfirmed(false)
       mutation.reset()
     },
   })
@@ -111,7 +114,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
               label={labels[name]}
               options={offOn}
               value={draft[name] ? 'on' : 'off'}
-              disabled={locked || mutation.isPending || stale}
+              disabled={locked || mutation.isPending || reload.isPending || stale}
               onChange={(choice) => {
                 setDraft({ ...draft, [name]: choice === 'on' })
                 setUnconfirmed(false)
@@ -122,7 +125,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         ))}
       </div>
       <button
-        disabled={locked || mutation.isPending || stale || !changed}
+        disabled={locked || mutation.isPending || reload.isPending || stale || !changed}
         onClick={() => mutation.mutate()}
       >
         {mutation.isPending ? 'Saving description preferences…' : 'Save description preferences'}
@@ -144,7 +147,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
                   'Description preferences could not be saved against the current settings. Reload the saved preferences before trying again.',
                 )}
           </p>
-          <button disabled={reload.isPending} onClick={() => reload.mutate()}>
+          <button disabled={reload.isPending} onClick={() => reload.mutate('owner')}>
             {reload.isPending ? 'Reloading preferences…' : 'Reload description preferences'}
           </button>
           {reload.isError ? (

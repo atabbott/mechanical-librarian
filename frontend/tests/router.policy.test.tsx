@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -1704,6 +1704,70 @@ it('reloads unconfirmed description preferences and says they may have been save
   expect(
     within(region).getByRole('button', { name: 'Reload description preferences' }),
   ).toBeVisible()
+})
+
+it('holds description edits while unconfirmed preferences reload', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let current = initial
+  let releaseReload: (() => void) | null = null
+  let held = false
+  http.getSettings = vi.fn(async () => {
+    if (held) await new Promise<void>((resolve) => (releaseReload = resolve))
+    return current
+  })
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+    current = { ...initial, document: write.document }
+    held = true
+    throw new ApiError(503, 'settings_unavailable')
+  })
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Description advice' })
+  const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
+  await user.click(within(marketing).getByRole('button', { name: 'Off' }))
+  await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
+
+  await waitFor(() => expect(releaseReload).not.toBeNull())
+  const praise = within(region).getByRole('group', { name: 'Remove pull quotes and author praise' })
+  for (const button of within(praise).getAllByRole('button')) expect(button).toBeDisabled()
+  expect(
+    within(region).getByRole('button', { name: 'Save description preferences' }),
+  ).toBeDisabled()
+  held = false
+  await act(async () => releaseReload?.())
+  await waitFor(() => expect(within(praise).getByRole('button', { name: 'Off' })).toBeEnabled())
+  expect(within(region).getByRole('alert')).toHaveTextContent(
+    'Description preferences could not be confirmed.',
+  )
+})
+
+it('clears the unconfirmed description message once the owner reloads', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let current = initial
+  http.getSettings = vi.fn(async () => current)
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+    current = { ...initial, document: write.document }
+    throw new ApiError(503, 'settings_unavailable')
+  })
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Description advice' })
+  const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
+  await user.click(within(marketing).getByRole('button', { name: 'Off' }))
+  await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
+  const reload = await within(region).findByRole('button', {
+    name: 'Reload description preferences',
+  })
+  await waitFor(() => expect(reload).toBeEnabled())
+
+  await user.click(reload)
+
+  await waitFor(() => expect(within(region).queryByRole('alert')).toBeNull())
+  expect(within(region).getByRole('status')).toHaveTextContent(
+    'Saved with their own button, not with the policy.',
+  )
 })
 
 it('shows locked description cleanup preferences without enabling edits', async () => {
