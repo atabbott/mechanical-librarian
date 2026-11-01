@@ -286,6 +286,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             )
             prior_case_id = None if prior is None else prior[2]
             checkpoint = 1 if prior is None else prior[3] + 1
+            # The same proposal set replays its recorded admission answer,
+            # unless the pointer's last actor retired the case without
+            # answering: preparation tombstoning it or finding it ineligible,
+            # or a policy activation retiring it for its successor. Leaving
+            # Automatic reactivates the unchanged policy, so that successor is
+            # this same proposal set, admitted again as its same case (#1568).
             if (
                 prior is not None
                 and prior[0] == proposal_set.proposal_set_id
@@ -295,7 +301,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     # reaching here proves the pointer was found.
                     (cast(_ReviewPointer, validated)[3],),
                 ).fetchone()
-                != ("review-preparation-v1",)
+                not in {("review-preparation-v1",), ("policy-activation-v1",)}
             ):
                 if self._binding is not None:
                     self._binding.require_current()
@@ -381,7 +387,33 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         case.to_json(),
                     ),
                 )
-            else:
+            # Reactivating an unchanged policy, as leaving Automatic does,
+            # retires a case only for it to return as itself. It continues its
+            # episode, so the owner's answers on it stay current (#1568). Only
+            # when the active generation is that reactivation and retired this
+            # case: a retirement left by an earlier change of policy, whose
+            # successor never arrived, still starts a new episode.
+            elif not (
+                validated is not None
+                and self._connection.execute(
+                    "SELECT actor,from_review_case_id FROM review_case_transitions "
+                    "WHERE transition_id=?",
+                    (validated[3],),
+                ).fetchone()
+                == ("policy-activation-v1", case.review_case_id)
+                and self._connection.execute(
+                    "SELECT 1 FROM metadata_policy_state state "
+                    "JOIN metadata_policy_transitions activation "
+                    "ON activation.generation=state.generation "
+                    "AND activation.from_policy_id=activation.to_policy_id "
+                    "JOIN metadata_policy_transition_items cohort "
+                    "ON cohort.transition_id=activation.transition_id "
+                    "AND cohort.connection_name=? AND cohort.library_name=? "
+                    "AND cohort.item_id=? WHERE state.singleton=1",
+                    lineage,
+                ).fetchone()
+                is not None
+            ):
                 # The work returned to this case's content, so the case starts
                 # a new episode: the owner decisions recorded on it so far are
                 # history and word, settle and hold nothing now (#1358).

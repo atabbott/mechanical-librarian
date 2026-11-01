@@ -176,6 +176,11 @@ brackets are GitHub issues.
 - A cover advisory retry or comparison whose result cannot be confirmed now
   reloads the case and says it may have been requested, instead of saying it
   failed safely (#1572).
+- Switching from Automatic to Preview without changing the policy keeps every
+  work in Attention and Library, and keeps your answers: a decision you had
+  not yet written stays decided and is still written. An automatic decision
+  recorded before the switch, including a cover or description, writes
+  nothing in Preview. No clean rebuild is needed (#1568).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

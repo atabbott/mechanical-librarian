@@ -194,7 +194,14 @@ Activation is one transaction: it stores the resolved per-library policy,
 retires every current unapplied old-policy case, fixes the transition total and
 switches the active generation. Successors return through ordinary preparation
 from retained evidence, with no new provider lookup, decision transfer or
-write.
+write. Once an automatic decision has been recorded, leaving Automatic
+reactivates the unchanged policy. Each work then returns as its same case,
+which continues its episode: the owner's answers, holds and queued writes on
+it stay current, since no decision moves to a successor case. A work still
+retired by an earlier change of policy when that happens starts a new episode
+on return, as any case does after a policy change. An automatic
+decision writes only in the Automatic posture, and one from an earlier policy
+generation no longer decides its field.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still
