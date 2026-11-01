@@ -314,8 +314,9 @@ export const writeStateLabels = {
   reconciling: 'Checking',
   retryable: 'Waiting safely',
   verified: 'Verified',
-  // A guarded write that closed for one of several reasons, each named beside
-  // it; "stale" is the store's word, not the owner's (#1542).
+  // A guarded write that closed for one of several reasons; Activity names the
+  // reason beside it, work history does not yet. "stale" is the store's word,
+  // not the owner's (#1542).
   stale: 'Closed safely',
   superseded: 'Superseded',
   abandoned: 'Stopped safely',
