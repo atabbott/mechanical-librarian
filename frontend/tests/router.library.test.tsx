@@ -11278,17 +11278,71 @@ it.each([
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
-  http.retryDescriptionAdvice = vi.fn(async () => {
-    throw failure
-  })
+  let fail!: (error: unknown) => void
+  http.retryDescriptionAdvice = vi.fn<ReviewHttp['retryDescriptionAdvice']>(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject
+      }),
+  )
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
-  await userEvent
-    .setup()
-    .click(await screen.findByRole('button', { name: 'Retry description advice' }))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Retry description advice' }))
+  // Pending keeps the pressed button focused; it looks disabled and ignores a second press.
+  const pending = await screen.findByRole('button', { name: 'Requesting retry…' })
+  expect(pending).not.toBeDisabled()
+  expect(pending).toHaveAttribute('aria-disabled', 'true')
+  expect(pending).toHaveFocus()
+  await user.click(pending)
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
 
+  await act(async () => fail(failure))
   expect(await screen.findByText(copy)).toBeVisible()
   await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+  const settled = screen.getByRole('button', { name: 'Retry description advice' })
+  expect(settled).not.toHaveAttribute('aria-disabled')
+  expect(settled).toHaveFocus()
   expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
+it('keeps a requested description advice retry focused and ignores another press', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.retryDescriptionAdvice = vi.fn(async () => undefined)
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  const retry = await screen.findByRole('button', { name: 'Retry description advice' })
+  await user.click(retry)
+  expect(
+    await screen.findByText('Description preparation requested. Paused preparation stays paused.'),
+  ).toBeVisible()
+  expect(retry).not.toBeDisabled()
+  expect(retry).toHaveAttribute('aria-disabled', 'true')
+  expect(retry).toHaveFocus()
+  await user.click(retry)
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
+it('keeps description advice retry natively disabled while a decision records', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+  const retry = screen.getByRole('button', { name: 'Retry description advice' })
+  // The press did not cause this, so the button stays natively disabled.
+  expect(retry).toBeDisabled()
+  expect(retry).not.toHaveAttribute('aria-disabled')
+  await user.click(retry)
+  expect(http.retryDescriptionAdvice).not.toHaveBeenCalled()
 })
 
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {

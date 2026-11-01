@@ -151,7 +151,7 @@ h2 { margin-bottom:.35rem; }
 .provider-throttle-refusal:not(:empty)::before { content:'\26A0'; content:'\26A0' / ''; }
 .preparation-popover > small { display:block; margin:.35rem 0 .7rem; }
 /* A running command looks disabled; retained busy rows keep their contrast. */
-.provider-throttle-notice button[aria-disabled='true'], .preparation-popover button[aria-disabled='true'], .preparation-detail button[aria-disabled='true'], .cm-policy-route button[aria-disabled='true'] { cursor:not-allowed; opacity:.55; }
+.provider-throttle-notice button[aria-disabled='true'], .preparation-popover button[aria-disabled='true'], .preparation-detail button[aria-disabled='true'], .cm-policy-route button[aria-disabled='true'], .settings-reviewer button[aria-disabled='true'], .description-advice-preparation button[aria-disabled='true'] { cursor:not-allowed; opacity:.55; }
 .provider-throttle-notice button[aria-busy='true'], .preparation-popover button[aria-busy='true'] { cursor:progress; }
 @media (max-width:760px) { .provider-throttle-command button { min-height:44px; width:100%; } }
 main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outline:none; }
