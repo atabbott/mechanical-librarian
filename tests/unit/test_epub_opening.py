@@ -4135,3 +4135,18 @@ def test_a_skipped_catalogue_heading_opens_no_block(heading: str) -> None:
     assert _identifiers(
         f'<section epub:type="copyright-page">{heading}<p>0306406152</p></section>'
     ) == ["0306406152"]
+
+
+@pytest.mark.parametrize(
+    "label",
+    ("<p>eBook ISBN</p>", "<p>ISBN</p>", "<p>Print ISBN:</p>"),
+    ids=("ebook", "isbn", "print"),
+)
+def test_a_catalogue_isbn_labelled_by_the_element_before_is_still_read(
+    label: str,
+) -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        f"{label}<p>0306406152</p></section>"
+    ) == ["0306406152"]

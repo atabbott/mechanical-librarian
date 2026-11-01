@@ -291,6 +291,8 @@ def test_an_open_library_description_is_kept_without_a_contradiction(language, l
         ("示例", (), {("zh", "Hans")}, None),
         ("Example", (), set(), None),
         ("1984", (), {("en", None)}, None),
+        ("Example", ("mul",), {("en", None)}, None),
+        ("Example", ("zxx",), {("en", None)}, None),
     ),
     ids=(
         "cyrillic",
@@ -300,6 +302,8 @@ def test_an_open_library_description_is_kept_without_a_contradiction(language, l
         "han_work",
         "unknown",
         "no_letters",
+        "edition_multiple",
+        "edition_no_language",
     ),
 )
 def test_closed_reasons(value, stated, established, reason):
@@ -605,3 +609,14 @@ def test_a_title_another_source_states_stays_offered_in_its_article_form(
 
     assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
     assert "The Example Title" in _offered(result)
+
+
+@pytest.mark.parametrize("package", ("mul", "mis"))
+def test_a_work_in_no_one_language_leaves_nothing_out(package):
+    result = _title(
+        titles=("Example Title", "Titre Exemple"),
+        provider_languages=(None, "fre"),
+        local_language=package,
+    )
+
+    assert "Titre Exemple" in _offered(result)

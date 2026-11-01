@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 import zipfile
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -2550,6 +2551,52 @@ def _catalogue_record_starts(
     return starts
 
 
+def _catalogue_neighbor_labels(
+    elements: list[_Element],
+    element: _Element,
+    admissible: Callable[[_Element], bool],
+) -> bool:
+    """Whether the element read just before or after is only an ISBN label.
+
+    These are the neighbours the recognizer reads a label from, so a bare
+    run they label stays an ISBN inside a catalogue record. A neighbour with
+    digits of its own labels its own number, not this run (#1497).
+    """
+    previous = next(
+        (
+            candidate
+            for candidate in reversed(elements)
+            if candidate.end <= element.start and admissible(candidate)
+        ),
+        None,
+    )
+    following = next(
+        (
+            candidate
+            for candidate in elements
+            if candidate.start >= element.end and admissible(candidate)
+        ),
+        None,
+    )
+    if previous is not None and any(
+        character.isdigit() for character in previous.exact_text
+    ):
+        previous = None
+    if following is not None and any(
+        character.isdigit() for character in following.exact_text
+    ):
+        following = None
+    previous_text = "" if previous is None else previous.exact_text.casefold()[-48:]
+    following_text = "" if following is None else following.exact_text.casefold()[:48]
+    return (
+        "isbn" in previous_text
+        or _EBOOK_LABEL.search(previous_text) is not None
+        or _PRINT_LABEL.search(previous_text) is not None
+        or _EBOOK_LABEL.search(following_text) is not None
+        or _PRINT_LABEL.search(following_text) is not None
+    )
+
+
 def _isbn_owned_by_non_isbn_identifier(
     match: re.Match[str], owner_spans: tuple[tuple[int, int], ...]
 ) -> bool:
@@ -3746,10 +3793,13 @@ def _recognize(
                 and "isbn" not in right_vicinity
                 and not left_has_labels
                 and not right_has_labels
+                and not _catalogue_neighbor_labels(
+                    projection.elements, element, admissible_context_element
+                )
             ):
                 # A bare ten-digit run in a catalogue record, with no ISBN label
-                # before it in its line, is its control number; the record's
-                # ISBNs carry a label or hyphens.
+                # before it in its line or in the element read beside it, is its
+                # control number; the record's ISBNs carry a label or hyphens.
                 continue
             if left_has_labels and right_has_labels:
                 left_ebook = bool(_EBOOK_LABEL.search(left_vicinity))

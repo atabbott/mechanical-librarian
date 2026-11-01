@@ -130,8 +130,10 @@ modification timestamp is never a publication date.
   becomes an ISBN. A Library of Congress control number is recognised by its
   label, with or without a colon, and a bare ten-digit run inside a Library of
   Congress Cataloging-in-Publication block, with no ISBN, ebook or print label
-  before or beside it, is read as one; the block's labelled or hyphenated
-  ISBNs are still read.
+  before or beside it, is read as one. A label alone in the element just
+  before or after it counts too. The block's labelled or hyphenated ISBNs are
+  still read. A heading the extractor does not read, such as one in foreign or
+  promotional content, opens no block.
 - The package's explicitly designated primary identifier, when it is a valid
   ISBN, applies to this EPUB. Other package ISBNs stay unlabelled unless other
   evidence establishes applicability.

@@ -54,6 +54,9 @@ Provider access times stay in the referenced report.
 An Open Library title or description is never offered as an alternative when
 it contradicts the work's established language, which is its package and target
 languages or, with neither, one language that two provider authorities state.
+A code for several, uncoded or no languages (`mul`, `mis`, `zxx`) names no one
+language: a work stated that way has no established language, and an edition
+stated that way contradicts none.
 That is the case when its edition states only other languages, or when a work in
 Latin-script languages gets a value written mostly in another script. The
 proposal set records no reason for a value it leaves out. With no established

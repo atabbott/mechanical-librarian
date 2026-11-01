@@ -43,6 +43,12 @@ _LATIN_WRITTEN: Final = frozenset(
 )  # fmt: skip
 
 
+# ISO 639 designations that name no one language: multiple, uncoded and no
+# linguistic content. They neither establish a work's language nor contradict
+# it (`und` already has no class).
+_NON_SPECIFIC: Final = frozenset({"mul", "mis", "zxx"})
+
+
 class ProviderValueLanguageExclusion(StrEnum):
     """Closed reasons an Open Library value leaves the alternatives."""
 
@@ -53,6 +59,16 @@ class ProviderValueLanguageExclusion(StrEnum):
 Language = tuple[str, str | None]
 
 
+def _non_specific(value: str) -> bool:
+    language = language_equivalence_class(value)
+    return language is not None and language[0] in _NON_SPECIFIC
+
+
+def _specific_language(value: str) -> Language | None:
+    language = language_equivalence_class(value)
+    return None if language is None or language[0] in _NON_SPECIFIC else language
+
+
 def established_work_languages(report: MetadataReport) -> frozenset[Language]:
     """Return the work's language classes: package and target, else agreement."""
     own: set[Language] = {
@@ -61,7 +77,7 @@ def established_work_languages(report: MetadataReport) -> frozenset[Language]:
         if claim.kind is ClaimKind.LANGUAGE
         and claim.state is FieldState.VALID
         and claim.canonical is not None
-        and (language := language_equivalence_class(claim.canonical)) is not None
+        and (language := _specific_language(claim.canonical)) is not None
     }
     own.update(
         language
@@ -69,8 +85,24 @@ def established_work_languages(report: MetadataReport) -> frozenset[Language]:
         if field.destination is TargetDestination.LANGUAGE
         and field.state is TargetFieldState.VALUE
         and type(field.value) is str
-        and (language := language_equivalence_class(field.value)) is not None
+        and (language := _specific_language(field.value)) is not None
     )
+    if any(
+        _non_specific(claim.canonical)
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.LANGUAGE
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+    ) or any(
+        _non_specific(field.value)
+        for field in report.target.fields
+        if field.destination is TargetDestination.LANGUAGE
+        and field.state is TargetFieldState.VALUE
+        and type(field.value) is str
+    ):
+        # A work said to be in several or uncoded languages has no one
+        # language for a value to contradict.
+        return frozenset()
     if own:
         return frozenset(own)
     stated: dict[Language, set[str]] = {}
@@ -118,7 +150,7 @@ def _stated_languages(candidate: ProviderCandidate) -> frozenset[Language]:
         if claim.kind is ClaimKind.LANGUAGE
         and claim.state is FieldState.VALID
         and type(claim.value) is str
-        and (language := language_equivalence_class(claim.value)) is not None
+        and (language := _specific_language(claim.value)) is not None
     )
 
 
