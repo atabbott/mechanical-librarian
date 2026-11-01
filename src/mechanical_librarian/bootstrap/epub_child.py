@@ -328,8 +328,9 @@ def _cover_recovery(
     """Resolve the package's cover fallbacks into shadow evidence only.
 
     Non-resolving declarations are skipped; any ambiguity among the ones that
-    resolve refuses the whole recovery. At most one wrapper is read, and no
-    image bytes are read for the recovered cover.
+    resolve refuses the whole recovery. At most one wrapper is read, never one
+    the package declares encrypted, and no image bytes are read for the
+    recovered cover, so an encrypted image is refused rather than recovered.
     """
     resolving = [
         item for item in report.cover_fallbacks if item.resource_identity is not None
@@ -357,8 +358,15 @@ def _cover_recovery(
     }
     if len(wrappers) > 1:
         return refused(EpubCoverRecoveryRefusal.MULTIPLE_WRAPPERS)
+    encrypted = {
+        item.resource_identity
+        for item in report.declarations
+        if item.kind is EpubPackageDeclarationKind.ENCRYPTION
+    }
     images: dict[str | None, str] = {}
     for wrapper_identity, wrapper in wrappers.items():
+        if wrapper_identity in encrypted:
+            return refused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE)
         try:
             image = _wrapper_image(
                 archive,
@@ -375,16 +383,13 @@ def _cover_recovery(
         if isinstance(image, EpubCoverRecoveryRefusal):
             return refused(image)
         images[wrapper_identity] = image
-    if (
-        len(
-            {
-                images.get(item.resource_identity, item.resource_identity)
-                for item in resolving
-            }
-        )
-        != 1
-    ):
+    agreed = {
+        images.get(item.resource_identity, item.resource_identity) for item in resolving
+    }
+    if len(agreed) != 1:
         return refused(EpubCoverRecoveryRefusal.CONTRADICTORY_DECLARATION)
+    if agreed & encrypted:
+        return refused(EpubCoverRecoveryRefusal.UNSUPPORTED_TARGET)
     return EpubCoverRecovery(fallbacks)
 
 

@@ -250,12 +250,16 @@ def _oversized_wrapper() -> bytes:
 
 
 def _read_cover(
-    tmp_path: Path, package: bytes, entries: tuple[tuple[str, bytes], ...] = ()
+    tmp_path: Path,
+    package: bytes,
+    entries: tuple[tuple[str, bytes], ...] = (),
+    encryption: bytes | None = None,
 ) -> epub_cover.DeclaredEpubCover:
     path = tmp_path / "book.epub"
     path.write_bytes(
         epub_bytes(
             package=package,
+            encryption=encryption,
             extra_entries=(
                 ("EPUB/other.jpg", b"TRAP: other bytes", zipfile.ZIP_STORED),
                 ("EPUB/unlisted.jpg", b"TRAP: unlisted bytes", zipfile.ZIP_STORED),
@@ -639,3 +643,70 @@ def test_many_members_keep_the_declared_cover_selection(tmp_path: Path) -> None:
     assert result.media_type == "image/jpeg"
     assert result.data == b"TRAP: cover bytes must remain opaque"
     assert result.recovery is None
+
+
+def _encrypting(member: str) -> bytes:
+    return (
+        b'<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        b'<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData>'
+        b'<CipherReference URI="' + member.encode() + b'"/></CipherData>'
+        b"</EncryptedData></encryption>"
+    )
+
+
+@pytest.mark.parametrize(
+    "package,encrypted,fallbacks,refusal",
+    (
+        (
+            _cover_package(_WRAP_COVER),
+            "EPUB/wrap.xhtml",
+            [_WRAPPER_FALLBACK],
+            "cover_wrapper_unreadable",
+        ),
+        (
+            _cover_package(guide=_guide_cover(b"cover.jpg")),
+            "EPUB/cover.jpg",
+            [_GUIDE_FALLBACK],
+            "cover_recovery_unsupported_target",
+        ),
+        (
+            _cover_package(_WRAP_COVER),
+            "EPUB/cover.jpg",
+            [_WRAPPER_FALLBACK],
+            "cover_recovery_unsupported_target",
+        ),
+        (
+            _cover_package(_WRAP_COVER, guide=_guide_cover(b"cover.jpg")),
+            "EPUB/other.jpg",
+            [_GUIDE_FALLBACK, _WRAPPER_FALLBACK],
+            None,
+        ),
+    ),
+    ids=(
+        "encrypted_wrapper",
+        "encrypted_direct_image",
+        "encrypted_image_behind_wrapper",
+        "other_resource_encrypted",
+    ),
+)
+def test_encrypted_cover_fallback_resources_are_never_recovered(
+    tmp_path: Path,
+    package: bytes,
+    encrypted: str,
+    fallbacks: list[str],
+    refusal: str | None,
+) -> None:
+    result = _read_cover(
+        tmp_path,
+        package,
+        (("EPUB/wrap.xhtml", _COVER_IMG),),
+        _encrypting(encrypted),
+    )
+    assert result.state is CoverSourceState.ABSENT
+    assert result.data is None
+    assert result.recovery is not None
+    assert result.recovery.to_data() == {
+        "authority": "shadow",
+        "fallbacks": fallbacks,
+        "refusal": refusal,
+    }
