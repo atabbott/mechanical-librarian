@@ -318,29 +318,39 @@ or library, and writes to Audiobookshelf only through its API, never directly
 to its database or through its web UI.
 
 ```bash
-uv run python scripts/qualify_audiobookshelf_field_effect.py \
+uv run --locked python scripts/qualify_audiobookshelf_field_effect.py \
   --source-sha "$(git rev-parse HEAD)"
 ```
 
-Run it from a clean exact head. It archives that head before running the
-adapter, creates scoped disposable API-key users, deletes their keys on
-teardown, and removes only its own labelled container. Per image it proves one
-metadata and tags PATCH and one digest-verified cover upload, with read-back,
-refusal and ambiguous-response reconciliation. Besides its EPUB libraries, a
-separate disposable library holds one generated audiobook for the audiobook
+Run it from a clean exact head; a dirty tree or a head other than
+`--source-sha` fails `source_head_mismatch`. It archives that head, builds and
+installs its wheel, and qualifies the installed artifact. Without `--version`
+it qualifies every pinned image, and `--version` selects one and can be
+repeated. It reads Audiobookshelf's latest release from the GitHub API and
+fails `latest_stable_not_pinned` when that release is not pinned, so a new
+upstream release needs a new pin before the canary passes again.
+
+It creates scoped disposable API-key users, deletes their keys on teardown,
+and removes only its own labelled container. Per image it proves one metadata
+and tags PATCH and one digest-verified cover upload, with read-back, refusal
+and ambiguous-response reconciliation. Besides its EPUB libraries, a separate
+disposable library holds one generated audiobook for the audiobook
 destinations. A destination whose shape the service rejects is recorded as
 `field_unavailable`, and the other destinations still run. An unreachable
 service, a key without write authority, or a write the service accepted but
-did not make fails the run instead. The aggregate
-`audiobookshelf-field-effect-v3` receipt holds image digests, field outcomes,
-the installed lifecycle summary and how the service stores seven synthetic
-descriptions, never credentials, tokens, source metadata or image bytes.
-
-`--corpus` supplies a private operator corpus, and the receipt reports
-`operator_corpus: true`. The qualifier then also drives the installed
+did not make fails the run instead. Every run also drives the installed
 application against two disposable libraries through preparation, owner
 decisions, consent, continuous scheduling, pause and resume, rescan,
 external-drift regeneration and restart recovery.
+
+`--corpus` replaces those libraries' two generated EPUBs with a private
+operator batch: a directory outside the repository holding 6 to 8 `*.epub`
+files, or the run fails `operator_corpus_invalid`. The aggregate
+`audiobookshelf-field-effect-v3` receipt holds the source SHA, image digests,
+field outcomes, the installed lifecycle summary, the outcome for each of seven
+synthetic descriptions and, with a batch, `operator_corpus: true` and each
+image's `operator_cases`. It never holds credentials, tokens, source metadata
+or image bytes.
 
 The container lifecycle (`scripts/qualify_container_lifecycle.py`) and the
 [recoverability envelope](recoverability-qualification.md) have their own

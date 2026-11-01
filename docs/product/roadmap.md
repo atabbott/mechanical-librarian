@@ -11,7 +11,7 @@ nothing; see
 
 ## Delivered
 
-Checkpoints 0.1.0 to 0.29.1 built the product up to its current state:
+Checkpoints 0.1.0 to 0.29.2 built the product up to its current state:
 
 - read-only Audiobookshelf inventory, EPUB and audio evidence, and catalogue
   evidence from several providers;
@@ -29,8 +29,6 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
 
 ## In progress
 
-- **0.29.2 Delivery reliability and hygiene.** Test, tracking and
-  documentation corrections that make every later change cheaper.
 - **0.29.3 Review fixes and hygiene.** Bounded fixes left over from the 0.29.x
   reviews, across Library, Activity, Settings, tests and the Codex reviewer.
 - **0.30.0 Audiobook matching and editions.** Audiobooks match the edition the
@@ -51,6 +49,8 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
 - **0.37.0 Provider economy.** Fewer provider requests for the same evidence.
 - **0.38.0 Owner-directed matching.** The owner can choose which provider
   record is a work's book, and unmatched works become ordinary review cases.
+- **0.39.0 Owner trust.** The owner can correct what was written straight
+  away, and change policy or access knowing its effect.
 
 ## 1.0.0 first public release
 
