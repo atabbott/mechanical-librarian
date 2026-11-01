@@ -1,6 +1,6 @@
 import { invalidateForegroundQueries } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { refusalCopy } from '../api/http'
+import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { DescriptionAdviceView } from '../api/http'
 import { useReviewContext } from '../router'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
@@ -20,6 +20,9 @@ export const DescriptionAdvicePreparation = ({
     mutationFn: () => http.retryDescriptionAdvice(reviewCaseId),
     retry: false,
     onSuccess: () => {
+      void invalidateForegroundQueries(cache, { queryKey: ['review-case', reviewCaseId] })
+    },
+    onError: () => {
       void invalidateForegroundQueries(cache, { queryKey: ['review-case', reviewCaseId] })
     },
   })
@@ -44,10 +47,12 @@ export const DescriptionAdvicePreparation = ({
       ) : null}
       {retry.isError ? (
         <p role="alert">
-          {refusalCopy(
-            retry.error,
-            'Description preparation could not be requested. Reload the current case and retry.',
-          )}
+          {uncertainWriteOutcome(retry.error)
+            ? 'Description preparation may have been requested. Reload the current case before retrying.'
+            : refusalCopy(
+                retry.error,
+                'Description preparation could not be requested. Reload the current case and retry.',
+              )}
         </p>
       ) : null}
     </div>

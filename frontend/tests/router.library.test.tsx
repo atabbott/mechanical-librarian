@@ -10772,6 +10772,32 @@ it.each(['Evidence', 'History'] as const)(
   },
 )
 
+it.each([
+  [
+    new ApiError(500, 'invalid_error_response'),
+    'Description preparation may have been requested. Reload the current case before retrying.',
+  ],
+  [
+    new ApiError(409, 'stale'),
+    'Description preparation could not be requested. Reload the current case and retry.',
+  ],
+])('reports a description advice retry failing with %s', async (failure, copy) => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.retryDescriptionAdvice = vi.fn(async () => {
+    throw failure
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent
+    .setup()
+    .click(await screen.findByRole('button', { name: 'Retry description advice' }))
+
+  expect(await screen.findByText(copy)).toBeVisible()
+  await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
