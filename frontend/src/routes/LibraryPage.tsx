@@ -2865,16 +2865,6 @@ export default function LibraryPage({
                       Try the same decision again
                     </button>
                   ) : null}
-                  {selectedChoiceMode && effect ? (
-                    <aside className="field-apply-context" aria-label="External update status">
-                      <span className="activity-state-mark" aria-hidden="true"></span>
-                      <span>
-                        <small>External library</small>
-                        <strong>{effect.state}</strong>
-                        <em>{effect.detail}</em>
-                      </span>
-                    </aside>
-                  ) : null}
                   {selectedChoiceMode &&
                   !ownerStatusShown &&
                   (controller.statusFor(selected.destination) ||
@@ -2898,6 +2888,16 @@ export default function LibraryPage({
                     >
                       {detail.isFetching ? 'Reloading current case…' : 'Reload current case'}
                     </button>
+                  ) : null}
+                  {selectedChoiceMode && effect ? (
+                    <aside className="field-apply-context" aria-label="External update status">
+                      <span className="activity-state-mark" aria-hidden="true"></span>
+                      <span>
+                        <small>External library</small>
+                        <strong>{effect.state}</strong>
+                        <em>{effect.detail}</em>
+                      </span>
+                    </aside>
                   ) : null}
                 </article>
               ) : (

@@ -11278,17 +11278,71 @@ it.each([
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
-  http.retryDescriptionAdvice = vi.fn(async () => {
-    throw failure
-  })
+  let fail!: (error: unknown) => void
+  http.retryDescriptionAdvice = vi.fn<ReviewHttp['retryDescriptionAdvice']>(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject
+      }),
+  )
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
-  await userEvent
-    .setup()
-    .click(await screen.findByRole('button', { name: 'Retry description advice' }))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Retry description advice' }))
+  // Pending keeps the pressed button focused; it looks disabled and ignores a second press.
+  const pending = await screen.findByRole('button', { name: 'Requesting retry…' })
+  expect(pending).not.toBeDisabled()
+  expect(pending).toHaveAttribute('aria-disabled', 'true')
+  expect(pending).toHaveFocus()
+  await user.click(pending)
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
 
+  await act(async () => fail(failure))
   expect(await screen.findByText(copy)).toBeVisible()
   await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+  const settled = screen.getByRole('button', { name: 'Retry description advice' })
+  expect(settled).not.toHaveAttribute('aria-disabled')
+  expect(settled).toHaveFocus()
   expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
+it('keeps a requested description advice retry focused and ignores another press', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.retryDescriptionAdvice = vi.fn(async () => undefined)
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  const retry = await screen.findByRole('button', { name: 'Retry description advice' })
+  await user.click(retry)
+  expect(
+    await screen.findByText('Description preparation requested. Paused preparation stays paused.'),
+  ).toBeVisible()
+  expect(retry).not.toBeDisabled()
+  expect(retry).toHaveAttribute('aria-disabled', 'true')
+  expect(retry).toHaveFocus()
+  await user.click(retry)
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
+it('keeps description advice retry natively disabled while a decision records', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+  const retry = screen.getByRole('button', { name: 'Retry description advice' })
+  // The press did not cause this, so the button stays natively disabled.
+  expect(retry).toBeDisabled()
+  expect(retry).not.toHaveAttribute('aria-disabled')
+  await user.click(retry)
+  expect(http.retryDescriptionAdvice).not.toHaveBeenCalled()
 })
 
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
@@ -11476,6 +11530,98 @@ it('retries an advised selection through the ordinary controller with the same a
   if (!first || !retried) throw new Error('description retry was not recorded')
   expect(retried[1]).toEqual(first[1])
   expect(first[1].authoredDescription?.binding).toEqual(advice.binding)
+})
+
+it('places the decision failure directly under its retry, before the external update status (#1584)', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // An earlier recorded change gives the field an external update status.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  http.recordDecision = vi.fn(async () => {
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
+  const message = await screen.findByRole('alert')
+  expect(message).toHaveTextContent('The decision could not be confirmed.')
+  const status = screen.getByLabelText('External update status')
+  expect(retry.nextElementSibling).toBe(message)
+  expect(message.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it('places the reload-required alert directly above Reload current case, before the external update status (#1584)', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // An earlier recorded change gives the field an external update status.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  let decided = false
+  // The refresh after the decision fails, so the case must be reloaded.
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new Error('current case refresh unavailable')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  // The decision records, but neither its response nor the refresh carries the case.
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+    decided = true
+    return {
+      schema_version: 'description-selection-ack-v1',
+      decision_id: `human_decision_${'a'.repeat(64)}`,
+      advised: true,
+      invalidation_sequences: [],
+      confirmation: { status: 'unavailable' },
+    }
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const reload = await screen.findByRole('button', { name: 'Reload current case' })
+  const message = screen.getByText(
+    'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+  )
+  expect(message).toHaveAttribute('role', 'alert')
+  expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+  const status = screen.getByLabelText('External update status')
+  expect(message.nextElementSibling).toBe(reload)
+  expect(reload.nextElementSibling).toBe(status)
 })
 
 it.each(['verified', 'no_change_required'] as const)(

@@ -1266,7 +1266,11 @@ describe('Application shell', () => {
         expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus(),
       )
       expect(screen.getByText('Safely paused').parentElement).toHaveTextContent('2')
-      expect(screen.getByRole('alert')).toHaveTextContent(copy)
+      // The notice's polite live region is the one announcer; no nested alert.
+      const notice = screen.getByRole('region', { name: 'Shared library connection status' })
+      expect(notice).toHaveAttribute('aria-live', 'polite')
+      expect(within(notice).getByText(copy, { exact: false })).toBeVisible()
+      expect(within(notice).queryByRole('alert')).toBeNull()
     },
   )
 
