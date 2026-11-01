@@ -55,7 +55,7 @@ SLACK = 10
 ENTRY_POINTS = {
     "audio_child.py": 264,
     "cover_child.py": 164,
-    "epub_child.py": 660,
+    "epub_child.py": 667,
     "probe_shim.py": 66,
     "container.py": 77,
     "container_health.py": 110,
