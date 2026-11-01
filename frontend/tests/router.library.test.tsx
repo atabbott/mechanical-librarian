@@ -11570,6 +11570,60 @@ it('places the decision failure directly under its retry, before the external up
   expect(message.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
+it('places the reload-required alert directly above Reload current case, before the external update status (#1584)', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // An earlier recorded change gives the field an external update status.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  let decided = false
+  // The refresh after the decision fails, so the case must be reloaded.
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new Error('current case refresh unavailable')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  // The decision records, but neither its response nor the refresh carries the case.
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+    decided = true
+    return {
+      schema_version: 'description-selection-ack-v1',
+      decision_id: `human_decision_${'a'.repeat(64)}`,
+      advised: true,
+      invalidation_sequences: [],
+      confirmation: { status: 'unavailable' },
+    }
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const reload = await screen.findByRole('button', { name: 'Reload current case' })
+  const message = screen.getByText(
+    'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+  )
+  expect(message).toHaveAttribute('role', 'alert')
+  expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+  const status = screen.getByLabelText('External update status')
+  expect(message.nextElementSibling).toBe(reload)
+  expect(reload.nextElementSibling).toBe(status)
+})
+
 it.each(['verified', 'no_change_required'] as const)(
   'shows the exact authored %s outcome without renewing a stale binding',
   async (outcome) => {

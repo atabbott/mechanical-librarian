@@ -2880,6 +2880,15 @@ export default function LibraryPage({
                         controller.messageFor(selected.destination)}
                     </p>
                   ) : null}
+                  {controller.reloadRequired ? (
+                    <button
+                      type="button"
+                      disabled={detail.isFetching}
+                      onClick={() => void controller.settle()}
+                    >
+                      {detail.isFetching ? 'Reloading current case…' : 'Reload current case'}
+                    </button>
+                  ) : null}
                   {selectedChoiceMode && effect ? (
                     <aside className="field-apply-context" aria-label="External update status">
                       <span className="activity-state-mark" aria-hidden="true"></span>
@@ -2889,15 +2898,6 @@ export default function LibraryPage({
                         <em>{effect.detail}</em>
                       </span>
                     </aside>
-                  ) : null}
-                  {controller.reloadRequired ? (
-                    <button
-                      type="button"
-                      disabled={detail.isFetching}
-                      onClick={() => void controller.settle()}
-                    >
-                      {detail.isFetching ? 'Reloading current case…' : 'Reload current case'}
-                    </button>
                   ) : null}
                 </article>
               ) : (
