@@ -30,6 +30,7 @@ from tests.support.proposal_evidence import (
     _report,
     consensus_local_title,
 )
+from tests.support.same_name_series import same_name_series_report
 
 _CURRENT = "Example Series 03 - Example Title"
 
@@ -448,3 +449,36 @@ def test_a_correct_title_is_kept_when_nothing_else_is_left_to_choose(values):
         result.outcome,
         _offered(result),
     )
+
+
+def test_a_title_kept_only_after_leaving_a_value_out_lets_no_series_fill_through():
+    # The combinations read the title as decided with the left-out value, so
+    # a same-name series fill stays blocked as before (#1497).
+    base = same_name_series_report("ebook")
+    open_library = _provider(
+        "open_library",
+        "open_library-1",
+        (
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.TITLE,
+                "Первое путешествие",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _report(
+        fields=base.target.fields,
+        local_claims=(*base.local_claims, _language("en")),
+        providers=(*base.providers, open_library),
+    )
+    proposal = evaluate_report(MetadataReport.from_json(report.to_json()))
+    results = {result.destination: result for result in proposal.results}
+
+    assert not proposal.bibliographic_combinations
+    assert ProposalOutcome.PROPOSE_CHANGE is not (
+        results[TargetDestination.SERIES].outcome
+    )
+    assert "Первое путешествие" not in _offered(results[TargetDestination.TITLE])

@@ -1384,6 +1384,7 @@ def evaluate_report(
     targets = canonical_target_fields(report.target.fields)
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
+    decided_title_kept = False
     title_associations: dict[str, str] = {}
     work_only = report.audio is not None and not admitted_audiobook_identity(report)
     for destination in TargetDestination:
@@ -1558,6 +1559,13 @@ def evaluate_report(
             result = _narrator_corroboration_guard(report, result)
         # Values that never name this item still decide the outcome above, so
         # leaving them out can only narrow it; they are just not offered (#1497).
+        if destination is TargetDestination.TITLE:
+            # Combinations read whether the title was kept as decided, before
+            # anything was left out, so a series fill cannot ride on it.
+            decided_title_kept = (
+                _apply_policy_destination(result, ignored).outcome
+                is ProposalOutcome.KEEP
+            )
         unoffered = _unoffered_references(report, destination)
         if unoffered:
             result = _withhold_unoffered(result, unoffered, targets[destination])
@@ -1579,10 +1587,7 @@ def evaluate_report(
     # A title the evidence keeps lets a same-name series stand beside it, even
     # where the work route masks that title below (#1253); an ignored title
     # leaves the current one in place, so it counts as kept.
-    title_kept = (
-        results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
-        or TargetDestination.TITLE in ignored
-    )
+    title_kept = decided_title_kept or TargetDestination.TITLE in ignored
     if work_only:
         # Book evidence answers only the book's own fields; the subtitle stays
         # out because a recording's subtitle is edition evidence, and a title
