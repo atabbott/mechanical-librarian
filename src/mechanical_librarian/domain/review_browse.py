@@ -26,6 +26,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
 )
+from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
     MAX_REPORT_BYTES,
@@ -190,6 +191,8 @@ class ProviderLaneFacts:
     # How an audiobook lane's dispatch ended, None where none was recorded, so
     # a lane work-identity admission refused can say so (#1407).
     dispatch: str | None
+    # The adapter itself failed this lane, not the provider (#1498).
+    adapter_fault: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,12 +241,28 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
             kind.value,
             status.value,
             None if dispatch is None else dispatch.outcome.value,
+            any(
+                value.category is FailureCategory.ADAPTER_FAULT for value in diagnostics
+            ),
         )
         for provider in report.providers
-        for kind, status, dispatch in (
-            tuple((lane.kind, lane.status, lane.dispatch) for lane in provider.lanes)
-            or ((provider.query_kind, provider.status, None),)
+        for kind, status, dispatch, diagnostics in (
+            tuple(
+                (lane.kind, lane.status, lane.dispatch, lane.diagnostics)
+                for lane in provider.lanes
+            )
+            or ((provider.query_kind, provider.status, None, provider.diagnostics),)
         )
+    )
+
+
+def _adapter_faulted(diagnostics: object) -> bool:
+    """Read only whether a stored diagnostic list names an adapter fault."""
+    if type(diagnostics) is not list:
+        raise ValueError
+    return any(
+        type(value) is dict and value.get("category") == "adapter_fault"
+        for value in diagnostics
     )
 
 
@@ -254,8 +273,9 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
     the one the canonical writer validated. The target, file and cover sources
     are then reconstructed by their own canonical readers, and each provider lane's
     authority, kinds, statuses, dispatch outcome and request count are checked
-    against the enums and bounds the canonical provider reader applies to them;
-    its candidates, evidence and diagnostics are not rendered and not read.
+    against the enums and bounds the canonical provider reader applies to them.
+    Its candidates and evidence are not read, and of its diagnostics only
+    whether one names an adapter fault.
     """
     try:
         identity = {key: value for key, value in report.items() if key != "report_id"}
@@ -291,10 +311,13 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     else _provider_lane_dispatch_from_data(
                         lane["dispatch"]
                     ).outcome.value,
+                    _adapter_faulted(lane["diagnostics"]),
                 )
                 for lane in provider["lanes"]
             ]
-            if any(lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _, _ in pairs):
+            if any(
+                lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _, _, _ in pairs
+            ):
                 raise ValueError
             lanes.extend(
                 ProviderLaneFacts(
@@ -303,8 +326,10 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     value.value,
                     state.value,
                     dispatch,
+                    fault,
                 )
-                for value, state, dispatch in pairs or [(kind, status, None)]
+                for value, state, dispatch, fault in pairs
+                or [(kind, status, None, _adapter_faulted(provider["diagnostics"]))]
             )
         covers = report["covers"]
         if type(covers) is not list:

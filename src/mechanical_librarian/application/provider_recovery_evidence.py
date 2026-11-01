@@ -26,6 +26,7 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.application.provider_recovery_policy import (
+    adapter_faulted,
     provider_recovery_decision,
 )
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
@@ -337,6 +338,7 @@ def provider_recovery_jobs(
                 lane.identity
                 for lane in observation.lanes
                 if lane.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
+                and not adapter_faulted(lane)
             )
         )
         if not lane_ids:

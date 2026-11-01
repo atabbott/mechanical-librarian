@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** A source lookup that failed inside Mechanical
+  Librarian reads as **Failed in Mechanical Librarian** in Sources and, when
+  nothing matched, in Library's Not matched lens, instead of "Could not be
+  reached" or "Providers unavailable", and it is not retried. Inventaire no
+  longer fails that way when it finds more than one work (#1498).
 - An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
   Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
   request or retry and no longer appear in an ebook's lookups (#1486).

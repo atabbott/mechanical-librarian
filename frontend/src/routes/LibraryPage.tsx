@@ -773,6 +773,7 @@ const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
   not_matched_refused: 'Found, but not this work',
   not_matched_unavailable_scheduled: 'Providers unavailable; will be checked again',
   not_matched_unavailable: 'Providers unavailable',
+  not_matched_adapter_fault: 'Failed in Mechanical Librarian',
   not_matched_no_match: 'No provider matched',
 }
 // A failed preparation's group shares its lens's name, so a "needs attention"

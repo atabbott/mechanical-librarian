@@ -6543,6 +6543,7 @@
               "not_matched_refused",
               "not_matched_unavailable_scheduled",
               "not_matched_unavailable",
+              "not_matched_adapter_fault",
               "not_matched_no_match"
             ],
             "title": "State",
