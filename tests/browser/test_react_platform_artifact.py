@@ -4010,7 +4010,10 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         _diag("playwright started")
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=[a for a in os.environ.get("DIAG_ARGS", "").split() if a],
+        )
         _diag("launched")
         stack.callback(
             lambda: (_diag("closing browser"), browser.close(), _diag("browser closed"))
@@ -4032,7 +4035,9 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         page.context.on("page", lambda pg: _diag(f"NEW PAGE {pg.url[:100]}"))
         _serve_cohort(
             page,
-            stylesheet=lambda: "html { font-size: 200% !important; }",
+            stylesheet=lambda: (
+                "html { font-size: 200% !important; }" + os.environ.get("DIAG_CSS", "")
+            ),
             writes_off_handoff=True,
         )
         rail = page.get_by_role("complementary", name="Attention queue")

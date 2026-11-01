@@ -21,5 +21,8 @@ run() {  # label, seconds, pytest args...
   echo "::endgroup::"
 }
 uv pip install py-spy >/dev/null 2>&1 || true
-for i in $(seq 1 60); do run "single-$i" 90 "$TEST"; done
-grep -c . /dev/null
+for i in $(seq 1 40); do
+  export DIAG_ARGS= DIAG_CSS=; run "base-$i" 30 "$TEST"
+  export DIAG_ARGS=--disable-gpu DIAG_CSS=; run "nogpu-$i" 30 "$TEST"
+  export DIAG_ARGS= DIAG_CSS=".masthead{backdrop-filter:none!important}"; run "noblur-$i" 30 "$TEST"
+done
