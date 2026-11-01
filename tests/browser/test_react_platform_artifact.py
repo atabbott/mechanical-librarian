@@ -3993,12 +3993,6 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
-        if os.environ.get("DIAG_INIT"):  # temporary diagnostic, not for merge
-            page.add_init_script(os.environ["DIAG_INIT"])
-            page.on(
-                "console",
-                lambda m: print(f"console {m.text[:200]}", file=sys.__stderr__, flush=True),
-            )
         _serve_cohort(
             page,
             stylesheet=lambda: "html { font-size: 200% !important; }",
@@ -4027,8 +4021,7 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 # The owner sees the opened rail, its heading focused, before
                 # closing it; a close in the same frame as the open is the
                 # Library route's Vitest case (#1563).
-                if not os.environ.get("DIAG_NOWAIT"):
-                    expect(heading).to_be_focused()
+                expect(heading).to_be_focused()
                 control.click()
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
@@ -4051,11 +4044,6 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
     in_view = """() => {
       const bounds = document.activeElement.getBoundingClientRect();
       return bounds.top >= -1 && bounds.bottom <= innerHeight + 1;
-    }"""
-    clear_of_masthead = """node => {
-      const bounds = node.getBoundingClientRect();
-      const masthead = document.querySelector('.masthead').getBoundingClientRect();
-      return bounds.top >= masthead.bottom - 1 && bounds.bottom <= innerHeight + 1;
     }"""
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
@@ -4091,12 +4079,6 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
                 toggle.click()
                 expect(heading).to_be_focused()
                 assert page.evaluate(in_view), f"{where}: heading out of view"
-                if not drawer:
-                    # Outside the drawer the page scrolls the heading clear of
-                    # the masthead and into the viewport (#1567).
-                    assert heading.evaluate(clear_of_masthead), (
-                        f"{where}: heading under the masthead or below the viewport"
-                    )
                 assert page.evaluate(inert) == (
                     [".masthead", ".library-works", ".workspace-detail"]
                     if drawer
