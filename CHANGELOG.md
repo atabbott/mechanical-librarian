@@ -191,6 +191,8 @@ brackets are GitHub issues.
 - An audiobook whose language is a regional tag such as en-GB, left to you
   under Automatic, says that dropping the region is never done for you on
   audiobooks, instead of "no more specific reason is known" (#1593).
+- Sign out always lands on the sign-in page, instead of sometimes on a
+  sign-in page that offers to return to where you were (#1588).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

@@ -27,6 +27,7 @@ import uvicorn
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from playwright.sync_api import (
+    APIResponse,
     BrowserContext,
     Locator,
     Page,
@@ -2388,6 +2389,79 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 context.close()
 
         assert errors == []
+
+
+@pytest.mark.parametrize("read_answers", ["before_login_commits", "before_logout_ends"])
+def test_sign_out_lands_on_login_when_a_held_read_answers_401(
+    read_answers: str,
+) -> None:
+    """A Library read held across Sign out answers 401 once the session is
+    revoked. Sign out alone navigates, to /login exactly: the read's expiry
+    must neither abort that navigation nor replace it with /login?next (#1588).
+    Every /login document request is held, so each navigation is counted."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright, closing(ReservedPort()) as port:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_context(ignore_https_errors=True).new_page()
+            with _server(
+                database=root / "review.sqlite",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=port,
+            ) as (origin, _case_id):
+                _login(page, origin)
+                reads: list[Route] = []
+                documents: list[Route] = []
+                logouts: list[tuple[Route, APIResponse]] = []
+
+                def until(condition: Callable[[], bool], polls: int = 250) -> bool:
+                    for _ in range(polls):
+                        if condition():
+                            return True
+                        page.wait_for_timeout(20)
+                    return condition()
+
+                page.route("**/api/v1/library?*", lambda route: reads.append(route))
+                page.route(
+                    re.compile(r".*/login(\?.*)?$"),
+                    lambda route: (
+                        documents.append(route)
+                        if route.request.is_navigation_request()
+                        else route.continue_()
+                    ),
+                )
+                if read_answers == "before_logout_ends":
+                    # The server revokes the session; its answer is held.
+                    page.route(
+                        "**/api/v1/session/logout",
+                        lambda route: logouts.append((route, route.fetch())),
+                    )
+                page.goto(f"{origin}/library?lens=all")
+                assert until(lambda: len(reads) == 1)
+                page.get_by_role("button", name="Sign out").click()
+                if read_answers == "before_login_commits":
+                    assert until(lambda: len(documents) == 1)
+                    reads[0].continue_()
+                else:
+                    assert until(lambda: len(logouts) == 1)
+                    reads[0].continue_()
+                    until(lambda: len(documents) > 0, 25)
+                    logout, response = logouts[0]
+                    logout.fulfill(response=response)
+                    assert until(lambda: len(documents) > 0)
+                # Room for a second, expiry-driven navigation to show itself.
+                until(lambda: len(documents) > 1, 25)
+                assert [route.request.url for route in documents] == [f"{origin}/login"]
+                documents[0].continue_()
+                page.wait_for_url(f"{origin}/login")
+                expect(page.get_by_role("button", name="Sign in")).to_be_visible()
+            browser.close()
 
 
 @pytest.mark.parametrize("transport_mode", ["direct", "http", "proxy"])
