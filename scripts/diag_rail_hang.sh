@@ -12,7 +12,7 @@ run() {  # label, seconds, pytest args...
     echo "HANG in $label after ${limit}s"
     ps -ef --forest | grep -E "chrome|playwright|node|pytest" | grep -v grep | cut -c1-220
     for p in $(pgrep -f "python -m pytest"); do sudo .venv/bin/py-spy dump --pid $p || true; done
-    for p in $(pgrep -f "chrome-headless-shell" | head -3); do echo "-- chrome $p"; sudo cat /proc/$p/status | grep -E "State|Threads"; sudo cat /proc/$p/wchan; echo; done
+    for p in $(pgrep -f "chrome-headless-shell"); do echo "-- chrome $p $(tr '\0' ' ' < /proc/$p/cmdline | grep -o -- '--type=[a-z-]*')"; for t in /proc/$p/task/*; do echo "   $(cat $t/comm) $(grep State $t/status | cut -f2) $(sudo cat $t/wchan)"; done; done
     pkill -9 -f "python -m pytest"; pkill -9 -f chrome-headless-shell
     echo "RESULT $label hang"
   else
@@ -21,6 +21,5 @@ run() {  # label, seconds, pytest args...
   echo "::endgroup::"
 }
 uv pip install py-spy >/dev/null 2>&1 || true
-run "file-durations" 600 tests/browser/test_react_platform_artifact.py tests/browser/test_review_browser.py --durations=25
-for i in $(seq 1 70); do run "single-$i" 90 "$TEST"; done
+for i in $(seq 1 60); do run "single-$i" 90 "$TEST"; done
 grep -c . /dev/null

@@ -4019,6 +4019,17 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         page.on("crash", lambda _: _diag("PAGE CRASH"))
 
         page.on("pageerror", lambda e: _diag(f"pageerror {e}"))
+        page.on("dialog", lambda d: _diag(f"DIALOG {d.type} {d.message[:100]}"))
+        page.on(
+            "request",
+            lambda r: _diag(f"req> {r.resource_type} {r.method} {r.url[:140]}"),
+        )
+        page.on("requestfinished", lambda r: _diag(f"req< {r.url[:140]}"))
+        page.on("requestfailed", lambda r: _diag(f"req! {r.url[:140]} {r.failure}"))
+        page.on("framenavigated", lambda f: _diag(f"nav {f.url[:140]}"))
+        page.on("console", lambda m: _diag(f"console {m.type} {m.text[:160]}"))
+        page.on("worker", lambda w: _diag(f"worker {w.url[:100]}"))
+        page.context.on("page", lambda pg: _diag(f"NEW PAGE {pg.url[:100]}"))
         _serve_cohort(
             page,
             stylesheet=lambda: "html { font-size: 200% !important; }",
@@ -4055,6 +4066,25 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 _diag(f"{where}: rail gone")
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
+                _diag(f"{where}: responsive?")
+                try:
+                    page.wait_for_function("() => true", timeout=8_000)
+                    _diag(f"{where}: responsive")
+                except Exception as error:
+                    _diag(f"UNRESPONSIVE {where}: {type(error).__name__}")
+                    try:
+                        page.screenshot(timeout=8_000)
+                        _diag("screenshot ok")
+                    except Exception as error2:
+                        _diag(f"screenshot failed {type(error2).__name__}")
+                    try:
+                        _diag(f"title {page.title()}")
+                    except Exception as error3:
+                        _diag(f"title failed {error3}")
+                    import time as _t
+
+                    _t.sleep(20)
+                    raise
                 _diag(f"{where}: two frames")
                 outcome = page.evaluate(_RAF_PROBE)
                 _diag(f"{where}: frames {outcome}")
