@@ -58,6 +58,9 @@ That is the case when its edition states only other languages, or when a work in
 Latin-script languages gets a value written mostly in another script. The
 proposal set records no reason for a value it leaves out. With no established
 language nothing is left out, and the same value from any other provider stays.
+A choice that would show such a value is withheld whole, even when another
+source's equivalent value joined it, such as a bare title beside the left-out
+edition's form with a leading article.
 Such a value still counts when the outcome is decided, so leaving it out never
 makes a change automatic: two descriptions still ask you to choose with only one
 of them offered, and on the ISBN route such a title still counts against the

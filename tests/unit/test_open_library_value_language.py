@@ -586,3 +586,18 @@ def test_a_left_out_title_keeps_its_title_and_series_duplication_veto():
         results[TargetDestination.SERIES].reasons,
     )
     assert "Пример" not in _offered(results[TargetDestination.TITLE])
+
+
+def test_a_left_out_article_form_is_not_offered_through_its_bare_title():
+    # The French edition's "The Example Title" merges with the other source's
+    # bare "Example Title" and would be shown as the article form, a value
+    # only the left-out edition states, so the merged choice is withheld
+    # whole rather than shown under the other source's name. Only the
+    # current title is left, so it is kept, which writes nothing.
+    result = _title(
+        titles=("Example Title", "The Example Title"),
+        provider_languages=(None, "fr"),
+        local_language="en",
+    )
+
+    assert (ProposalOutcome.KEEP, {_CURRENT}) == (result.outcome, _offered(result))

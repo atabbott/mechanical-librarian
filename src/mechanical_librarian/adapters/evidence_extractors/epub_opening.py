@@ -2490,7 +2490,9 @@ def _non_isbn_identifier_spans(value: str) -> tuple[tuple[int, int], ...]:
     return tuple(spans)
 
 
-def _catalogue_record_starts(elements: list[_Element]) -> dict[int, int]:
+def _catalogue_record_starts(
+    elements: list[_Element], eligible: set[int]
+) -> dict[int, int]:
     """Map each element inside a catalogue-record block to where it starts.
 
     The block opens at its heading. The heading is read on the innermost
@@ -2498,6 +2500,9 @@ def _catalogue_record_starts(elements: list[_Element]) -> dict[int, int]:
     text (a `<b>` inside a `<p>`), and the block runs through every later
     element of the widened heading's container. A heading element counts only
     from the heading on, and every later member from its start (#1497).
+
+    Only an element the recognizer would read can state the heading or widen
+    it, so foreign, promotional, excluded and body content opens no block.
     """
     by_ordinal = {element.ordinal: element for element in elements}
     headings = {
@@ -2514,15 +2519,16 @@ def _catalogue_record_starts(elements: list[_Element]) -> dict[int, int]:
     blocks: list[tuple[int, int | None]] = []
     for ordinal in sorted(headings - ancestors_of_headings):
         node = by_ordinal[ordinal]
-        if not _is_html_namespace(node.namespace):
-            # Foreign content is isolated as elsewhere: a heading stated only
-            # inside it opens no block, and neither do its HTML ancestors.
+        if ordinal not in eligible:
+            # Content the recognizer skips is isolated as elsewhere: a heading
+            # stated only inside it opens no block, and neither do its
+            # ancestors.
             continue
         chain = [node]
         while (
             node.ancestors
             and (parent := by_ordinal.get(node.ancestors[-1])) is not None
-            and _is_html_namespace(parent.namespace)
+            and parent.ordinal in eligible
             and parent.exact_text.strip() == node.exact_text.strip()
         ):
             node = parent
@@ -3406,7 +3412,9 @@ def _recognize(
         projection.elements,
         eligible_ordinals,
     )
-    catalogue_record_starts = _catalogue_record_starts(projection.elements)
+    catalogue_record_starts = _catalogue_record_starts(
+        projection.elements, eligible_ordinals
+    )
     for element in projection.elements:
         text = element.exact_text
         if element.active or not _is_html_namespace(element.namespace):

@@ -4124,10 +4124,14 @@ def test_a_long_whitespace_run_after_a_control_number_label_is_linear() -> None:
         "Library of Congress Cataloging-in-Publication Data</f:p>",
         '<div><f:p xmlns:f="urn:foreign">'
         "Library of Congress Cataloging-in-Publication Data</f:p></div>",
+        '<h2 epub:type="preview">'
+        "Library of Congress Cataloging-in-Publication Data</h2>",
+        '<aside epub:type="preview"><p>'
+        "Library of Congress Cataloging-in-Publication Data</p></aside>",
     ),
-    ids=("foreign", "foreign_in_html_wrapper"),
+    ids=("foreign", "foreign_in_html_wrapper", "preview", "inside_preview"),
 )
-def test_a_foreign_catalogue_heading_opens_no_block(heading: str) -> None:
+def test_a_skipped_catalogue_heading_opens_no_block(heading: str) -> None:
     assert _identifiers(
         f'<section epub:type="copyright-page">{heading}<p>0306406152</p></section>'
     ) == ["0306406152"]
