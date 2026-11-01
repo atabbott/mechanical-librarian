@@ -21,10 +21,14 @@ run() {  # label, seconds, pytest args...
   echo "::endgroup::"
 }
 LOG='for (const [target, name] of [[window, "scrollTo"], [window, "scrollBy"], [Element.prototype, "scrollIntoView"], [HTMLElement.prototype, "focus"]]) { const original = target[name]; target[name] = function (...args) { console.log("CALL " + name + " " + (this === window ? "window" : (this.tagName + "." + this.className)).slice(0, 60) + " y=" + Math.round(scrollY) + " t=" + Math.round(performance.now()) + " open=" + location.search.includes("attention=open")); return original.apply(this, args); }; }'
-export DIAG_INIT="$LOG" DIAG_NOWAIT=1
-for i in $(seq 1 40); do run "main-$i" 30 "$TEST"; done
-git apply scripts/diag_candidate.patch
-(cd frontend && ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/react-assets-fix" npm run build >/dev/null 2>&1) || echo "BUILD FAILED"
-export ML_REACT_ASSET_DIR="$RUNNER_TEMP/react-assets-fix"
-for i in $(seq 1 120); do run "fix-$i" 30 "$TEST"; done
-grep -c "RESULT" /dev/null >/dev/null
+MARK='addEventListener("pointerdown", e => console.log("CLICK " + e.target.tagName + "." + e.target.className + " t=" + Math.round(performance.now())), true);'
+export DIAG_NOWAIT=1
+arm() {  # name, prefix-js
+  export DIAG_INIT="$2 $MARK $LOG"
+  for i in $(seq 1 40); do run "$1-$i" 30 "$TEST"; done
+}
+arm control ''
+arm noanchor 'document.documentElement.style.overflowAnchor = "none";'
+arm nosiv 'Element.prototype.scrollIntoView = function () {};'
+arm noscrollto 'window.scrollTo = function () {};'
+arm nofocus 'HTMLElement.prototype.focus = function () {};'

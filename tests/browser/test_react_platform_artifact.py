@@ -3995,7 +3995,12 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
         if os.environ.get("DIAG_INIT"):  # temporary diagnostic, not for merge
             page.add_init_script(os.environ["DIAG_INIT"])
-            page.on("console", lambda m: print(f"console {m.text[:200]}", file=sys.__stderr__, flush=True))
+            page.on(
+                "console",
+                lambda m: print(
+                    f"console {m.text[:200]}", file=sys.__stderr__, flush=True
+                ),
+            )
         _serve_cohort(
             page,
             stylesheet=lambda: "html { font-size: 200% !important; }",
