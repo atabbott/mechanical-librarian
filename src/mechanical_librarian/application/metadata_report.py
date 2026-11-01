@@ -67,6 +67,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
+    EpubCoverRecovery,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
@@ -1611,6 +1612,8 @@ class InspectionResult:
     claims: tuple[LocalClaim, ...]
     cover_sources: tuple[CoverSource, ...] = ()
     rear_resource_limit: bool = False
+    # Shadow evidence only: never a cover source, candidate or verification.
+    cover_recovery: EpubCoverRecovery | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2558,6 +2561,7 @@ def observe_work_ladder(
     observe_rung: Callable[[WorkQuery], ProviderObservation],
     *,
     corroborate: bool = False,
+    narrow: Callable[[WorkQuery], ProviderObservation] | None = None,
 ) -> QualifiedLaneObservation:
     """Walk one WORK lane's query ladder, qualifying each rung as it returns.
 
@@ -2570,7 +2574,13 @@ def observe_work_ladder(
     or empty, the lane records each rung's lineage in ladder order with the
     empty-rung and refused-product counts, and keeps the recording hints of the
     earliest refused rung that had any. An ebook plan still stops at the first
-    rung that returned products.
+    rung that returned products. When no product is admitted there, or every
+    rung was empty, it records the rungs it sent the same way (#1499), so a
+    miss shows what was searched.
+
+    `narrow` is the adapter's own narrowing request: a rung whose answer is
+    over the candidate limit sends its narrowing successor once, and that
+    answer is the lane's result.
 
     The asserted lane of an audiobook plan also keeps band-first lookup hints
     (#1257): the products each rung returned inside the tight runtime band that
@@ -2612,6 +2622,14 @@ def observe_work_ladder(
         leading_number=corroborate,
     ):
         physical = observe_rung(query)
+        if (
+            narrow is not None
+            and physical.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        ):
+            return QualifiedLaneObservation(
+                qualify_provider_observation(narrow(query), lookup),
+                rungs=len(exhausted) + 1,
+            )
         observation = qualify_provider_observation(physical, lookup)
         if (
             lookup.audio is not None
@@ -2646,13 +2664,32 @@ def observe_work_ladder(
                 ),
                 rungs=len(exhausted) + 1,
             )
+        elif (
+            lookup.audio is None
+            and physical.status is ProviderStatus.CANDIDATES
+            and observation.status is ProviderStatus.NO_MATCH
+        ):
+            # An ebook ladder ends at its first rung with products, so the
+            # refused rung is the last one it sent (#1499).
+            exhausted.append(WorkDispatchLineage.from_query(query))
+            return QualifiedLaneObservation(
+                observation,
+                tuple(exhausted),
+                work_ladder_diagnostics(empty_rungs, len(physical.candidates)),
+                rungs=len(exhausted),
+            )
         else:
             return QualifiedLaneObservation(observation, rungs=len(exhausted) + 1)
         exhausted.append(WorkDispatchLineage.from_query(query))
     if observation is None:
         raise MetadataReportError("work query ladder is empty")
     if lookup.audio is None:
-        return QualifiedLaneObservation(observation, rungs=len(exhausted))
+        return QualifiedLaneObservation(
+            observation,
+            tuple(exhausted),
+            work_ladder_diagnostics(empty_rungs, 0),
+            rungs=len(exhausted),
+        )
     observation = replace(observation, recording_lookup_candidates=hints)
     sent = len(exhausted)
 
@@ -3304,6 +3341,7 @@ class GenerateMetadataReport:
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
+                cover_recovery=local.cover_recovery,
             )
         except Exception as error:
             # Cleanup only: the report assembly spans domain construction over

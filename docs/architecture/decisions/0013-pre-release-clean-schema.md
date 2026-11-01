@@ -257,6 +257,14 @@ with the claims read from it, so a v62 report cannot state what a v63 report
 records. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
 
+Issue #1497 also takes the clean-rebuild branch. A Library of Congress
+control number in opening matter is no longer an ISBN-10 (extractor
+`epub-opening-v5`), Hardcover author names are tidied or left unoffered, and an
+Open Library title or description that contradicts the work's language is no
+longer an alternative, so report contents change and the proposal policy moves
+to `fixed-conservative-v43`. The report schema is unchanged; no adoption is
+supplied.
+
 Issue #1496 also takes the clean-rebuild branch. Titles that differ only by a
 leading article form one alternative, a bracketed ISBN suffix is the explicit
 identifier decoration, a packaged generic subtitle is not observed, and a
@@ -301,3 +309,17 @@ failed instead of `unknown` (ADR-0017), so a v64 report cannot state what a v65
 report records. The report browse facts gain an `adapter_fault` match state, so
 such a work reads as its own Not matched reason, never as unavailable. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
+
+Issue #1499 also takes the clean-rebuild branch. An ebook titled with its
+bracketed series name now admits the series-stripped work (ADR-0067), and an
+ebook WORK lane that admits nothing records the rungs it sent as
+`exhausted_dispatch`, so an earlier report's matches and lane records are not
+what this code prepares. The report schema is unchanged; no adoption is
+supplied.
+
+Issue #1357 also takes the clean-rebuild branch. `metadata-report-v66` adds the
+EPUB report's `local.cover_recovery`, the closed fallback and refusal codes of
+a cover recovered from a malformed declaration as shadow evidence, so a v65
+report cannot state what a v66 report records. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.

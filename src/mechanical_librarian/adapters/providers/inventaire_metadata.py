@@ -32,8 +32,10 @@ from mechanical_librarian.application.metadata_report import (
     ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
+    QualifiedLaneObservation,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
+    observe_work_ladder,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
@@ -86,6 +88,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
+    WorkQuery,
     narrowing_work_query,
     work_query_ladder,
 )
@@ -260,23 +263,25 @@ class InventaireMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                physical, _ = ledger.resolve(
+                lane_result, _ = ledger.resolve(
                     kind=lookup.kind.value,
                     matched_family=lookup.matched_family,
                     title=lookup.title,
                     authors=lookup.authors,
                     projection="entities-v5.1.1",
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - resolve executes before the loop advances
+                    execute=lambda: self._observe_lane(lookup, deadline=deadline),  # noqa: B023 - resolve executes before the loop advances
                 )
-                qualified = qualify_provider_observation(physical, lookup)
+                qualified = lane_result.observation
                 results.append(
                     ProviderLaneResult(
                         lane,
                         qualified.status,
                         qualified.candidates,
                         qualified.accessed_at,
+                        diagnostics=lane_result.diagnostics,
                         dispatch_lineage=qualified.dispatch_lineage,
                         transformation_lineage=qualified.transformation_lineage,
+                        exhausted_dispatch=lane_result.exhausted_dispatch,
                     )
                 )
         return provider_observation(
@@ -298,6 +303,56 @@ class InventaireMetadataProvider:
             title=lookup.title,
             authors=lookup.authors,
             projection="entities-v5.1.1",
+        )
+
+    def _observe_lane(
+        self,
+        lookup: MetadataLookup,
+        *,
+        deadline: float | None,
+    ) -> QualifiedLaneObservation:
+        """Qualify one plan lane's answer.
+
+        An ebook WORK lane walks its query ladder through `observe_work_ladder`,
+        so a lane that admits nothing records the rungs it sent (#1499).
+        """
+        if (
+            lookup.kind is ProviderQueryKind.WORK
+            and lookup.audio is None
+            and lookup.title is not None
+            and lookup.authors
+            and work_query_ladder(lookup.title, lookup.authors)
+        ):
+            return observe_work_ladder(
+                lookup,
+                lambda query: self._observe_work_query(
+                    lookup,
+                    query.title,
+                    query.authors,
+                    WorkDispatchLineage.from_query(query),
+                    deadline=deadline,
+                    query_retry=query.rung is not WorkDispatchRung.NORMALIZED,
+                ),
+                narrow=lambda query: self._observe_narrowed(
+                    lookup, narrowing_work_query(query), deadline=deadline
+                ),
+            )
+        return QualifiedLaneObservation(
+            qualify_provider_observation(
+                self._observe_lookup(lookup, deadline=deadline), lookup
+            )
+        )
+
+    def _observe_narrowed(
+        self, lookup: MetadataLookup, narrowed: WorkQuery, *, deadline: float | None
+    ) -> ProviderObservation:
+        return self._observe_work_query(
+            lookup,
+            narrowed.title,
+            narrowed.authors,
+            WorkDispatchLineage.from_query(narrowed),
+            deadline=deadline,
+            query_retry=True,
         )
 
     def _observe_lookup(

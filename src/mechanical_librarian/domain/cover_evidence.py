@@ -300,6 +300,93 @@ class CoverSource:
         }
 
 
+class EpubCoverFallback(StrEnum):
+    """A bounded cover fallback, in the fixed order the inspector tries them."""
+
+    EPUB2_META_COVER_ITEM = "epub2_meta_cover_item"
+    GUIDE_COVER_REFERENCE = "guide_cover_reference"
+    COVER_IMAGE_WRAPPER = "cover_image_wrapper"
+
+
+class EpubCoverRecoveryRefusal(StrEnum):
+    """The closed, value-free reason a cover recovery chose no image."""
+
+    UNRESOLVED = "cover_recovery_unresolved"
+    UNSUPPORTED_TARGET = "cover_recovery_unsupported_target"
+    MULTIPLE_WRAPPERS = "cover_recovery_multiple_wrappers"
+    WRAPPER_UNREADABLE = "cover_wrapper_unreadable"
+    WRAPPER_RESOURCE_LIMIT = "cover_wrapper_resource_limit"
+    WRAPPER_TIMEOUT = "cover_wrapper_timeout"
+    WRAPPER_EXTERNAL_REFERENCE = "cover_wrapper_external_reference"
+    WRAPPER_OUTSIDE_PACKAGE = "cover_wrapper_outside_package"
+    WRAPPER_NESTED = "cover_wrapper_nested"
+    WRAPPER_NOT_MANIFEST_IMAGE = "cover_wrapper_not_manifest_image"
+    WRAPPER_NO_IMAGE = "cover_wrapper_no_image"
+    WRAPPER_MULTIPLE_IMAGES = "cover_wrapper_multiple_images"
+    CONTRADICTORY_DECLARATION = "contradictory_cover_declaration"
+
+
+_FALLBACK_ORDER = tuple(EpubCoverFallback)
+
+
+@dataclass(frozen=True, slots=True)
+class EpubCoverRecovery:
+    """Shadow evidence of an EPUB cover recovered from a malformed declaration.
+
+    It names only the fallbacks that resolved and, when no image was agreed,
+    one closed refusal. It is never a cover source, a candidate or a
+    verification of the current cover: activation is a separate decision.
+    """
+
+    fallbacks: tuple[EpubCoverFallback, ...]
+    refusal: EpubCoverRecoveryRefusal | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.fallbacks) is not tuple
+            or any(type(value) is not EpubCoverFallback for value in self.fallbacks)
+            or self.fallbacks
+            != tuple(value for value in _FALLBACK_ORDER if value in self.fallbacks)
+            or (
+                self.refusal is not None
+                and type(self.refusal) is not EpubCoverRecoveryRefusal
+            )
+            or (self.refusal is EpubCoverRecoveryRefusal.UNRESOLVED)
+            != (not self.fallbacks)
+        ):
+            raise CoverEvidenceError("EPUB cover recovery is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "authority": "shadow",
+            "fallbacks": [value.value for value in self.fallbacks],
+            "refusal": None if self.refusal is None else self.refusal.value,
+        }
+
+    @classmethod
+    def from_data(cls, value: object) -> "EpubCoverRecovery":
+        if (
+            type(value) is not dict
+            or set(value) != {"authority", "fallbacks", "refusal"}
+            or value["authority"] != "shadow"
+            or type(value["fallbacks"]) is not list
+            or any(type(item) is not str for item in value["fallbacks"])
+            or (value["refusal"] is not None and type(value["refusal"]) is not str)
+        ):
+            raise CoverEvidenceError("EPUB cover recovery is invalid")
+        try:
+            return cls(
+                tuple(EpubCoverFallback(item) for item in value["fallbacks"]),
+                None
+                if value["refusal"] is None
+                else EpubCoverRecoveryRefusal(value["refusal"]),
+            )
+        except ValueError as error:
+            if isinstance(error, CoverEvidenceError):
+                raise
+            raise CoverEvidenceError("EPUB cover recovery is invalid") from None
+
+
 def cover_source_id(kind: CoverSourceKind, identity: str) -> str:
     if type(kind) is not CoverSourceKind or type(identity) is not str:
         raise CoverEvidenceError("cover source identity is invalid")
@@ -380,6 +467,9 @@ __all__ = [
     "CoverSourceKind",
     "CoverSourceState",
     "CoverTruncationReason",
+    "EpubCoverFallback",
+    "EpubCoverRecovery",
+    "EpubCoverRecoveryRefusal",
     "PREVIEW_VARIANT",
     "cover_source_id",
     "publication_ready",

@@ -43,6 +43,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
     CoverTruncationReason,
+    EpubCoverRecovery,
     publication_ready,
 )
 from mechanical_librarian.domain.epub_inspection import (
@@ -95,7 +96,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v65"
+REPORT_SCHEMA = "metadata-report-v66"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -3543,6 +3544,21 @@ def provider_candidate_work_identity_admission(
             )
         ),
         provider_series_memberships=memberships,
+        # Each stated series name no position claim directly follows.
+        provider_series_names=tuple(
+            claim.value
+            for index, claim in enumerate(ordered)
+            if claim.kind is ClaimKind.SERIES
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and not (
+                index + 1 < len(ordered)
+                and ordered[index + 1].kind is ClaimKind.SERIES_SEQUENCE
+                and ordered[index + 1].scope is ClaimScope.WORK
+                and ordered[index + 1].raw_order == claim.raw_order + 1
+            )
+        ),
         audiobook=audiobook,
         runtime_tight=runtime_tight,
         leading_number=leading_number,
@@ -4272,6 +4288,38 @@ def lane_work_ladder(
     )
 
 
+def _ebook_ladder_record(
+    payload: WorkLanePayload, lane: ProviderLaneObservation
+) -> tuple[WorkDispatchLineage, ...] | None:
+    """The rungs an exhausted ebook WORK lane must record (#1499).
+
+    Every rung when all were empty; otherwise the rungs up to the first one
+    with products, which work-identity admission refused.
+    """
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(payload.title, payload.authors)
+    )
+    refused = any(
+        value.category is FailureCategory.WORK_IDENTITY_REFUSED
+        for value in lane.diagnostics
+    )
+    if not refused:
+        return ladder
+    sent = len(lane.exhausted_dispatch)
+    empty = next(
+        (
+            value.count
+            for value in lane.diagnostics
+            if value.category is FailureCategory.EMPTY_NO_MATCH
+        ),
+        0,
+    )
+    if not 1 <= sent <= len(ladder) or empty != sent - 1:
+        return None
+    return ladder[:sent]
+
+
 def provider_candidate_set_exact_work_identity_admission(
     candidates: tuple[ProviderCandidate, ...],
     local_title: str,
@@ -4421,6 +4469,9 @@ class MetadataReport:
     # Every admission read of this report applies them, so they travel with it.
     library_languages: tuple[str, ...] = ()
     companion: CompanionEbook | None = None
+    # Shadow evidence of a cover recovered from a malformed EPUB declaration
+    # (#1357). It is never a cover source and only an EPUB report states one.
+    cover_recovery: EpubCoverRecovery | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -4443,6 +4494,11 @@ class MetadataReport:
             type(self.companion) is not CompanionEbook or self.audio is None
         ):
             raise ReportValueError("companion ebook does not match the selected file")
+        if self.cover_recovery is not None and (
+            type(self.cover_recovery) is not EpubCoverRecovery
+            or self.file.format != "epub"
+        ):
+            raise ReportValueError("cover recovery does not match the selected file")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
         if self.comparison_version != COMPARISON_VERSION:
@@ -4528,6 +4584,19 @@ class MetadataReport:
                     self.target.fields, self.local_claims, self.audio.discovery_titles
                 )
             }
+        )
+        # An ebook plan has one WORK lane, its own title, and only an
+        # exhausted lane's record replays from it (#1499).
+        ebook_planned = (
+            {
+                payload.identity: payload
+                for payload in work_discovery_lane_payloads(
+                    self.target.fields, self.local_claims
+                )
+            }
+            if self.audio is None
+            and any(lane.exhausted_dispatch for p in self.providers for lane in p.lanes)
+            else {}
         )
         asserted = next(
             (
@@ -4738,17 +4807,29 @@ class MetadataReport:
                         "provider work identity lineage is inconsistent"
                     )
             # An exhausted lane walked its own title's whole audiobook ladder,
-            # in ladder order, so its lineages replay from the plan alone.
+            # in ladder order, so its lineages replay from the plan alone. An
+            # ebook ladder ends at its first rung with products, so its record
+            # is the whole ladder when every rung was empty, and otherwise the
+            # ladder up to the one refused rung (#1499).
             for lane in provider.lanes:
                 if not lane.exhausted_dispatch:
                     continue
-                payload = planned.get(lane.identity)
+                payload = (planned if is_audio else ebook_planned).get(lane.identity)
                 if (
-                    not is_audio
-                    or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-                    or payload is None
-                    or lane.exhausted_dispatch
-                    != lane_work_ladder(provider.authority, payload)
+                    payload is None
+                    or (
+                        is_audio
+                        and (
+                            provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                            or lane.exhausted_dispatch
+                            != lane_work_ladder(provider.authority, payload)
+                        )
+                    )
+                    or (
+                        not is_audio
+                        and lane.exhausted_dispatch
+                        != _ebook_ladder_record(payload, lane)
+                    )
                 ):
                     raise ReportValueError(
                         "provider exhausted dispatch is inconsistent"
@@ -5067,6 +5148,7 @@ class MetadataReport:
         audio: AudioFacts | None = None,
         companion: CompanionEbook | None = None,
         library_languages: tuple[str, ...] = (),
+        cover_recovery: EpubCoverRecovery | None = None,
     ) -> Self:
         local_status = (
             "candidate"
@@ -5147,6 +5229,7 @@ class MetadataReport:
             audio,
             companion,
             library_languages,
+            cover_recovery,
         )
         data.pop("report_id")
         return cls(
@@ -5163,6 +5246,7 @@ class MetadataReport:
             audio=audio,
             companion=companion,
             library_languages=library_languages,
+            cover_recovery=cover_recovery,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -5185,6 +5269,7 @@ class MetadataReport:
             self.audio,
             self.companion,
             self.library_languages,
+            self.cover_recovery,
         )
 
     def to_json(self) -> str:
@@ -6584,6 +6669,15 @@ def _has_creator_duplicates(values: tuple[str, ...]) -> bool:
     return len({creator_comparison_key(value) for value in values}) != len(values)
 
 
+def comma_inverted_name(value: str) -> str | None:
+    """Return one personal `Family, Given` name in display order, if it is one.
+
+    Organisations, joined names, name suffixes and non-personal tokens give
+    None, so a source's comma is read as an inversion only for one person.
+    """
+    return _comma_inverted(value)
+
+
 def _comma_inverted(value: str) -> str | None:
     if value.count(",") != 1:
         return None
@@ -6669,6 +6763,7 @@ def _report_data(
     audio: AudioFacts | None = None,
     companion: CompanionEbook | None = None,
     library_languages: tuple[str, ...] = (),
+    cover_recovery: EpubCoverRecovery | None = None,
 ) -> dict[str, object]:
     return {
         "audio": None if audio is None else audio.to_data(),
@@ -6679,6 +6774,9 @@ def _report_data(
         "identifier_evidence": [value.to_data() for value in identifier_evidence],
         "local": {
             "claims": [value.to_data() for value in local_claims],
+            "cover_recovery": (
+                None if cover_recovery is None else cover_recovery.to_data()
+            ),
             "reasons": list(local_reasons),
             "status": local_status,
         },
@@ -6728,7 +6826,7 @@ def _report_from_data(value: object) -> MetadataReport:
     file = _object(
         root["file"], {"content_digest", "format", "identity", "selected_index"}
     )
-    local = _object(root["local"], {"claims", "reasons", "status"})
+    local = _object(root["local"], {"claims", "cover_recovery", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
     field_results = tuple(
@@ -6767,6 +6865,9 @@ def _report_from_data(value: object) -> MetadataReport:
         _audio_facts_from_data(root["audio"]),
         tuple(_strings(root["library_languages"])),
         _companion_from_data(root["companion"]),
+        None
+        if local["cover_recovery"] is None
+        else EpubCoverRecovery.from_data(local["cover_recovery"]),
     )
 
 

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Callable
 
+from mechanical_librarian.domain.cover_evidence import EpubCoverFallback
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionOutcome,
     EpubObservationApplicability,
@@ -436,6 +437,32 @@ class EpubPackageUsage:
 
 
 @dataclass(frozen=True)
+class EpubCoverFallbackTarget:
+    """One cover fallback declaration, kept only inside the extraction child.
+
+    ``resource_identity`` and ``media_type`` are the local manifest item the
+    declaration names, or both ``None`` when it names none. A resource that
+    several manifest items name keeps its identity without a media type, which
+    the child refuses as an unsupported target. The plan never leaves the
+    child: only the closed fallback names reach a report.
+    """
+
+    fallback: EpubCoverFallback
+    resource_identity: str | None = None
+    media_type: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.fallback) is not EpubCoverFallback or (
+            self.resource_identity is None and self.media_type is not None
+        ):
+            raise EvidenceValueError("EPUB cover fallback is malformed")
+        if self.resource_identity is not None:
+            _digest(self.resource_identity, "EPUB cover fallback identity")
+        if self.media_type is not None:
+            validate_text(self.media_type, "EPUB cover fallback media type", 128)
+
+
+@dataclass(frozen=True)
 class EpubPackageReport:
     outcome: EpubInspectionOutcome
     capability: EpubPackageCapability
@@ -445,6 +472,9 @@ class EpubPackageReport:
     warnings: tuple[EpubPackageWarning, ...] = ()
     declarations: tuple[EpubPackageDeclaration, ...] = ()
     usage: EpubPackageUsage = EpubPackageUsage()
+    # The cover fallback plan, present only when the package declares no valid
+    # cover. It is internal to the child and never projected into a fact.
+    cover_fallbacks: tuple[EpubCoverFallbackTarget, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -466,6 +496,19 @@ class EpubPackageReport:
         _typed_tuple(
             self.declarations, EpubPackageDeclaration, MAX_DECLARATIONS, "declarations"
         )
+        _typed_tuple(
+            self.cover_fallbacks,
+            EpubCoverFallbackTarget,
+            MAX_DECLARATIONS,
+            "cover fallbacks",
+        )
+        if self.cover_fallbacks and (
+            not self.outcome.succeeded
+            or any(item.field is EpubPackageField.COVER for item in self.observations)
+        ):
+            raise EvidenceValueError(
+                "a cover fallback plan requires a package without a selected cover"
+            )
         if (
             self.outcome is EpubInspectionOutcome.SUCCESS
             and self.source_fingerprint is None
@@ -616,6 +659,7 @@ def _typed_tuple(
 
 
 __all__ = [
+    "EpubCoverFallbackTarget",
     "EpubPackageCitationSection",
     "EpubPackageDeclarationKind",
     "EpubPackageLimits",

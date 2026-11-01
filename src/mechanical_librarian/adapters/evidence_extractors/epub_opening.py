@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 import zipfile
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -29,6 +30,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     epub_file_lineage,
     epub_resource_identity,
 )
+from mechanical_librarian.domain.cover_evidence import EpubCoverRecoveryRefusal
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -467,6 +469,18 @@ _HARDCOVER_LABEL = re.compile(r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I)
 _NON_ISBN_IDENTIFIER = re.compile(
     r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
 )
+# A Library of Congress control number named by its label, with or without a
+# colon, owns the digits after it (#1497).
+_LCCN_LABELLED = re.compile(
+    r"(?i)(?<![\w])(?:library\s+of\s+congress\s+control\s+(?:number|no\.?)"
+    r"|lc\s+control\s+(?:number|no\.?)|lccn)\s*(?:[:#.]\s*)?\d[\d\s-]{6,14}\d"
+    r"(?![\dXx])"
+)
+# The heading of a Library of Congress catalogue record (CIP data block), whose
+# bare ten-digit run is its control number, not an ISBN-10 (#1497).
+_CATALOGUE_RECORD_HEADING = re.compile(
+    r"(?i)(?<![\w])library\s+of\s+congress\s+cataloging[\s-]+in[\s-]+publication"
+)
 _INDICIA_PROMOTION_NOTICE = re.compile(
     r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
     r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
@@ -552,6 +566,9 @@ class _Element:
     namespace: str = ""
     fragment_ids: tuple[str, ...] = ()
     invalid_attributes: frozenset[str] = frozenset()
+    # Every mapped attribute name the recovery parser saw more than once; the
+    # cover wrapper reader refuses rather than reading the kept value.
+    duplicate_attributes: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -757,7 +774,7 @@ def _recovery_namespaces(
 def _recovery_attributes(
     attributes: list[tuple[str, str]],
     namespaces: dict[str, str],
-) -> tuple[dict[str, str], tuple[str, ...], frozenset[str]]:
+) -> tuple[dict[str, str], tuple[str, ...], frozenset[str], frozenset[str]]:
     values: dict[str, list[str]] = {}
     for name, value in attributes:
         if name == "xmlns" or name.startswith("xmlns:"):
@@ -792,7 +809,10 @@ def _recovery_attributes(
     fragment_ids = tuple(
         mapped[name] for name in ("id", f"{{{_XML_NS}}}id") if mapped.get(name)
     )
-    return mapped, fragment_ids, frozenset(invalid)
+    duplicates = frozenset(
+        name for name, candidates in values.items() if len(candidates) > 1
+    )
+    return mapped, fragment_ids, frozenset(invalid), duplicates
 
 
 def _local(name: str) -> str:
@@ -1055,8 +1075,8 @@ class _RecoveryParser(HTMLParser):
                 nodes=len(self.elements),
                 text_characters=_projected_text_usage(self.events),
             )
-        mapped, fragment_ids, invalid_attributes = _recovery_attributes(
-            raw_attributes, namespaces
+        mapped, fragment_ids, invalid_attributes, duplicate_attributes = (
+            _recovery_attributes(raw_attributes, namespaces)
         )
         if _is_html_namespace(namespace):
             for opened, closing in _HTML_IMPLIED_CLOSE.items():
@@ -1096,6 +1116,7 @@ class _RecoveryParser(HTMLParser):
             namespace=namespace,
             fragment_ids=fragment_ids,
             invalid_attributes=invalid_attributes,
+            duplicate_attributes=duplicate_attributes,
         )
         self.elements.append(element)
         if local_name in {"br", "wbr"} and self.stack and not self.stack[-1].active:
@@ -2474,7 +2495,123 @@ def _non_isbn_identifier_spans(value: str) -> tuple[tuple[int, int], ...]:
         ):
             continue
         spans.append(owner.span())
+    spans.extend(owner.span() for owner in _LCCN_LABELLED.finditer(value))
     return tuple(spans)
+
+
+def _catalogue_record_starts(
+    elements: list[_Element], eligible: set[int]
+) -> dict[int, int]:
+    """Map each element inside a catalogue-record block to where it starts.
+
+    The block opens at its heading. The heading is read on the innermost
+    element that states it, widened through wrappers that hold only the same
+    text (a `<b>` inside a `<p>`), and the block runs through every later
+    element of the widened heading's container. A heading element counts only
+    from the heading on, and every later member from its start (#1497).
+
+    Only an element the recognizer would read can state the heading or widen
+    it, so foreign, promotional, excluded and body content opens no block.
+    """
+    by_ordinal = {element.ordinal: element for element in elements}
+    headings = {
+        element.ordinal
+        for element in elements
+        if _CATALOGUE_RECORD_HEADING.search(element.exact_text) is not None
+    }
+    # A container's text holds its children's, so only the innermost element
+    # stating the heading opens a block.
+    ancestors_of_headings = {
+        ancestor for ordinal in headings for ancestor in by_ordinal[ordinal].ancestors
+    }
+    starts: dict[int, int] = {}
+    blocks: list[tuple[int, int | None]] = []
+    for ordinal in sorted(headings - ancestors_of_headings):
+        node = by_ordinal[ordinal]
+        if ordinal not in eligible:
+            # Content the recognizer skips is isolated as elsewhere: a heading
+            # stated only inside it opens no block, and neither do its
+            # ancestors.
+            continue
+        chain = [node]
+        while (
+            node.ancestors
+            and (parent := by_ordinal.get(node.ancestors[-1])) is not None
+            and parent.ordinal in eligible
+            and parent.exact_text.strip() == node.exact_text.strip()
+        ):
+            node = parent
+            chain.append(node)
+        for member in chain:
+            heading = _CATALOGUE_RECORD_HEADING.search(member.exact_text)
+            if heading is not None:
+                starts[member.ordinal] = min(
+                    starts.get(member.ordinal, heading.start()), heading.start()
+                )
+        blocks.append((node.ordinal, node.ancestors[-1] if node.ancestors else None))
+    for element in elements:
+        if any(
+            element.ordinal > head
+            and (container is None or container in element.ancestors)
+            for head, container in blocks
+        ):
+            starts.setdefault(element.ordinal, 0)
+    return starts
+
+
+_ISBN_FORM_DESIGNATOR = re.compile(r"isbn[\s-]*1[03]")
+_FORM_WORD_ONLY = re.compile(
+    r"\W*(?:e-?book|paperback|hardcover|hardback|pbk\.?|hbk\.?)\W*"
+)
+
+
+def _catalogue_neighbor_labels(
+    elements: list[_Element],
+    element: _Element,
+    admissible: Callable[[_Element], bool],
+) -> bool:
+    """Whether the element read just before or after is only an ISBN label.
+
+    These are the neighbours the recognizer reads a label from, so a bare
+    run such a label names stays an ISBN inside a catalogue record. Only a
+    short line that names an ISBN and holds no number of its own, or is only
+    an ebook or print form word such as "(paperback)", counts, so
+    a note or another line's own ISBN never lets a control number back in
+    (#1497).
+    """
+    previous = next(
+        (
+            candidate
+            for candidate in reversed(elements)
+            if candidate.end <= element.start and admissible(candidate)
+        ),
+        None,
+    )
+    following = next(
+        (
+            candidate
+            for candidate in elements
+            if candidate.start >= element.end and admissible(candidate)
+        ),
+        None,
+    )
+    return any(
+        neighbor is not None and _isbn_label_only(neighbor.exact_text)
+        for neighbor in (previous, following)
+    )
+
+
+def _isbn_label_only(text: str) -> bool:
+    label = " ".join(text.casefold().split())
+    if len(label) > 32:
+        return False
+    if _FORM_WORD_ONLY.fullmatch(label) is not None:
+        return True
+    if "isbn" not in label:
+        return False
+    return not any(
+        character.isdigit() for character in _ISBN_FORM_DESIGNATOR.sub("", label)
+    )
 
 
 def _isbn_owned_by_non_isbn_identifier(
@@ -3339,6 +3476,9 @@ def _recognize(
         projection.elements,
         eligible_ordinals,
     )
+    catalogue_record_starts = _catalogue_record_starts(
+        projection.elements, eligible_ordinals
+    )
     for element in projection.elements:
         text = element.exact_text
         if element.active or not _is_html_namespace(element.namespace):
@@ -3660,6 +3800,24 @@ def _recognize(
                 _EBOOK_LABEL.search(right_vicinity)
                 or _PRINT_LABEL.search(right_vicinity)
             )
+            catalogue_start = catalogue_record_starts.get(element.ordinal)
+            if (
+                catalogue_start is not None
+                and match.start() >= catalogue_start
+                and identifier.isdigit()
+                and len(identifier) == 10
+                and "isbn" not in lowered[catalogue_start : match.start()]
+                and "isbn" not in right_vicinity
+                and not left_has_labels
+                and not right_has_labels
+                and not _catalogue_neighbor_labels(
+                    projection.elements, element, admissible_context_element
+                )
+            ):
+                # A bare ten-digit run in a catalogue record, with no ISBN label
+                # before it in its line or in the element read beside it, is its
+                # control number; the record's ISBNs carry a label or hyphens.
+                continue
             if left_has_labels and right_has_labels:
                 left_ebook = bool(_EBOOK_LABEL.search(left_vicinity))
                 left_print = bool(_PRINT_LABEL.search(left_vicinity))
@@ -4198,4 +4356,99 @@ class EpubOpeningExtractor:
                 raise
 
 
-__all__ = ["EpubOpeningExtractor", "OpeningField"]
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+# Recovery parsing maps an undeclared ``xlink:`` prefix to this namespace,
+# which is how HTML serializes SVG ``xlink:href`` without declaring it.
+_UNDECLARED_XLINK = _unknown_namespace("xlink", "missing")
+
+
+class CoverWrapperRefused(Exception):
+    """A cover wrapper could not be read; carries one closed refusal."""
+
+    def __init__(self, refusal: EpubCoverRecoveryRefusal) -> None:
+        self.refusal = refusal
+
+
+@dataclass
+class CoverWrapperUsage:
+    """One cover selection's accumulated work, capped at the opening totals."""
+
+    expanded_bytes: int = 0
+    nodes: int = 0
+    text_characters: int = 0
+
+
+def cover_wrapper_references(
+    archive: zipfile.ZipFile,
+    request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
+    member_name: str,
+    media_type: str,
+    usage: CoverWrapperUsage,
+) -> tuple[str, ...]:
+    """Read one cover wrapper under the opening rules and list its image references.
+
+    The wrapper is read and parsed exactly as an opening resource is, under
+    the per-resource bounds and charged to ``usage`` against the per-selection
+    totals. Only HTML ``img/@src`` and SVG ``image/@href`` or
+    ``image/@xlink:href`` count, on every element including hidden ones, in
+    document order. Nothing is rendered or retained beyond the references, and
+    every failure is one closed refusal. A reference element with a repeated
+    or invalid reference attribute refuses as unreadable.
+    """
+    try:
+        data = _read_member(
+            archive, member_name, limits.expanded_bytes_per_resource, request
+        )
+        usage.expanded_bytes += len(data)
+        if usage.expanded_bytes > limits.expanded_bytes_per_selection:
+            raise _ResourceRejected
+        projection = _parse(data, media_type, limits, request)
+        usage.nodes += projection.work_nodes
+        usage.text_characters += projection.work_text_characters
+        if (
+            usage.nodes > limits.nodes_per_selection
+            or usage.text_characters > limits.text_characters_per_selection
+        ):
+            raise _ResourceRejected
+    except _AggregateRejected as rejected:
+        raise CoverWrapperRefused(
+            EpubCoverRecoveryRefusal.WRAPPER_RESOURCE_LIMIT
+            if rejected.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
+            else EpubCoverRecoveryRefusal.WRAPPER_TIMEOUT
+        ) from None
+    except _ResourceRejected:
+        raise CoverWrapperRefused(
+            EpubCoverRecoveryRefusal.WRAPPER_RESOURCE_LIMIT
+        ) from None
+    except (ValueError, RecursionError):
+        # ``_MalformedMarkup`` and its unsafe-construct and encoding refusals
+        # are ``ValueError``s, as is a member that could not be read.
+        raise CoverWrapperRefused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE) from None
+    references: list[str] = []
+    for element in projection.elements:
+        if element.name == "img" and _is_html_namespace(element.namespace):
+            names: tuple[str, ...] = ("src",)
+        elif element.name == "image" and element.namespace == _SVG_NS:
+            names = ("href", f"{{{_XLINK_NS}}}href", f"{{{_UNDECLARED_XLINK}}}href")
+        else:
+            continue
+        # A repeated or withdrawn reference attribute is ambiguous: refuse it
+        # rather than read whichever value a parser kept. Strict parsing
+        # rejects a repeated attribute outright, so this only arises after
+        # recovery.
+        if set(names) & (element.duplicate_attributes | element.invalid_attributes):
+            raise CoverWrapperRefused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE)
+        references.extend(
+            element.attributes[name] for name in names if name in element.attributes
+        )
+    return tuple(references)
+
+
+__all__ = [
+    "CoverWrapperRefused",
+    "CoverWrapperUsage",
+    "EpubOpeningExtractor",
+    "OpeningField",
+    "cover_wrapper_references",
+]

@@ -11,6 +11,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
+    EpubCoverFallback,
+    EpubCoverRecovery,
+    EpubCoverRecoveryRefusal,
     cover_source_id,
     publication_ready,
 )
@@ -230,3 +233,102 @@ def test_inventaire_source_kind_must_match_identity() -> None:
             CoverSourceKind.HARDCOVER,
             CoverSourceState.ABSENT,
         )
+
+
+@pytest.mark.parametrize(
+    "recovery",
+    (
+        EpubCoverRecovery(tuple(EpubCoverFallback)),
+        EpubCoverRecovery((EpubCoverFallback.GUIDE_COVER_REFERENCE,)),
+        EpubCoverRecovery((), EpubCoverRecoveryRefusal.UNRESOLVED),
+        EpubCoverRecovery(
+            (EpubCoverFallback.COVER_IMAGE_WRAPPER,),
+            EpubCoverRecoveryRefusal.WRAPPER_MULTIPLE_IMAGES,
+        ),
+    ),
+    ids=("all_fallbacks", "one_fallback", "unresolved", "refused"),
+)
+def test_epub_cover_recovery_round_trips_as_closed_shadow_evidence(
+    recovery: EpubCoverRecovery,
+) -> None:
+    data = recovery.to_data()
+    assert data["authority"] == "shadow"
+    assert EpubCoverRecovery.from_data(data) == recovery
+
+
+@pytest.mark.parametrize(
+    "fallbacks,refusal",
+    (
+        ((), None),
+        (
+            (EpubCoverFallback.GUIDE_COVER_REFERENCE,),
+            EpubCoverRecoveryRefusal.UNRESOLVED,
+        ),
+        (
+            (
+                EpubCoverFallback.COVER_IMAGE_WRAPPER,
+                EpubCoverFallback.GUIDE_COVER_REFERENCE,
+            ),
+            None,
+        ),
+        (
+            (
+                EpubCoverFallback.GUIDE_COVER_REFERENCE,
+                EpubCoverFallback.GUIDE_COVER_REFERENCE,
+            ),
+            None,
+        ),
+        (("guide_cover_reference",), None),
+        ((EpubCoverFallback.GUIDE_COVER_REFERENCE,), "cover_wrapper_no_image"),
+        ([EpubCoverFallback.GUIDE_COVER_REFERENCE], None),
+    ),
+    ids=(
+        "recovered_without_fallback",
+        "unresolved_with_fallback",
+        "out_of_order",
+        "repeated",
+        "plain_string",
+        "plain_refusal",
+        "list",
+    ),
+)
+def test_epub_cover_recovery_refuses_an_open_shape(
+    fallbacks: object, refusal: object
+) -> None:
+    with pytest.raises(CoverEvidenceError):
+        EpubCoverRecovery(fallbacks, refusal)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        None,
+        {
+            "authority": "verified",
+            "fallbacks": [],
+            "refusal": "cover_recovery_unresolved",
+        },
+        {"authority": "shadow", "fallbacks": ["first_image_in_spine"], "refusal": None},
+        {"authority": "shadow", "fallbacks": [], "refusal": "made_up"},
+        {"authority": "shadow", "fallbacks": "guide_cover_reference", "refusal": None},
+        {
+            "authority": "shadow",
+            "fallbacks": ["guide_cover_reference"],
+            "refusal": None,
+            "href": "OEBPS/cover.xhtml",
+        },
+        {"authority": "shadow", "fallbacks": ["guide_cover_reference"]},
+    ),
+    ids=(
+        "null",
+        "authority",
+        "fallback",
+        "refusal",
+        "fallbacks_text",
+        "extra_key",
+        "missing_key",
+    ),
+)
+def test_epub_cover_recovery_parse_is_closed(value: object) -> None:
+    with pytest.raises(CoverEvidenceError):
+        EpubCoverRecovery.from_data(value)

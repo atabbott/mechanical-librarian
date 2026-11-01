@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import resource
 import signal
 import sys
@@ -29,6 +30,8 @@ from mechanical_librarian.adapters.evidence_extractors.epub_opening import (
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
+    _InvalidReferenceSyntax,
+    _normalize_member_reference,
     _Rejected,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
@@ -37,6 +40,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _SourceIO as _SourceIO,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubCoverFallbackTarget,
     EpubPackageCancellation,
     EpubPackageCapability,
     EpubPackageDeclarationKind,
@@ -46,6 +50,11 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageSource,
     EpubPackageSourceError,
     epub_resource_identity,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    EpubCoverFallback,
+    EpubCoverRecovery,
+    EpubCoverRecoveryRefusal,
 )
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspection,
@@ -58,6 +67,7 @@ from mechanical_librarian.domain.epub_opening import (
     EpubOpeningReport,
 )
 from mechanical_librarian.domain.epub_source import FileReference
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -230,8 +240,162 @@ def _write_cover(value: dict[str, object], data: bytes | None, descriptor: int) 
             offset += written
 
 
+_COVER_IMAGE_MEDIA = frozenset(
+    {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
+)
+_COVER_WRAPPER_MEDIA = frozenset({"application/xhtml+xml", "text/html"})
+_REFERENCE_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def _member_index(archive: zipfile.ZipFile) -> dict[str, list[str]]:
+    """Map each resource identity to its archive file members, hashed once."""
+    index: dict[str, list[str]] = {}
+    for info in archive.infolist():
+        if not info.is_dir():
+            index.setdefault(epub_resource_identity(info.filename), []).append(
+                info.filename
+            )
+    return index
+
+
+def _wrapper_image(
+    archive: zipfile.ZipFile,
+    package_request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
+    report: EpubPackageReport,
+    wrapper: EpubCoverFallbackTarget,
+    members: dict[str, list[str]],
+) -> str | EpubCoverRecoveryRefusal:
+    """Read the one wrapper and return the single local image it names."""
+    names = members.get(cast(str, wrapper.resource_identity), [])
+    if len(names) != 1:
+        return EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE
+    try:
+        references = opening_parser.cover_wrapper_references(
+            archive,
+            package_request,
+            limits,
+            names[0],
+            cast(str, wrapper.media_type),
+            opening_parser.CoverWrapperUsage(),
+        )
+    except opening_parser.CoverWrapperRefused as refused:
+        return refused.refusal
+    manifest: dict[str, list[str]] = {}
+    for declaration in report.declarations:
+        if (
+            declaration.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
+            and declaration.resource_identity is not None
+        ):
+            manifest.setdefault(declaration.resource_identity, []).append(
+                cast(str, declaration.media_type)
+            )
+    images: list[str] = []
+    for reference in references:
+        if reference.startswith("#") or _REFERENCE_SCHEME.match(reference):
+            return EpubCoverRecoveryRefusal.WRAPPER_EXTERNAL_REFERENCE
+        try:
+            identity = epub_resource_identity(
+                _normalize_member_reference(names[0], reference)
+            )
+        except (_Rejected, _InvalidReferenceSyntax, EvidenceValueError):
+            return EpubCoverRecoveryRefusal.WRAPPER_OUTSIDE_PACKAGE
+        media = manifest.get(identity, [])
+        if identity == wrapper.resource_identity or any(
+            value in _COVER_WRAPPER_MEDIA for value in media
+        ):
+            return EpubCoverRecoveryRefusal.WRAPPER_NESTED
+        if (
+            len(media) != 1
+            or media[0] not in _COVER_IMAGE_MEDIA
+            or len(members.get(identity, [])) != 1
+        ):
+            return EpubCoverRecoveryRefusal.WRAPPER_NOT_MANIFEST_IMAGE
+        images.append(identity)
+    if not images:
+        return EpubCoverRecoveryRefusal.WRAPPER_NO_IMAGE
+    if len(set(images)) != 1:
+        return EpubCoverRecoveryRefusal.WRAPPER_MULTIPLE_IMAGES
+    return images[0]
+
+
+def _cover_recovery(
+    archive: zipfile.ZipFile,
+    package_request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
+    report: EpubPackageReport,
+) -> EpubCoverRecovery:
+    """Resolve the package's cover fallbacks into shadow evidence only.
+
+    Non-resolving declarations are skipped; any ambiguity among the ones that
+    resolve refuses the whole recovery. At most one wrapper is read, never one
+    the package declares encrypted, and no image bytes are read for the
+    recovered cover, so an encrypted image is refused rather than recovered.
+    """
+    resolving = [
+        item for item in report.cover_fallbacks if item.resource_identity is not None
+    ]
+    fallbacks = tuple(
+        value
+        for value in EpubCoverFallback
+        if any(item.fallback is value for item in resolving)
+    )
+
+    def refused(refusal: EpubCoverRecoveryRefusal) -> EpubCoverRecovery:
+        return EpubCoverRecovery(fallbacks, refusal)
+
+    if not resolving:
+        return refused(EpubCoverRecoveryRefusal.UNRESOLVED)
+    if any(
+        item.media_type not in _COVER_IMAGE_MEDIA | _COVER_WRAPPER_MEDIA
+        for item in resolving
+    ):
+        return refused(EpubCoverRecoveryRefusal.UNSUPPORTED_TARGET)
+    wrappers = {
+        item.resource_identity: item
+        for item in resolving
+        if item.media_type in _COVER_WRAPPER_MEDIA
+    }
+    if len(wrappers) > 1:
+        return refused(EpubCoverRecoveryRefusal.MULTIPLE_WRAPPERS)
+    encrypted = {
+        item.resource_identity
+        for item in report.declarations
+        if item.kind is EpubPackageDeclarationKind.ENCRYPTION
+    }
+    images: dict[str | None, str] = {}
+    for wrapper_identity, wrapper in wrappers.items():
+        if wrapper_identity in encrypted:
+            return refused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE)
+        try:
+            image = _wrapper_image(
+                archive,
+                package_request,
+                limits,
+                report,
+                wrapper,
+                _member_index(archive),
+            )
+        except (OSError, LookupError, ValueError, RecursionError, zipfile.BadZipFile):
+            # A wrapper failure stays a closed refusal; it never turns the
+            # package's absent cover into a child failure.
+            return refused(EpubCoverRecoveryRefusal.WRAPPER_UNREADABLE)
+        if isinstance(image, EpubCoverRecoveryRefusal):
+            return refused(image)
+        images[wrapper_identity] = image
+    agreed = {
+        images.get(item.resource_identity, item.resource_identity) for item in resolving
+    }
+    if len(agreed) != 1:
+        return refused(EpubCoverRecoveryRefusal.CONTRADICTORY_DECLARATION)
+    if agreed & encrypted:
+        return refused(EpubCoverRecoveryRefusal.UNSUPPORTED_TARGET)
+    return EpubCoverRecovery(fallbacks)
+
+
 def _selected_cover(
     package_request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
 ) -> tuple[dict[str, object], bytes | None]:
     try:
         rejected = EpubPackageExtractor().preflight(package_request)
@@ -248,7 +412,14 @@ def _selected_cover(
                 if item.field is EpubPackageField.COVER
             ]
             if not values:
-                return {"state": "absent"}, None
+                if not report.cover_fallbacks:
+                    return {"state": "absent"}, None
+                return {
+                    "state": "absent",
+                    "recovery": _cover_recovery(
+                        archive, package_request, limits, report
+                    ).to_data(),
+                }, None
             if len(values) != 1:
                 return {"state": "invalid_declaration"}, None
             media = [
@@ -257,12 +428,7 @@ def _selected_cover(
                 if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
                 and item.resource_identity == values[0]
             ]
-            names = [
-                info.filename
-                for info in archive.infolist()
-                if not info.is_dir()
-                and epub_resource_identity(info.filename) == values[0]
-            ]
+            names = _member_index(archive).get(values[0], [])
             if len(media) != 1 or len(names) != 1:
                 return {"state": "invalid_declaration"}, None
             if media[0] not in {"image/jpeg", "image/png", "image/webp"}:
@@ -519,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         if capability == "cover":
             if len(arguments) != 4:
                 raise ValueError("cover descriptor is unavailable")
-            result, data = _selected_cover(package_request)
+            result, data = _selected_cover(package_request, limits)
             _write_cover(result, data, int(arguments[3]))
             return 0
         bundle = _inspect_bundle(request, package_request, limits)

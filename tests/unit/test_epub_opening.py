@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import io
 import json
 import re
 import time
@@ -62,6 +63,7 @@ from tests.support.epub_packages import (
     _opening_epub,
     _opening_package,
     _xhtml,
+    epub_bytes,
     opening_active_content_inert,
     opening_claim_families,
     opening_claims_complete,
@@ -703,7 +705,7 @@ def test_identifier_owner_spans_are_computed_once_per_element() -> None:
 
 def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
-    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v4"
+    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v5"
     assert all(
         claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims
@@ -4014,3 +4016,400 @@ def test_typed_credit_containers_preserve_roles_without_authors(
         else []
     )
     assert not [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+
+
+def _identifiers(body: str) -> list[str | None]:
+    report = _extract(_single(_xhtml(body)))
+    return [
+        claim.normalized_value
+        for claim in report.claims
+        if claim.field is OpeningField.IDENTIFIER
+    ]
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "Library of Congress Control Number: ",
+        "Library of Congress Control No. ",
+        "LC control number ",
+        "LC Control No.: ",
+        "LCCN ",
+        "LCCN# ",
+    ),
+    ids=("full", "full_no", "lc", "lc_no", "lccn", "lccn_hash"),
+)
+def test_a_labelled_control_number_is_no_isbn_candidate(label: str) -> None:
+    # 2012345670 passes the ISBN-10 checksum (#1497).
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        f"<p>{label}2012345670</p><p>eBook ISBN 9780306406157</p></section>"
+    ) == ["9780306406157"]
+
+
+def test_a_catalogue_record_block_keeps_only_its_isbns() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>Example, Ada.</p><p>Synthetic voyage / Ada Example.</p>"
+        "<p>ISBN 0306406152 (hardcover)</p><p>2012345670</p>"
+        "<p>eBook ISBN 9780306406157</p></section>"
+    ) == ["0306406152", "9780306406157"]
+
+
+def test_an_isbn_10_outside_the_catalogue_record_is_still_read() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page"><p>ISBN 2012345670</p>'
+        "<div><p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>2012345670</p></div></section>"
+    ) == ["2012345670"]
+    assert _identifiers(
+        '<section epub:type="copyright-page"><p>2012345670</p>'
+        "<p>Library of Congress number on request</p></section>"
+    ) == ["2012345670"]
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    (
+        ("eBook edition 0306406152", ["0306406152"]),
+        (
+            "ISBN 9780306406157 (hardcover), 0306406152 (pbk.)",
+            ["9780306406157", "0306406152"],
+        ),
+        ("0-306-40615-2 (pbk.)", ["0306406152"]),
+        ("2012345670", []),
+    ),
+    ids=("ebook_label", "print_label_after_separator", "hyphenated", "bare"),
+)
+def test_a_catalogue_record_keeps_every_labelled_or_hyphenated_isbn(
+    line: str, expected: list[str]
+) -> None:
+    assert (
+        _identifiers(
+            '<section epub:type="copyright-page">'
+            "<p>Library of Congress Cataloging-in-Publication Data</p>"
+            f"<p>{line}</p></section>"
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "<p><b>Library of Congress Cataloging-in-Publication Data</b></p>",
+        "<h2><span>Library of Congress Cataloging-in-Publication Data</span></h2>",
+    ),
+    ids=("bold", "span_heading"),
+)
+def test_a_wrapped_catalogue_record_heading_still_opens_the_block(heading: str) -> None:
+    assert (
+        _identifiers(
+            f'<section epub:type="copyright-page">{heading}'
+            "<p>Example, Ada.</p><p>2012345670</p></section>"
+        )
+        == []
+    )
+
+
+def test_a_long_whitespace_run_after_a_control_number_label_is_linear() -> None:
+    started = time.monotonic()
+    assert opening._LCCN_LABELLED.search("LCCN" + " " * 20000 + "x") is None
+    assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        '<f:p xmlns:f="urn:foreign">'
+        "Library of Congress Cataloging-in-Publication Data</f:p>",
+        '<div><f:p xmlns:f="urn:foreign">'
+        "Library of Congress Cataloging-in-Publication Data</f:p></div>",
+        '<h2 epub:type="preview">'
+        "Library of Congress Cataloging-in-Publication Data</h2>",
+        '<aside epub:type="preview"><p>'
+        "Library of Congress Cataloging-in-Publication Data</p></aside>",
+    ),
+    ids=("foreign", "foreign_in_html_wrapper", "preview", "inside_preview"),
+)
+def test_a_skipped_catalogue_heading_opens_no_block(heading: str) -> None:
+    assert _identifiers(
+        f'<section epub:type="copyright-page">{heading}<p>0306406152</p></section>'
+    ) == ["0306406152"]
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "<p>eBook ISBN</p>",
+        "<p>ISBN</p>",
+        "<p>Print ISBN:</p>",
+        "<p>ISBN-10:</p>",
+        "<p>ISBN 10</p>",
+    ),
+    ids=("ebook", "isbn", "print", "isbn_10", "isbn_10_spaced"),
+)
+def test_a_catalogue_isbn_labelled_by_the_element_before_is_still_read(
+    label: str,
+) -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        f"{label}<p>0306406152</p></section>"
+    ) == ["0306406152"]
+
+
+def test_a_catalogue_isbn_10_beside_an_isbn_13_line_is_still_read() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>ISBN-13:</p><p>9780306406157</p><p>ISBN-10:</p><p>0306406152</p>"
+        "</section>"
+    ) == ["9780306406157", "0306406152"]
+
+
+@pytest.mark.parametrize(
+    "note",
+    ("<p>Also available as an ebook.</p>", "<p>Electronic edition by Example</p>"),
+    ids=("ebook_note", "electronic_note"),
+)
+def test_a_note_beside_a_catalogue_control_number_is_no_label(note: str) -> None:
+    assert (
+        _identifiers(
+            '<section epub:type="copyright-page">'
+            "<p>Library of Congress Cataloging-in-Publication Data</p>"
+            f"<p>2012345670</p>{note}</section>"
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("label", ("(paperback)", "eBook", "(pbk.)"))
+def test_a_catalogue_isbn_10_with_its_form_on_the_next_line_is_still_read(
+    label: str,
+) -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        f"<p>0306406152</p><p>{label}</p></section>"
+    ) == ["0306406152"]
+
+
+_COVER_WRAPPER = "EPUB/wrap.xhtml"
+
+
+def _wrapper_references(
+    data: bytes,
+    *,
+    media_type: str = "application/xhtml+xml",
+    usage: opening.CoverWrapperUsage | None = None,
+    request: EpubPackageRequest | None = None,
+) -> tuple[str, ...]:
+    archive_bytes = epub_bytes(
+        extra_entries=((_COVER_WRAPPER, data, zipfile.ZIP_DEFLATED),)
+    )
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        return opening.cover_wrapper_references(
+            archive,
+            _request(archive_bytes) if request is None else request,
+            EpubOpeningLimits(),
+            _COVER_WRAPPER,
+            media_type,
+            opening.CoverWrapperUsage() if usage is None else usage,
+        )
+
+
+def _wrapper_document(body: str) -> bytes:
+    return (
+        '<html xmlns="http://www.w3.org/1999/xhtml" '
+        'xmlns:xlink="http://www.w3.org/1999/xlink"><body>'
+        f"{body}</body></html>"
+    ).encode()
+
+
+def _padded_wrapper(size: int) -> bytes:
+    document = _wrapper_document('<img src="cover.jpg"/><!---->')
+    return document.replace(
+        b"<!---->", b"<!--" + b"x" * (size - len(document)) + b"-->"
+    )
+
+
+def _wide_wrapper(elements: int) -> bytes:
+    return _wrapper_document('<img src="cover.jpg"/>' + "<i/>" * (elements - 3))
+
+
+def _deep_wrapper(depth: int) -> bytes:
+    nesting = depth - 3
+    return _wrapper_document(
+        "<div>" * nesting + '<img src="cover.jpg"/>' + "</div>" * nesting
+    )
+
+
+@pytest.mark.parametrize(
+    "data,media_type,expected",
+    (
+        (
+            _wrapper_document(
+                '<img src="cover.jpg"/><p hidden=""><img src="b.png"/></p>'
+                '<svg xmlns="http://www.w3.org/2000/svg"><image xlink:href="c.png"/>'
+                '<image href="d.png"/></svg><object data="e.png"/>'
+            ),
+            "application/xhtml+xml",
+            ("cover.jpg", "b.png", "c.png", "d.png"),
+        ),
+        (
+            b"<html><body><p><img src='cover.jpg'><svg><image xlink:href='c.png'>"
+            b"</svg></body></html>",
+            "text/html",
+            ("cover.jpg", "c.png"),
+        ),
+        (
+            # Malformed XHTML falls back to recovery under the same rules.
+            b'<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="a.png">'
+            b"</body></html>",
+            "application/xhtml+xml",
+            ("a.png",),
+        ),
+        (_wrapper_document("<p>No image here</p>"), "application/xhtml+xml", ()),
+        (_padded_wrapper(1_048_576), "application/xhtml+xml", ("cover.jpg",)),
+        (_wide_wrapper(25_000), "application/xhtml+xml", ("cover.jpg",)),
+        (_deep_wrapper(64), "application/xhtml+xml", ("cover.jpg",)),
+    ),
+    ids=(
+        "strict_every_element",
+        "recovered_html",
+        "strict_then_recovered",
+        "no_reference",
+        "at_byte_bound",
+        "at_node_bound",
+        "at_depth_bound",
+    ),
+)
+def test_cover_wrapper_lists_image_references_in_document_order(
+    data: bytes, media_type: str, expected: tuple[str, ...]
+) -> None:
+    assert _wrapper_references(data, media_type=media_type) == expected
+
+
+@pytest.mark.parametrize(
+    "data,refusal",
+    (
+        (_padded_wrapper(1_048_577), "cover_wrapper_resource_limit"),
+        (_wide_wrapper(25_001), "cover_wrapper_resource_limit"),
+        (_deep_wrapper(65), "cover_wrapper_resource_limit"),
+        (
+            b'<!DOCTYPE html [<!ENTITY cover "a.png">]>' + _wrapper_document(""),
+            "cover_wrapper_unreadable",
+        ),
+        (
+            b'<!ENTITY cover "a.png">' + _wrapper_document('<img src="a.png"/>'),
+            "cover_wrapper_unreadable",
+        ),
+        ("<html>é</html>".encode("utf-16"), "cover_wrapper_unreadable"),
+    ),
+    ids=(
+        "over_byte_bound",
+        "over_node_bound",
+        "over_depth_bound",
+        "doctype_internal_subset",
+        "entity_declaration",
+        "wide_encoding",
+    ),
+)
+def test_cover_wrapper_refuses_with_one_closed_code(data: bytes, refusal: str) -> None:
+    with pytest.raises(opening.CoverWrapperRefused) as raised:
+        _wrapper_references(data)
+    assert raised.value.refusal.value == refusal
+    assert str(raised.value) == refusal
+
+
+def test_cover_wrapper_charges_the_selection_totals() -> None:
+    usage = opening.CoverWrapperUsage(
+        expanded_bytes=EpubOpeningLimits().expanded_bytes_per_selection - 8
+    )
+    with pytest.raises(opening.CoverWrapperRefused) as raised:
+        _wrapper_references(_wrapper_document('<img src="a.png"/>'), usage=usage)
+    assert raised.value.refusal.value == "cover_wrapper_resource_limit"
+    fresh = opening.CoverWrapperUsage()
+    data = _wrapper_document('<img src="a.png"/>')
+    _wrapper_references(data, usage=fresh)
+    assert fresh.expanded_bytes == len(data)
+    assert fresh.nodes == 3
+
+
+@pytest.mark.parametrize(
+    "cancelled,remaining",
+    ((False, -1.0), (True, 30.0)),
+    ids=("expired_deadline", "cancelled"),
+)
+def test_cover_wrapper_honours_deadline_and_cancellation(
+    cancelled: bool, remaining: float
+) -> None:
+    base = _request(b"source")
+    request = EpubPackageRequest(
+        base.target,
+        base.file,
+        base.source,
+        base.expected_source,
+        base.capability,
+        base.limits,
+        base.deadline,
+        time.monotonic() + remaining,
+        EpubPackageCancellation("wrapper-test", lambda: cancelled),
+    )
+    with pytest.raises(opening.CoverWrapperRefused) as raised:
+        _wrapper_references(_wrapper_document('<img src="a.png"/>'), request=request)
+    assert raised.value.refusal.value == "cover_wrapper_timeout"
+
+
+@pytest.mark.parametrize(
+    "data,media_type",
+    (
+        (
+            _wrapper_document('<img src="other.jpg" src="cover.jpg"/>'),
+            "application/xhtml+xml",
+        ),
+        (
+            b"<html><body><img src='other.jpg' SRC='cover.jpg'></body></html>",
+            "text/html",
+        ),
+        (
+            _wrapper_document(
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                '<image href="https://example.invalid/x.png" href="cover.jpg"/></svg>'
+            ),
+            "application/xhtml+xml",
+        ),
+        (
+            b"<html><body><svg><image href='https://example.invalid/x.png' "
+            b"href='cover.jpg'></svg></body></html>",
+            "text/html",
+        ),
+        (
+            b"<html><body><svg><image xlink:href='other.jpg' "
+            b"xlink:href='cover.jpg'></svg></body></html>",
+            "text/html",
+        ),
+    ),
+    ids=(
+        "duplicate_src_xhtml",
+        "duplicate_src_html",
+        "duplicate_svg_href_xhtml",
+        "duplicate_svg_href_html",
+        "duplicate_svg_xlink_href_html",
+    ),
+)
+def test_cover_wrapper_refuses_a_repeated_reference_attribute(
+    data: bytes, media_type: str
+) -> None:
+    with pytest.raises(opening.CoverWrapperRefused) as raised:
+        _wrapper_references(data, media_type=media_type)
+    assert raised.value.refusal.value == "cover_wrapper_unreadable"
+
+
+def test_repeated_non_reference_attributes_leave_the_reference_readable() -> None:
+    assert _wrapper_references(
+        b"<html><body><img alt='a' alt='b' src='cover.jpg'></body></html>",
+        media_type="text/html",
+    ) == ("cover.jpg",)

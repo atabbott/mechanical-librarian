@@ -342,7 +342,10 @@ service, a key without write authority, or a write the service accepted but
 did not make fails the run instead. Every run also drives the installed
 application against two disposable libraries through preparation, owner
 decisions, consent, continuous scheduling, pause and resume, rescan,
-external-drift regeneration and restart recovery.
+external-drift regeneration and restart recovery. It composes that
+application as the product does: preparation, continuous scheduling and the
+review application all queue at the root repository's one operation
+admission.
 
 `--corpus` replaces those libraries' two generated EPUBs with a private
 operator batch: a directory outside the repository holding 6 to 8 `*.epub`

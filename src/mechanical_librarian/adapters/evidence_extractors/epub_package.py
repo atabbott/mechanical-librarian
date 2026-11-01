@@ -24,6 +24,7 @@ from xml.parsers import expat
 
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     MAX_DECLARATIONS,
+    EpubCoverFallbackTarget,
     EpubInspectionOutcome,
     EpubObservationApplicability,
     EpubPackageCapability,
@@ -42,6 +43,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     epub_file_lineage,
     epub_resource_identity,
 )
+from mechanical_librarian.domain.cover_evidence import EpubCoverFallback
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_code,
@@ -106,6 +108,9 @@ _EPUB2_SPINE_MEDIA_TYPES = {
     "text/x-oeb1-document",
 }
 _EPUB3_SPINE_MEDIA_TYPES = {"application/xhtml+xml", "image/svg+xml"}
+_COVER_IMAGE_MEDIA = frozenset(
+    {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
+)
 
 
 class _Rejected(Exception):
@@ -2724,6 +2729,74 @@ def _cover_observations(
     return observations, declarations, warnings
 
 
+def _cover_fallback_plan(
+    manifest: _Manifest,
+    metadata_nodes: tuple[_Node, ...],
+    guide_declarations: list[EpubPackageDeclaration],
+) -> tuple[EpubCoverFallbackTarget, ...]:
+    """List the cover fallback declarations of a package with no valid cover.
+
+    Runs only when neither a valid EPUB3 ``cover-image`` nor a valid legacy
+    ``<meta name="cover">`` exists, so a valid declaration always keeps
+    today's selection. Each declaration yields one entry, resolved against the
+    accepted manifest's local items or left unresolved; a resource that more
+    than one manifest item names is kept without a media type, so the child
+    refuses it rather than picking one. Repeated entries collapse. The plan
+    adds no warning or declaration, and a plan that cannot be stated within
+    the report's bounds is dropped, never turned into a package rejection.
+    """
+    legacy_ids = [
+        _attribute(node, "content")
+        for node in metadata_nodes
+        if node.name == f"{{{_OPF_NS}}}meta" and _attribute(node, "name") == "cover"
+    ]
+    if manifest.cover_ids or any(
+        identifier in manifest.local_ids
+        and manifest.media_types[identifier] in _COVER_IMAGE_MEDIA
+        for identifier in legacy_ids
+    ):
+        return ()
+    items_by_resource: dict[str, list[str]] = {}
+    for identifier, resource in manifest.ids.items():
+        items_by_resource.setdefault(resource, []).append(identifier)
+
+    def target(
+        fallback: EpubCoverFallback, resource: str | None
+    ) -> EpubCoverFallbackTarget:
+        identifiers = items_by_resource.get(resource or "", [])
+        local = [value for value in identifiers if value in manifest.local_ids]
+        if not local:
+            return EpubCoverFallbackTarget(fallback)
+        if len(identifiers) != 1:
+            return EpubCoverFallbackTarget(fallback, resource)
+        return EpubCoverFallbackTarget(
+            fallback, resource, manifest.media_types[local[0]]
+        )
+
+    plan: dict[EpubCoverFallbackTarget, None] = {}
+    for legacy_id in legacy_ids:
+        plan[
+            target(
+                EpubCoverFallback.EPUB2_META_COVER_ITEM,
+                manifest.ids.get(legacy_id) if legacy_id is not None else None,
+            )
+        ] = None
+    for declaration in guide_declarations:
+        if declaration.identifier == "cover":
+            plan[
+                target(
+                    EpubCoverFallback.GUIDE_COVER_REFERENCE,
+                    declaration.resource_identity,
+                )
+            ] = None
+    for identifier, node in manifest.nodes.items():
+        if "cover-image" in (_attribute(node, "properties") or "").split():
+            plan[
+                target(EpubCoverFallback.COVER_IMAGE_WRAPPER, manifest.ids[identifier])
+            ] = None
+    return tuple(plan) if len(plan) <= MAX_DECLARATIONS else ()
+
+
 def _consistency_warnings(
     observations: list[EpubPackageObservation],
 ) -> list[EpubPackageWarning]:
@@ -2800,6 +2873,7 @@ def _bounded_report(
     declarations: list[EpubPackageDeclaration],
     warnings: list[EpubPackageWarning],
     usage: EpubPackageUsage,
+    cover_fallbacks: tuple[EpubCoverFallbackTarget, ...] = (),
 ) -> EpubPackageReport:
     """Account for every report bound and assemble the canonical report.
 
@@ -2847,6 +2921,7 @@ def _bounded_report(
             tuple(warnings),
             tuple(declarations),
             usage,
+            cover_fallbacks,
         )
     except EvidenceValueError as error:
         if str(error) == "local evidence report exceeds its byte limit":
@@ -2936,8 +3011,17 @@ def _package_report(
     observations.extend(cover_observations)
     declarations.extend(cover_declarations)
     warnings.extend(cover_warnings)
+    try:
+        cover_fallbacks = _cover_fallback_plan(
+            manifest_state, frame.metadata_nodes, guide_declarations
+        )
+    except EvidenceValueError:
+        # The plan is shadow input only; it never rejects the package.
+        cover_fallbacks = ()
     warnings.extend(_consistency_warnings(observations))
-    return _bounded_report(request, observations, declarations, warnings, usage)
+    return _bounded_report(
+        request, observations, declarations, warnings, usage, cover_fallbacks
+    )
 
 
 def _expat_supported() -> bool:

@@ -56,10 +56,13 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
     isbn_family,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
+    work_query_ladder,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
     open_library_client,
@@ -4555,3 +4558,155 @@ def test_an_asin_lane_beside_served_lanes_leaves_their_answer_unchanged() -> Non
 
     assert "/search.json" in expected[1]
     assert expected == _recorded_observation(mixed)
+
+
+def _series_titled_plan(title: str) -> MetadataDiscoveryPlan:
+    fields = tuple(
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Author",))
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in default_target_fields(title)
+    )
+    claim = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed=title,
+        canonical=title,
+        excerpt=title,
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    return metadata_discovery_plan(
+        TargetSnapshot("ebook", title, (), fields=fields), (claim,)
+    )
+
+
+def _series_titled_provider(
+    sent: list[str | None],
+    *,
+    catalogued: bool,
+    series: list[str] | None = None,
+    series_number: list[str] | None = None,
+) -> OpenLibraryMetadataProvider:
+    def handler(request: httpx.Request) -> httpx.Response:
+        value: dict[str, object]
+        if request.url.path == "/search.json":
+            sent.append(request.url.params.get("title"))
+            value = (
+                {
+                    "docs": [
+                        {
+                            "key": "/works/OL5W",
+                            "author_name": ["Ada Author"],
+                            "editions": {"docs": [{"key": "/books/OL1M"}]},
+                        }
+                    ]
+                }
+                if catalogued and request.url.params.get("title") == "Local work title"
+                else {"docs": []}
+            )
+        elif request.url.path == "/books/OL1M.json":
+            value = _edition("/books/OL1M", work="/works/OL5W")
+        else:
+            assert "/works/OL5W.json" == request.url.path
+            value = _work("/works/OL5W")
+            if series is not None:
+                value["series"] = series
+            if series_number is not None:
+                value["series_number"] = series_number
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=value
+        )
+
+    return OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Local work title (The Example Series)",
+        "Local work title (The Example Series, #2)",
+        "Local work title (Example Series Book 2)",
+    ),
+    ids=("series_name", "series_and_number", "series_book_number"),
+)
+def test_an_ebook_titled_with_its_series_matches_the_work_without_it(
+    title: str,
+) -> None:
+    """The bare-tier EPUB of #1499: only the series-stripped rung finds it."""
+    sent: list[str | None] = []
+    observation = (
+        _series_titled_provider(sent, catalogued=True)
+        .observe(_series_titled_plan(title))
+        .observation
+    )
+
+    (lane,) = observation.lanes
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert "Local work title" == sent[-1]
+    assert lane.dispatch_lineage is not None
+    assert WorkDispatchRung.NORMALIZED is lane.dispatch_lineage.rung
+    assert (
+        WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+    ) == lane.dispatch_lineage.transformations
+    assert lane.transformation_lineage is not None
+    assert "band_parenthesized_series_name" == lane.transformation_lineage.production
+    assert () == lane.exhausted_dispatch
+
+
+def test_an_ebook_lane_that_finds_nothing_records_every_search_it_sent() -> None:
+    title = "Local work title (The Example Series)"
+    sent: list[str | None] = []
+    observation = (
+        _series_titled_provider(sent, catalogued=False)
+        .observe(_series_titled_plan(title))
+        .observation
+    )
+
+    (lane,) = observation.lanes
+    ladder = work_query_ladder(title, ("Ada Author",))
+    assert ProviderStatus.NO_MATCH is lane.status
+    assert [query.title for query in ladder] == sent
+    assert (
+        tuple(WorkDispatchLineage.from_query(query) for query in ladder)
+        == lane.exhausted_dispatch
+    )
+    assert work_ladder_diagnostics(len(ladder), 0) == lane.diagnostics
+
+
+def test_an_ebook_whose_work_states_another_series_is_not_that_work() -> None:
+    """#1499: a series stated without a position must still be the one stripped."""
+    sent: list[str | None] = []
+    observation = (
+        _series_titled_provider(sent, catalogued=True, series=["Other Saga"])
+        .observe(_series_titled_plan("Local work title (Example Saga)"))
+        .observation
+    )
+
+    (lane,) = observation.lanes
+    assert ProviderStatus.NO_MATCH is lane.status
+
+
+def test_another_series_position_does_not_hide_this_series_name() -> None:
+    """#1499: every stated series is considered, positioned or not."""
+    sent: list[str | None] = []
+    observation = (
+        _series_titled_provider(
+            sent,
+            catalogued=True,
+            series=["Other Saga", "Example Saga"],
+            series_number=["2"],
+        )
+        .observe(_series_titled_plan("Local work title (Example Saga)"))
+        .observation
+    )
+
+    (lane,) = observation.lanes
+    assert ProviderStatus.CANDIDATES is lane.status

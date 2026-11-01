@@ -17,6 +17,15 @@ brackets are GitHub issues.
   nothing matched, in Library's Not matched lens, instead of "Could not be
   reached" or "Providers unavailable", and it is not retried. Inventaire no
   longer fails that way when it finds more than one work (#1498).
+- **Clean rebuild required.** An ebook whose title carries its series name in
+  brackets, such as "Title (Series Name)", now matches the work its providers
+  call "Title" by the same authors, unless the brackets name a volume, part,
+  collection, trilogy, guide or workbook, or end in a number. When an ebook's
+  lookup at Open Library, Google Books, Inventaire or iTunes finds nothing, its
+  report records which searches were sent. An ebook whose providers found only
+  other works now reads "Found, but not this work" in Library's Not matched
+  lens instead of "No provider matched", and its report says so for that
+  source (#1499).
 - An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
   Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
   request or retry and no longer appear in an ebook's lookups (#1486).
@@ -25,6 +34,17 @@ brackets are GitHub issues.
   Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
   `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
   automatically (#1496).
+- **Clean rebuild required.** A Library of Congress control number in an
+  EPUB's opening pages is no longer read as an ISBN, Hardcover author names
+  that differ from the book's only by spacing, a `Family, Given` comma or word
+  order are no longer offered as other authors, and Open Library titles or
+  descriptions in another language or script than the work's are no longer
+  offered as choices. Those values still keep a change from being automatic, so
+  a field may still ask you to choose, with fewer options (#1497).
+- **Clean rebuild required.** An EPUB whose cover declaration is malformed
+  now records, as shadow evidence only, whether its own cover could be
+  recovered from a legacy cover entry, a guide reference or a cover page. The
+  cover stays absent, and nothing is chosen or shown from it yet (#1357).
 - Closing the Attention queue right after opening it no longer moves focus to
   the closing queue or scrolls the page to it first (#1563).
 
@@ -138,6 +158,12 @@ brackets are GitHub issues.
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read
   "Closed safely", instead of "Stale" (#1542).
+- A preparation step that briefly loses the database write lock while
+  checking its library connection now waits and carries on, instead of
+  marking the work as could not finish (#1547).
+- The Audiobookshelf field-effect canary composes the installed application
+  around one shared operation admission, as the product does, so its
+  preparation lanes queue instead of meeting at the database (#1561).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
