@@ -40,6 +40,7 @@ import type {
   WorkSummaryState,
 } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
+import { drawerQuery, useAttentionRail } from '../attentionRail'
 import { useRouteReadyFocus } from '../focus'
 import {
   audioSurfaceLabels,
@@ -1063,8 +1064,6 @@ function AsinAutomaticStatement({ field }: { field: ReviewField }) {
 // suggestions. Each is offered only where the store would accept it now; the
 // store still decides, and a refusal is said here, beside the control used.
 type OwnerOutcome = 'owner_entered' | 'withdraw'
-// The width range where the Attention rail is a drawer over the workspace.
-const drawerQuery = '(min-width: 761px) and (max-width: 1199px)'
 // The open field's heading, the place focus returns to when the control that
 // was used is gone.
 const focusFieldHeading = () => {
@@ -1748,12 +1747,6 @@ export default function LibraryPage({
   const attentionHeading = useRef<HTMLHeadingElement>(null)
   const attentionToggle = useRef<HTMLButtonElement>(null)
   const attentionRetry = useRef<HTMLButtonElement>(null)
-  // Close and Escape hand focus back to the toggle that opened the rail.
-  const returnToToggle = useRef(false)
-  const returnToWork = useRef(false)
-  // A close reaches the route one navigation later, so the opening reveal
-  // must not focus or scroll a rail that is already going away (#1563).
-  const cancelOpeningReveal = useRef<(() => void) | null>(null)
   const revealWorkspace = useRef(false)
   const revealQueueChoice = useRef(false)
   const workSelectionGeneration = useRef(0)
@@ -2757,81 +2750,11 @@ export default function LibraryPage({
     restoreAutomaticTrigger.current = false
     automaticTrigger.current?.focus()
   }, [automaticPanel])
-  useEffect(() => {
-    const opened = search.attention === 'open'
-    if (!opened && !returnToToggle.current) return
-    returnToToggle.current = false
-    let focusFrame = 0
-    const routeFrame = requestAnimationFrame(() => {
-      focusFrame = requestAnimationFrame(() => {
-        // Closing returns focus from the rail it left, or from where the
-        // route's own focus put it, never from a field the owner moved to.
-        const active = document.activeElement
-        const routeTarget = document.querySelector('#main-content [data-route-focus]')
-        // At 760px and below closing over a selected work reveals that work,
-        // so focus stays on its header there rather than the toggle above it.
-        if (opened) {
-          attentionHeading.current?.focus({ preventScroll: true })
-          attentionHeading.current?.scrollIntoView({ block: 'nearest' })
-        } else if (
-          !active ||
-          active === document.body ||
-          active === routeTarget ||
-          attentionRail.current?.contains(active)
-        ) {
-          ;(returnToWork.current && routeTarget instanceof HTMLElement
-            ? routeTarget
-            : attentionToggle.current
-          )?.focus({ preventScroll: true })
-        }
-      })
-    })
-    const cancel = () => {
-      cancelAnimationFrame(routeFrame)
-      cancelAnimationFrame(focusFrame)
-    }
-    if (opened) cancelOpeningReveal.current = cancel
-    return () => {
-      cancel()
-      if (cancelOpeningReveal.current === cancel) cancelOpeningReveal.current = null
-    }
-  }, [search.attention])
-  // From 761 to 1199px the rail is a drawer over the workspace: everything
-  // outside it but the toolbar that toggles it is inert until it closes, and
-  // its own Tab order wraps.
-  useEffect(() => {
-    const rail = attentionRail.current
-    if (search.attention !== 'open' || !rail || typeof window.matchMedia !== 'function') return
-    const drawer = window.matchMedia(drawerQuery)
-    let muted: Element[] = []
-    const restore = () => {
-      for (const node of muted) node.removeAttribute('inert')
-      muted = []
-    }
-    const apply = () => {
-      restore()
-      if (!drawer.matches) return
-      for (let node: Element = rail; node.parentElement && node !== document.body;) {
-        const parent: Element = node.parentElement
-        for (const sibling of parent.children)
-          if (
-            sibling !== node &&
-            !sibling.hasAttribute('inert') &&
-            !(attentionToggle.current && sibling.contains(attentionToggle.current))
-          ) {
-            sibling.setAttribute('inert', '')
-            muted.push(sibling)
-          }
-        node = parent
-      }
-    }
-    apply()
-    drawer.addEventListener('change', apply)
-    return () => {
-      drawer.removeEventListener('change', apply)
-      restore()
-    }
-  }, [search.attention])
+  const attentionFocus = useAttentionRail(search.attention, {
+    rail: attentionRail,
+    heading: attentionHeading,
+    toggle: attentionToggle,
+  })
   useEffect(() => {
     if (
       complete?.id === selectedReviewCaseId &&
@@ -3007,8 +2930,7 @@ export default function LibraryPage({
     scheduleSearchNavigation()
   }
   const closeAttention = () => {
-    returnToToggle.current = true
-    returnToWork.current = Boolean(search.preview ?? search.work) && narrowWidth()
+    attentionFocus.returnFocus(Boolean(search.preview ?? search.work) && narrowWidth())
     changeAttention(false)
   }
   const changeAttention = (open: boolean) => {
@@ -3016,7 +2938,7 @@ export default function LibraryPage({
     // which stays where it was with the toggle in view.
     if (!open) {
       revealWorkspace.current = Boolean(search.preview ?? search.work) && narrowWidth()
-      cancelOpeningReveal.current?.()
+      attentionFocus.cancelOpeningReveal()
     }
     pendingSearchQuery.current = {
       q: searchPending ? queryText.trim() : null,
