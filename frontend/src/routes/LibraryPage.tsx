@@ -591,13 +591,15 @@ const PreparationDetail = ({
         ) : null}
       </section>
       {presentation.dismissible ? (
-        // Disabled, not removed, so focus stays on it while the command settles.
+        // A pending dismissal is aria-disabled, not disabled, so focus stays on it
+        // while the command settles; recovery disables it outright.
         <button
           type="button"
-          aria-disabled={recoveryRequired || dismissing}
+          disabled={recoveryRequired}
+          aria-disabled={dismissing || undefined}
           aria-busy={dismissing || undefined}
           onClick={() => {
-            if (!recoveryRequired && !dismissing) onDismiss()
+            if (!dismissing) onDismiss()
           }}
         >
           {dismissing ? 'Dismissing…' : 'Dismiss preparation'}

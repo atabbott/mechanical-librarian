@@ -1545,6 +1545,24 @@ describe('Library route', () => {
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toHaveFocus()
   })
 
+  it('disables Dismiss while preparation needs a restart', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    http.getPreparation = vi.fn(async () => ({
+      ...terminalPreparation(runId),
+      recovery_required: true,
+    }))
+    renderRoute(`/library?lens=all&preparation=${runId}`, http)
+    expect(await screen.findByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
+    const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+    expect(dismiss).toBeDisabled()
+
+    await user.click(dismiss)
+    fireEvent.click(dismiss)
+    expect(http.dismissPreparation).not.toHaveBeenCalled()
+  })
+
   it('does not carry an unconfirmed dismissal over to a later run', async () => {
     const user = userEvent.setup()
     const http = createHttp()
