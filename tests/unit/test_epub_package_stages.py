@@ -60,6 +60,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _tours_warnings,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    MAX_DECLARATIONS,
     EpubCoverFallbackTarget,
     EpubInspectionOutcome,
     EpubObservationApplicability,
@@ -1026,7 +1027,7 @@ def test_fallback_plan_resolves_each_declaration_in_fixed_order() -> None:
     wrapper = EpubCoverFallback.COVER_IMAGE_WRAPPER
     assert plan == (
         EpubCoverFallbackTarget(meta, wrap, "application/xhtml+xml"),
-        EpubCoverFallbackTarget(meta),
+        # The missing and the remote items collapse into one unresolved entry.
         EpubCoverFallbackTarget(meta),
         EpubCoverFallbackTarget(guide, image, "image/png"),
         # The guide names an archive member that is not a manifest item.
@@ -1044,9 +1045,55 @@ def test_a_package_without_any_cover_declaration_plans_nothing() -> None:
     assert _cover_fallback_plan(manifest, frame.metadata_nodes, []) == ()
 
 
+def test_a_resource_named_by_several_items_is_planned_once_without_a_choice() -> None:
+    manifest = _fallback_manifest()
+    image = manifest.ids["img"]
+    for index in range(3_000):
+        identifier = f"dup{index}"
+        manifest.ids[identifier] = image
+        manifest.media_types[identifier] = "application/xhtml+xml"
+        manifest.local_ids.add(identifier)
+    frame = _package_frame(
+        _request(),
+        _parse(_package(metadata='<meta name="cover" content="dup7"/>')),
+    )
+    plan = _cover_fallback_plan(
+        manifest,
+        frame.metadata_nodes,
+        _guide('<reference type="cover" href="img.png"/>' * 3),
+    )
+    assert plan == (
+        EpubCoverFallbackTarget(EpubCoverFallback.EPUB2_META_COVER_ITEM, image),
+        EpubCoverFallbackTarget(EpubCoverFallback.GUIDE_COVER_REFERENCE, image),
+        EpubCoverFallbackTarget(
+            EpubCoverFallback.COVER_IMAGE_WRAPPER,
+            manifest.ids["wrap"],
+            "application/xhtml+xml",
+        ),
+        EpubCoverFallbackTarget(EpubCoverFallback.COVER_IMAGE_WRAPPER),
+    )
+
+
+def test_a_fallback_plan_beyond_the_report_bound_is_dropped() -> None:
+    count = MAX_DECLARATIONS + 1
+    manifest = _Manifest(
+        ids={f"w{index}": f"{index:064x}" for index in range(count)},
+        nodes={
+            f"w{index}": _parse(b'<item properties="cover-image"/>')
+            for index in range(count)
+        },
+        media_types={f"w{index}": "application/xhtml+xml" for index in range(count)},
+        local_ids={f"w{index}" for index in range(count)},
+    )
+    frame = _package_frame(_request(), _parse(_package()))
+    assert _cover_fallback_plan(manifest, frame.metadata_nodes, []) == ()
+
+
 def test_cover_fallback_targets_are_closed() -> None:
     with pytest.raises(EvidenceValueError):
-        EpubCoverFallbackTarget(EpubCoverFallback.GUIDE_COVER_REFERENCE, "a" * 64)
+        EpubCoverFallbackTarget(
+            EpubCoverFallback.GUIDE_COVER_REFERENCE, None, "image/png"
+        )
     with pytest.raises(EvidenceValueError):
         EpubCoverFallbackTarget(
             EpubCoverFallback.GUIDE_COVER_REFERENCE, "not-a-digest", "image/png"

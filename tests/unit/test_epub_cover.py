@@ -564,3 +564,24 @@ def test_malformed_recovery_protocol_is_an_invalid_declaration(payload: bytes) -
         result = read_declared_cover(-1, "0" * 64)
     assert result.state is CoverSourceState.INVALID_DECLARATION
     assert result.recovery is None
+
+
+def test_duplicate_items_under_repeated_guide_covers_refuse_without_a_choice(
+    tmp_path: Path,
+) -> None:
+    duplicates = b"".join(
+        b'<item id="dup%d" href="cover.jpg" media-type="image/jpeg"/>' % index
+        for index in range(3_000)
+    )
+    result = _read_cover(
+        tmp_path,
+        _cover_package(duplicates, guide=_guide_cover(b"cover.jpg") * 3),
+    )
+    assert result.state is CoverSourceState.ABSENT
+    assert result.data is None
+    assert result.recovery is not None
+    assert result.recovery.to_data() == {
+        "authority": "shadow",
+        "fallbacks": [_GUIDE_FALLBACK],
+        "refusal": "cover_recovery_unsupported_target",
+    }

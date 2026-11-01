@@ -2738,9 +2738,12 @@ def _cover_fallback_plan(
 
     Runs only when neither a valid EPUB3 ``cover-image`` nor a valid legacy
     ``<meta name="cover">`` exists, so a valid declaration always keeps
-    today's selection. Each declaration is resolved against the accepted
-    manifest's local items; one that names none is kept unresolved. The plan
-    adds no warning or declaration: the child decides what it amounts to.
+    today's selection. Each declaration yields one entry, resolved against the
+    accepted manifest's local items or left unresolved; a resource that more
+    than one manifest item names is kept without a media type, so the child
+    refuses it rather than picking one. Repeated entries collapse. The plan
+    adds no warning or declaration, and a plan that cannot be stated within
+    the report's bounds is dropped, never turned into a package rejection.
     """
     legacy_ids = [
         _attribute(node, "content")
@@ -2753,45 +2756,45 @@ def _cover_fallback_plan(
         for identifier in legacy_ids
     ):
         return ()
+    items_by_resource: dict[str, list[str]] = {}
+    for identifier, resource in manifest.ids.items():
+        items_by_resource.setdefault(resource, []).append(identifier)
 
-    def targets(
-        fallback: EpubCoverFallback, identifiers: list[str]
-    ) -> list[EpubCoverFallbackTarget]:
-        resolved = [
-            EpubCoverFallbackTarget(
-                fallback, manifest.ids[identifier], manifest.media_types[identifier]
-            )
-            for identifier in identifiers
-            if identifier in manifest.local_ids
-        ]
-        return resolved or [EpubCoverFallbackTarget(fallback)]
-
-    plan: list[EpubCoverFallbackTarget] = []
-    for legacy_id in legacy_ids:
-        plan.extend(
-            targets(
-                EpubCoverFallback.EPUB2_META_COVER_ITEM,
-                [legacy_id]
-                if legacy_id is not None and legacy_id in manifest.ids
-                else [],
-            )
+    def target(
+        fallback: EpubCoverFallback, resource: str | None
+    ) -> EpubCoverFallbackTarget:
+        identifiers = items_by_resource.get(resource or "", [])
+        local = [value for value in identifiers if value in manifest.local_ids]
+        if not local:
+            return EpubCoverFallbackTarget(fallback)
+        if len(identifiers) != 1:
+            return EpubCoverFallbackTarget(fallback, resource)
+        return EpubCoverFallbackTarget(
+            fallback, resource, manifest.media_types[local[0]]
         )
+
+    plan: dict[EpubCoverFallbackTarget, None] = {}
+    for legacy_id in legacy_ids:
+        plan[
+            target(
+                EpubCoverFallback.EPUB2_META_COVER_ITEM,
+                manifest.ids.get(legacy_id) if legacy_id is not None else None,
+            )
+        ] = None
     for declaration in guide_declarations:
         if declaration.identifier == "cover":
-            plan.extend(
-                targets(
+            plan[
+                target(
                     EpubCoverFallback.GUIDE_COVER_REFERENCE,
-                    [
-                        identifier
-                        for identifier, resource in manifest.ids.items()
-                        if resource == declaration.resource_identity
-                    ],
+                    declaration.resource_identity,
                 )
-            )
+            ] = None
     for identifier, node in manifest.nodes.items():
         if "cover-image" in (_attribute(node, "properties") or "").split():
-            plan.extend(targets(EpubCoverFallback.COVER_IMAGE_WRAPPER, [identifier]))
-    return tuple(plan)
+            plan[
+                target(EpubCoverFallback.COVER_IMAGE_WRAPPER, manifest.ids[identifier])
+            ] = None
+    return tuple(plan) if len(plan) <= MAX_DECLARATIONS else ()
 
 
 def _consistency_warnings(
@@ -3008,9 +3011,13 @@ def _package_report(
     observations.extend(cover_observations)
     declarations.extend(cover_declarations)
     warnings.extend(cover_warnings)
-    cover_fallbacks = _cover_fallback_plan(
-        manifest_state, frame.metadata_nodes, guide_declarations
-    )
+    try:
+        cover_fallbacks = _cover_fallback_plan(
+            manifest_state, frame.metadata_nodes, guide_declarations
+        )
+    except EvidenceValueError:
+        # The plan is shadow input only; it never rejects the package.
+        cover_fallbacks = ()
     warnings.extend(_consistency_warnings(observations))
     return _bounded_report(
         request, observations, declarations, warnings, usage, cover_fallbacks

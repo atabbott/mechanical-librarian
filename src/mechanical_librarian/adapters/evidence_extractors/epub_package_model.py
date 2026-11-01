@@ -441,8 +441,10 @@ class EpubCoverFallbackTarget:
     """One cover fallback declaration, kept only inside the extraction child.
 
     ``resource_identity`` and ``media_type`` are the local manifest item the
-    declaration names, or both ``None`` when it names none. The plan never
-    leaves the child: only the closed fallback names reach a report.
+    declaration names, or both ``None`` when it names none. A resource that
+    several manifest items name keeps its identity without a media type, which
+    the child refuses as an unsupported target. The plan never leaves the
+    child: only the closed fallback names reach a report.
     """
 
     fallback: EpubCoverFallback
@@ -451,11 +453,12 @@ class EpubCoverFallbackTarget:
 
     def __post_init__(self) -> None:
         if type(self.fallback) is not EpubCoverFallback or (
-            self.resource_identity is None
-        ) != (self.media_type is None):
+            self.resource_identity is None and self.media_type is not None
+        ):
             raise EvidenceValueError("EPUB cover fallback is malformed")
         if self.resource_identity is not None:
             _digest(self.resource_identity, "EPUB cover fallback identity")
+        if self.media_type is not None:
             validate_text(self.media_type, "EPUB cover fallback media type", 128)
 
 

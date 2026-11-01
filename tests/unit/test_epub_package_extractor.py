@@ -26,6 +26,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 )
 from mechanical_librarian.domain.cover_evidence import EpubCoverFallback
 from mechanical_librarian.domain.epub_source import FileReference
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -2311,4 +2312,43 @@ def test_a_guide_cover_outside_the_package_still_rejects_the_package() -> None:
     )
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome is EpubInspectionOutcome.MALFORMED
+    assert report.cover_fallbacks == ()
+
+
+def test_duplicate_items_under_repeated_guide_covers_keep_the_package() -> None:
+    duplicates = b"".join(
+        b'<item id="dup%d" href="cover.jpg" media-type="image/jpeg"/>' % index
+        for index in range(3_000)
+    )
+    package = (
+        EPUB3_PACKAGE.replace(b' properties="cover-image"', b"")
+        .replace(b"</manifest>", duplicates + b"</manifest>")
+        .replace(
+            b"</spine>",
+            b"</spine><guide>"
+            + b'<reference type="cover" href="cover.jpg"/>' * 3
+            + b"</guide>",
+        )
+    )
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
+    assert report.outcome is EpubInspectionOutcome.SUCCESS
+    assert [(item.fallback, item.media_type) for item in report.cover_fallbacks] == [
+        (EpubCoverFallback.GUIDE_COVER_REFERENCE, None)
+    ]
+
+
+def test_a_failing_fallback_plan_never_rejects_the_package() -> None:
+    wrong_cover = EPUB3_PACKAGE.replace(
+        b'media-type="image/jpeg" properties="cover-image"',
+        b'media-type="application/xhtml+xml" properties="cover-image"',
+    )
+    with patch(
+        "mechanical_librarian.adapters.evidence_extractors.epub_package."
+        "_cover_fallback_plan",
+        side_effect=EvidenceValueError("plan"),
+    ):
+        report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=wrong_cover))
+        )
+    assert report.outcome is EpubInspectionOutcome.SUCCESS
     assert report.cover_fallbacks == ()

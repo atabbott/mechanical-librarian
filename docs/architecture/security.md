@@ -319,7 +319,9 @@ a directory, a self or wrapper reference, a second image, or fallbacks that
 name different images is a closed refusal, never a choice. A recovery is
 shadow evidence only: the cover source stays `absent`, no image byte is read,
 and it is neither a candidate nor verification of the current cover. No bound
-is raised, and the report keeps only closed fallback and refusal codes.
+is raised. Only closed fallback and refusal codes reach the report; no
+reference, member name, wrapper text or image byte reaches a report, log,
+diagnostic, status or support bundle.
 
 **Audiobooks.** `ffprobe` runs as an isolated child over a passed descriptor
 ([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
