@@ -297,7 +297,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema,
             "_REPORTS_SQL",
             schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v66'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v67'", "= 'metadata-report-v49'"
             ),
         )
         with closing(open_repository(old_path)) as repository:

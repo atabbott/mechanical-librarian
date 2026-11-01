@@ -1780,9 +1780,15 @@ class _WorkAnsweringProvider:
 class _AsinAnsweringProvider:
     """A per-ASIN provider: a plan naming no product names nothing it can answer."""
 
-    def __init__(self, name: str, plans: list[MetadataDiscoveryPlan]) -> None:
+    def __init__(
+        self,
+        name: str,
+        plans: list[MetadataDiscoveryPlan],
+        authority: str = "audnexus",
+    ) -> None:
         self._name = name
         self._plans = plans
+        self._authority = authority
 
     def observe(
         self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
@@ -1794,7 +1800,9 @@ class _AsinAnsweringProvider:
         if not lanes:
             return ProviderResult(
                 ProviderObservation(
-                    self._name, ProviderStatus.INSUFFICIENT_INPUT, authority="audnexus"
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    authority=self._authority,
                 )
             )
         return ProviderResult(
@@ -1803,7 +1811,7 @@ class _AsinAnsweringProvider:
                 tuple(
                     ProviderLaneResult(lane, ProviderStatus.NO_MATCH) for lane in lanes
                 ),
-                authority="audnexus",
+                authority=self._authority,
             )
         )
 
@@ -1944,6 +1952,105 @@ def test_an_asserted_asin_feeds_the_per_asin_providers_and_keeps_the_work_lane()
     assert (FieldSource.TARGET_METADATA, FieldState.VALID) in {
         (value.source, value.state) for value in asin.sources
     }
+
+
+def _silo_binding(
+    plans: list[MetadataDiscoveryPlan], built: list[str]
+) -> ProviderBinding:
+    def build() -> _AsinAnsweringProvider:
+        built.append("silo")
+        return _AsinAnsweringProvider("silo", plans, authority="audiosilo")
+
+    return ProviderBinding("silo", True, build, authority="audiosilo")
+
+
+@pytest.mark.parametrize("silo_first", (False, True))
+def test_audiosilo_is_not_asked_after_a_stated_runtime_admission(
+    silo_first: bool,
+) -> None:
+    """AudioSilo only repeats a recording Audible already admitted (#1309).
+
+    The catalogue admits the recording by stated runtime in phase one, so the
+    ASIN feed asks Audnexus and records AudioSilo as not needed, whatever
+    order the connections were configured in.
+    """
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget([_fed_snapshot(selected), _fed_snapshot(selected)])
+    asin_plans: list[MetadataDiscoveryPlan] = []
+    silo_plans: list[MetadataDiscoveryPlan] = []
+    built: list[str] = []
+    bindings = (
+        ProviderBinding(
+            "catalogue",
+            True,
+            lambda: _WorkAnsweringProvider("catalogue", "B0CW1KL2QD", []),
+            authority="audible_catalog",
+        ),
+        ProviderBinding(
+            "audnexus",
+            True,
+            lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+            authority="audnexus",
+        ),
+    )
+    silo = _silo_binding(silo_plans, built)
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            target,
+            FakeReportRepository(),
+            _fed_inspector(),
+            (silo, *bindings) if silo_first else (*bindings, silo),
+        ).run("item-1", 0)
+    )
+
+    # Phase one handed AudioSilo the search plan, which names no product, so
+    # it was built once and answered nothing; the feed never built it again.
+    assert ["silo"] == built
+    assert [[ProviderQueryKind.WORK]] == [
+        [lane.kind for lane in plan.lanes] for plan in silo_plans
+    ]
+    assert ["B0CW1KL2QD"] == [lane.canonical_asin for lane in asin_plans[1].lanes]
+    observed = next(value for value in published.providers if value.provider == "silo")
+    assert ProviderStatus.NOT_NEEDED is observed.status
+    assert ["B0CW1KL2QD"] == [
+        next(
+            lane for lane in asin_plans[1].lanes if lane.identity == value.identity
+        ).canonical_asin
+        for value in observed.lanes
+    ]
+    assert {ProviderStatus.NOT_NEEDED} == {lane.status for lane in observed.lanes}
+    assert () == observed.input_references
+    assert 0 == observed.request_accounting.logical_requests
+
+
+def test_audiosilo_is_asked_when_nothing_admitted_by_stated_runtime() -> None:
+    """With no admission, AudioSilo is fed like any per-ASIN provider (#1309)."""
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    snapshot = _fed_snapshot(selected, asin="B0ASSERTED")
+    target = FakeTarget([snapshot, snapshot])
+    silo_plans: list[MetadataDiscoveryPlan] = []
+    built: list[str] = []
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            target,
+            FakeReportRepository(),
+            _fed_inspector(),
+            (
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", []),
+                    authority="audnexus",
+                ),
+                _silo_binding(silo_plans, built),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert ["silo", "silo"] == built
+    assert ["B0ASSERTED"] == [lane.canonical_asin for lane in silo_plans[1].lanes]
+    observed = next(value for value in published.providers if value.provider == "silo")
+    assert ProviderStatus.NO_MATCH is observed.status
 
 
 def test_a_local_asin_item_feeds_no_asserted_asin() -> None:
@@ -3280,8 +3387,16 @@ def test_a_mixed_library_dispatches_each_media_kind_only_to_its_set() -> None:
         "itunes_search",
         "open_library",
     ]
+    # An audiobook asks AudioSilo last, once Audible and Audnexus answered
+    # (#1309); the report lists providers by name either way.
+    order = {
+        "audiobook": sorted(
+            dispatched["audiobook"], key=lambda name: name == "audiosilo"
+        ),
+        "ebook": dispatched["ebook"],
+    }
     for item in ("audiobook", "ebook"):
-        assert dispatched[item] == constructed[item] == observed[item]
+        assert order[item] == constructed[item] == observed[item]
         assert dispatched[item] == [value.provider for value in reports[item].providers]
     assert reports["audiobook"].audio is not None
     assert reports["ebook"].audio is None
@@ -3976,7 +4091,9 @@ def test_each_request_failure_is_one_counted_event(
             "region_unavailable",
             [
                 _dispatch_event(
-                    "provider_request_failed", "unknown", attempt_outcome="terminal"
+                    "provider_request_failed",
+                    "region_unavailable",
+                    attempt_outcome="terminal",
                 )
             ],
         ),

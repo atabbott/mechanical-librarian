@@ -336,6 +336,10 @@ def _provider_attempt_category(
         return FailureCategory.HTTP_NON_SUCCESS, FailureStage.RESPONSE
     if category == "not_found":
         return FailureCategory.EMPTY_NO_MATCH, FailureStage.RESPONSE
+    if category == "region_unavailable":
+        # Audnexus's own "not in this marketplace": the region walk moves on,
+        # so it is neither a failure nor an unexplained answer (#1309).
+        return FailureCategory.REGION_UNAVAILABLE, FailureStage.RESPONSE
     if category == "response_malformed":
         return FailureCategory.MALFORMED_RESPONSE, FailureStage.RESPONSE
     if category == "response_oversized":

@@ -20,6 +20,7 @@ class FailureCategory(str, Enum):
     BURST_THROTTLE = "burst_throttle"
     DAILY_QUOTA_EXHAUSTED = "daily_quota_exhausted"
     EMPTY_NO_MATCH = "empty_no_match"
+    REGION_UNAVAILABLE = "region_unavailable"
     MALFORMED_RESPONSE = "malformed_response"
     OVERSIZED_RESPONSE = "oversized_response"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"

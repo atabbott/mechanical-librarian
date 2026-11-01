@@ -225,6 +225,11 @@ Discovery has two phases:
 At most four ASIN lanes run per item. Hardcover and Open Library have no ASIN
 lookup and record `insufficient_input` for an ASIN-only plan.
 
+AudioSilo runs last in each phase and only when neither the Audible catalog nor
+Audnexus admitted a recording by stated runtime; otherwise it records
+`not_needed`, with its lanes `not_dispatched` and no request. Open Library asks
+an audiobook title-and-author lane one search and no narrowing retry (#1309).
+
 An ASIN from the item's own tags, sidecar or path is this recording's
 identifier, so its answers keep edition scope as returned. Every fed ASIN
 (carried, promoted, asserted, Hardcover lead or hint) obtains evidence but

@@ -55,6 +55,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     runtime_agreement,
     runtime_corroborated_candidate,
     runtime_short_of_stated,
+    stated_runtime_admission,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity as _domain_admitted_audiobook_identity,
@@ -1906,6 +1907,71 @@ class ReportRepository(Protocol):
     def close(self) -> None: ...
 
 
+def _undispatched_observation(
+    binding: ProviderBinding,
+    plan: MetadataDiscoveryPlan,
+    status: ProviderStatus,
+    lanes: tuple[MetadataDiscoveryLane, ...],
+) -> ProviderObservation:
+    """Record a binding this pass never asked: disabled, or not needed (#1309)."""
+    recorded = tuple(
+        ProviderLaneObservation(
+            lane.identity,
+            lane.kind,
+            status,
+            lane.input_references,
+            lane.matched_family,
+            dispatch=(
+                None
+                if plan.audio is None
+                else ProviderLaneDispatch(DispatchOutcome.NOT_DISPATCHED)
+            ),
+        )
+        for lane in lanes
+    )
+    return ProviderObservation(
+        binding.name,
+        status,
+        query_kind=(
+            recorded[0].kind
+            if len(recorded) == 1
+            else (ProviderQueryKind.DISCOVERY if recorded else ProviderQueryKind.NONE)
+        ),
+        authority=binding.authority,
+        lanes=recorded,
+    )
+
+
+def _audiosilo_not_needed(
+    binding: ProviderBinding,
+    plan: MetadataDiscoveryPlan,
+    observations: tuple[ProviderObservation, ...],
+) -> bool:
+    """Whether AudioSilo would only repeat a recording already admitted (#1309).
+
+    AudioSilo answers ASIN lanes only. On #1294 every one of its lookups that
+    followed an Audible or Audnexus stated-runtime admission added no match and
+    no field value the owner lacked, so it is asked only when neither admitted.
+    A failed Audible or Audnexus answer admits nothing, so AudioSilo still runs.
+    """
+    return (
+        binding.authority == "audiosilo"
+        and plan.audio is not None
+        and not plan.overflow
+        and any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes)
+        and stated_runtime_admission(
+            tuple(
+                observation
+                for observation in observations
+                if observation.authority in {"audible_catalog", "audnexus"}
+            ),
+            plan.local_claims,
+            plan.work_title or "",
+            plan.library_languages,
+        )
+    )
+
+
 def _release_repository(
     repository: ReportRepository | None, failure: BaseException
 ) -> None:
@@ -3371,6 +3437,7 @@ class GenerateMetadataReport:
         phase: str,
         bindings: tuple[ProviderBinding, ...] | None = None,
         catalogue_plan: MetadataDiscoveryPlan | None = None,
+        prior_observations: tuple[ProviderObservation, ...] = (),
     ) -> tuple[tuple[ProviderObservation, ...], tuple[ProviderCoverDescriptor, ...]]:
         """Dispatch one discovery plan across the configured provider bindings.
 
@@ -3401,6 +3468,11 @@ class GenerateMetadataReport:
         or recorded, and neither the configured connections nor `bindings` can
         widen the set.
 
+        An audiobook's AudioSilo binding runs last, and only when no Audible
+        or Audnexus observation of this pass, or of `prior_observations` (the
+        phase-one answers an ASIN feed follows), admitted a recording by stated
+        runtime. Otherwise it is recorded `not_needed` and sent nothing (#1309).
+
         Each dispatched binding's failures, throttles and deadline stops are
         written as value-free provider events once its observation returns,
         outside the timed stage and before publication, so a report that then
@@ -3413,7 +3485,14 @@ class GenerateMetadataReport:
         # factory declared missing, and a factory that broke for any other
         # reason. Both are released and re-raised through the same statements.
         failure: MetadataReportError
-        for binding in self._providers if bindings is None else bindings:
+        selected = self._providers if bindings is None else bindings
+        if plan.audio is not None:
+            # AudioSilo is decided last, once Audible and Audnexus have
+            # answered, whatever order the connections were configured in.
+            selected = tuple(
+                sorted(selected, key=lambda value: value.authority == "audiosilo")
+            )
+        for binding in selected:
             binding_plan = (
                 catalogue_plan
                 if catalogue_plan is not None and binding.authority == "audible_catalog"
@@ -3424,37 +3503,32 @@ class GenerateMetadataReport:
             ):
                 continue
             if not binding.enabled:
-                disabled_lanes = tuple(
-                    ProviderLaneObservation(
-                        lane.identity,
-                        lane.kind,
+                observations.append(
+                    _undispatched_observation(
+                        binding,
+                        binding_plan,
                         ProviderStatus.DISABLED,
-                        lane.input_references,
-                        lane.matched_family,
-                        dispatch=(
-                            None
-                            if binding_plan.audio is None
-                            else ProviderLaneDispatch(DispatchOutcome.NOT_DISPATCHED)
+                        tuple(
+                            lane
+                            for lane in binding_plan.lanes
+                            if lane.title_basis is None
                         ),
                     )
-                    for lane in binding_plan.lanes
-                    if lane.title_basis is None
                 )
+                continue
+            if _audiosilo_not_needed(
+                binding, binding_plan, (*prior_observations, *observations)
+            ):
                 observations.append(
-                    ProviderObservation(
-                        binding.name,
-                        ProviderStatus.DISABLED,
-                        query_kind=(
-                            disabled_lanes[0].kind
-                            if len(disabled_lanes) == 1
-                            else (
-                                ProviderQueryKind.DISCOVERY
-                                if disabled_lanes
-                                else ProviderQueryKind.NONE
-                            )
+                    _undispatched_observation(
+                        binding,
+                        binding_plan,
+                        ProviderStatus.NOT_NEEDED,
+                        tuple(
+                            lane
+                            for lane in binding_plan.lanes
+                            if lane.kind is ProviderQueryKind.ASIN
                         ),
-                        authority=binding.authority,
-                        lanes=disabled_lanes,
                     )
                 )
                 continue
@@ -3690,7 +3764,13 @@ class GenerateMetadataReport:
         )
         if feed is not None and targets:
             fed, fed_descriptors = self._observe_providers(
-                repository, feed, cover_aggregate_deadline, item, "asin_feed", targets
+                repository,
+                feed,
+                cover_aggregate_deadline,
+                item,
+                "asin_feed",
+                targets,
+                prior_observations=observations,
             )
             replaced = {value.provider for value in fed}
             observations = (

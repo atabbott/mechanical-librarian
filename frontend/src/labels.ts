@@ -209,6 +209,7 @@ export const sourceStatusLabels = {
   oversized: 'Response too large',
   candidate_limit_exceeded: 'Too many candidates',
   query_limit_exceeded: 'Query allowance reached',
+  not_needed: 'Not needed: already matched',
   adapter_fault: 'Failed in Mechanical Librarian',
 } satisfies Record<ProviderStatus, string>
 

@@ -3059,7 +3059,7 @@ def _report_authors(target: TargetFacts) -> list[str]:
 # text says what the source did and what followed from it, and never a query,
 # header, credential, payload or path.
 _NON_LIMITING_PROVIDER_STATUSES = frozenset(
-    {"candidates", "disabled", "insufficient_input"}
+    {"candidates", "disabled", "insufficient_input", "not_needed"}
 )
 _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "candidates": "Returned metadata candidates for comparison.",
@@ -3075,6 +3075,7 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "oversized": "Returned more than the accepted bound, so nothing was retained.",
     "candidate_limit_exceeded": "Returned too many candidates to compare safely.",
     "query_limit_exceeded": "Reached the bounded query allowance for this work.",
+    "not_needed": "Not asked, because another source had already matched this recording.",
 }
 # A lane whose candidates work-identity admission refused persists as no match,
 # so its dispatch says what happened, in the row's own words (#1407).

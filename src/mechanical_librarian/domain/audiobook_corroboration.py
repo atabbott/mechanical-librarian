@@ -995,6 +995,7 @@ __all__ = [
     "recording_lookup_hints",
     "runtime_agreement",
     "runtime_corroborated_candidate",
+    "stated_runtime_admission",
     "runtime_short_of_stated",
     "stated_runtime_agreement",
     "tight_runtime_distance",
@@ -1165,7 +1166,26 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
     here (#1305). A WORK lane keeps such a product's runtime as a lookup hint,
     which is how it reached this path.
     """
-    title = report.target.current_title or ""
+    return stated_runtime_admission(
+        report.providers,
+        report.local_claims,
+        report.target.current_title or "",
+        report.library_languages,
+    )
+
+
+def stated_runtime_admission(
+    observations: tuple[ProviderObservation, ...],
+    local_claims: tuple[LocalClaim, ...],
+    title: str,
+    library_languages: tuple[str, ...],
+) -> bool:
+    """Whether any of these observations admitted a recording by stated runtime.
+
+    It is the test `admitted_audiobook_identity` applies first, read over the
+    observations one dispatch pass has so far, so the dispatch loop can tell
+    whether AudioSilo would add anything (#1309).
+    """
     return any(
         observation.status is ProviderStatus.CANDIDATES
         and runtime_corroborated_candidate(
@@ -1173,14 +1193,14 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
                 candidate
                 for candidate in observation.candidates
                 if recording_variant_conflict(
-                    candidate, report.local_claims, title, report.library_languages
+                    candidate, local_claims, title, library_languages
                 )
                 is None
             ),
-            report.local_claims,
+            local_claims,
         )
         is not None
-        for observation in report.providers
+        for observation in observations
     )
 
 
@@ -2111,7 +2131,7 @@ def _carried_or_admitted_asin(
         statuses = tuple(
             lane.status
             for _observation, lane in _carried_lanes(report, carried)
-            if lane.status is not ProviderStatus.DISABLED
+            if lane.status not in {ProviderStatus.DISABLED, ProviderStatus.NOT_NEEDED}
         )
         if not statuses or any(
             status not in _DEFINITIVE_LANE_STATUSES for status in statuses

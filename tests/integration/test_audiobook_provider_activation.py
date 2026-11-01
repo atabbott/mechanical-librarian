@@ -492,9 +492,11 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         repository.close()
 
         # The plan was the ASIN one, and every connected provider in the
-        # audiobook dispatch set was asked. The store is connected, enabled and
-        # outside that set, so it was never asked at all (#1254).
-        assert {"audible_catalog", "audnexus", "audiosilo"} == {
+        # audiobook dispatch set was asked except AudioSilo: Audible had
+        # already admitted the recording by stated runtime (#1309). The store
+        # is connected, enabled and outside that set, so it was never asked at
+        # all (#1254).
+        assert {"audible_catalog", "audnexus"} == {
             authority for authority, _kind in calls
         }
         assert {ProviderQueryKind.ASIN} == {
@@ -507,8 +509,12 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         assert {
             "audible": ProviderStatus.CANDIDATES,
             "enrichment": ProviderStatus.CANDIDATES,
-            "silo": ProviderStatus.CANDIDATES,
+            "silo": ProviderStatus.NOT_NEEDED,
         } == {value.provider: value.status for value in published.providers}
+        silo = next(value for value in published.providers if value.provider == "silo")
+        assert [ProviderQueryKind.ASIN] == [lane.kind for lane in silo.lanes]
+        assert () == silo.input_references
+        assert 0 == silo.request_accounting.logical_requests
         # An ASIN lane is not a work lane, so nothing was filtered: the
         # marketplace, the chapter structure and the narrator all survive.
         enrichment = next(
@@ -520,8 +526,8 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v66" == published.schema_version
-        # Three authorities answered the ASIN lane with candidates, so the
+        assert "metadata-report-v67" == published.schema_version
+        # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
         assert ("proposal", "queued", None, None, None) == work
@@ -539,9 +545,12 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
 ) -> None:
     """The primary going dark changes what is recorded, not what is configured.
 
-    Audible is ADR-0061's primary discovery surface. With it unavailable the
-    other two ASIN providers still answer and their evidence is still bound to
-    the report, under exactly the same configuration.
+    Audible is ADR-0061's primary discovery surface. With it unavailable
+    Audnexus still answers and its evidence is still bound to the report,
+    under exactly the same configuration. Its admission by stated runtime
+    leaves AudioSilo nothing to add, so AudioSilo is recorded as not needed:
+    a failed Audible never suppresses it, but an admitting Audnexus does
+    (#1309).
     """
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -571,7 +580,7 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
         statuses = {value.provider: value.status for value in published.providers}
         assert ProviderStatus.UNAVAILABLE is statuses["audible"]
         assert ProviderStatus.CANDIDATES is statuses["enrichment"]
-        assert ProviderStatus.CANDIDATES is statuses["silo"]
+        assert ProviderStatus.NOT_NEEDED is statuses["silo"]
         assert 3 == len(published.providers)
         # A degraded primary is still a published report, and the two
         # authorities that did answer still admit the recording, so the work
@@ -614,6 +623,14 @@ def test_an_unmatched_audiobook_records_its_evidence_and_completes(
 
         assert 3 == len(published.providers)
         assert not any(observation.candidates for observation in published.providers)
+        # Nothing admitted, so AudioSilo was asked, and its lane was empty.
+        silo = next(value for value in published.providers if value.provider == "silo")
+        assert ProviderStatus.NO_MATCH is silo.status
+        assert ["empty"] * len(silo.lanes) == [
+            lane.dispatch.outcome.value if lane.dispatch else None
+            for lane in silo.lanes
+        ]
+        assert silo.lanes
         assert ("complete", "complete", None, None, "evidence_only") == work
         assert remaining is None
         assert progress is not None
@@ -2834,9 +2851,11 @@ def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
         ],
         "hardcover": [("work", record(outcome.EMPTY_OR_REFUSED))],
         "openlibrary": [("work", record(outcome.STARVED))],
-        "silo": [("asin", record(outcome.EMPTY))] * 2,
+        # Audnexus admitted by stated runtime, so AudioSilo was not needed
+        # (#1309); an empty ASIN lane is proved by the unmatched audiobook.
+        "silo": [("asin", record(outcome.NOT_DISPATCHED))] * 2,
     } == lanes
-    assert set(DispatchOutcome) == {
+    assert set(DispatchOutcome) - {outcome.EMPTY} == {
         dispatch.outcome
         for values in lanes.values()
         for _kind, dispatch in values
@@ -2848,7 +2867,7 @@ def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
         "enrichment": outcome.ADMITTED,
         "hardcover": outcome.EMPTY_OR_REFUSED,
         "openlibrary": outcome.STARVED,
-        "silo": outcome.EMPTY,
+        "silo": outcome.NOT_DISPATCHED,
     } == {value.provider: provider_dispatch_class(value) for value in report.providers}
     # The two in-band refusals Audible handed on are the only products asked.
     assert {_DISPATCH_ADMITTED, _DISPATCH_FAILING} == {

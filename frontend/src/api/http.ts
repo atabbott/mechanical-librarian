@@ -330,6 +330,8 @@ export const PROVIDER_STATUSES = [
   'oversized',
   'candidate_limit_exceeded',
   'query_limit_exceeded',
+  // Not asked: Audible or Audnexus had already matched the recording (#1309).
+  'not_needed',
   // Not a provider status: the lane failed inside Mechanical Librarian (#1498).
   'adapter_fault',
 ] as const
