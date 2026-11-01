@@ -71,6 +71,8 @@ function guard(document, node, at, top = false) {
   if ('properties' in node && !top) fail(at, 'object with properties outside a component')
   if ('properties' in node && node.additionalProperties !== false) fail(at, 'open object with properties')
   if (node.additionalProperties === false && !('properties' in node)) fail(at, 'closed object without properties')
+  if (('propertyNames' in node || 'maxProperties' in node) && !plain(node.additionalProperties))
+    fail(at, 'map constraint without a value schema')
   if ('propertyNames' in node) {
     const names = node.propertyNames
     const extra = plain(names) && Object.keys(names).filter((key) => !['title', 'description'].includes(key))

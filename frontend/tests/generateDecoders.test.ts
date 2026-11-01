@@ -165,6 +165,12 @@ describe('the generator guard', () => {
     ['oneOf without a discriminator', { oneOf: [ref('LibrarySettings')] }, at],
     ['an open object with properties', { type: 'object', properties: {} }, at],
     ['a propertyNames pattern', { type: 'object', propertyNames: { pattern: '^a' } }, at],
+    [
+      'propertyNames on an object with no value schema',
+      { type: 'object', propertyNames: { enum: ['a'] } },
+      at,
+    ],
+    ['maxProperties on an object with no value schema', { type: 'object', maxProperties: 1 }, at],
     ['a non-object schema node', true, at],
   ])('refuses %s and names where it is', (_name, schema, location) => {
     const { status, stderr } = generate(property(schema))
