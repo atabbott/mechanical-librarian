@@ -1505,11 +1505,72 @@ describe('Library route', () => {
       expect(screen.queryByRole('alert')).toBeNull()
     } else {
       expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Dismissal could not be confirmed. It may have been saved; the current preparation is shown. Check it before dismissing again.',
+        'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
       )
-      expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeEnabled()
+      const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+      expect(dismiss).not.toHaveAttribute('aria-disabled', 'true')
+      expect(dismiss).toHaveFocus()
     }
     expect(http.dismissPreparation).toHaveBeenCalledOnce()
+  })
+
+  it('keeps focus on a pending dismissal through an unconfirmed failure', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    let fail!: (error: unknown) => void
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        }),
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    const pending = await screen.findByRole('button', { name: 'Dismissing…' })
+    expect(pending).not.toBeDisabled()
+    expect(pending).toHaveAttribute('aria-disabled', 'true')
+    expect(pending).toHaveFocus()
+    await user.click(pending)
+    expect(http.dismissPreparation).toHaveBeenCalledOnce()
+
+    await act(async () => fail(new ApiError(503, 'persistence')))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+    )
+    expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toHaveFocus()
+  })
+
+  it('does not carry an unconfirmed dismissal over to a later run', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const first = terminalPreparation(`preparation_run_${'e'.repeat(64)}`)
+    const later = terminalPreparation(`preparation_run_${'f'.repeat(64)}`, 102)
+    let current: PreparationView = first
+    http.getPreparation = vi.fn(async () => current)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+      current = later
+      throw new ApiError(503, 'persistence')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    expect(await screen.findByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
+    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
   })
 
   it('keeps a refused dismissal silent', async () => {

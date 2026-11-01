@@ -591,14 +591,22 @@ const PreparationDetail = ({
         ) : null}
       </section>
       {presentation.dismissible ? (
-        <button type="button" disabled={recoveryRequired || dismissing} onClick={onDismiss}>
+        // Disabled, not removed, so focus stays on it while the command settles.
+        <button
+          type="button"
+          aria-disabled={recoveryRequired || dismissing}
+          aria-busy={dismissing || undefined}
+          onClick={() => {
+            if (!recoveryRequired && !dismissing) onDismiss()
+          }}
+        >
           {dismissing ? 'Dismissing…' : 'Dismiss preparation'}
         </button>
       ) : null}
       {uncertain ? (
         <p role="alert">
-          Dismissal could not be confirmed. It may have been saved; the current preparation is
-          shown. Check it before dismissing again.
+          Dismissal could not be confirmed. This preparation is still shown as current; dismiss it
+          again if you still want to.
         </p>
       ) : null}
     </div>
@@ -3861,7 +3869,9 @@ export default function LibraryPage({
               animateChange={animatedPresentationVersion === presentationVersion}
               dismissing={dismissPreparation.isPending}
               uncertain={
-                dismissPreparation.isError && uncertainWriteOutcome(dismissPreparation.error)
+                dismissPreparation.isError &&
+                dismissPreparation.variables.runId === presentation.run_id &&
+                uncertainWriteOutcome(dismissPreparation.error)
               }
               onDismiss={() =>
                 dismissPreparation.mutate({
