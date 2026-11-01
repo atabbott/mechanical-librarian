@@ -380,8 +380,9 @@ jobs:
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
         # Serial: four Chromium workers on one hosted runner broke
-        # timing-bound tests and saved little time.
-        run: uv run python scripts/run_test_tier.py browser
+        # timing-bound tests and saved little time. The per-test deadline is a
+        # backstop, so a hang fails named instead of at the job limit.
+        run: uv run python scripts/run_test_tier.py browser --test-timeout-seconds 180
 
   container-image:
     runs-on: ubuntu-24.04

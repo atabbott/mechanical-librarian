@@ -13,6 +13,7 @@ The authorities this page summarises are:
 - `src/mechanical_librarian/bootstrap/composition.py`, the composition root,
   for what is wired together;
 - `tests/architecture/test_import_boundaries.py` for the layering rule;
+- `tests/architecture/test_bootstrap_ratchet.py` for what bootstrap may hold;
 - the [ADRs](decisions/README.md) for why each boundary is where it is.
 
 ## Layers
@@ -41,6 +42,15 @@ contract lives beside the application operation that uses it; there is no
 central ports module, provider registry, job broker or plugin scheduler. The
 contract families are listed in
 [application service contracts](service-port-contracts.md).
+
+Bootstrap holds wiring and entry points, plus a pinned residual of older
+behaviour. The bootstrap ratchet fails unless every growth
+in it (module size, def count, a residual span, a new behaviour-bearing class,
+a def over 60 lines, a new module) is an edit to the ratchet's constants in
+the same pull request, and stops composition once it has grown past its review band
+since the owner's last review. The test makes growth visible; whether a raise is
+acceptable is decided in review under the rule in
+[AGENTS.md](../../AGENTS.md#code-economy).
 
 Provider adapters parse and validate hostile records, bind identities and
 classify each field. They do not own comparison policy: the domain finalises

@@ -129,10 +129,11 @@ the run invalidates it. It checks a snapshot of trusted source; it is not a
 sandbox for untrusted code. Nor is it exact hosted parity: architecture, SQLite
 build and resources differ.
 
-`run_test_tier.py` has no per-test deadline unless given
-`--test-timeout-seconds`. On expiry it writes one `test-tier-timeout-v1` record
-to standard error and exits nonzero, even if the test catches
-`BaseException`. It is a deadlock backstop, not a performance measurement.
+`run_test_tier.py` has no per-test deadline unless the `fast` or `browser` tier
+is given `--test-timeout-seconds`. On expiry it writes one
+`test-tier-timeout-v1` record naming the tier to standard error and exits
+nonzero, even if the test catches `BaseException`. It is a deadlock backstop,
+not a performance measurement.
 
 Directory `fcntl.flock` behaves differently on macOS and Linux. The persistence
 adapters use `fcntl` only on Linux, and Linux-only lock and permission tests
@@ -174,11 +175,11 @@ head cancels only pull-request runs.
 - **Fast tier.** `fast-source` runs the source checks then shard 1; the shard
   jobs run 2 to 4, each with `--workers 2 --shard K/4`. `fast-source` has 25
   minutes including setup.
-- **Browser tier.** `protected-browser` runs serially; timing-bound browser
-  tests assume one Chromium per runner. It caches the Chromium payload per
-  Playwright version, saving it only after
-  `scripts/verify_playwright_browser.py` accepts its layout and tree digest.
-  It does not detect corruption of a payload within one Playwright version.
+- **Browser tier.** `protected-browser` runs serially, giving each test a
+  180-second deadline; timing-bound browser tests assume one Chromium per
+  runner. It caches the Chromium payload per Playwright version, saving it
+  only after `scripts/verify_playwright_browser.py` accepts its layout and
+  tree digest. It does not detect corruption of a payload within one Playwright version.
 - **Container image.** `container-image` builds the shipped image at the same
   revision, so a Dockerfile regression fails the gate. It extracts the pinned
   `ffprobe` and SQLite for the `probe` and `shipped-sqlite` tiers and never
@@ -251,6 +252,10 @@ recorded mutants. A capped `killed` verdict is sound; a capped
 `survived` is not, so only pass 2's survivors are unkilled. `first_failure`
 names one killer, not all; to prove a test kills nothing, run it alone with
 `scripts/mutation_kills_for_test.py`.
+`--functions f,C.m,C` narrows a run to module function `f`, method `C.m` and
+every method of class `C`; a name matching no scanned mutant is refused, and
+`--dry-run` prints the selection without running it. Names are not tied to a
+module, so pair `--functions` with `--only`.
 
 A non-Linux coverage run leaves Linux-only branches unexecuted. Tests that read
 source as text cannot kill mutants, and code reached only through a subprocess,

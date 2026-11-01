@@ -7782,6 +7782,80 @@ describe('Library route', () => {
     expect(document.body).not.toHaveFocus()
   })
 
+  it.each(['Close', 'toggle', 'Escape'] as const)(
+    'cancels the opening reveal when %s closes the rail before it runs (#1563)',
+    async (closer) => {
+      const user = userEvent.setup()
+      renderRoute('/library?lens=all', createHttp())
+      const toggle = await screen.findByRole('button', { name: /Attention/ })
+      await routeSettled()
+      // The rail reveals its heading two frames after opening; hold those
+      // frames so the closer lands before them, as a fast owner's can.
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      }
+      // setup.ts stubs scrollIntoView on the prototype; count calls per element.
+      const scrollsOf = (element: Element) =>
+        vi
+          .mocked(Element.prototype.scrollIntoView)
+          .mock.contexts.filter((context) => context === element).length
+      const railGone = async () => {
+        await waitFor(() =>
+          expect(screen.queryByRole('complementary', { name: 'Attention queue' })).toBeNull(),
+        )
+        act(runFrames)
+      }
+
+      // Positive control: left alone, the frames reveal the heading.
+      await user.click(toggle)
+      let rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      let heading = within(rail).getByRole('heading', { name: 'Attention' })
+      act(runFrames)
+      expect(heading).toHaveFocus()
+      expect(scrollsOf(heading)).toBe(1)
+      await user.click(within(rail).getByRole('button', { name: 'Close' }))
+      await railGone()
+      await waitFor(() => expect(toggle).toHaveFocus())
+
+      await user.click(toggle)
+      rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      heading = within(rail).getByRole('heading', { name: 'Attention' })
+      const focused = vi.spyOn(heading, 'focus')
+      expect(queued.size).toBeGreaterThan(0)
+      if (closer === 'Close') {
+        const close = within(rail).getByRole('button', { name: 'Close' })
+        close.focus()
+        fireEvent.click(close)
+      } else if (closer === 'toggle') fireEvent.click(toggle)
+      else {
+        rail.focus()
+        fireEvent.keyDown(rail, { key: 'Escape' })
+      }
+      act(runFrames)
+      expect(focused).not.toHaveBeenCalled()
+      expect(scrollsOf(heading)).toBe(0)
+      await railGone()
+      // Close and Escape hand focus back to the toggle. The toggle closes
+      // without that hand-back, so route-ready focus moves to the Library
+      // controls that hold it, as when it closes after the reveal.
+      await waitFor(() =>
+        expect(closer === 'toggle' ? toggle.closest('[data-route-focus]') : toggle).toHaveFocus(),
+      )
+      expect(focused).not.toHaveBeenCalled()
+      expect(scrollsOf(heading)).toBe(0)
+    },
+  )
+
   it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]

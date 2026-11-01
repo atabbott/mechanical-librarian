@@ -14,7 +14,11 @@ from mechanical_librarian.adapters.evidence_extractors import epub_cover
 from mechanical_librarian.adapters.evidence_extractors.epub_cover import (
     read_declared_cover,
 )
-from mechanical_librarian.domain.cover_evidence import CoverSourceState
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, epub_bytes
 
 
@@ -710,3 +714,33 @@ def test_encrypted_cover_fallback_resources_are_never_recovered(
         "fallbacks": fallbacks,
         "refusal": refusal,
     }
+
+
+@pytest.mark.parametrize(
+    "package,encrypted,refused",
+    (
+        (EPUB3_PACKAGE, "EPUB/cover.jpg", True),
+        (EPUB2_PACKAGE, "EPUB/cover.jpg", True),
+        (EPUB3_PACKAGE, "EPUB/other.jpg", False),
+    ),
+    ids=(
+        "encrypted_epub3_cover_image",
+        "encrypted_legacy_meta_cover",
+        "other_resource_encrypted",
+    ),
+)
+def test_encrypted_declared_cover_is_refused_unread(
+    tmp_path: Path, package: bytes, encrypted: str, refused: bool
+) -> None:
+    result = _read_cover(tmp_path, package, encryption=_encrypting(encrypted))
+    assert result.recovery is None
+    if refused:
+        assert result.state is CoverSourceState.UNSUPPORTED_FORMAT
+        assert result.data is None
+        assert result.source_id == cover_source_id(
+            CoverSourceKind.EPUB, "unsupported_format"
+        )
+    else:
+        assert result.state is None
+        assert result.media_type == "image/jpeg"
+        assert result.data == b"TRAP: cover bytes must remain opaque"

@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -3243,3 +3244,46 @@ def test_an_unexpected_wrapper_failure_stays_a_closed_refusal(
             "refusal": "cover_wrapper_unreadable",
         },
     }
+
+
+def test_an_encrypted_declared_cover_is_never_opened() -> None:
+    encryption = (
+        b'<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        b'<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData>'
+        b'<CipherReference URI="EPUB/cover.jpg"/></CipherData>'
+        b"</EncryptedData></encryption>"
+    )
+    original = zipfile.ZipFile.open
+    opened: list[str] = []
+
+    def recording(
+        archive: zipfile.ZipFile,
+        name: str | zipfile.ZipInfo,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        opened.append(name.filename if isinstance(name, zipfile.ZipInfo) else name)
+        return original(archive, name, *args, **kwargs)
+
+    outcomes = []
+    for source in (epub_bytes(), epub_bytes(encryption=encryption)):
+        opened.clear()
+        request = _request(source)
+        package_request = EpubPackageRequest(
+            request.target,
+            request.file,
+            request.source,
+            request.expected_source,
+            EpubPackageCapability.PACKAGE,
+            request.limits,
+            request.deadline,
+            request.monotonic_deadline,
+            request.cancellation,
+        )
+        with patch.object(zipfile.ZipFile, "open", recording):
+            result, data = child._selected_cover(package_request, EpubOpeningLimits())
+        outcomes.append((result["state"], data is None, "EPUB/cover.jpg" in opened))
+    assert outcomes == [
+        ("declared", False, True),
+        ("unsupported_format", True, False),
+    ]
