@@ -145,6 +145,9 @@ brackets are GitHub issues.
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read
   "Closed safely", instead of "Stale" (#1542).
+- A preparation step that briefly loses the database write lock while
+  checking its library connection now waits and carries on, instead of
+  marking the work as could not finish (#1547).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

@@ -54,11 +54,15 @@ have a durable terminal row. A clean restart resumes from the last checkpoint
 ([ADR-0078](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md)).
 
 A claim that loses SQLite's write lock to a long reader commits nothing and
-retries on the lane's next one-second wake instead of stopping. Each retry logs
-`preparation_claim_contended` (below). Many in a row mean a reader is holding
-the database past the five-second busy timeout; status meanwhile shows
+retries on the lane's next one-second wake instead of stopping. A claimed stage
+whose target-connection check loses the write lock the same way changes nothing
+either: the lane keeps its claim, waits briefly and checks again until the lock
+clears, instead of failing the work as `unknown`. Each retry of either kind logs
+`preparation_claim_contended` (below). Many in a row mean another connection is
+holding the database past the five-second busy timeout; status meanwhile shows
 preparation active with unchanged counts. Any other claim failure reports
-**Preparation stopped**.
+**Preparation stopped**, and any other connection-check failure fails the work
+as before.
 
 ## Log lines
 
@@ -71,7 +75,7 @@ text, credential or path.
 | `event` | Written when |
 | --- | --- |
 | `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
-| `preparation_claim_contended` | A preparation claim lost the write lock and will retry (WARNING, `code: contention`). |
+| `preparation_claim_contended` | A preparation claim, or a claimed stage's target-connection check, lost the write lock and will retry (WARNING, `code: contention`). |
 | `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
 | `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
 | `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job` | See [provider logs](#provider-logs). |

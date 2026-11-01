@@ -32,6 +32,7 @@ __all__ = [
     "PipelineProgress",
     "ReviewPipelineClaimContention",
     "ReviewPipelineError",
+    "ReviewPipelineGuardContention",
     "ReviewPipelineRepository",
     "ReviewPreparationPipeline",
     "ReviewPreparationSupervisor",
@@ -84,8 +85,21 @@ class ReviewPipelineClaimContention(ReviewPipelineError):
         super().__init__("contention")
 
 
+class ReviewPipelineGuardContention(ReviewPipelineError):
+    """A claimed action's connection guard lost the writer lock and changed nothing.
+
+    A repository raises this only once the guard's transaction has rolled back
+    and released its scope, so the durable claim and its attempt are exactly as
+    they were. The lane retries the guard while keeping that claim instead of
+    settling the item as an unknown failure (#1547).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("contention")
+
+
 def _log_claim_contention() -> None:
-    """Record one value-free claim retry; a failing sink cannot stop the lane."""
+    """Record one value-free claim or guard retry; a failing sink cannot stop the lane."""
     try:
         sys.stderr.write(
             '{"code":"contention","event":"preparation_claim_contended",'
@@ -1137,6 +1151,23 @@ class ReviewPreparationPipeline:
                 exact_next=exact_next,
             )
 
+    def _guard_claimed_action(
+        self, guard: Callable[[PipelineAction, int], bool], action: PipelineAction
+    ) -> bool:
+        """Re-check the target connection, waiting out released writer contention.
+
+        A contended guard released everything it touched, so the same durable
+        claim is retried after a cooperative wait, holding no admission or
+        connection lock in between, until the competing writer finishes. A
+        draining lane still finishes its current claim this way.
+        """
+        while True:
+            try:
+                return guard(action, self._clock())
+            except ReviewPipelineGuardContention:
+                _log_claim_contention()
+                self._cooperative_wait()
+
     def _execute_claimed_action(
         self,
         repository: ReviewPipelineRepository,
@@ -1153,7 +1184,7 @@ class ReviewPreparationPipeline:
             # the claim returns to its retained checkpoint without an item
             # failure.
             guard = getattr(repository, "guard_target_connection", None)
-            if guard is not None and not guard(action, self._clock()):
+            if guard is not None and not self._guard_claimed_action(guard, action):
                 self._own(None)
                 return None
             output_id: str | None = None
