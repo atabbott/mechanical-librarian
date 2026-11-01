@@ -113,6 +113,8 @@ _PYTEST_ARGUMENTS = (
 # The tiers `--workers` may divide. The others either already run as bounded
 # partitions of their own or execute through the installed distribution.
 _PARALLEL_TIERS = ("fast", "browser")
+# The tiers `--test-timeout-seconds` may bound with a per-test deadline.
+_DEADLINE_TIERS = ("fast", "browser")
 # Each fast-tier file's recorded wall time, which `--shard` balances on.
 _FAST_TIMINGS = Path(__file__).with_name("fast_tier_timings.json")
 _RUN_EXIT_CODES = frozenset((pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED))
@@ -934,6 +936,7 @@ def _execute_cohort(
     reporter = threading.Thread(
         target=_report_stalled_test,
         args=(session, stopped, test_timeout_seconds),
+        kwargs={"tier": name},
         daemon=True,
     )
     reporter.start()
@@ -1463,6 +1466,8 @@ def _report_stalled_test(
     session: _CohortSession,
     stopped: threading.Event,
     test_timeout_seconds: int | None = None,
+    *,
+    tier: str,
 ) -> None:
     reported: str | None = None
     while not stopped.wait(timeout=1):
@@ -1480,7 +1485,7 @@ def _report_stalled_test(
                             json.dumps(
                                 {
                                     "schema": "test-tier-timeout-v1",
-                                    "tier": "fast",
+                                    "tier": tier,
                                     "test_id": session._current_test_id,
                                     "timeout_seconds": test_timeout_seconds,
                                 },
@@ -1647,11 +1652,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("worker execution is internal to --workers")
     if arguments.test_timeout_seconds is not None and (
         arguments.test_timeout_seconds <= 0
-        or arguments.tier != "fast"
+        or arguments.tier not in _DEADLINE_TIERS
         or arguments.list
     ):
         parser.error(
-            "--test-timeout-seconds requires fast execution and a positive integer"
+            "--test-timeout-seconds requires fast or browser execution and a "
+            "positive integer"
         )
     if arguments.slow_part is not None and (arguments.tier != "slow" or arguments.list):
         parser.error("--slow-part requires slow execution")

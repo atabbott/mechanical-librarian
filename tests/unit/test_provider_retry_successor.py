@@ -68,6 +68,15 @@ from mechanical_librarian.bootstrap.composition import (
     _classify_provider_recovery_failure,
 )
 from mechanical_librarian.domain.audio_inspection import AudioTrackDigest
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    EpubCoverFallback,
+    EpubCoverRecovery,
+    EpubCoverRecoveryRefusal,
+    cover_source_id,
+)
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
     FailureComponent,
@@ -352,6 +361,62 @@ def test_retries_only_selected_failed_lane_and_preserves_sibling(retry: _Retry) 
     assert before == after
     assert retry.report.report_id != successor.report_id
     assert retry.report.report_id == retry.repository.package[1]
+
+
+def test_a_retry_successor_carries_the_cover_recovery_unchanged(
+    retry: _Retry,
+) -> None:
+    recovery = EpubCoverRecovery(
+        (EpubCoverFallback.COVER_IMAGE_WRAPPER,),
+        EpubCoverRecoveryRefusal.WRAPPER_NO_IMAGE,
+    )
+    absent = CoverSource(
+        cover_source_id(CoverSourceKind.EPUB, "absent"),
+        CoverSourceKind.EPUB,
+        CoverSourceState.ABSENT,
+    )
+    retry.report = MetadataReport.create(
+        target=retry.report.target,
+        file=retry.report.file,
+        local_claims=retry.report.local_claims,
+        local_reasons=retry.report.local_reasons,
+        providers=retry.report.providers,
+        cover_sources=(absent,),
+        cover_recovery=recovery,
+    )
+    retry.repository = _Repository(retry.report)
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                retry.failed,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("new", "work", ()),),
+            ),
+        ),
+        authority="open_library",
+    )
+    service = retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding(
+                "catalogue", True, lambda: _Provider(replacement), "open_library"
+            ),
+            "open_library",
+            2,
+        )
+    )
+    successor = MetadataReport.from_json(
+        service.run(
+            retry.report.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="open_library",
+            generation=2,
+        )
+    )
+    assert successor.report_id != retry.report.report_id
+    assert successor.cover_recovery == recovery
+    assert successor.cover_sources == (absent,)
 
 
 def test_mixed_identifier_recovery_keeps_work_for_retry_successor(

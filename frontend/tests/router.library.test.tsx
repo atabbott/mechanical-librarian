@@ -1463,6 +1463,169 @@ describe('Library route', () => {
     expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
   })
 
+  it.each([
+    ['committed', true],
+    ['not committed', false],
+  ])('refreshes preparation after an unconfirmed dismissal that %s', async (_name, committed) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    const confirmed = terminalPreparation(runId)
+    let current: PreparationView = confirmed
+    http.getPreparation = vi.fn(async () => current)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+      // Only the response was lost; the write may or may not have committed.
+      if (committed)
+        current = {
+          ...confirmed,
+          presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+        }
+      throw new ApiError(503, 'persistence')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    // Opening the detail moves route focus to its heading; let that settle
+    // before pressing Dismiss so the focus assertions measure the dismissal.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('heading', { name: 'Preparation completed with failures' })
+          .closest('[data-route-focus]'),
+      ).toHaveFocus(),
+    )
+    await screen.findByRole('button', { name: 'Dismiss preparation' })
+    const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+
+    await waitFor(() =>
+      expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(
+        readsBeforeDismissal,
+      ),
+    )
+    if (committed) {
+      // The refreshed state no longer holds the run, so its detail and the
+      // control close; nothing claims the dismissal failed.
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+      )
+      const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+      expect(dismiss).not.toHaveAttribute('aria-disabled', 'true')
+      expect(dismiss).toHaveFocus()
+    }
+    expect(http.dismissPreparation).toHaveBeenCalledOnce()
+  })
+
+  it('keeps focus on a pending dismissal through an unconfirmed failure', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    let fail!: (error: unknown) => void
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        }),
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    // Opening the detail moves route focus to its heading; let that settle
+    // before pressing Dismiss so the focus assertions measure the dismissal.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('heading', { name: 'Preparation completed with failures' })
+          .closest('[data-route-focus]'),
+      ).toHaveFocus(),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    const pending = await screen.findByRole('button', { name: 'Dismissing…' })
+    expect(pending).not.toBeDisabled()
+    expect(pending).toHaveAttribute('aria-disabled', 'true')
+    expect(pending).toHaveFocus()
+    await user.click(pending)
+    expect(http.dismissPreparation).toHaveBeenCalledOnce()
+
+    await act(async () => fail(new ApiError(503, 'persistence')))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+    )
+    expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toHaveFocus()
+  })
+
+  it('disables Dismiss while preparation needs a restart', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    http.getPreparation = vi.fn(async () => ({
+      ...terminalPreparation(runId),
+      recovery_required: true,
+    }))
+    renderRoute(`/library?lens=all&preparation=${runId}`, http)
+    expect(await screen.findByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
+    const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+    expect(dismiss).toBeDisabled()
+
+    await user.click(dismiss)
+    fireEvent.click(dismiss)
+    expect(http.dismissPreparation).not.toHaveBeenCalled()
+  })
+
+  it('does not carry an unconfirmed dismissal over to a later run', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const first = terminalPreparation(`preparation_run_${'e'.repeat(64)}`)
+    const later = terminalPreparation(`preparation_run_${'f'.repeat(64)}`, 102)
+    let current: PreparationView = first
+    http.getPreparation = vi.fn(async () => current)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+      current = later
+      throw new ApiError(503, 'persistence')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+    )
+
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    expect(await screen.findByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
+    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+  })
+
+  it('keeps a refused dismissal silent', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    http.dismissPreparation = vi
+      .fn<ReviewHttp['dismissPreparation']>()
+      .mockRejectedValue(new ApiError(409, 'stale'))
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
+    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+  })
+
   it('retries a failed live confirmation until authoritative HTTP succeeds', async () => {
     const http = createHttp()
     const updates = createLiveStream()
@@ -3808,6 +3971,68 @@ describe('Library route', () => {
     },
   )
 
+  it.each([
+    { automaticWithheldReason: null },
+    {
+      automaticWithheldReason:
+        'Another source gave a value that isn’t offered here; choose whether to use this one.',
+    },
+  ])(
+    'names an unoffered dissent once when one candidate fills an empty field ($automaticWithheldReason)',
+    async ({ automaticWithheldReason }) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const field = {
+        ...base,
+        destination: 'description' as const,
+        notices: ['competing_evidence'],
+        currentValue: 'Not set in Audiobookshelf',
+        currentRaw: null,
+        automaticDecision: null,
+        automaticWithheldReason,
+        humanDecision: null,
+        decisionActions: ['keep_current', 'accept'] as const,
+        editable: true,
+        needsAttention: true,
+        navigationRole: 'attention' as const,
+        proposedValues: [{ kind: 'text' as const, value: 'A voyage reveals a hidden city.' }],
+        choiceContexts: [
+          {
+            alternativeId: 'source-description',
+            evidence: [
+              {
+                observation: 'Description: A voyage reveals a hidden city.',
+                role: 'external_corroboration' as const,
+                source: 'Source record 1',
+              },
+            ],
+            limitations: [],
+            rationale: 'Source description.',
+            recommendation: 'no_recommendation' as const,
+            recommendationReason: 'Source alternative retained.',
+            selection: 'proposed' as const,
+          },
+        ],
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=description', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind: 'epub' },
+          fields: [field],
+        })),
+      })
+      expect(
+        (
+          await screen.findAllByText(
+            /^Another source gave a value that isn’t offered here; choose whether to use this one\.?$/u,
+          )
+        ).length,
+      ).toBe(1)
+      expect(screen.queryByText(/^The sources disagree; choose the value yourself\.?$/u)).toBeNull()
+    },
+  )
+
   it('keeps the provider-consensus contributor statement visible while revisiting choices', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('workspace fixture requires a field')
@@ -5302,6 +5527,198 @@ describe('Library route', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
   })
 
+  const retryableCover = (
+    reviewerStatus: 'completed' | 'failed',
+  ): NonNullable<CaseDetailView['fields'][number]['coverConsideration']> => ({
+    id: `cover_consideration_${'r'.repeat(64)}`,
+    current: true,
+    choiceContexts: [
+      {
+        alternativeId: null,
+        selection: 'current',
+        evidence: [],
+        limitations: [],
+        rationale: 'Keep the local cover.',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+      },
+      {
+        alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
+        selection: 'proposed',
+        evidence: [],
+        limitations: [],
+        rationale: 'Selectable retained cover.',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+      },
+    ],
+    candidates: [
+      {
+        artifactId: `cover_${'a'.repeat(64)}`,
+        deterministicCitations: ['citation-a'],
+        deterministicRank: 1,
+        deterministicRankKey: [
+          1,
+          0,
+          -960000,
+          -800,
+          -1200,
+          1,
+          `cover_transport_ref_${'a'.repeat(64)}`,
+        ],
+        height: 1200,
+        identity: { outcome: 'verified_work_match' },
+        incumbent: false,
+        matchState: 'same_book',
+        observation: null,
+        originalSha256: 'a'.repeat(64),
+        ordinal: 1,
+        previewSha256: 'a'.repeat(64),
+        reference: `cover_transport_ref_${'a'.repeat(64)}`,
+        selectable: true,
+        manualEligible: true,
+        sourceKinds: ['open_library'],
+        state: 'acceptable',
+        width: 800,
+      },
+    ],
+    incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' },
+    omissions: [],
+    policy: null,
+    policyPreferences: {
+      avoidPromotionalText: false,
+      avoidTieInBranding: false,
+      preferMinimalComposition: false,
+    },
+    policyReference: `cover_policy_${'r'.repeat(64)}`,
+    providerFetching: false,
+    ready: true,
+    reviewerAccessRevision: null,
+    reviewerEngine: null,
+    reviewerModel: null,
+    reviewerStatus,
+    reviewerUnavailableReason: null,
+    targetFingerprint: 'fingerprint-cover',
+  })
+
+  it.each([
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      new ApiError(503, 'persistence'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      new ApiError(409, 'stale_cover'),
+      'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+    ],
+  ])('reports a cover advisory retry failing with %s', async (failure, copy) => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const access: ReviewerAccessView = {
+      schema_version: 'reviewer-access-view-v2',
+      cover_metadata: null,
+      cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+      revision: 9,
+      mapping: { engine: 'codex' },
+      description_mapping: null,
+      description_metadata: null,
+      description: null,
+      openrouter_key_configured: false,
+      codex: {
+        engine: 'codex',
+        state: 'failed',
+        reason: null,
+        model: null,
+        tier: null,
+        host_headroom_bytes: null,
+      },
+      openrouter: {
+        engine: 'openrouter',
+        state: 'unconfigured',
+        reason: null,
+        model: null,
+        tier: null,
+        host_headroom_bytes: null,
+      },
+      recommendations: [],
+      candidates: [],
+      free_tier_caveat: '',
+      data_use_caveat: '',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+            coverConsideration: retryableCover('failed'),
+          },
+        ],
+      })),
+      getReviewerAccess: vi.fn(async () => access),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        throw failure
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+    // A reload that keeps the consideration keeps the alert on screen.
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
+    ],
+    [
+      new ApiError(409, 'stale'),
+      'The comparison could not be prepared. The existing cover remains unchanged.',
+    ],
+  ])('reports preparing a cover comparison failing with %s', async (failure, copy) => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+            coverConsideration: null,
+          },
+        ],
+      })),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        throw failure
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Prepare cover comparison' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+  })
+
   it('offers only preparation for an authenticated historical cover comparison', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -6262,7 +6679,14 @@ describe('Library route', () => {
   })
 
   it.each([
-    [new ApiError(503, 'persistence'), 'The decision was not recorded. Your choice is unchanged.'],
+    [
+      new ApiError(503, 'persistence'),
+      'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
+    ],
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
+    ],
     [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
   ])(
     'retries the embedded Library decision after %s with the exact preserved command and idempotency key',
@@ -6939,7 +7363,9 @@ describe('Library route', () => {
         await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
       )
       expect(
-        await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
+        await screen.findByText(
+          'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
+        ),
       ).toBeVisible()
       scrollTo.mockClear()
       const authors = screen.getByRole('button', { name: /Authors.*Needs you/u })
@@ -7719,6 +8145,139 @@ describe('Library route', () => {
     )
     expect(document.body).not.toHaveFocus()
   })
+
+  it.each(['Close', 'toggle', 'Escape'] as const)(
+    'cancels the opening reveal when %s closes the rail before it runs (#1563)',
+    async (closer) => {
+      const user = userEvent.setup()
+      renderRoute('/library?lens=all', createHttp())
+      const toggle = await screen.findByRole('button', { name: /Attention/ })
+      await routeSettled()
+      // The rail reveals its heading two frames after opening; hold those
+      // frames so the closer lands before them, as a fast owner's can.
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      }
+      // setup.ts stubs scrollIntoView on the prototype; count calls per element.
+      const scrollsOf = (element: Element) =>
+        vi
+          .mocked(Element.prototype.scrollIntoView)
+          .mock.contexts.filter((context) => context === element).length
+      const railGone = async () => {
+        await waitFor(() =>
+          expect(screen.queryByRole('complementary', { name: 'Attention queue' })).toBeNull(),
+        )
+        act(runFrames)
+      }
+
+      // Positive control: left alone, the frames reveal the heading.
+      await user.click(toggle)
+      let rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      let heading = within(rail).getByRole('heading', { name: 'Attention' })
+      act(runFrames)
+      expect(heading).toHaveFocus()
+      expect(scrollsOf(heading)).toBe(1)
+      await user.click(within(rail).getByRole('button', { name: 'Close' }))
+      await railGone()
+      await waitFor(() => expect(toggle).toHaveFocus())
+
+      await user.click(toggle)
+      rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      heading = within(rail).getByRole('heading', { name: 'Attention' })
+      const focused = vi.spyOn(heading, 'focus')
+      expect(queued.size).toBeGreaterThan(0)
+      if (closer === 'Close') {
+        const close = within(rail).getByRole('button', { name: 'Close' })
+        close.focus()
+        fireEvent.click(close)
+      } else if (closer === 'toggle') fireEvent.click(toggle)
+      else {
+        rail.focus()
+        fireEvent.keyDown(rail, { key: 'Escape' })
+      }
+      act(runFrames)
+      expect(focused).not.toHaveBeenCalled()
+      expect(scrollsOf(heading)).toBe(0)
+      await railGone()
+      // Every closer hands focus back to the toggle, the toggle included,
+      // rather than leaving it on the Library controls that route-ready focus
+      // moves to first (#1566).
+      await waitFor(() => expect(toggle).toHaveFocus())
+      expect(focused).not.toHaveBeenCalled()
+      expect(scrollsOf(heading)).toBe(0)
+    },
+  )
+
+  it.each([
+    ['wide, with no selection', '/library?lens=all', false],
+    ['wide, with a selected work', '/library?lens=all&preview=case-1', false],
+    ['760px and below, with a selected work', '/library?lens=all&preview=case-1', true],
+  ] as const)(
+    'returns focus as Close does when the toggle closes the rail, %s (#1566)',
+    async (_layout, path, narrow) => {
+      if (narrow) {
+        const previousMatchMedia = window.matchMedia
+        vi.stubGlobal('matchMedia', (query: string) => ({
+          matches: query === '(max-width: 760px)' || query === '(max-width: 1024px)',
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(() => true),
+        }))
+        onTestFinished(() => {
+          vi.stubGlobal('matchMedia', previousMatchMedia)
+        })
+      }
+      const user = userEvent.setup()
+      renderRoute(path, createHttp())
+      const toggle = await screen.findByRole('button', { name: /Attention/ })
+      await routeSettled()
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      }
+
+      await user.click(toggle)
+      const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      const heading = within(rail).getByRole('heading', { name: 'Attention' })
+      act(runFrames)
+      expect(heading).toHaveFocus()
+      await user.click(toggle)
+      await waitFor(() =>
+        expect(screen.queryByRole('complementary', { name: 'Attention queue' })).toBeNull(),
+      )
+      act(runFrames)
+      // Like Close and Escape, the toggle keeps focus, except at 760px and
+      // below, where closing reveals the selected work and focus goes to it.
+      const work = document.querySelector('.selected-work-header')
+      if (path.includes('preview')) expect(work).toBeInstanceOf(HTMLElement)
+      await waitFor(() => expect(narrow ? work : toggle).toHaveFocus())
+      expect(document.querySelector('header.library-header')).not.toHaveFocus()
+      if (!narrow && work) expect(work).not.toHaveFocus()
+    },
+  )
 
   it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
     const user = userEvent.setup()
@@ -10706,6 +11265,32 @@ it.each(['Evidence', 'History'] as const)(
   },
 )
 
+it.each([
+  [
+    new ApiError(500, 'invalid_error_response'),
+    'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+  ],
+  [
+    new ApiError(409, 'stale'),
+    'Description preparation could not be requested. Reload the current case and retry.',
+  ],
+])('reports a description advice retry failing with %s', async (failure, copy) => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.retryDescriptionAdvice = vi.fn(async () => {
+    throw failure
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent
+    .setup()
+    .click(await screen.findByRole('button', { name: 'Retry description advice' }))
+
+  expect(await screen.findByText(copy)).toBeVisible()
+  await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
@@ -10772,7 +11357,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     name: 'Choose advised value: Authored synthetic description.',
   })
   expect(option).toHaveTextContent('Advised · Authored content')
-  expect(option).toHaveTextContent('codex · synthetic-model')
+  expect(option).toHaveTextContent('codex · gpt-5.6-sol')
   const chooser = option.closest('section.direct-choice')
   if (!(chooser instanceof HTMLElement)) throw new Error('description choice area is missing')
   expect(

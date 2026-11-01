@@ -1467,8 +1467,17 @@ def test_oversized_parameters_stay_bounded_and_distinct() -> None:
     assert len(set(identifiers)) == 2
 
 
-@pytest.mark.parametrize("phase", ["setup", "call", "teardown", "flock", "swallow"])
-def test_fast_deadline_hard_exits_real_hangs(tmp_path: Path, phase: str) -> None:
+@pytest.mark.parametrize(
+    ("tier", "phase"),
+    [
+        *(
+            ("fast", phase)
+            for phase in ("setup", "call", "teardown", "flock", "swallow")
+        ),
+        ("browser", "call"),
+    ],
+)
+def test_deadline_hard_exits_real_hangs(tmp_path: Path, tier: str, phase: str) -> None:
     import subprocess
 
     hang = "time.sleep(60)"
@@ -1495,7 +1504,7 @@ def test_fast_deadline_hard_exits_real_hangs(tmp_path: Path, phase: str) -> None
         "from scripts.run_test_tier import run_cohort\n"
         "if __name__ == '__main__':\n"
         f"    with patch('scripts.run_test_tier.cohort_targets', return_value={targets!r}):\n"
-        "        run_cohort(Path.cwd(), 'fast', 1)\n"
+        f"        run_cohort(Path.cwd(), {tier!r}, 1)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", driver], capture_output=True, text=True, timeout=15
@@ -1504,11 +1513,46 @@ def test_fast_deadline_hard_exits_real_hangs(tmp_path: Path, phase: str) -> None
     diagnostics = [json.loads(line) for line in result.stderr.splitlines()]
     assert len(diagnostics) == 1
     assert diagnostics[0]["schema"] == "test-tier-timeout-v1"
-    assert diagnostics[0]["tier"] == "fast"
+    assert diagnostics[0]["tier"] == tier
     assert diagnostics[0]["timeout_seconds"] == 1
     assert _SAFE_TEST_ID.fullmatch(diagnostics[0]["test_id"])
     assert diagnostics[0]["test_id"].endswith("test_hang")
     assert "test-tier-result-v1" not in result.stdout + result.stderr
+
+
+def test_browser_deadline_names_its_tier_under_workers(tmp_path: Path) -> None:
+    import subprocess
+
+    targets = _module(
+        tmp_path,
+        "import time\n"
+        "def test_hang() -> None:\n    time.sleep(60)\n"
+        "def test_pass() -> None:\n    pass\n",
+    )
+    driver = (
+        "from unittest.mock import patch\n"
+        "from scripts.run_test_tier import main\n"
+        "if __name__ == '__main__':\n"
+        f"    with patch('scripts.run_test_tier.cohort_targets', return_value={targets!r}):\n"
+        "        raise SystemExit(main(['browser', '--workers', '2', "
+        "'--test-timeout-seconds', '1']))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", driver], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 1
+    # The hanging worker inherits this tier's standard error, so its deadline
+    # record reaches it unchanged; its missing worker record refuses the tier.
+    timeout, refusal = [json.loads(line) for line in result.stderr.splitlines()]
+    assert timeout["schema"] == "test-tier-timeout-v1"
+    assert timeout["tier"] == "browser"
+    assert timeout["timeout_seconds"] == 1
+    assert timeout["test_id"].endswith("test_hang")
+    assert refusal == {
+        "reason": "test_tier_worker_exited",
+        "schema": "test-tier-result-v1",
+        "status": "failed",
+    }
 
 
 @pytest.mark.parametrize(
@@ -1518,10 +1562,11 @@ def test_fast_deadline_hard_exits_real_hangs(tmp_path: Path, phase: str) -> None
         ["fast", "--test-timeout-seconds", "-1"],
         ["fast", "--test-timeout-seconds", "x"],
         ["fast", "--list", "--test-timeout-seconds", "1"],
+        ["browser", "--test-timeout-seconds", "0"],
+        ["browser", "--list", "--test-timeout-seconds", "1"],
         ["--list", "--test-timeout-seconds", "1"],
         ["complete", "--test-timeout-seconds", "1"],
         ["slow", "--test-timeout-seconds", "1"],
-        ["browser", "--test-timeout-seconds", "1"],
         ["required-installed", "--test-timeout-seconds", "1"],
     ],
 )
@@ -1547,7 +1592,7 @@ def test_deadline_ignores_finished_state_and_resets_start() -> None:
         patch.object(stopped, "wait", side_effect=[False, True]),
         patch("scripts.run_test_tier.os._exit") as terminate,
     ):
-        _report_stalled_test(session, stopped, 1)
+        _report_stalled_test(session, stopped, 1, tier="fast")
         terminate.assert_not_called()
     with patch("scripts.run_test_tier.time.monotonic", return_value=100):
         session.pytest_runtest_logstart("second.test", None)
@@ -1555,7 +1600,7 @@ def test_deadline_ignores_finished_state_and_resets_start() -> None:
             patch.object(stopped, "wait", side_effect=[False, True]),
             patch("scripts.run_test_tier.os._exit") as terminate,
         ):
-            _report_stalled_test(session, stopped, 1)
+            _report_stalled_test(session, stopped, 1, tier="fast")
             terminate.assert_not_called()
 
 
@@ -1570,7 +1615,7 @@ session = _CohortSession()
 session.pytest_runtest_logstart('safe.test', None)
 session._current_started_at = 0
 with patch('scripts.run_test_tier.os.write', side_effect=OSError('write failed')):
-    _report_stalled_test(session, threading.Event(), 1)
+    _report_stalled_test(session, threading.Event(), 1, tier='fast')
 """
     result = subprocess.run(
         [sys.executable, "-c", driver], capture_output=True, text=True, timeout=10
@@ -1603,7 +1648,7 @@ session = _CohortSession()
 session.pytest_runtest_logstart('safe.test', None)
 session._current_started_at = 0
 with patch('scripts.run_test_tier.sys.__stderr__', Blocked()):
-    _report_stalled_test(session, threading.Event(), 1)
+    _report_stalled_test(session, threading.Event(), 1, tier='fast')
 """
     if early_stall:
         driver = driver.replace(
@@ -1643,7 +1688,7 @@ def test_early_stall_output_only_without_deadline(deadline: int | None) -> None:
         patch("scripts.run_test_tier.sys.__stderr__", output),
         patch("scripts.run_test_tier.os.write") as write,
     ):
-        _report_stalled_test(session, stopped, deadline)
+        _report_stalled_test(session, stopped, deadline, tier="fast")
     write.assert_not_called()
     if deadline is None:
         assert json.loads(output.getvalue()) == {
@@ -1665,7 +1710,7 @@ from scripts.run_test_tier import _CohortSession, _report_stalled_test
 session = _CohortSession()
 session.pytest_runtest_logstart('safe.test', None)
 session._current_started_at = 0
-_report_stalled_test(session, threading.Event(), 1)
+_report_stalled_test(session, threading.Event(), 1, tier='fast')
 """
     if early_threshold:
         driver = driver.replace(
@@ -1721,7 +1766,7 @@ session.pytest_runtest_logstart('safe.test', None)
 session._current_started_at = 0
 with patch('scripts.run_test_tier.threading.Thread') as writer:
     FAILURE
-    _report_stalled_test(session, threading.Event(), 1)
+    _report_stalled_test(session, threading.Event(), 1, tier='fast')
 """
     failure_code = (
         "writer.side_effect = RuntimeError('construct')"
@@ -2145,4 +2190,7 @@ def test_the_gate_divides_the_fast_tier_into_four_sharded_jobs() -> None:
             f"--shard {shard}/4\n"
         ) in workflow
     assert workflow.count("run_test_tier.py fast") == 4
-    assert "run: uv run python scripts/run_test_tier.py browser\n" in workflow
+    assert (
+        "run: uv run python scripts/run_test_tier.py browser"
+        " --test-timeout-seconds 180\n"
+    ) in workflow

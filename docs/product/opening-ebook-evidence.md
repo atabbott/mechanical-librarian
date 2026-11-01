@@ -127,7 +127,14 @@ modification timestamp is never a publication date.
 - A valid ISBN does not by itself identify this file's ebook edition. Print
   and invalid ISBNs are kept as evidence but never sent as ebook inputs.
 - A UUID, DOI, ASIN, LCCN, URI, proprietary or package identifier never
-  becomes an ISBN.
+  becomes an ISBN. A Library of Congress control number is recognised by its
+  label, with or without a colon, and a bare ten-digit run inside a Library of
+  Congress Cataloging-in-Publication block, with no ISBN, ebook or print label
+  before or beside it, is read as one. A short line just before or after it
+  that is only such a label, such as "eBook ISBN", "ISBN-10:" or "(paperback)",
+  counts too. The block's labelled or hyphenated ISBNs are
+  still read. A heading the extractor does not read, such as one in foreign or
+  promotional content, opens no block.
 - The package's explicitly designated primary identifier, when it is a valid
   ISBN, applies to this EPUB. Other package ISBNs stay unlabelled unless other
   evidence establishes applicability.
@@ -188,7 +195,7 @@ absent and never quarantines the item.
 
 A changed file fingerprint supersedes earlier evidence. Evidence is reused
 only under the same fingerprint and the current extractor, configuration and
-selection versions (recognition contract `epub-opening-v4`); citations from
+selection versions (recognition contract `epub-opening-v5`); citations from
 another version fail closed.
 
 ## Privacy

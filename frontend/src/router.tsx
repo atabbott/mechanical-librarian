@@ -27,7 +27,13 @@ import {
 import type { ComponentPropsWithRef } from 'react'
 import type { createMemoryHistory } from '@tanstack/react-router'
 import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
-import { ApiError, BuildMismatchError, SessionExpiredError, refusalCopy } from './api/http'
+import {
+  ApiError,
+  BuildMismatchError,
+  SessionExpiredError,
+  refusalCopy,
+  uncertainWriteOutcome,
+} from './api/http'
 import type {
   ActivitySearch,
   ScanState,
@@ -458,10 +464,12 @@ export const ConnectionNotice = ({
       </button>
       {error ? (
         <p role="alert">
-          {refusalCopy(
-            error,
-            'Connection checking could not be completed. Preparation remains safely paused.',
-          )}
+          {uncertainWriteOutcome(error)
+            ? 'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.'
+            : refusalCopy(
+                error,
+                'Connection checking could not be completed. Preparation remains safely paused.',
+              )}
         </p>
       ) : null}
     </section>
@@ -992,6 +1000,13 @@ export const PreparationActivity = () => {
           >
             {data.paused ? 'Resume' : 'Pause'}
           </button>
+          {action.isError ? (
+            <p role="alert">
+              {uncertainWriteOutcome(action.error)
+                ? 'The preparation change could not be confirmed. It may have been saved; the current state is shown. Check it before pressing again.'
+                : refusalCopy(action.error, 'Preparation control failed safely. Try again.')}
+            </p>
+          ) : null}
           {!data.recovery_required ? (
             <small className="activity-backup-note">
               Pause stops new library scans. Provider lookups that are already deferred still retry
@@ -1001,11 +1016,6 @@ export const PreparationActivity = () => {
           <button type="button" onClick={close}>
             Close
           </button>
-          {action.isError ? (
-            <p role="alert">
-              {refusalCopy(action.error, 'Preparation control failed safely. Try again.')}
-            </p>
-          ) : null}
         </section>
       ) : null}
     </div>

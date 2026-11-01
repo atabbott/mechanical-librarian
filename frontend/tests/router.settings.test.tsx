@@ -674,6 +674,49 @@ describe('owner settings route', () => {
     },
   )
 
+  it.each([
+    [
+      new ApiError(503, 'reviewer_access_unavailable'),
+      'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+      true,
+    ],
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+      true,
+    ],
+    [
+      new ApiError(503, 'unreachable'),
+      'OpenRouter could not be reached. Check network access, then retry.',
+      false,
+    ],
+  ])('reports an OpenRouter configuration failing with %s', async (failure, copy, reloads) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view('file'))
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    http.configureOpenRouter = vi.fn(async () => {
+      throw failure
+    })
+    renderRoute('/settings?group=reviewer', http)
+    await screen.findByRole('combobox', { name: 'Cover model' })
+    await pickModel(user, 'Cover model', 'GPT-6 Luna (openai/gpt-6-luna)')
+    await user.type(screen.getByLabelText('OpenRouter API key'), 'synthetic-key')
+    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+
+    expect(await screen.findByText(copy)).toBeVisible()
+    // Nothing else reads reviewer access after the write, so a read after the
+    // failed call is the panel's own reload of the authoritative state.
+    const readsAfterFailure = () => {
+      const failedAt = vi.mocked(http.configureOpenRouter).mock.invocationCallOrder[0] ?? Infinity
+      return vi
+        .mocked(http.getReviewerAccess)
+        .mock.invocationCallOrder.filter((order) => order > failedAt).length
+    }
+    if (reloads) await waitFor(() => expect(readsAfterFailure()).toBe(1))
+    expect(http.configureOpenRouter).toHaveBeenCalledOnce()
+  })
+
   it('renders wire recommendations, catalogue candidates, and manual model entry honestly', async () => {
     const user = userEvent.setup()
     const http = createHttp()

@@ -34,6 +34,28 @@ brackets are GitHub issues.
   Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
   `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
   automatically (#1496).
+- **Clean rebuild required.** A Library of Congress control number in an
+  EPUB's opening pages is no longer read as an ISBN, Hardcover author names
+  that differ from the book's only by spacing, a `Family, Given` comma or word
+  order are no longer offered as other authors, and Open Library titles or
+  descriptions in another language or script than the work's are no longer
+  offered as choices. Those values still keep a change from being automatic, so
+  a field may still ask you to choose, with fewer options (#1497).
+- **Clean rebuild required.** An EPUB whose cover declaration is malformed
+  now records, as shadow evidence only, whether its own cover could be
+  recovered from a legacy cover entry, a guide reference or a cover page. The
+  cover stays absent, and nothing is chosen or shown from it yet. A declared
+  cover the EPUB lists as encrypted is never read and shows as an unsupported
+  image format (#1357, #1569).
+- Closing the Attention queue right after opening it no longer moves focus to
+  the closing queue or scrolls the page to it first (#1563).
+- A browser change that may have been saved although its response failed is
+  no longer reported as failed or refused: the page reloads the current state
+  and asks you to check it before pressing again. A decision offers Try the
+  same decision again, which cannot record it twice. A saved reviewer-access
+  change now answers with its saved view (#1571).
+- Closing the Attention queue with its toolbar toggle keeps focus on the
+  toggle, as Close and Escape do (#1566).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
@@ -148,6 +170,12 @@ brackets are GitHub issues.
 - A preparation step that briefly loses the database write lock while
   checking its library connection now waits and carries on, instead of
   marking the work as could not finish (#1547).
+- The Audiobookshelf field-effect canary composes the installed application
+  around one shared operation admission, as the product does, so its
+  preparation lanes queue instead of meeting at the database (#1561).
+- A cover advisory retry or comparison whose result cannot be confirmed now
+  reloads the case and says it may have been requested, instead of saying it
+  failed safely (#1572).
 - Switching from Automatic to Preview without changing the policy keeps every
   work in Attention and Library, and keeps your answers: a decision you had
   not yet written stays decided and is still written. An automatic decision

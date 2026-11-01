@@ -4,6 +4,18 @@ import type { components } from '../generated/review-api'
 import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 
 type Schema<Name extends keyof components['schemas']> = components['schemas'][Name]
+// Holds a literal tuple to exactly the members of a generated enum: an extra
+// member fails the element type, and a missing one fails the parameter type,
+// which names the missing members (#1576).
+export const lits =
+  <T extends string>() =>
+  <const V extends readonly T[]>(
+    values: V &
+      ([Exclude<T, V[number]>] extends [never]
+        ? unknown
+        : { missing_members: Exclude<T, V[number]> }),
+  ) =>
+    values
 type LibraryDto = Schema<'_LibraryResponse'>
 type AttentionDto = Schema<'_AttentionResponse'>
 type CaseDetailDto = Schema<'_CaseDetailResponse'>
@@ -177,6 +189,7 @@ export const attentionStates = [
   'not_matched',
   'preparation_failed',
 ] as const
+lits<Schema<'_LibraryWork'>['attention_state']>()(attentionStates)
 export type AttentionState = (typeof attentionStates)[number]
 export type LibraryLens = 'all' | AttentionState
 // Why a work with no case reads as it does: nothing to decide, a preparation
@@ -190,6 +203,7 @@ export const workSummaryStates = [
   'not_matched_adapter_fault',
   'not_matched_no_match',
 ] as const
+lits<Schema<'_LibraryWorkSummary'>['state']>()(workSummaryStates)
 export type WorkSummaryState = (typeof workSummaryStates)[number]
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
@@ -200,6 +214,7 @@ export const DECISION_OUTCOMES = [
   'owner_entered',
   'withdraw',
 ] as const
+lits<Schema<'_HistoryDecisionItem'>['outcome']>()(DECISION_OUTCOMES)
 export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
 export type DecisionAction = Extract<DecisionOutcome, 'accept' | 'keep_current'>
 
@@ -259,6 +274,7 @@ export const MEDIA_HEALTH_KINDS = [
   'stream_encrypted',
   'media_unreadable',
 ] as const
+lits<Schema<'_MediaHealthObservation'>['kind']>()(MEDIA_HEALTH_KINDS)
 export type MediaHealthKind = (typeof MEDIA_HEALTH_KINDS)[number]
 // The closed code sets an owner surface names. Each tuple restates its
 // producer's StrEnum or literal set, is checked where its mapper reads it, and
@@ -419,6 +435,7 @@ export const PROPOSAL_OUTCOMES = [
 ] as const
 export type ProposalOutcome = (typeof PROPOSAL_OUTCOMES)[number]
 export const AUTOMATIC_OUTCOMES = ['candidate', 'keep_current', 'ignore'] as const
+lits<Schema<'_HistoryAutomaticItem'>['outcome']>()(AUTOMATIC_OUTCOMES)
 export type AutomaticOutcome = (typeof AUTOMATIC_OUTCOMES)[number]
 // Why writes to one destination, or a whole connection, are held.
 export const SUSPENSION_REASONS = [
@@ -475,6 +492,7 @@ export const COVER_HISTORY_OUTCOMES = [
   'no_action',
   'stale',
 ] as const
+lits<Schema<'_HistoryCoverItem'>['kind']>()(COVER_HISTORY_OUTCOMES)
 export type CoverHistoryOutcome = (typeof COVER_HISTORY_OUTCOMES)[number]
 // A recorded description's lifecycle: its advice, then the guarded write.
 export const DESCRIPTION_STATES = [
@@ -494,6 +512,7 @@ export const DESCRIPTION_STATES = [
   'abandoned',
   'no_change_required',
 ] as const
+lits<Schema<'_HistoryDescriptionItem'>['state']>()(DESCRIPTION_STATES)
 export type DescriptionState = (typeof DESCRIPTION_STATES)[number]
 export const COVER_SOURCE_KINDS = [
   'abs',
@@ -1314,6 +1333,14 @@ export class AmbiguousMutationError extends ApiError {
     this.name = 'AmbiguousMutationError'
   }
 }
+// Server codes proven to be raised before any handler body runs, so an unsafe
+// request answered with one of them changed nothing. The sole member comes from
+// the session dependency; tests pin that proof on both sides.
+export const PRE_CALL_SERVER_CODES: ReadonlySet<string> = new Set(['react_assets_unavailable'])
+// Whether an unsafe write may have committed although it answered a failure.
+export const uncertainWriteOutcome = (error: unknown) =>
+  error instanceof AmbiguousMutationError ||
+  (error instanceof ApiError && error.status >= 500 && !PRE_CALL_SERVER_CODES.has(error.code))
 
 const csrfPattern = /^[A-Za-z0-9_-]{32,128}$/
 const buildPattern = /^[0-9a-f]{64}$/
@@ -2498,11 +2525,12 @@ export const displayValue = (value: unknown): string =>
           : 'Unavailable'
 // A target field that holds no value says whether Audiobookshelf has none or
 // could not be read, in Audiobookshelf's own name (#1286).
+export const EMPTY_TARGET_TEXT = 'Not set in Audiobookshelf'
 export const targetValueText = (state: TargetFieldState, value: unknown) =>
   state === 'value'
     ? displayValue(value)
     : state === 'missing' || state === 'null' || state === 'empty'
-      ? 'Not set in Audiobookshelf'
+      ? EMPTY_TARGET_TEXT
       : 'Couldn’t be read from Audiobookshelf'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => {

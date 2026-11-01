@@ -100,6 +100,10 @@ from mechanical_librarian.domain.metadata_report import (
     target_work_identity_context,
     work_discovery_lane_payloads,
 )
+from mechanical_librarian.domain.provider_value_language import (
+    established_work_languages,
+    open_library_value_exclusion,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
@@ -117,10 +121,11 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v42"
+POLICY_VERSION = "fixed-conservative-v43"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
+HARDCOVER_AUTHORITY = "hardcover"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _PROPOSAL_SET_ID = re.compile(r"^proposal_set_[0-9a-f]{64}$")
@@ -1551,6 +1556,18 @@ def evaluate_report(
             ProposalOutcome.ACCEPTABLE_CHOICE,
         }:
             result = _narrator_corroboration_guard(report, result)
+        # Values that never name this item still decide the outcome above, so
+        # leaving them out can only narrow it; they are just not offered (#1497).
+        # A title is left alone here: the bibliographic combinations below
+        # are worked out from it as decided, and its unoffered values are
+        # withheld only after them (#1497).
+        unoffered = (
+            frozenset()
+            if destination is TargetDestination.TITLE
+            else _unoffered_references(report, destination)
+        )
+        if unoffered:
+            result = _withhold_unoffered(result, unoffered, targets[destination])
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1613,6 +1630,7 @@ def evaluate_report(
         result = results[destination]
         if result.alternatives and result.reasons != (EVIDENCE_LED_TITLE_REASON,):
             results[destination] = _bibliographic_unresolved(result)
+    combinations = _withhold_unoffered_title(report, targets, results, combinations)
     ordered = tuple(results[value] for value in TargetDestination)
     if resolved_policy_id is None:
         # The production default is a real resolved built-in profile for this
@@ -1668,6 +1686,265 @@ def _bound_immaterial_work_alternatives(
         result.alternatives,
         result.selected_alternative_id,
         (*result.reasons, WORK_ALTERNATIVE_IMMATERIAL_REASON),
+        result.dependencies,
+    )
+
+
+def _unoffered_references(
+    report: MetadataReport, destination: TargetDestination
+) -> frozenset[str]:
+    """Return claims whose values are never offered for this destination (#1497).
+
+    An Open Library title or description that contradicts the work's
+    established language, and a Hardcover author list that is the book's own
+    author names with at least one of them only with its words rotated.
+    """
+    if destination in {TargetDestination.TITLE, TargetDestination.DESCRIPTION}:
+        languages = established_work_languages(report)
+        if not languages:
+            return frozenset()
+        kind = (
+            ClaimKind.TITLE
+            if destination is TargetDestination.TITLE
+            else ClaimKind.DESCRIPTION
+        )
+        return frozenset(
+            claim.reference
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+            if claim.kind is kind
+            and claim.state is FieldState.VALID
+            and type(claim.value) is str
+            and open_library_value_exclusion(
+                provider.authority, candidate, destination, claim.value, languages
+            )
+            is not None
+        )
+    if destination is not TargetDestination.AUTHORS:
+        return frozenset()
+    local = {
+        " ".join(claim.canonical.split()).casefold()
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.state is FieldState.VALID
+        and type(claim.canonical) is str
+    }
+    unoffered: set[str] = set()
+    for provider in report.providers:
+        if provider.authority != HARDCOVER_AUTHORITY:
+            continue
+        for candidate in provider.candidates:
+            # One candidate's authors are one list: it is left out when it
+            # names as many authors as the book, at least one is a rotated
+            # book author name and every other is a book author name as it
+            # stands, so no coauthor carries a rotated name back in and no
+            # shorter list is hidden.
+            authors = [
+                claim
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.CREATOR
+                and claim.role == "author"
+                and claim.state is FieldState.VALID
+            ]
+            names = [claim.value for claim in authors]
+            if (
+                len(names) == len(local)
+                and all(type(name) is str for name in names)
+                and any(_rotated_local_author(cast(str, name), local) for name in names)
+                and all(
+                    " ".join(cast(str, name).casefold().split()) in local
+                    or _rotated_local_author(cast(str, name), local)
+                    for name in names
+                )
+            ):
+                unoffered.update(claim.reference for claim in authors)
+    return frozenset(unoffered)
+
+
+def _rotated_local_author(value: str, local: set[str]) -> bool:
+    words = value.casefold().split()
+    return (
+        len(words) <= 16
+        and " ".join(words) not in local
+        and any(
+            " ".join((*words[index:], *words[:index])) in local
+            for index in range(1, len(words))
+        )
+    )
+
+
+def _withhold_unoffered_title(
+    report: MetadataReport,
+    targets: Mapping[TargetDestination, TargetField],
+    results: dict[TargetDestination, ProposalResult],
+    combinations: tuple[BibliographicCombination, ...],
+) -> tuple[BibliographicCombination, ...]:
+    """Withhold unoffered titles once the combinations stand (#1497).
+
+    The combinations were worked out from every title, so each veto a
+    left-out title carries still holds. A combination that selects a
+    withheld title goes, and a subtitle or series change that only such a
+    combination allowed asks the owner instead. Nothing is ever admitted.
+    """
+    unoffered = _unoffered_references(report, TargetDestination.TITLE)
+    if not unoffered:
+        return combinations
+    before = results[TargetDestination.TITLE]
+    withheld = _withhold_unoffered(
+        before, unoffered, targets[TargetDestination.TITLE], keep_alone=False
+    )
+    dropped = {value.alternative_id for value in before.alternatives} - {
+        value.alternative_id for value in withheld.alternatives
+    }
+    results[TargetDestination.TITLE] = _keep_alone_title(withheld, unoffered)
+    if not dropped:
+        return combinations
+    kept = tuple(
+        combination
+        for combination in combinations
+        if not any(
+            selection.kind is BibliographicSelectionKind.CANDIDATE
+            and selection.alternative_id in dropped
+            for selection in combination.selections
+        )
+    )
+
+    def selected(
+        values: tuple[BibliographicCombination, ...], destination: TargetDestination
+    ) -> set[str]:
+        return {
+            cast(str, selection.alternative_id)
+            for combination in values
+            for selection in combination.selections
+            if selection.destination is destination
+            and selection.kind is BibliographicSelectionKind.CANDIDATE
+        }
+
+    for destination in (TargetDestination.SUBTITLE, TargetDestination.SERIES):
+        result = results[destination]
+        if (
+            result.outcome
+            in {ProposalOutcome.PROPOSE_CHANGE, ProposalOutcome.ACCEPTABLE_CHOICE}
+            and result.selected_alternative_id in selected(combinations, destination)
+            and result.selected_alternative_id not in selected(kept, destination)
+        ):
+            results[destination] = _bibliographic_unresolved(result)
+    return kept
+
+
+def _keep_alone_title(
+    result: ProposalResult, unoffered: frozenset[str]
+) -> ProposalResult:
+    """Keep a title whose only choice left is its current value (#1497)."""
+    if (
+        not unoffered
+        or result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or result.reasons
+        not in {("competing_evidence",), ("isbn_title_material_conflict",)}
+        or not result.alternatives
+        or any(
+            value.assessment is not ProposalAssessment.PRESERVES_TARGET
+            for value in result.alternatives
+        )
+    ):
+        return result
+    return ProposalResult(
+        result.destination,
+        ProposalOutcome.KEEP,
+        result.alternatives,
+        None,
+        ("positive_preservation_evidence",),
+        result.dependencies,
+    )
+
+
+def _withhold_unoffered(
+    result: ProposalResult,
+    unoffered: frozenset[str],
+    target: TargetField,
+    *,
+    keep_alone: bool = True,
+) -> ProposalResult:
+    """Leave out alternatives only unoffered claims support, never widening."""
+    kept = tuple(
+        value
+        for value in result.alternatives
+        if value.assessment is ProposalAssessment.PRESERVES_TARGET
+        or not unoffered.issuperset(value.evidence_references)
+    )
+    if len(kept) == len(result.alternatives):
+        return result
+    if result.outcome not in {
+        ProposalOutcome.PROPOSE_CHANGE,
+        ProposalOutcome.ACCEPTABLE_CHOICE,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+    }:
+        return ProposalResult(
+            result.destination,
+            result.outcome,
+            kept,
+            None,
+            result.reasons,
+            result.dependencies,
+        )
+    if not any(
+        value.assessment is not ProposalAssessment.PRESERVES_TARGET for value in kept
+    ):
+        # Nothing else is left to choose: the current value stays, which is
+        # no write (#1497).
+        if kept and not keep_alone:
+            return ProposalResult(
+                result.destination,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                kept,
+                None,
+                result.reasons
+                if result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+                else ("competing_evidence",),
+                result.dependencies,
+            )
+        if kept:
+            return ProposalResult(
+                result.destination,
+                ProposalOutcome.KEEP,
+                kept,
+                None,
+                ("positive_preservation_evidence",),
+                result.dependencies,
+            )
+        defer = target.state is TargetFieldState.VALUE
+        return ProposalResult(
+            result.destination,
+            ProposalOutcome.DEFER if defer else ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            (
+                "no_positive_preservation_evidence"
+                if defer
+                else "no_supported_evidence",
+            ),
+            result.dependencies,
+        )
+    selected = result.selected_alternative_id
+    if selected is not None and selected not in {
+        value.alternative_id for value in kept
+    }:
+        return ProposalResult(
+            result.destination,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            kept,
+            None,
+            ("competing_evidence",),
+            result.dependencies,
+        )
+    return ProposalResult(
+        result.destination,
+        result.outcome,
+        kept,
+        selected,
+        result.reasons,
         result.dependencies,
     )
 

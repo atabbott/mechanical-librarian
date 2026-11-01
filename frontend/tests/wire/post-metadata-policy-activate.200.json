@@ -1,0 +1,22 @@
+{
+  "body": {
+    "policy_id": "policy_da8453b5de7a86fc671ca7f64159cd87cbf35f42e1651e921821032b2b4c4dd9",
+    "schema_version": "metadata-policy-activation-v1",
+    "transition": {
+      "acknowledged": false,
+      "completed": 0,
+      "failed": 0,
+      "from_policy_id": "policy_c1280edcaffc78aa739aad98249e425e850797ba513f223af594a97e10f555a9",
+      "generation": 2,
+      "origin": "activation",
+      "schema_version": "metadata-policy-transition-v1",
+      "state": "completed",
+      "to_policy_id": "policy_da8453b5de7a86fc671ca7f64159cd87cbf35f42e1651e921821032b2b4c4dd9",
+      "total": 0,
+      "transition_id": "policy_transition_489084e3704837def86fa2a40a828d6dd6f42df1f9873db15b10987f5e272563"
+    }
+  },
+  "method": "POST",
+  "path": "/api/v1/metadata-policy/activate",
+  "status": 200
+}

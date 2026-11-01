@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -40,6 +41,14 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.application.configuration import MediaMountConfiguration
 from mechanical_librarian.application.metadata_report import ItemInspectionError
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    EpubCoverFallback,
+    EpubCoverRecovery,
+    cover_source_id,
+)
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -3138,3 +3147,143 @@ def test_package_facts_read_a_description_once_like_every_description(
         for fact in _package_facts(package)
         if fact.field.value == "description"
     ] == [(canonical, state)]
+
+
+def test_isolated_inspector_keeps_a_recovered_cover_as_shadow_evidence(
+    tmp_path: Path,
+) -> None:
+    package = EPUB3_PACKAGE.replace(
+        b'href="cover.jpg" media-type="image/jpeg" properties="cover-image"',
+        b'href="cover.jpg" media-type="image/jpeg"/><item id="wrap" '
+        b'href="wrap.xhtml" media-type="application/xhtml+xml" '
+        b'properties="cover-image"',
+    )
+    wrapper = (
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        b'<img src="cover.jpg" alt=""/></body></html>'
+    )
+    payload = epub_bytes(
+        package=package,
+        extra_entries=(("EPUB/wrap.xhtml", wrapper, zipfile.ZIP_DEFLATED),),
+    )
+    (tmp_path / "book.epub").write_bytes(payload)
+    artifacts = tmp_path / "artifacts"
+    inspection = composition._IsolatedEpubInspector(
+        CoverArtifactStore(artifacts)
+    ).inspect(
+        MediaMountConfiguration("books", str(tmp_path), "/library", True),
+        "book.epub",
+        len(payload) + 1,
+    )
+    assert inspection.cover_sources == (
+        CoverSource(
+            cover_source_id(CoverSourceKind.EPUB, "absent"),
+            CoverSourceKind.EPUB,
+            CoverSourceState.ABSENT,
+        ),
+    )
+    assert inspection.cover_recovery == EpubCoverRecovery(
+        (EpubCoverFallback.COVER_IMAGE_WRAPPER,)
+    )
+    assert not artifacts.exists() or not any(artifacts.rglob("*"))
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, inspection.content_digest),
+        local_claims=inspection.claims,
+        local_reasons=("opening_matter",),
+        providers=(),
+        cover_sources=inspection.cover_sources,
+        cover_recovery=inspection.cover_recovery,
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    serialized = report.to_json()
+    assert all(text not in serialized for text in ("wrap.xhtml", "cover.jpg", "EPUB/"))
+    assert json.loads(serialized)["local"]["cover_recovery"] == {
+        "authority": "shadow",
+        "fallbacks": ["cover_image_wrapper"],
+        "refusal": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (ValueError("bad"), KeyError("member"), OSError("EIO"), RecursionError()),
+    ids=("value_error", "key_error", "os_error", "recursion_error"),
+)
+def test_an_unexpected_wrapper_failure_stays_a_closed_refusal(
+    fault: BaseException,
+) -> None:
+    package = EPUB3_PACKAGE.replace(
+        b'media-type="image/jpeg" properties="cover-image"',
+        b'media-type="application/xhtml+xml" properties="cover-image"',
+    )
+    request = _request(epub_bytes(package=package))
+    package_request = EpubPackageRequest(
+        request.target,
+        request.file,
+        request.source,
+        request.expected_source,
+        EpubPackageCapability.PACKAGE,
+        request.limits,
+        request.deadline,
+        request.monotonic_deadline,
+        request.cancellation,
+    )
+    with patch.object(
+        child.opening_parser, "cover_wrapper_references", side_effect=fault
+    ):
+        result, data = child._selected_cover(package_request, EpubOpeningLimits())
+    assert data is None
+    assert result == {
+        "state": "absent",
+        "recovery": {
+            "authority": "shadow",
+            "fallbacks": ["cover_image_wrapper"],
+            "refusal": "cover_wrapper_unreadable",
+        },
+    }
+
+
+def test_an_encrypted_declared_cover_is_never_opened() -> None:
+    encryption = (
+        b'<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        b'<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData>'
+        b'<CipherReference URI="EPUB/cover.jpg"/></CipherData>'
+        b"</EncryptedData></encryption>"
+    )
+    original = zipfile.ZipFile.open
+    opened: list[str] = []
+
+    def recording(
+        archive: zipfile.ZipFile,
+        name: str | zipfile.ZipInfo,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        opened.append(name.filename if isinstance(name, zipfile.ZipInfo) else name)
+        return original(archive, name, *args, **kwargs)
+
+    outcomes = []
+    for source in (epub_bytes(), epub_bytes(encryption=encryption)):
+        opened.clear()
+        request = _request(source)
+        package_request = EpubPackageRequest(
+            request.target,
+            request.file,
+            request.source,
+            request.expected_source,
+            EpubPackageCapability.PACKAGE,
+            request.limits,
+            request.deadline,
+            request.monotonic_deadline,
+            request.cancellation,
+        )
+        with patch.object(zipfile.ZipFile, "open", recording):
+            result, data = child._selected_cover(package_request, EpubOpeningLimits())
+        outcomes.append((result["state"], data is None, "EPUB/cover.jpg" in opened))
+    assert outcomes == [
+        ("declared", False, True),
+        ("unsupported_format", True, False),
+    ]

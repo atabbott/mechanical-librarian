@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  policyImpactDisplay,
-  policyImpactTotals,
-  policyRepresentationGuidance,
-} from '../src/routes/PolicyPage'
+import { policyRepresentationGuidance } from '../src/policyFields'
+import { policyImpactDisplay, policyImpactTotals } from '../src/policyImpact'
 
 describe('policy impact projections', () => {
   it('labels both associated values in a paired subtitle preview', () => {
