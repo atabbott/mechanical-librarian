@@ -1,0 +1,11 @@
+{
+  "body": {
+    "authority": "decision_only",
+    "can_leave_preview": false,
+    "posture": "automatic",
+    "schema_version": "shadow-posture-v1"
+  },
+  "method": "POST",
+  "path": "/api/v1/metadata-policy/shadow/confirm-automatic",
+  "status": 200
+}
