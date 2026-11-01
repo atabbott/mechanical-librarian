@@ -36,8 +36,12 @@ export const DescriptionAdvicePreparation = ({
       ) : null}
       {!busy ? (
         <button
-          disabled={disabled || retry.isPending || retry.isSuccess}
-          onClick={() => retry.mutate()}
+          disabled={disabled}
+          aria-disabled={retry.isPending || retry.isSuccess || undefined}
+          aria-busy={retry.isPending || undefined}
+          onClick={() => {
+            if (!retry.isPending && !retry.isSuccess) retry.mutate()
+          }}
         >
           {retry.isPending ? 'Requesting retry…' : 'Retry description advice'}
         </button>

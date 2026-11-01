@@ -330,15 +330,13 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         session_lifetime_seconds=600,
     )
     web.client.close()
-    web.client = TestClient(
-        create_transport_test_app(
-            repository,
-            configuration,
-            clock=lambda: web.now,
-            cover_considerations=covers,
-        ),
-        base_url="https://review.test",
+    app = create_transport_test_app(
+        repository,
+        configuration,
+        clock=lambda: web.now,
+        cover_considerations=covers,
     )
+    web.client = TestClient(app, base_url="https://review.test")
     image_path = (
         f"/api/v1/review-cases/{case.review_case_id}"
         f"/cover-considerations/{consideration_id}/images/{candidate_reference}"
@@ -379,6 +377,32 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         },
     )
     assert 200 == retried.status_code, retried.text
+    # A retry whose projection fails after the record committed answers a bare
+    # 500 that is not a refusal; the browser reads it as uncertain (#1572).
+    covers.ensure.reset_mock()
+    covers.ensure.side_effect = ValueError("synthetic projection failure")
+    with TestClient(
+        app,
+        base_url="https://review.test",
+        cookies=web.client.cookies,
+        headers=web.client.headers,
+        raise_server_exceptions=False,
+    ) as unraised:
+        projection_failure = unraised.post(
+            retry_path,
+            headers={**web.origin, "X-CSRF-Token": str(login["csrf_token"])},
+        )
+    assert 500 == projection_failure.status_code, projection_failure.text
+    assert not projection_failure.headers["content-type"].startswith("application/json")
+    covers.ensure.assert_called_once()
+    covers.ensure.side_effect = CoverConsiderationError("stale")
+    refused = web.client.post(
+        retry_path,
+        headers={**web.origin, "X-CSRF-Token": str(login["csrf_token"])},
+    )
+    assert 409 == refused.status_code
+    assert "stale" == refused.json()["error"]["code"]
+    covers.ensure.side_effect = None
     detail = web.client.get(f"/api/v1/review-cases/{case.review_case_id}").json()
     cover = next(field for field in detail["fields"] if field["destination"] == "cover")
     with patch.object(
