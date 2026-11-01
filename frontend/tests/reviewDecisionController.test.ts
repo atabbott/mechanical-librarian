@@ -11,10 +11,12 @@ import { detail } from './fixtures'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 
 describe('review decision failure contract', () => {
-  it('retries only the closed transient server outcomes', () => {
+  it('retries any server failure the call may have followed', () => {
     for (const error of [
       new ApiError(503, 'persistence'),
       new ApiError(503, 'unavailable'),
+      new ApiError(503, 'other'),
+      new ApiError(500, 'invalid_error_response'),
       new CsrfRenewedError(),
     ]) {
       expect(classifyDecisionFailure(error)).toBe('retryable')
@@ -26,7 +28,7 @@ describe('review decision failure contract', () => {
       new ApiError(422, 'unsupported'),
       new ApiError(422, 'invalid_selection'),
       new ApiError(409, 'idempotency_conflict'),
-      new ApiError(503, 'other'),
+      new ApiError(503, 'react_assets_unavailable'),
     ]) {
       expect(classifyDecisionFailure(error)).toBe('permanent')
       expect(retryableDecisionFailure(error)).toBe(false)

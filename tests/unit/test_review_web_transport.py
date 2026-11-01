@@ -5,6 +5,7 @@ served composition.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import html
 import json
@@ -57,6 +58,7 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
+from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -1322,6 +1324,139 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert len(web.repository.decisions) == 1
 
 
+def test_decision_replay_after_post_commit_failure_confirms_the_recorded_decision(
+    web: ReviewWebContext[FakeReviewRepository], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import mechanical_librarian.application.review_web as review_web
+
+    login = web.login()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
+    field = detail["fields"][0]
+    payload = {
+        "destination": field["destination"],
+        "outcome": "accept",
+        "proposal_id": field["proposal_id"],
+        "selected_value": field["proposed_values"][0],
+        "target_fingerprint": field["target_fingerprint"],
+    }
+    headers = {
+        **web.origin,
+        "X-CSRF-Token": login["csrf_token"],
+        "Idempotency-Key": "decision-request-0002",
+    }
+    projection = review_web._decision_projection
+    failures = [RuntimeError("acknowledgement projection failed")]
+
+    def fail_once(decision: object) -> dict[str, object]:
+        if failures:
+            raise failures.pop()
+        return projection(decision)
+
+    monkeypatch.setattr(review_web, "_decision_projection", fail_once)
+    path = f"/api/v1/review-cases/{web.case.review_case_id}/decisions"
+
+    uncertain = web.client.post(path, headers=headers, json=payload)
+    assert uncertain.status_code == 503, uncertain.text
+    assert uncertain.json()["error"]["code"] == "unavailable"
+    assert len(web.repository.decisions) == 1
+    (recorded,) = web.repository.decisions.values()
+    # The recorded decision has made the case non-current; only the same-key
+    # replay branch, which runs before the currentness checks, can answer 200.
+    web.repository.case_current = False
+    web.now += 1
+
+    replay = web.client.post(path, headers=headers, json=payload)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["decision_id"] == json.loads(recorded)["decision_id"]
+    assert len(web.repository.decisions) == 1
+
+
+def test_pre_call_code_is_raised_only_by_the_session_dependency() -> None:
+    # The browser treats an unsafe 5xx as an uncertain outcome unless its code
+    # is proven to be raised before any handler body runs. This pins that
+    # proof for the one allow-listed code, react_assets_unavailable.
+    source = Path(__file__).resolve().parents[2] / "src"
+    web = source / "mechanical_librarian" / "interfaces" / "web"
+    hits = sorted(
+        path.relative_to(source).as_posix()
+        for path in source.rglob("*.py")
+        if "react_assets_unavailable" in path.read_text(encoding="utf-8")
+    )
+    assert hits == ["mechanical_librarian/interfaces/web/react_assets.py"]
+
+    tree = ast.parse((web / "app.py").read_text(encoding="utf-8"))
+    functions = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+
+    def references(node: ast.AST, name: str) -> bool:
+        return any(
+            isinstance(child, ast.Name) and child.id == name for child in ast.walk(node)
+        )
+
+    def own_nodes(function: ast.FunctionDef) -> Iterator[ast.AST]:
+        # The function's own body, not the bodies of functions nested in it.
+        pending: list[ast.AST] = list(function.body)
+        while pending:
+            node = pending.pop()
+            yield node
+            if not isinstance(node, ast.FunctionDef):
+                pending.extend(ast.iter_child_nodes(node))
+
+    def get_page(node: ast.FunctionDef) -> bool:
+        # A GET route outside /api/v1, which no unsafe request reaches.
+        return any(
+            isinstance(decorator, ast.Call)
+            and ast.unparse(decorator.func) == "app.get"
+            and isinstance(decorator.args[0], ast.Constant)
+            and not str(decorator.args[0].value).startswith("/api/")
+            for decorator in node.decorator_list
+        )
+
+    consumers = {
+        name
+        for name, node in functions.items()
+        if references(node, "ReactAssetRecovery")
+        and not any(
+            inner is not node
+            and isinstance(inner, ast.FunctionDef)
+            and references(inner, "ReactAssetRecovery")
+            for inner in ast.walk(node)
+        )
+    }
+    assert "authenticated_session_cookie" in consumers
+    dependency = functions["authenticated_session_cookie"]
+    (guard,) = (
+        node
+        for node in ast.walk(dependency)
+        if isinstance(node, ast.If)
+        and references(node, "ReactAssetRecovery")
+        and "request.method" in ast.unparse(node.test)
+    )
+    guard_source = ast.unparse(guard.test)
+    assert "startswith('/api/v1/')" in guard_source
+    assert "request.method not in {'GET', 'HEAD', 'OPTIONS'}" in guard_source
+    for name in consumers - {"authenticated_session_cookie"}:
+        node = functions[name]
+        assert not any(
+            isinstance(child, ast.Attribute) and child.attr == "code"
+            for child in ast.walk(node)
+        ), name
+        callers = [
+            caller
+            for caller in functions.values()
+            if any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == name
+                for call in own_nodes(caller)
+            )
+        ]
+        assert get_page(node) or (
+            callers and all(get_page(caller) for caller in callers)
+        ), name
+
+
 def _preparation_presentation(state: PreparationRunState) -> PreparationPresentation:
     terminal = state in {
         PreparationRunState.COMPLETED_CLEAN,
@@ -1399,6 +1534,175 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert current.status_code == 200
     assert current.headers["cache-control"] == "no-store, private"
     assert current.json()["presentation"] is None
+
+
+def _locked_read(*_args: object, **_kwargs: object) -> object:
+    raise sqlite3.OperationalError("database is locked")
+
+
+def test_committed_dismissal_after_failed_read_answers_persistence(
+    web: ReviewWebContext[FakeReviewRepository], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The dismissal commits; only the read that builds the response fails. The
+    # server keeps answering 503 persistence, a code the browser treats as an
+    # uncertain outcome rather than a refusal.
+    run_id = "preparation_run_" + "a" * 64
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    web.repository.preparation_presentation_value = _preparation_presentation(
+        PreparationRunState.COMPLETED_WITH_FAILURES
+    )
+    real_dismiss = web.repository.dismiss_preparation_presentation
+
+    def dismiss_then_lock(run: str, at: int) -> None:
+        real_dismiss(run, at)
+        monkeypatch.setattr(web.repository, "preparation_presentation", _locked_read)
+
+    monkeypatch.setattr(
+        web.repository, "dismiss_preparation_presentation", dismiss_then_lock
+    )
+    response = web.client.post(
+        "/api/v1/review-preparation/dismiss", headers=headers, json={"run_id": run_id}
+    )
+    assert web.repository.dismissed_preparation_runs == [run_id]
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "persistence"
+
+
+def test_committed_automatic_pause_after_failed_read_answers_persistence(
+    web: ReviewWebContext[FakeReviewRepository], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    real_pause = web.repository.pause_automatic_safety
+
+    def pause_then_lock(paused: bool, at: int) -> AutomaticSafetyState:
+        result = real_pause(paused, at)
+        monkeypatch.setattr(web.repository, "automatic_safety_state", _locked_read)
+        return result
+
+    monkeypatch.setattr(web.repository, "pause_automatic_safety", pause_then_lock)
+    response = web.client.post(
+        "/api/v1/metadata-policy/automatic-safety/pause",
+        headers=headers,
+        json={"paused": True},
+    )
+    assert web.repository.automatic_safety.paused is True
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "persistence"
+
+
+def test_admission_closed_after_committed_automatic_pause_is_not_a_refusal(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    application = web.client.app.state.review_application
+    operations = application.automatic_safety
+    real_pause = operations.pause
+
+    def pause_then_close(paused: object, at: object) -> None:
+        real_pause(paused, at)
+        # Shutdown closes admission between the commit and the read-back.
+        application._admission.close()
+
+    operations.pause = pause_then_close
+    response = web.client.post(
+        "/api/v1/metadata-policy/automatic-safety/pause",
+        headers=headers,
+        json={"paused": True},
+    )
+    assert web.repository.automatic_safety.paused is True
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("activated", "status", "code"),
+    (("automatic", 503, "persistence"), ("review", 422, "automatic_unavailable")),
+)
+def test_confirm_automatic_read_back_failure_is_uncertain_not_refused(
+    web: ReviewWebContext[FakeReviewRepository],
+    monkeypatch: pytest.MonkeyPatch,
+    activated: str,
+    status: int,
+    code: str,
+) -> None:
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    monkeypatch.setattr(
+        web.repository, "activate_qualified_automatic", lambda _at: activated
+    )
+    monkeypatch.setattr(web.repository, "shadow_posture", _locked_read)
+
+    response = web.client.post(
+        "/api/v1/metadata-policy/shadow/confirm-automatic", headers=headers
+    )
+
+    assert response.status_code == status, response.text
+    assert response.json()["error"]["code"] == code
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    (
+        ("get", "/api/v1/reviewer-access", None),
+        (
+            "put",
+            "/api/v1/reviewer-access/openrouter",
+            {"api_key": "synthetic", "expected_revision": 1, "model": "a/b"},
+        ),
+        (
+            "put",
+            "/api/v1/reviewer-access/selection",
+            {"engine": None, "expected_revision": 1},
+        ),
+        ("delete", "/api/v1/reviewer-access/codex", {"expected_revision": 1}),
+    ),
+)
+def test_closed_admission_on_reviewer_routes_is_a_structured_unavailability(
+    web: ReviewWebContext[FakeReviewRepository],
+    method: str,
+    path: str,
+    body: dict[str, object] | None,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessOperations,
+    )
+
+    access = Mock(spec=ReviewerAccessOperations)
+    for name in ("read", "configure_openrouter", "select_none", "clear_codex"):
+        getattr(access, name).side_effect = ReviewApplicationError("unavailable")
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+            reviewer_access=access,
+        ),
+        base_url="https://review.test",
+    )
+    login = web.login()
+
+    response = web.client.request(
+        method,
+        path,
+        headers={**web.origin, "x-csrf-token": login["csrf_token"]},
+        json=body,
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "reviewer_access_unavailable"
 
 
 def test_preparation_dismissal_rejects_declared_and_streamed_oversized_bodies(

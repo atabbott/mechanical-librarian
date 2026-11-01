@@ -19,6 +19,8 @@ import {
   policyAutomaticQualification,
   SessionExpiredError,
   refusalCopy,
+  PRE_CALL_SERVER_CODES,
+  uncertainWriteOutcome,
   mapLibrary,
   mapEvidence,
   mapHistory,
@@ -3925,5 +3927,32 @@ describe('signInLocation', () => {
       '/login?next=%2Freview%2Fcase-1%3Ffield%3Dtitle',
     )
     expect(signInLocation({ pathname: '/library', search: '' })).toBe('/login?next=%2Flibrary')
+  })
+})
+
+describe('uncertainWriteOutcome', () => {
+  it.each([
+    ['a lost or unreadable response', new AmbiguousMutationError()],
+    ["Starlette's text 500", new ApiError(500, 'invalid_error_response')],
+    ['503 persistence', new ApiError(503, 'persistence')],
+    ['503 unavailable', new ApiError(503, 'unavailable')],
+    ['503 reviewer_access_unavailable', new ApiError(503, 'reviewer_access_unavailable')],
+    ['a client mapper refusal after a 2xx write', new ApiError(502, 'invalid_x')],
+  ])('treats %s as possibly committed', (_name, error) => {
+    expect(uncertainWriteOutcome(error)).toBe(true)
+  })
+
+  it.each([
+    ['the pre-call build refusal', new ApiError(503, 'react_assets_unavailable')],
+    ['a renewed CSRF token', new CsrfRenewedError()],
+    ['a stale refusal', new ApiError(409, 'stale')],
+    ['a validation refusal', new ApiError(422, 'automatic_unavailable')],
+    ['a plain error', new Error('network')],
+  ])('treats %s as nothing changed', (_name, error) => {
+    expect(uncertainWriteOutcome(error)).toBe(false)
+  })
+
+  it('allow-lists only the code the session dependency raises before a handler runs', () => {
+    expect([...PRE_CALL_SERVER_CODES]).toEqual(['react_assets_unavailable'])
   })
 })

@@ -2499,6 +2499,10 @@ def reviewer_failure_response(error: Exception) -> tuple[int, str]:
             if str(error).endswith("stale")
             else (503, "reviewer_access_unavailable")
         )
+    if isinstance(error, ReviewApplicationError):
+        # The served application refused admission before the reviewer
+        # command ran (shutdown or a fail-closed dispatcher).
+        return 503, "reviewer_access_unavailable"
     if isinstance(error, ReviewerAccessApplicationError):
         if error.code == "access_changed":
             return 409, "reviewer_access_stale"
@@ -2506,6 +2510,13 @@ def reviewer_failure_response(error: Exception) -> tuple[int, str]:
             return 503, error.code
         return 422, error.code
     return 422, "reviewer_access_invalid"
+
+
+_REVIEWER_FAILURES = (
+    ReviewerAccessRepositoryError,
+    ReviewerAccessApplicationError,
+    ReviewApplicationError,
+)
 
 
 def _register_reviewer_access_routes(
@@ -2534,7 +2545,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session)
         try:
             return authority().read()
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.post(
@@ -2553,7 +2564,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().refresh_openrouter(task)
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.post(
@@ -2570,7 +2581,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().describe_contained_description()
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.post(
@@ -2591,11 +2602,7 @@ def _register_reviewer_access_routes(
             return authority().test_description_model(
                 request.api_key.get_secret_value(), request.model
             )
-        except (
-            ValueError,
-            ReviewerAccessRepositoryError,
-            ReviewerAccessApplicationError,
-        ) as error:
+        except (ValueError, *_REVIEWER_FAILURES) as error:
             raise problem(error) from None
 
     @app.put(
@@ -2619,11 +2626,7 @@ def _register_reviewer_access_routes(
                 model=request.model,
                 task=request.task,
             )
-        except (
-            ValueError,
-            ReviewerAccessRepositoryError,
-            ReviewerAccessApplicationError,
-        ) as error:
+        except (ValueError, *_REVIEWER_FAILURES) as error:
             raise problem(error) from None
 
     @app.delete(
@@ -2644,7 +2647,7 @@ def _register_reviewer_access_routes(
             return authority().clear_openrouter(
                 expected_revision=request.expected_revision
             )
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.put(
@@ -2670,7 +2673,7 @@ def _register_reviewer_access_routes(
             return operations.select_none(
                 expected_revision=request.expected_revision, task=request.task
             )
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.post(
@@ -2701,7 +2704,7 @@ def _register_reviewer_access_routes(
                     failure=device.failure,
                 ),
             )
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.get(
@@ -2715,7 +2718,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session)
         try:
             return authority().codex_status()
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.post(
@@ -2733,7 +2736,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().recheck_codex()
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.post(
@@ -2751,7 +2754,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().cancel_codex()
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
     @app.delete(
@@ -2770,7 +2773,7 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().clear_codex(expected_revision=request.expected_revision)
-        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+        except _REVIEWER_FAILURES as error:
             raise problem(error) from None
 
 
@@ -3023,7 +3026,11 @@ def _register_policy_routes(
             return _ShadowPostureResponse.model_validate(
                 notebook.confirm_automatic(application.now())
             )
-        except MetadataPolicyApplicationError:
+        except MetadataPolicyApplicationError as error:
+            if str(error) == "shadow posture is unavailable":
+                # Automatic was activated; only the read-back failed, so the
+                # outcome is uncertain rather than refused.
+                raise HTTPException(503, detail={"code": "persistence"}) from None
             raise HTTPException(422, detail={"code": "automatic_unavailable"}) from None
 
     def _automatic_safety_response() -> _AutomaticSafetyResponse:
@@ -3033,6 +3040,18 @@ def _register_policy_routes(
             global_suspension=state.global_suspension,
             category_suspensions=dict(state.category_suspensions),
         )
+
+    def _committed_automatic_safety_response() -> _AutomaticSafetyResponse:
+        # The command has committed, so a failed read-back is an uncertain
+        # outcome, never the refusal the command's own handler reports.
+        try:
+            return _automatic_safety_response()
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except ReviewApplicationError as error:
+            if error.code != "unavailable":
+                raise
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
 
     @app.get(
         "/api/v1/metadata-policy/automatic-safety",
@@ -3059,11 +3078,11 @@ def _register_policy_routes(
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             automatic_safety.pause(payload.paused, application.now())
-            return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
+        return _committed_automatic_safety_response()
 
     @app.post(
         "/api/v1/metadata-policy/automatic-safety/recover",
@@ -3083,11 +3102,11 @@ def _register_policy_routes(
             if category is not None and not category:
                 raise ValueError
             automatic_safety.recover(application.now(), category)
-            return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
+        return _committed_automatic_safety_response()
 
     @app.post(
         "/api/v1/metadata-policy/automatic-safety/suspend",
@@ -3108,11 +3127,11 @@ def _register_policy_routes(
             automatic_safety.suspend(
                 payload.reason, application.now(), payload.category
             )
-            return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
+        return _committed_automatic_safety_response()
 
     @app.get(
         "/api/v1/metadata-policy/shadow/leave-preview",
