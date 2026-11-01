@@ -388,10 +388,12 @@ def test_installed_root_repository_opens_with_a_fresh_shared_admission(
         reopened.close()
 
 
-_INSTALLED_PHASES = (
-    "_installed_continuous_qualification",
-    "_installed_automatic_series_qualification",
-)
+# Each installed phase and how many times it opens its root repository (the
+# continuous phase reopens it to prove restart recovery).
+_INSTALLED_PHASES = {
+    "_installed_continuous_qualification": 2,
+    "_installed_automatic_series_qualification": 1,
+}
 
 
 def _shared_admission_violations(module: ast.Module) -> list[str]:
@@ -411,16 +413,34 @@ def _shared_admission_violations(module: ast.Module) -> list[str]:
     functions = {
         node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
     }
-    for phase in _INSTALLED_PHASES:
+    for phase, expected_opens in _INSTALLED_PHASES.items():
+        opens = 0
+        pipelines = 0
         for node in ast.walk(functions[phase]):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            if not isinstance(node, ast.Call):
                 continue
-            if node.func.id == "open_repository":
+            called = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if called == "open_repository":
                 violations.append(phase + ": bare open_repository")
-            if node.func.id == "create_review_pipeline":
+            if called == "_open_root_repository":
+                opens += 1
+            if called == "create_review_pipeline":
+                pipelines += 1
                 source = keyword_source(node, "admission")
                 if source is None or not source.endswith(".operation_admission"):
                     violations.append(phase + ": pipeline without root admission")
+        # A refactor that moves composition out of the phase must move this
+        # guard with it, never leave it checking nothing.
+        if opens != expected_opens:
+            violations.append(phase + ": root opens moved")
+        if pipelines != 1:
+            violations.append(phase + ": pipeline composition moved")
     client = functions["_compose_review_client"]
     composes = [
         node
@@ -455,6 +475,18 @@ def test_installed_phases_compose_around_the_root_admission() -> None:
             ):
                 node.keywords = [k for k in node.keywords if k.arg != removed]
         assert _shared_admission_violations(module) != []
+
+    # A root open that bypasses the admission helper is caught too.
+    module = ast.parse(source)
+    for node in ast.walk(module):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_open_root_repository"
+        ):
+            node.func.id = "open_repository"
+            break
+    assert _shared_admission_violations(module) != []
 
 
 @pytest.mark.parametrize(
