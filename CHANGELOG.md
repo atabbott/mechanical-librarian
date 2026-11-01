@@ -45,6 +45,8 @@ brackets are GitHub issues.
   now records, as shadow evidence only, whether its own cover could be
   recovered from a legacy cover entry, a guide reference or a cover page. The
   cover stays absent, and nothing is chosen or shown from it yet (#1357).
+- Closing the Attention queue right after opening it no longer moves focus to
+  the closing queue or scrolls the page to it first (#1563).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

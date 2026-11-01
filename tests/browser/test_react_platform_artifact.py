@@ -3999,6 +3999,7 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
             writes_off_handoff=True,
         )
         rail = page.get_by_role("complementary", name="Attention queue")
+        heading = rail.get_by_role("heading", name="Attention")
         toggle = page.locator(".attention-toggle")
         closers = {
             "Close": rail.get_by_role("button", name="Close", exact=True),
@@ -4017,6 +4018,10 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 page.locator(".compact-workspace-back").wait_for()
                 toggle.click()
                 expect(toggle).to_have_attribute("aria-expanded", "true")
+                # The owner sees the opened rail, its heading focused, before
+                # closing it; a close in the same frame as the open is the
+                # Library route's Vitest case (#1563).
+                expect(heading).to_be_focused()
                 control.click()
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
