@@ -1018,3 +1018,54 @@ def test_respelling_a_current_language_is_decided_automatically(tmp_path, audio)
             "value": "English",
         }
         assert field["automatic_withheld_reason"] is None
+
+
+_AUDIOBOOK_REGION_TEXT = (
+    "This spelling names a region, and dropping a region is never done for you "
+    "on audiobooks. Choose the plain language yourself if you want it."
+)
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_regional_language_tag_withheld_reason_is_specific(tmp_path, audio):
+    """An audiobook's regional tag says why Automatic left it (#1593)."""
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.language_reports import publish_language_case
+
+    report = language_report(("English", "en"), "en-GB", audio=audio)
+    with closing(open_repository(tmp_path / "region.sqlite")) as repository:
+        case_id, _ = publish_language_case(repository, report)
+        outcome = next(
+            value
+            for value in ShadowOutcomeSet.from_json(
+                repository.read_current_review_case(
+                    case_id, None
+                ).final_outcome_document
+            ).outcomes
+            if value.destination == "language"
+        )
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+    assert field["notices"] == ["language_display_name"]
+    if audio:
+        assert (
+            outcome.disposition,
+            outcome.policy_option,
+            outcome.reason_code,
+        ) == (
+            "manual",
+            "display_name:audiobook_language_replace",
+            "unique_supported_candidate",
+        )
+        assert field["automatic_decision"] is None
+        assert field["automatic_withheld_reason"] == _AUDIOBOOK_REGION_TEXT
+    else:
+        # An ebook's regional tag is respelled for you, so nothing is withheld.
+        assert field["automatic_decision"]["selected_value"] == {
+            "kind": "text",
+            "value": "English",
+        }
+        assert field["automatic_withheld_reason"] is None
