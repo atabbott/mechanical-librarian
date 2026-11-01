@@ -43,6 +43,7 @@ from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
     ReviewPipelineError,
+    ReviewPipelineGuardContention,
     TargetConnectionCondition,
     is_first_boot_scan_id,
     pipeline_scan_id,
@@ -898,6 +899,21 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             elif isinstance(error, MetadataReportError):
                 raise
             elif isinstance(error, sqlite3.Error):
+                # Only plain SQLITE_BUSY after a proven release of the scope and
+                # its connection leaves the claim exactly as it was (#1547), so
+                # the lane may retry this guard. Every other failure, or an
+                # unprovable release, keeps the ordinary item settlement.
+                try:
+                    released = (
+                        not transaction.started and not self._connection.in_transaction
+                    )
+                except sqlite3.Error:
+                    released = False
+                if (
+                    released
+                    and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
+                ):
+                    raise ReviewPipelineGuardContention() from error
                 raise MetadataReportError(
                     "target connection condition is unavailable"
                 ) from error
