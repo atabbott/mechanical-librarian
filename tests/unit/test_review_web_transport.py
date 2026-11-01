@@ -57,6 +57,7 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
+from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -1322,6 +1323,53 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert len(web.repository.decisions) == 1
 
 
+def test_decision_replay_after_post_commit_failure_confirms_the_recorded_decision(
+    web: ReviewWebContext[FakeReviewRepository], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import mechanical_librarian.application.review_web as review_web
+
+    login = web.login()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
+    field = detail["fields"][0]
+    payload = {
+        "destination": field["destination"],
+        "outcome": "accept",
+        "proposal_id": field["proposal_id"],
+        "selected_value": field["proposed_values"][0],
+        "target_fingerprint": field["target_fingerprint"],
+    }
+    headers = {
+        **web.origin,
+        "X-CSRF-Token": login["csrf_token"],
+        "Idempotency-Key": "decision-request-0002",
+    }
+    projection = review_web._decision_projection
+    failures = [RuntimeError("acknowledgement projection failed")]
+
+    def fail_once(decision: object) -> dict[str, object]:
+        if failures:
+            raise failures.pop()
+        return projection(decision)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(review_web, "_decision_projection", fail_once)
+    path = f"/api/v1/review-cases/{web.case.review_case_id}/decisions"
+
+    uncertain = web.client.post(path, headers=headers, json=payload)
+    assert uncertain.status_code == 503, uncertain.text
+    assert uncertain.json()["error"]["code"] == "unavailable"
+    assert len(web.repository.decisions) == 1
+    (recorded,) = web.repository.decisions.values()
+    # The recorded decision has made the case non-current; only the same-key
+    # replay branch, which runs before the currentness checks, can answer 200.
+    web.repository.case_current = False
+    web.now += 1
+
+    replay = web.client.post(path, headers=headers, json=payload)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["decision_id"] == json.loads(recorded)["decision_id"]
+    assert len(web.repository.decisions) == 1
+
+
 def _preparation_presentation(state: PreparationRunState) -> PreparationPresentation:
     terminal = state in {
         PreparationRunState.COMPLETED_CLEAN,
@@ -1399,6 +1447,145 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert current.status_code == 200
     assert current.headers["cache-control"] == "no-store, private"
     assert current.json()["presentation"] is None
+
+
+def _locked_read(*_args: object, **_kwargs: object) -> object:
+    raise sqlite3.OperationalError("database is locked")
+
+
+def test_committed_dismissal_after_failed_read_answers_persistence(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    # The dismissal commits; only the read that builds the response fails. The
+    # server keeps answering 503 persistence, a code the browser treats as an
+    # uncertain outcome rather than a refusal.
+    run_id = "preparation_run_" + "a" * 64
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    web.repository.preparation_presentation_value = _preparation_presentation(
+        PreparationRunState.COMPLETED_WITH_FAILURES
+    )
+    real_dismiss = web.repository.dismiss_preparation_presentation
+
+    def dismiss_then_lock(run: str, at: int) -> None:
+        real_dismiss(run, at)
+        web.repository.preparation_presentation = _locked_read  # type: ignore[method-assign]
+
+    web.repository.dismiss_preparation_presentation = dismiss_then_lock  # type: ignore[method-assign]
+    response = web.client.post(
+        "/api/v1/review-preparation/dismiss", headers=headers, json={"run_id": run_id}
+    )
+    assert web.repository.dismissed_preparation_runs == [run_id]
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "persistence"
+
+
+def test_committed_automatic_pause_after_failed_read_answers_persistence(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    real_pause = web.repository.pause_automatic_safety
+
+    def pause_then_lock(paused: bool, at: int) -> AutomaticSafetyState:
+        result = real_pause(paused, at)
+        web.repository.automatic_safety_state = _locked_read  # type: ignore[method-assign,assignment]
+        return result
+
+    web.repository.pause_automatic_safety = pause_then_lock  # type: ignore[method-assign]
+    response = web.client.post(
+        "/api/v1/metadata-policy/automatic-safety/pause",
+        headers=headers,
+        json={"paused": True},
+    )
+    assert web.repository.automatic_safety.paused is True
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "persistence"
+
+
+@pytest.mark.parametrize(
+    ("activated", "status", "code"),
+    (("automatic", 503, "persistence"), ("review", 422, "automatic_unavailable")),
+)
+def test_confirm_automatic_read_back_failure_is_uncertain_not_refused(
+    web: ReviewWebContext[FakeReviewRepository],
+    activated: str,
+    status: int,
+    code: str,
+) -> None:
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    web.repository.activate_qualified_automatic = lambda _at: activated  # type: ignore[method-assign]
+    web.repository.shadow_posture = _locked_read  # type: ignore[method-assign]
+
+    response = web.client.post(
+        "/api/v1/metadata-policy/shadow/confirm-automatic", headers=headers
+    )
+
+    assert response.status_code == status, response.text
+    assert response.json()["error"]["code"] == code
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    (
+        ("get", "/api/v1/reviewer-access", None),
+        (
+            "put",
+            "/api/v1/reviewer-access/openrouter",
+            {"api_key": "synthetic", "expected_revision": 1, "model": "a/b"},
+        ),
+        (
+            "put",
+            "/api/v1/reviewer-access/selection",
+            {"engine": None, "expected_revision": 1},
+        ),
+        ("delete", "/api/v1/reviewer-access/codex", {"expected_revision": 1}),
+    ),
+)
+def test_closed_admission_on_reviewer_routes_is_a_structured_unavailability(
+    web: ReviewWebContext[FakeReviewRepository],
+    method: str,
+    path: str,
+    body: dict[str, object] | None,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessOperations,
+    )
+
+    access = Mock(spec=ReviewerAccessOperations)
+    for name in ("read", "configure_openrouter", "select_none", "clear_codex"):
+        getattr(access, name).side_effect = ReviewApplicationError("unavailable")
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+            reviewer_access=access,
+        ),
+        base_url="https://review.test",
+    )
+    login = web.login()
+
+    response = web.client.request(
+        method,
+        path,
+        headers={**web.origin, "x-csrf-token": login["csrf_token"]},
+        json=body,
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "reviewer_access_unavailable"
 
 
 def test_preparation_dismissal_rejects_declared_and_streamed_oversized_bodies(
