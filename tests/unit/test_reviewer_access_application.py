@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -1170,3 +1171,73 @@ def test_committed_reviewer_change_is_answered_when_the_change_hook_refuses(
     assert view.mapping is None
     assert (key is None) is (command == "clear_openrouter")
     assert hook == ["changed"]
+
+
+def _configured(operations: ReviewerAccessOperations) -> int:
+    return operations.configure_openrouter(
+        expected_revision=1, api_key="secret-key", model="example/vision"
+    ).revision
+
+
+def _codex_selected(operations: ReviewerAccessOperations) -> int:
+    return operations.select_codex(expected_revision=1).revision
+
+
+_COMMITTED_COMMANDS: dict[
+    str,
+    tuple[
+        Callable[[ReviewerAccessOperations], int],
+        Callable[[ReviewerAccessOperations, int], ReviewerAccessView],
+    ],
+] = {
+    "select_none": (
+        _configured,
+        lambda access, revision: access.select_none(expected_revision=revision),
+    ),
+    "clear_openrouter": (
+        _configured,
+        lambda access, revision: access.clear_openrouter(expected_revision=revision),
+    ),
+    "select_codex": (
+        lambda _access: 1,
+        lambda access, revision: access.select_codex(expected_revision=revision),
+    ),
+    "clear_codex": (
+        _codex_selected,
+        lambda access, revision: access.clear_codex(expected_revision=revision),
+    ),
+    "start_codex_clearing_selection": (
+        _codex_selected,
+        lambda access, revision: access.start_codex(expected_revision=revision)[0],
+    ),
+    "refresh_openrouter": (
+        _configured,
+        lambda access, _revision: access.refresh_openrouter(),
+    ),
+}
+
+
+@pytest.mark.parametrize("command", tuple(_COMMITTED_COMMANDS))
+def test_committed_reviewer_change_is_answered_when_the_later_revision_check_locks(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    operations, _auth, _calls, _codex = _operations(auth_state="usable")
+    prepare, run = _COMMITTED_COMMANDS[command]
+    revision = prepare(operations)
+    store = cast("ReviewerAccessStore", operations._repository)
+    real_replace = store.replace
+
+    def locked(_revision: int) -> bool:
+        raise ReviewerAccessStoreError("reviewer access is unavailable")
+
+    def replace_then_lock(*args, **kwargs):
+        result = real_replace(*args, **kwargs)
+        monkeypatch.setattr(store, "revision_is_current", locked)
+        return result
+
+    monkeypatch.setattr(store, "replace", replace_then_lock)
+
+    view = run(operations, revision)
+
+    document, _key = store.snapshot()
+    assert document.revision == view.revision == revision + 1
