@@ -4584,7 +4584,7 @@ def _series_titled_plan(title: str) -> MetadataDiscoveryPlan:
 
 
 def _series_titled_provider(
-    sent: list[str | None], *, catalogued: bool
+    sent: list[str | None], *, catalogued: bool, series: list[str] | None = None
 ) -> OpenLibraryMetadataProvider:
     def handler(request: httpx.Request) -> httpx.Response:
         value: dict[str, object]
@@ -4608,6 +4608,8 @@ def _series_titled_provider(
         else:
             assert "/works/OL5W.json" == request.url.path
             value = _work("/works/OL5W")
+            if series is not None:
+                value["series"] = series
         return httpx.Response(
             200, headers={"content-type": "application/json"}, json=value
         )
@@ -4671,3 +4673,16 @@ def test_an_ebook_lane_that_finds_nothing_records_every_search_it_sent() -> None
         == lane.exhausted_dispatch
     )
     assert work_ladder_diagnostics(len(ladder), 0) == lane.diagnostics
+
+
+def test_an_ebook_whose_work_states_another_series_is_not_that_work() -> None:
+    """#1499: a series stated without a position must still be the one stripped."""
+    sent: list[str | None] = []
+    observation = (
+        _series_titled_provider(sent, catalogued=True, series=["Other Saga"])
+        .observe(_series_titled_plan("Local work title (Example Saga)"))
+        .observation
+    )
+
+    (lane,) = observation.lanes
+    assert ProviderStatus.NO_MATCH is lane.status

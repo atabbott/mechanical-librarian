@@ -1032,6 +1032,7 @@ def replay_provider_work_identity_admission(
     variant_excluded: bool = False,
     provider_series: tuple[tuple[str, str], ...] = (),
     provider_series_memberships: tuple[tuple[str, str | None], ...] = (),
+    provider_series_names: tuple[str, ...] = (),
     audiobook: bool = False,
     runtime_tight: bool = False,
     leading_number: bool = False,
@@ -1046,7 +1047,10 @@ def replay_provider_work_identity_admission(
     caller passes it only for a tight candidate on an audiobook plan's asserted
     lane from an audiobook authority. A band title production also needs one
     of `provider_series_memberships`, the product's own stated series names and
-    positions, to state the series the rung stripped.
+    positions, to state the series the rung stripped. An ebook's series-name
+    production also reads `provider_series_names`, every series name the
+    product states with or without a position, so a stated series always has
+    to be this one (#1499).
     """
     admission = admit_provider_work_identity(
         local_title=local_title,
@@ -1162,7 +1166,9 @@ def replay_provider_work_identity_admission(
         == (WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,)
         and not work_title_has_variant_marker(local_title)
         and _RECORDING_FORMAT.search(local_title) is None
-        and _ebook_series_decoration(local_title, provider_series_memberships)
+        and _ebook_series_decoration(
+            local_title, provider_series_memberships, provider_series_names
+        )
     ):
         # An ebook titled "Title (Series Name)" is the work its provider
         # calls "Title" by the same authors: the rung that stripped the
@@ -2092,7 +2098,9 @@ _EBOOK_PART_WORDS = frozenset(
 
 
 def _ebook_series_decoration(
-    local_title: str, memberships: tuple[tuple[str, str | None], ...]
+    local_title: str,
+    memberships: tuple[tuple[str, str | None], ...],
+    names: tuple[str, ...] = (),
 ) -> bool:
     """Whether an ebook's bracketed decoration reads as its series name (#1499).
 
@@ -2111,6 +2119,9 @@ def _ebook_series_decoration(
     inside = "" if paren is None else _clean(paren.group(1))
     position = _PAREN_SERIES_POSITION.fullmatch(inside)
     name = inside if position is None else _clean(position.group("series"))
+    if names:
+        # A series stated without a position must still be this one.
+        return bool(name) and any(_closed_equal(stated, name) for stated in names)
     tokens = _PUNCTUATION.sub(" ", name).casefold().split()
     return bool(tokens) and not (
         any(token in _EBOOK_PART_WORDS for token in tokens)

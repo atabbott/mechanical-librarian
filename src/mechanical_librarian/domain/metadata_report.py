@@ -3543,6 +3543,14 @@ def provider_candidate_work_identity_admission(
             )
         ),
         provider_series_memberships=memberships,
+        provider_series_names=tuple(
+            claim.value
+            for claim in ordered
+            if claim.kind is ClaimKind.SERIES
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        ),
         audiobook=audiobook,
         runtime_tight=runtime_tight,
         leading_number=leading_number,
