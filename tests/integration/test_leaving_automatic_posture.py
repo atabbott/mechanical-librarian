@@ -41,7 +41,10 @@ from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineRepository,
@@ -454,6 +457,42 @@ def test_owner_answers_from_before_leaving_automatic_are_kept(
     }
 
 
+def test_an_owner_plan_waits_while_its_case_is_retired_for_reconciliation(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A plan picked between the retirement and re-admission still writes."""
+    case = library.case()
+    destination = next(
+        str(value)
+        for _, value in library.attention()
+        if value in {proposal["destination"] for proposal in case.proposals}
+    )
+    decision = _accept(case, destination, "during-reconciliation", 11)
+    library.root.record_human_decision(decision)
+    library.root.grant_field_effect_consents("primary", ("ebooks",), (destination,), 12)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[decision.decision_id].plan
+    target.seed(plan)
+
+    # Leaving Automatic retires the case; preparation has not re-admitted it.
+    assert library.root.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    assert library.root._connection.execute(
+        "SELECT review_case_id FROM current_review_case_lineages WHERE " + _LINEAGE
+    ).fetchone() == (None,)
+    assert library.root.next_field_effect_plan_id(None) is None
+    with pytest.raises(GuardedApplicationError, match="deferred"):
+        service.apply(plan.plan_id)
+    assert _planned(library)[decision.decision_id].state == "planned"
+
+    library.now[0] = 30
+    library.drain()
+    assert library.case_id() == case.review_case_id
+    assert library.root.next_field_effect_plan_id(None) == (plan.plan_id, "ebooks")
+    assert service.apply(plan.plan_id).state == "verified"
+
+
 def test_an_automatic_decision_writes_only_in_the_automatic_posture(
     library: _Library, tmp_path: Path
 ) -> None:
@@ -511,7 +550,7 @@ def test_an_automatic_decision_writes_only_in_the_automatic_posture(
 def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
     library: _Library, tmp_path: Path, confirm_automatic: bool
 ) -> None:
-    """The plan stays stale in Preview and after Confirm Automatic."""
+    """The plan waits in Preview and goes stale after Confirm Automatic."""
     automatic = library.automatic()
     library.root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
     scheduler, service, target = _applier(library, tmp_path)
@@ -532,6 +571,16 @@ def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
         assert not library.root.field_effect_authority_is_current(plan.authority)
     target.seed(plan)
     before = target.read(plan).value
+    if not confirm_automatic:
+        # Outside Automatic the plan waits rather than being consumed.
+        assert library.root.next_field_effect_plan_id(None) is None
+        with pytest.raises(GuardedApplicationError, match="deferred"):
+            service.apply(plan.plan_id)
+        assert _planned(library)[automatic.decision_id].state == "planned"
+        library.root.activate_qualified_automatic(40)
+    # In Automatic it is selected and goes stale: it belongs to the earlier
+    # generation.
+    assert library.root.next_field_effect_plan_id(None) == (plan.plan_id, "ebooks")
     applied = service.apply(plan.plan_id)
     assert (applied.state, applied.failure) == ("stale", "authority")
     assert target.read(plan).value == before

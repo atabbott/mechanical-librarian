@@ -69,6 +69,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.schema import (
     _proposal_browse_fact_pair,
     _require_equal_facts,
+    _same_policy_retirement_sql,
     _validate_report_row,
     _validated_report_row,
 )
@@ -402,17 +403,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 ).fetchone()
                 == ("policy-activation-v1", case.review_case_id)
                 and self._connection.execute(
-                    "SELECT 1 FROM metadata_policy_state state "
-                    "JOIN metadata_policy_transitions activation "
-                    "ON activation.generation=state.generation "
-                    "AND activation.from_policy_id=activation.to_policy_id "
-                    "JOIN metadata_policy_transition_items cohort "
-                    "ON cohort.transition_id=activation.transition_id "
-                    "AND cohort.connection_name=? AND cohort.library_name=? "
-                    "AND cohort.item_id=? WHERE state.singleton=1",
+                    "SELECT " + _same_policy_retirement_sql("?", "?", "?"),
                     lineage,
                 ).fetchone()
-                is not None
+                == (1,)
             ):
                 # The work returned to this case's content, so the case starts
                 # a new episode: the owner decisions recorded on it so far are

@@ -40,7 +40,10 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
@@ -630,9 +633,21 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> 
             assert authority.current(operation.plan.authority)
             assert repository.enter_shadow_preview(7, ("ebooks",)) == "preview"
             assert not authority.current(operation.plan.authority)
+            # Outside Automatic the planned cover waits: it is not selected,
+            # and applying it directly defers without consuming it.
+            target.seed(operation.plan)
+            assert repository.next_field_effect_plan_id(None) is None
+            with pytest.raises(GuardedApplicationError, match="deferred"):
+                application.apply(operation.plan.plan_id)
+            assert (
+                repository.get_field_effect(operation.plan.plan_id).state == "planned"
+            )
             repository.activate_qualified_automatic(8)
             assert authority.current(operation.plan.authority)
-            target.seed(operation.plan)
+            assert repository.next_field_effect_plan_id(None) == (
+                operation.plan.plan_id,
+                operation.plan.library,
+            )
             assert application.apply(operation.plan.plan_id).state == "verified"
             assert target.read(operation.plan).value == automatic.artifact_id
         finally:

@@ -202,6 +202,9 @@ retired by an earlier change of policy when that happens starts a new episode
 on return, as any case does after a policy change. An automatic
 decision writes only in the Automatic posture, and one from an earlier policy
 generation no longer decides its field.
+A queued write whose authority is withdrawn only for now waits rather than
+going stale: an automatic write waits outside Automatic, and an owner's write
+waits while its case is retired by that reactivation and not yet returned.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still

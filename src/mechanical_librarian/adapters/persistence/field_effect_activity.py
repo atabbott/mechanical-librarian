@@ -79,6 +79,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
     _validate_report_row,
@@ -196,17 +197,6 @@ _ActivityStamp = tuple[tuple[int, int], _ActivityDatabaseIdentity]
 # the owner is told about is decided here (#968).
 _RECORDED_ONLY_EXCLUDED_SQL = (
     "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
-)
-
-# Automatic authority decides and writes only in the Automatic posture. An
-# automatic decision recorded there stays on its case when the owner leaves
-# Automatic, and leaving Automatic with the policy unchanged admits that same
-# case again (#1568), so its field, cover or description decision waits until
-# the owner confirms Automatic again. Owner decisions are never gated on
-# posture.
-_AUTOMATIC_POSTURE_SQL = (
-    "EXISTS (SELECT 1 FROM metadata_policy_state "
-    "WHERE singleton=1 AND posture='automatic')"
 )
 
 # An effect holds its decision unless it was superseded, abandoned, or staled

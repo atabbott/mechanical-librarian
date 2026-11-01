@@ -808,12 +808,12 @@ def test_live_and_target_reads_reach_effects_by_their_indexes(
     reads = {
         "claim": (
             lambda: repository.next_field_effect_plan_id(None),
-            ["SCAN field_effects USING INDEX field_effects_ready"],
+            ["SCAN effect USING INDEX field_effects_ready"],
             "field_effects_ready",
         ),
         "alternating claim": (
             lambda: repository.next_field_effect_plan_id("books"),
-            ["SCAN field_effects USING INDEX field_effects_ready"],
+            ["SCAN effect USING INDEX field_effects_ready"],
             "field_effects_ready",
         ),
         "waiting": (
