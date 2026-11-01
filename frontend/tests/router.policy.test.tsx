@@ -1668,22 +1668,38 @@ it('saves description preferences independently next to Cover guidance and keeps
   expect(within(region).getByRole('link')).toHaveAttribute('href', '/settings?group=reviewer')
 })
 
-it('says unconfirmed description preferences may have been saved and offers a reload', async () => {
+it('reloads unconfirmed description preferences and says they may have been saved', async () => {
   const http = createHttp()
-  http.getSettings = vi.fn(async () => view())
-  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+  const initial = view()
+  let current = initial
+  http.getSettings = vi.fn(async () => current)
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+    // The save committed; only its response failed.
+    current = { ...initial, document: write.document }
     throw new ApiError(503, 'settings_unavailable')
   })
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Description advice' })
   const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
   await userEvent.setup().click(within(marketing).getByRole('button', { name: 'Off' }))
+  const reads = vi.mocked(http.getSettings).mock.calls.length
   await userEvent
     .setup()
     .click(within(region).getByRole('button', { name: 'Save description preferences' }))
 
   expect(await within(region).findByRole('alert')).toHaveTextContent(
-    'Description preferences may have been saved. Reload the saved preferences and check them before saving again.',
+    'Description preferences could not be confirmed. They may have been saved; the saved preferences were reloaded. Check them before saving again.',
+  )
+  await waitFor(() =>
+    expect(within(region).getByRole('status')).toHaveTextContent(
+      'Saved with their own button, not with the policy.',
+    ),
+  )
+  expect(within(region).queryByText(/Unsaved\./u)).toBeNull()
+  expect(vi.mocked(http.getSettings).mock.calls.length).toBeGreaterThan(reads)
+  expect(within(marketing).getByRole('button', { name: 'Off' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
   )
   expect(
     within(region).getByRole('button', { name: 'Reload description preferences' }),
