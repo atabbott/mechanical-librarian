@@ -21,6 +21,6 @@ run() {  # label, seconds, pytest args...
   echo "::endgroup::"
 }
 uv pip install py-spy >/dev/null 2>&1 || true
-for i in $(seq 1 3); do run "file-$i" 420 tests/browser/test_react_platform_artifact.py; done
-for i in $(seq 1 25); do run "single-$i" 90 "$TEST"; done
+run "file-durations" 600 tests/browser/test_react_platform_artifact.py tests/browser/test_review_browser.py --durations=25
+for i in $(seq 1 70); do run "single-$i" 90 "$TEST"; done
 grep -c . /dev/null

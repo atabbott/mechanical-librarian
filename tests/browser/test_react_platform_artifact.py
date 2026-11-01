@@ -3984,8 +3984,21 @@ def test_attention_beside_a_work_never_clips_its_choices() -> None:
         expect(heading).to_be_in_viewport()
 
 
+_RAF_PROBE = """() => new Promise(done => {
+  const start = performance.now();
+  const timer = setTimeout(() => done({result: 'timeout', ms: performance.now() - start}), 3000);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    clearTimeout(timer); done({result: 'raf', ms: performance.now() - start});
+  }));
+})"""
+_PAGE_STATE = """() => ({visibility: document.visibilityState, focus: document.hasFocus(),
+  scrollY, height: document.documentElement.scrollHeight, url: location.href,
+  active: document.activeElement?.className, animations: document.getAnimations().length})"""
+
+
 def _diag(label: str) -> None:
     import sys, time
+
     print(f"DIAG {time.time():.3f} {label}", file=sys.__stderr__, flush=True)
 
 
@@ -3999,7 +4012,9 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         _diag("playwright started")
         browser = playwright.chromium.launch(headless=True)
         _diag("launched")
-        stack.callback(lambda: (_diag("closing browser"), browser.close(), _diag("browser closed")))
+        stack.callback(
+            lambda: (_diag("closing browser"), browser.close(), _diag("browser closed"))
+        )
         page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
         page.on("crash", lambda _: _diag("PAGE CRASH"))
 
@@ -4041,7 +4056,20 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
                 _diag(f"{where}: two frames")
-                page.evaluate(_TWO_FRAMES)
+                outcome = page.evaluate(_RAF_PROBE)
+                _diag(f"{where}: frames {outcome}")
+                if outcome["result"] == "timeout":
+                    _diag(f"STALL {where}: state {page.evaluate(_PAGE_STATE)}")
+                    _diag(f"STALL {where}: again {page.evaluate(_RAF_PROBE)}")
+                    page.mouse.move(5, 5)
+                    _diag(f"STALL {where}: after mouse {page.evaluate(_RAF_PROBE)}")
+                    page.screenshot(timeout=10_000)
+                    _diag(
+                        f"STALL {where}: after screenshot {page.evaluate(_RAF_PROBE)}"
+                    )
+                    page.set_viewport_size({"width": width, "height": 845})
+                    _diag(f"STALL {where}: after resize {page.evaluate(_RAF_PROBE)}")
+                    raise AssertionError(f"rAF stall: {where}")
                 _diag(f"{where}: back in view")
                 back = page.evaluate(_BACK_IN_VIEW)
                 _diag(f"{where}: back={back}")
