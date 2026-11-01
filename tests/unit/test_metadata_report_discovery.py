@@ -1522,6 +1522,59 @@ def test_a_report_keeps_only_the_ladder_its_audiobook_target_produces(
         _exhausted_report(_exhausted_lane(**lane), **report)
 
 
+_EBOOK_LADDER = tuple(
+    WorkDispatchLineage.from_query(query)
+    for query in work_query_ladder(_REFUSED_TITLE, _REFUSED_AUTHORS)
+)
+
+
+@pytest.mark.parametrize(
+    ("sent", "empty", "refused"),
+    (
+        (len(_EBOOK_LADDER), len(_EBOOK_LADDER), 0),
+        (1, 0, 2),
+        (len(_EBOOK_LADDER), len(_EBOOK_LADDER) - 1, 1),
+    ),
+    ids=("every_rung_empty", "first_rung_refused", "last_rung_refused"),
+)
+def test_an_ebook_lane_keeps_the_rungs_it_sent(
+    sent: int, empty: int, refused: int
+) -> None:
+    """An ebook ladder ends at its first rung with products (#1499)."""
+    report = _exhausted_report(
+        _exhausted_lane(
+            exhausted_dispatch=_EBOOK_LADDER[:sent],
+            diagnostics=work_ladder_diagnostics(empty, refused),
+        ),
+        audio=False,
+    )
+
+    (lane,) = report.providers[0].lanes
+    assert _EBOOK_LADDER[:sent] == lane.exhausted_dispatch
+    assert report == MetadataReport.from_json(report.to_json())
+
+
+@pytest.mark.parametrize(
+    ("sent", "empty", "refused"),
+    (
+        (len(_EBOOK_LADDER) - 1, len(_EBOOK_LADDER) - 1, 0),
+        (len(_EBOOK_LADDER), 0, 2),
+    ),
+    ids=("empty_ladder_cut_short", "refused_rung_not_last"),
+)
+def test_an_ebook_lane_cannot_claim_rungs_its_ladder_did_not_send(
+    sent: int, empty: int, refused: int
+) -> None:
+    with pytest.raises(ReportValueError, match="exhausted dispatch is inconsistent"):
+        _exhausted_report(
+            _exhausted_lane(
+                exhausted_dispatch=_EBOOK_LADDER[:sent],
+                diagnostics=work_ladder_diagnostics(empty, refused),
+            ),
+            audio=False,
+        )
+
+
 _HINT = dom.RecordingLookupHint("B000000011", 58_200, _REFUSED_LADDER[0])
 
 
@@ -1722,6 +1775,50 @@ def test_an_ebook_ladder_keeps_no_recording_lookup_hint() -> None:
         ("local_" + "2" * 64,),
     )
     assert [] == lane.to_data()["recording_lookup_hints"]
+
+
+def test_an_ebook_ladder_over_the_candidate_limit_narrows_once_and_records_nothing() -> (
+    None
+):
+    """#1499 G2: the narrowing answer is the lane's result, with no rung record."""
+    local = _audio_local_claims()
+    sent: list[Any] = []
+    narrowed: list[Any] = []
+
+    def observe(query: Any) -> ProviderObservation:
+        sent.append(query)
+        return ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            query_kind=ProviderQueryKind.WORK,
+            authority="google_books",
+            dispatch_lineage=WorkDispatchLineage.from_query(query),
+        )
+
+    def narrow(query: Any) -> ProviderObservation:
+        narrowed.append(query)
+        return ProviderObservation(
+            "catalogue",
+            ProviderStatus.NO_MATCH,
+            query_kind=ProviderQueryKind.WORK,
+            authority="google_books",
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK,
+        local,
+        "Example Book: A Test (Example Saga)",
+        ("Corin Halloway",),
+    )
+    assert 2 == len(work_query_ladder(lookup.title or "", lookup.authors))
+    result = app.observe_work_ladder(lookup, observe, narrow=narrow)
+
+    assert 1 == len(sent)
+    assert sent == narrowed
+    assert ProviderStatus.NO_MATCH is result.observation.status
+    assert () == result.exhausted_dispatch
+    assert () == result.diagnostics
+    assert 1 == result.rungs
 
 
 @pytest.fixture(scope="module")

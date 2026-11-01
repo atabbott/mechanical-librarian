@@ -17,6 +17,15 @@ brackets are GitHub issues.
   nothing matched, in Library's Not matched lens, instead of "Could not be
   reached" or "Providers unavailable", and it is not retried. Inventaire no
   longer fails that way when it finds more than one work (#1498).
+- **Clean rebuild required.** An ebook whose title carries its series name in
+  brackets, such as "Title (Series Name)", now matches the work its providers
+  call "Title" by the same authors, unless the brackets name a volume, part,
+  collection, trilogy, guide or workbook, or end in a number. When an ebook's
+  lookup at Open Library, Google Books, Inventaire or iTunes finds nothing, its
+  report records which searches were sent. An ebook whose providers found only
+  other works now reads "Found, but not this work" in Library's Not matched
+  lens instead of "No provider matched", and its report says so for that
+  source (#1499).
 - An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
   Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
   request or retry and no longer appear in an ebook's lookups (#1486).
@@ -137,7 +146,8 @@ brackets are GitHub issues.
 - An optional description or genre choice says once why no review is needed
   (the proposed values only shorten or extend the current one), instead of
   also showing a note that the sources disagree or that a change needs you
-  (#1450).
+  (#1450). Notes that only explain the choice, such as that accepting only
+  changes how a language is written, still show (#1557).
 - Activity's advice for finding a stopped change also says to clear filters
   when a search or event type is active. A write that closed because the item
   changed reads "Item changed; closed safely", and other closed writes read

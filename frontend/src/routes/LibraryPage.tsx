@@ -105,6 +105,7 @@ import {
   fieldReason,
   noticeText,
   questionReason,
+  ownerContext,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
 const authoredOwnerRecorded = (field: ReviewField) =>
@@ -653,8 +654,10 @@ const completionOutcome = (field: ReviewField) =>
         : field.humanDecision?.outcome === 'accept'
           ? 'Proposed value selected'
           : 'Recorded outcome'
-const choiceContext = (field: ReviewField, alternativeId: string | null) =>
-  field.choiceContexts.find((context) => context.alternativeId === alternativeId)
+const choiceContext = (field: ReviewField, alternativeId: string | null) => {
+  const context = field.choiceContexts.find((item) => item.alternativeId === alternativeId)
+  return context && ownerContext(field, context)
+}
 
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
@@ -1466,7 +1469,7 @@ function RecordedOutcome({
               .map((item, index) => (
                 <ChoiceEvidencePanel
                   key={item.alternativeId ?? 'current'}
-                  context={item}
+                  context={ownerContext(field, item)}
                   evidenceId={`${evidenceId}-${String(index)}`}
                   label={
                     item.selection === 'current'

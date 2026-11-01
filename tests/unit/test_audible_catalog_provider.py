@@ -107,8 +107,12 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
     }
     if failure == "subtitle":
         product["subtitle"] = "A genuine subtitle"
-    plan = work_plan(
-        local_runtime_claim(), title=lookup_title, authors=("Example Author",)
+    base = admitted_audiobook_report()
+    # The report is an audiobook's, so the lane is asked on its audiobook plan.
+    plan = m.audiobook_discovery_plan(
+        audio_target(lookup_title, ("Example Author",)),
+        (target_title_claim(lookup_title), local_runtime_claim()),
+        audio=base.audio,
     )
     observation = (
         _provider(lambda request: _json({"products": [product]}))
@@ -118,9 +122,7 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
     from mechanical_librarian.adapters.persistence.metadata_reports import (
         open_repository,
     )
-    from tests.support.audiobook_providers import audio_target
 
-    base = admitted_audiobook_report()
     report = MetadataReport.create(
         target=replace(
             base.target, fields=audio_target(lookup_title, ("Example Author",)).fields
@@ -1440,8 +1442,13 @@ def test_an_ebook_plan_still_stops_at_the_first_rung_that_returned_products() ->
 
     assert 1 == len(seen)
     assert ProviderStatus.NO_MATCH is observation.status
-    assert () == observation.lanes[0].exhausted_dispatch
-    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _diagnostics(observation)
+    # The one rung it sent is recorded, its products refused (#1499).
+    assert (
+        WorkDispatchLineage.from_query(
+            work_query_ladder(_SUBTITLED, ("Corin Halloway",))[0]
+        ),
+    ) == observation.lanes[0].exhausted_dispatch
+    assert ((FailureCategory.WORK_IDENTITY_REFUSED, 1),) == _diagnostics(observation)
 
 
 _ASSERTED = "Asserted Title"
@@ -2849,7 +2856,8 @@ def test_a_set_admitted_without_the_band_keeps_its_candidates_and_lineage() -> N
     assert banded.transformation is None
 
 
-def test_an_ebook_lookup_never_admits_band_first() -> None:
+def test_an_ebook_lookup_admits_its_series_stripped_title() -> None:
+    """No band is read for an ebook, but the stripped rung admits (#1499)."""
     plan = _band_plan()
     (lane,) = plan.lanes
     candidate = _band_candidate(plan, _band_product("B000000001", "Plain Work"))
@@ -2870,7 +2878,11 @@ def test_an_ebook_lookup_never_admits_band_first() -> None:
         ),
     )
 
-    assert ProviderStatus.NO_MATCH is qualified.status
+    assert ProviderStatus.CANDIDATES is qualified.status
+    assert qualified.transformation_lineage is not None
+    assert (
+        "band_parenthesized_series_name" == qualified.transformation_lineage.production
+    )
 
 
 def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> None:

@@ -2,10 +2,15 @@
 // comparison conditions beside it, and how differing source values are named.
 // Moved out of the Library route under the route-size rule (#1497).
 import { EMPTY_TARGET_TEXT } from './api/http'
-import type { AutomaticOutcome, DecisionOutcome, ProposalOutcome } from './api/http'
+import type {
+  AutomaticOutcome,
+  ChoiceContextView,
+  DecisionOutcome,
+  ProposalOutcome,
+} from './api/http'
 import { audioFileFormat, sameSelectedValue } from './fieldDecision'
 import type { ReviewField } from './fieldDecision'
-import { materialReasonLabel, opaqueSource } from './labels'
+import { choiceRequestReasons, materialReasonLabel, opaqueSource } from './labels'
 import { actionable } from './reviewDecisionController'
 
 export const bounded = (value: string, fallback: string) =>
@@ -46,17 +51,32 @@ export const fieldReason = (field: ReviewField) =>
             : 'No eligible owner decision is available.',
     'Retained reviewer notice',
   )
-// An optional choice's reason is its one statement: a condition worded as
-// asking the owner would contradict "no review is needed", so none is shown
-// beside it (#1450).
+// An optional choice already says no review is needed, so a limitation worded
+// as asking the owner to choose is left off its evidence too (#1557).
+export const ownerContext = (field: ReviewField, context: ChoiceContextView) =>
+  field.classification === 'owner_choosable'
+    ? {
+        ...context,
+        limitations: context.limitations.filter(
+          (limitation) => !choiceRequestReasons.has(limitation),
+        ),
+      }
+    : context
+// An optional choice already says no review is needed, so a condition worded
+// as asking the owner to choose is left off it (#1450). Other conditions still
+// explain the choice, such as a language respelling (#1496, #1557).
 export const comparisonNotices = (field: ReviewField) =>
-  field.classification === 'owner_choosable' ||
   field.choiceContexts.some((context) =>
-    context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
+    ownerContext(field, context).limitations.some(
+      (limitation) => materialReasonLabel(limitation) !== undefined,
+    ),
   )
     ? []
     : field.notices.filter(
-        (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
+        (notice) =>
+          materialReasonLabel(notice) !== undefined &&
+          !restatesReason(field, notice) &&
+          !(field.classification === 'owner_choosable' && choiceRequestReasons.has(notice)),
       )
 // A comparison condition in words; differing source tag lists or synopses are
 // named as such rather than as a disagreement.

@@ -190,8 +190,9 @@ lenses are alphabetical.
 
 A work with no case, nothing to decide and no admitted provider evidence is
 **Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
-gives one reason, in order: **Found, but not this work** (admission refused
-what was found), **Providers unavailable** (adding **; will be checked again**
+gives one reason, in order: **Found, but not this work** (a provider found
+candidates, but work-identity admission refused them all, for audiobooks and
+ebooks alike), **Providers unavailable** (adding **; will be checked again**
 only while a recovery job is scheduled), **Failed in Mechanical Librarian** (a
 source failed inside Mechanical Librarian itself, which is never retried), or
 **No provider matched**. If the
@@ -201,8 +202,10 @@ the page and its counts.
 A work whose latest preparation could not finish is a **Preparation failed
 safely** row in **Could not finish**, counted beside Works as `2 could not
 finish`, even if an earlier report was retained or unmatched. A decision still
-open on a retained case keeps it in Needs attention. An ebook whose candidates
-were found but not admitted as proposals stays in No attention needed.
+open on a retained case keeps it in Needs attention. An ebook whose
+provider matched it but offered no change worth a proposal stays in No
+attention needed; one whose providers found only other works is Not matched,
+Found, but not this work.
 
 ### Rows and selection
 

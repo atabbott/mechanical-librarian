@@ -3101,7 +3101,7 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             "reason": _ADAPTER_FAULT_REASON
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
-            if lane.dispatch == "refused"
+            if lane.dispatch == "refused" or lane.identity_refused
             else _PROVIDER_OUTCOME_REASONS.get(
                 lane.status, "Ended in a bounded state this build cannot name."
             ),
