@@ -1350,7 +1350,7 @@ def test_decision_replay_after_post_commit_failure_confirms_the_recorded_decisio
     def fail_once(decision: object) -> dict[str, object]:
         if failures:
             raise failures.pop()
-        return projection(decision)  # type: ignore[arg-type]
+        return projection(decision)
 
     monkeypatch.setattr(review_web, "_decision_projection", fail_once)
     path = f"/api/v1/review-cases/{web.case.review_case_id}/decisions"
@@ -1541,7 +1541,7 @@ def _locked_read(*_args: object, **_kwargs: object) -> object:
 
 
 def test_committed_dismissal_after_failed_read_answers_persistence(
-    web: ReviewWebContext[FakeReviewRepository],
+    web: ReviewWebContext[FakeReviewRepository], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The dismissal commits; only the read that builds the response fails. The
     # server keeps answering 503 persistence, a code the browser treats as an
@@ -1556,9 +1556,11 @@ def test_committed_dismissal_after_failed_read_answers_persistence(
 
     def dismiss_then_lock(run: str, at: int) -> None:
         real_dismiss(run, at)
-        web.repository.preparation_presentation = _locked_read  # type: ignore[method-assign]
+        monkeypatch.setattr(web.repository, "preparation_presentation", _locked_read)
 
-    web.repository.dismiss_preparation_presentation = dismiss_then_lock  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        web.repository, "dismiss_preparation_presentation", dismiss_then_lock
+    )
     response = web.client.post(
         "/api/v1/review-preparation/dismiss", headers=headers, json={"run_id": run_id}
     )
@@ -1568,7 +1570,7 @@ def test_committed_dismissal_after_failed_read_answers_persistence(
 
 
 def test_committed_automatic_pause_after_failed_read_answers_persistence(
-    web: ReviewWebContext[FakeReviewRepository],
+    web: ReviewWebContext[FakeReviewRepository], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     login = web.login()
     headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
@@ -1576,10 +1578,10 @@ def test_committed_automatic_pause_after_failed_read_answers_persistence(
 
     def pause_then_lock(paused: bool, at: int) -> AutomaticSafetyState:
         result = real_pause(paused, at)
-        web.repository.automatic_safety_state = _locked_read  # type: ignore[method-assign,assignment]
+        monkeypatch.setattr(web.repository, "automatic_safety_state", _locked_read)
         return result
 
-    web.repository.pause_automatic_safety = pause_then_lock  # type: ignore[method-assign]
+    monkeypatch.setattr(web.repository, "pause_automatic_safety", pause_then_lock)
     response = web.client.post(
         "/api/v1/metadata-policy/automatic-safety/pause",
         headers=headers,
@@ -1595,7 +1597,7 @@ def test_admission_closed_after_committed_automatic_pause_is_not_a_refusal(
 ) -> None:
     login = web.login()
     headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
-    application = web.client.app.state.review_application  # type: ignore[attr-defined]
+    application = web.client.app.state.review_application
     operations = application.automatic_safety
     real_pause = operations.pause
 
@@ -1621,14 +1623,17 @@ def test_admission_closed_after_committed_automatic_pause_is_not_a_refusal(
 )
 def test_confirm_automatic_read_back_failure_is_uncertain_not_refused(
     web: ReviewWebContext[FakeReviewRepository],
+    monkeypatch: pytest.MonkeyPatch,
     activated: str,
     status: int,
     code: str,
 ) -> None:
     login = web.login()
     headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
-    web.repository.activate_qualified_automatic = lambda _at: activated  # type: ignore[method-assign]
-    web.repository.shadow_posture = _locked_read  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        web.repository, "activate_qualified_automatic", lambda _at: activated
+    )
+    monkeypatch.setattr(web.repository, "shadow_posture", _locked_read)
 
     response = web.client.post(
         "/api/v1/metadata-policy/shadow/confirm-automatic", headers=headers

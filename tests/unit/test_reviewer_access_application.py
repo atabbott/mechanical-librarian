@@ -1099,9 +1099,9 @@ def test_present_invalid_description_request_fee_is_refused_without_mutation(
     assert not any(kind == "run" for kind, _ in calls)
 
 
-def test_committed_openrouter_key_is_answered_when_the_later_revision_check_locks() -> (
-    None
-):
+def test_committed_openrouter_key_is_answered_when_the_later_revision_check_locks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     operations, _auth, _calls, _codex = _operations()
     store = cast("ReviewerAccessStore", operations._repository)
     real_replace = store.replace
@@ -1111,10 +1111,10 @@ def test_committed_openrouter_key_is_answered_when_the_later_revision_check_lock
 
     def replace_then_lock(*args, **kwargs):
         result = real_replace(*args, **kwargs)
-        store.revision_is_current = locked  # type: ignore[method-assign]
+        monkeypatch.setattr(store, "revision_is_current", locked)
         return result
 
-    store.replace = replace_then_lock  # type: ignore[method-assign]
+    monkeypatch.setattr(store, "replace", replace_then_lock)
 
     view = operations.configure_openrouter(
         expected_revision=1, api_key="secret-key", model="example/vision"
