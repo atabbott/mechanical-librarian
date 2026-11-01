@@ -315,13 +315,13 @@ the child's deadline; the page is never rendered, stored or sent. Only HTML
 `img/@src` and SVG `image/@href` or `@xlink:href` count, and each must resolve
 through the package's member-name normalisation to exactly one local manifest
 image, one hop only. A remote, `data:` or fragment-only reference, a traversal,
-a directory, a self or wrapper reference, a second image, or fallbacks that
-name different images is a closed refusal, never a choice. A recovery is
-shadow evidence only: the cover source stays `absent`, no image byte is read,
-and it is neither a candidate nor verification of the current cover. No bound
-is raised. Only closed fallback and refusal codes reach the report; no
-reference, member name, wrapper text or image byte reaches a report, log,
-diagnostic, status or support bundle.
+a directory, a self or wrapper reference, a repeated reference attribute, a
+second image, or fallbacks that name different images is a closed refusal,
+never a choice. A recovery is shadow evidence only: the cover source stays
+`absent`, no image byte is read, and it is neither a candidate nor
+verification of the current cover. No bound is raised. Only closed fallback
+and refusal codes reach the report; no reference, member name, wrapper text or
+image byte reaches a report, log, diagnostic, status or support bundle.
 
 **Audiobooks.** `ffprobe` runs as an isolated child over a passed descriptor
 ([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
