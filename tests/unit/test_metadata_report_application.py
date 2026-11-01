@@ -2021,6 +2021,12 @@ def test_audiosilo_is_not_asked_after_a_stated_runtime_admission(
     assert {ProviderStatus.NOT_NEEDED} == {lane.status for lane in observed.lanes}
     assert () == observed.input_references
     assert 0 == observed.request_accounting.logical_requests
+    # Nothing was attempted, so there is nothing for recovery to retry.
+    from mechanical_librarian.domain.metadata_report import (
+        PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
+    )
+
+    assert observed.status not in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
 
 
 def test_audiosilo_is_asked_when_nothing_admitted_by_stated_runtime() -> None:
@@ -2051,6 +2057,124 @@ def test_audiosilo_is_asked_when_nothing_admitted_by_stated_runtime() -> None:
     assert ["B0ASSERTED"] == [lane.canonical_asin for lane in silo_plans[1].lanes]
     observed = next(value for value in published.providers if value.provider == "silo")
     assert ProviderStatus.NO_MATCH is observed.status
+
+
+def _silo_plan(title: str) -> MetadataDiscoveryPlan:
+    """An audiobook naming its own product, with no authors (#1309)."""
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_discovery_plan,
+    )
+    from tests.support.audiobook_providers import audio_target, local_claims
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    return replace(
+        audiobook_discovery_plan(audio_target(title, ()), local_claims()),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _silo_lead(
+    plan: MetadataDiscoveryPlan,
+    authority: str,
+    runtime: str = "58244.000",
+    edition: str | None = None,
+) -> ProviderObservation:
+    """One answered observation whose single product states `runtime`."""
+    identity = f"{authority}-B0SYNE7P1K"
+    candidate = ProviderCandidate(
+        identity,
+        "unresolved",
+        tuple(
+            ProviderClaim.create(
+                provider=authority,
+                candidate=identity,
+                kind=kind,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="not_applicable",
+                raw_order=order,
+            )
+            for order, (kind, value) in enumerate(
+                ((ClaimKind.ASIN, "B0SYNE7P1K"), (ClaimKind.DURATION, runtime))
+            )
+        ),
+        evidence=()
+        if edition is None
+        else (
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_STATEMENT, edition, ClaimScope.EDITION
+            ),
+        ),
+    )
+    return ProviderObservation(
+        authority,
+        ProviderStatus.CANDIDATES,
+        (),
+        (finalize_candidate_comparisons(candidate, plan.local_claims, authority),),
+        ProviderQueryKind.ASIN,
+        authority,
+    )
+
+
+@pytest.mark.parametrize("authority", ("audible_catalog", "audnexus"))
+def test_either_authority_admitting_by_runtime_makes_audiosilo_not_needed(
+    authority: str,
+) -> None:
+    """An Audnexus admission, as in the ASIN feed, counts as Audible's does."""
+    from mechanical_librarian.application.metadata_report import (
+        _audiosilo_not_needed,
+    )
+
+    plan = _silo_plan("Ember Tide Protocol")
+    silo = _silo_binding([], [])
+    assert _audiosilo_not_needed(
+        silo, plan, (_silo_lead(plan, authority),), "Ember Tide Protocol"
+    )
+
+
+@pytest.mark.parametrize(
+    "observation",
+    (
+        "failed",
+        "runtime_disagrees",
+        "abridged_against_unabridged_title",
+    ),
+)
+def test_audiosilo_is_still_asked_when_nothing_admitted(observation: str) -> None:
+    """A failed answer, a disagreeing runtime or another cut admits nothing.
+
+    The abridgement case has no authors, so the plan carries no work title:
+    the skip must read the item's own "(Unabridged)" title, as the published
+    report's admission check does, or it would skip on a product the report
+    then refuses.
+    """
+    from mechanical_librarian.application.metadata_report import (
+        _audiosilo_not_needed,
+    )
+
+    title = "Ember Tide Protocol (Unabridged)"
+    plan = _silo_plan(title)
+    assert plan.work_title is None
+    lead = {
+        "failed": ProviderObservation(
+            "audible_catalog", ProviderStatus.UNAVAILABLE, authority="audible_catalog"
+        ),
+        "runtime_disagrees": _silo_lead(plan, "audible_catalog", runtime="30000.000"),
+        "abridged_against_unabridged_title": _silo_lead(
+            plan, "audible_catalog", edition="abridged"
+        ),
+    }[observation]
+    silo = _silo_binding([], [])
+    assert not _audiosilo_not_needed(silo, plan, (lead,), title)
+    if observation != "failed":
+        # The same product admits once the cut no longer conflicts.
+        assert _audiosilo_not_needed(
+            silo,
+            plan,
+            (_silo_lead(plan, "audible_catalog"),),
+            title,
+        )
 
 
 def test_a_local_asin_item_feeds_no_asserted_asin() -> None:

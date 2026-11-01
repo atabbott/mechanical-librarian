@@ -1946,6 +1946,7 @@ def _audiosilo_not_needed(
     binding: ProviderBinding,
     plan: MetadataDiscoveryPlan,
     observations: tuple[ProviderObservation, ...],
+    title: str,
 ) -> bool:
     """Whether AudioSilo would only repeat a recording already admitted (#1309).
 
@@ -1953,6 +1954,8 @@ def _audiosilo_not_needed(
     followed an Audible or Audnexus stated-runtime admission added no match and
     no field value the owner lacked, so it is asked only when neither admitted.
     A failed Audible or Audnexus answer admits nothing, so AudioSilo still runs.
+    `title` is the item's own title, the one the published report's admission
+    check reads, so an abridgement suffix vetoes here exactly as it does there.
     """
     return (
         binding.authority == "audiosilo"
@@ -1966,7 +1969,7 @@ def _audiosilo_not_needed(
                 if observation.authority in {"audible_catalog", "audnexus"}
             ),
             plan.local_claims,
-            plan.work_title or "",
+            title,
             plan.library_languages,
         )
     )
@@ -3438,6 +3441,7 @@ class GenerateMetadataReport:
         bindings: tuple[ProviderBinding, ...] | None = None,
         catalogue_plan: MetadataDiscoveryPlan | None = None,
         prior_observations: tuple[ProviderObservation, ...] = (),
+        recording_title: str = "",
     ) -> tuple[tuple[ProviderObservation, ...], tuple[ProviderCoverDescriptor, ...]]:
         """Dispatch one discovery plan across the configured provider bindings.
 
@@ -3471,7 +3475,8 @@ class GenerateMetadataReport:
         An audiobook's AudioSilo binding runs last, and only when no Audible
         or Audnexus observation of this pass, or of `prior_observations` (the
         phase-one answers an ASIN feed follows), admitted a recording by stated
-        runtime. Otherwise it is recorded `not_needed` and sent nothing (#1309).
+        runtime, judged against `recording_title` (the item's own title).
+        Otherwise it is recorded `not_needed` and sent nothing (#1309).
 
         Each dispatched binding's failures, throttles and deadline stops are
         written as value-free provider events once its observation returns,
@@ -3517,7 +3522,10 @@ class GenerateMetadataReport:
                 )
                 continue
             if _audiosilo_not_needed(
-                binding, binding_plan, (*prior_observations, *observations)
+                binding,
+                binding_plan,
+                (*prior_observations, *observations),
+                recording_title,
             ):
                 observations.append(
                     _undispatched_observation(
@@ -3747,6 +3755,12 @@ class GenerateMetadataReport:
             # original failure while releasing the already-open repository.
             _release_repository(repository, error)
             raise
+        recording_title = (
+            TargetFacts(
+                self._connection.name, self._library.name, item, initial.fields
+            ).current_title
+            or ""
+        )
         observations, descriptors = self._observe_providers(
             repository,
             plan,
@@ -3754,6 +3768,7 @@ class GenerateMetadataReport:
             item,
             "discovery",
             catalogue_plan=audiobook_carried_plan(plan),
+            recording_title=recording_title,
         )
         feed = audiobook_asin_feed_plan(initial, plan, observations)
         unanswered = {value.provider for value in observations if not value.lanes}
@@ -3771,6 +3786,7 @@ class GenerateMetadataReport:
                 "asin_feed",
                 targets,
                 prior_observations=observations,
+                recording_title=recording_title,
             )
             replaced = {value.provider for value in fed}
             observations = (

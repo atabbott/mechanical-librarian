@@ -2127,7 +2127,8 @@ def _carried_or_admitted_asin(
         # products or no match. Any other ending, recoverable or not (a
         # malformed or oversized response, a candidate limit), is a failure
         # and leaves the question open, as does no answer at all. A disabled
-        # provider is not asked, so it neither keeps nor refutes.
+        # or not-needed provider is not asked, so it neither keeps nor
+        # refutes.
         statuses = tuple(
             lane.status
             for _observation, lane in _carried_lanes(report, carried)

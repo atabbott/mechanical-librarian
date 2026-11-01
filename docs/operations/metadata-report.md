@@ -225,10 +225,12 @@ Discovery has two phases:
 At most four ASIN lanes run per item. Hardcover and Open Library have no ASIN
 lookup and record `insufficient_input` for an ASIN-only plan.
 
-AudioSilo runs last in each phase and only when neither the Audible catalog nor
-Audnexus admitted a recording by stated runtime; otherwise it records
-`not_needed`, with its lanes `not_dispatched` and no request. Open Library asks
-an audiobook title-and-author lane one search and no narrowing retry (#1309).
+AudioSilo runs last in each phase. When the plan has an ASIN lane and the
+Audible catalog or Audnexus already admitted a recording by stated runtime
+(in the feed, phase one's Audible answer counts too), AudioSilo records
+`not_needed`, with its lanes `not_dispatched` and no request; a title-only
+plan still records `insufficient_input`. Open Library asks an audiobook
+title-and-author lane one search and no narrowing retry (#1309).
 
 An ASIN from the item's own tags, sidecar or path is this recording's
 identifier, so its answers keep edition scope as returned. Every fed ASIN
@@ -371,6 +373,8 @@ and rate-limit holds are in
 - **Open Library.** A closed allowlist of rich evidence is kept; subjects stay
   neutral, not genres.
 - **AudioSilo.** A 404 is `empty_no_match`, not a failure.
+- **Audnexus.** A product missing from one region is diagnosed
+  `region_unavailable`, not `unknown`, while the walk tries the next region.
 
 A bad optional member is dropped and counted while valid siblings stay; bad
 record shape or identity fails the whole record. One provider restating a

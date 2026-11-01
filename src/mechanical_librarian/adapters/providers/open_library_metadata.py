@@ -468,8 +468,9 @@ class OpenLibraryMetadataProvider:
             )
             if lookup.audio is not None:
                 # Every Open Library audiobook admission measured on #1294 sat
-                # on the first rung, and every narrowing retry overflowed
-                # again, so an audiobook asks one rung and no retry (#1309).
+                # on the first rung, and no later rung or narrowing retry
+                # admitted anything, so an audiobook asks one rung and no
+                # retry (#1309).
                 work_queries = work_queries[:1]
             if not work_queries:
                 return ProviderObservation(
