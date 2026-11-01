@@ -237,6 +237,18 @@ class ReviewerAccessOperations:
     def attach_changes(self, changed: Callable[[], None]) -> None:
         self._changed = changed
 
+    def _notify_changed(self) -> None:
+        """Invalidate dependents after a committed write, best effort.
+
+        The hook runs after the reviewer-access commit. A refusal or fault in
+        it cannot undo that commit, so it never turns the saved write into a
+        reported failure; the committed write remains authoritative.
+        """
+        try:
+            self._changed()
+        except Exception:  # noqa: BLE001 - post-commit invalidation is best effort
+            return
+
     def attach_serialization(
         self, serialized: Callable[[Callable[[], object]], object]
     ) -> None:
@@ -293,6 +305,7 @@ class ReviewerAccessOperations:
         if not configured or not isinstance(selection, OpenRouterTaskSelection):
             return self._view(document=document, configured=configured)
         assert key is not None
+        committed = False
         try:
             account = self._probe_openrouter(key, selection.model, task)
             if task == "description_rewrite":
@@ -313,7 +326,8 @@ class ReviewerAccessOperations:
                     }
                 )
                 self._replace_document(document, document.revision - 1)
-                self._changed()
+                committed = True
+                self._notify_changed()
             else:
                 self._require_revision(document.revision)
                 document = ReviewerAccessDocument.model_validate(
@@ -324,7 +338,8 @@ class ReviewerAccessOperations:
                     }
                 )
                 self._replace_document(document, document.revision - 1)
-                self._changed()
+                committed = True
+                self._notify_changed()
             status = ReviewerEngineStatus(
                 engine="openrouter",
                 state="usable",
@@ -351,12 +366,14 @@ class ReviewerAccessOperations:
                     }
                 )
                 self._replace_document(document, document.revision - 1)
-                self._changed()
+                committed = True
+                self._notify_changed()
         return self._view(
             document=document,
             configured=configured,
             openrouter=status if task == "cover_observation" else None,
             description=status if task == "description_rewrite" else None,
+            committed=committed,
         )
 
     def _view(
@@ -367,7 +384,15 @@ class ReviewerAccessOperations:
         openrouter: ReviewerEngineStatus | None = None,
         codex: ReviewerEngineStatus | None = None,
         description: ReviewerEngineStatus | None = None,
+        committed: bool = False,
     ) -> ReviewerAccessView:
+        """Project access state; `committed` marks a document a write just saved.
+
+        The write's optimistic concurrency was enforced inside `replace`, so a
+        committed document is answered as saved without re-checking currency:
+        a later commit by another session only makes this view older, and the
+        next write's expected revision refuses it correctly.
+        """
         if document is None or configured is None:
             document, key = self._snapshot()
             configured = key is not None
@@ -440,7 +465,8 @@ class ReviewerAccessOperations:
             openrouter_status = ReviewerEngineStatus(
                 engine="openrouter", state="configured", reason="not_selected"
             )
-        self._require_revision(document.revision)
+        if not committed:
+            self._require_revision(document.revision)
         return ReviewerAccessView(
             revision=document.revision,
             mapping=selection,
@@ -594,7 +620,7 @@ class ReviewerAccessOperations:
         document, configured = self._replace_document(
             replacement, expected_revision, openrouter_key=api_key
         )
-        self._changed()
+        self._notify_changed()
         status = ReviewerEngineStatus(
             engine="openrouter", state="usable", model=account.model, tier=account.tier
         )
@@ -603,6 +629,7 @@ class ReviewerAccessOperations:
             configured=configured,
             openrouter=status if task == "cover_observation" else None,
             description=status if task == "description_rewrite" else None,
+            committed=True,
         )
 
     def select_codex(
@@ -632,13 +659,14 @@ class ReviewerAccessOperations:
                 state="usable",
                 host_headroom_bytes=host.headroom_bytes,
             ),
+            committed=True,
         )
 
     def select_none(
         self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
     ) -> ReviewerAccessView:
         document, configured = self._replace_selection(expected_revision, None, task)
-        return self._view(document=document, configured=configured)
+        return self._view(document=document, configured=configured, committed=True)
 
     def clear_openrouter(self, *, expected_revision: int) -> ReviewerAccessView:
         return self._clear_openrouter(expected_revision=expected_revision)
@@ -665,8 +693,8 @@ class ReviewerAccessOperations:
         document, configured = self._replace_document(
             replacement, expected_revision, clear_openrouter_key=True
         )
-        self._changed()
-        return self._view(document=document, configured=configured)
+        self._notify_changed()
+        return self._view(document=document, configured=configured, committed=True)
 
     def start_codex(
         self, *, expected_revision: int
@@ -677,14 +705,18 @@ class ReviewerAccessOperations:
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
             self._admit_codex()
-            if isinstance(document.cover_observation, CodexTaskSelection) or isinstance(
-                document.description_rewrite, CodexTaskSelection
-            ):
+            committed = isinstance(
+                document.cover_observation, CodexTaskSelection
+            ) or isinstance(document.description_rewrite, CodexTaskSelection)
+            if committed:
                 document, configured = self._clear_codex_selections(
                     document, expected_revision
                 )
             device = self._codex_auth.start()
-        return self._view(document=document, configured=configured), device
+        return (
+            self._view(document=document, configured=configured, committed=committed),
+            device,
+        )
 
     def codex_status(self) -> CodexDeviceAuthState:
         def status() -> CodexDeviceAuthState:
@@ -732,7 +764,7 @@ class ReviewerAccessOperations:
             document, configured = self._clear_codex_selections(
                 document, expected_revision
             )
-        return self._view(document=document, configured=configured)
+        return self._view(document=document, configured=configured, committed=True)
 
     def _clear_codex_selections(
         self, document: ReviewerAccessDocument, expected_revision: int
@@ -750,7 +782,7 @@ class ReviewerAccessOperations:
             }
         )
         result = self._replace_document(replacement, expected_revision)
-        self._changed()
+        self._notify_changed()
         return result
 
     def dispatch_cover_observation(self) -> ReviewerDispatch:
@@ -900,7 +932,7 @@ class ReviewerAccessOperations:
             }
         )
         result = self._replace_document(replacement, expected_revision)
-        self._changed()
+        self._notify_changed()
         return result
 
     def _probe_openrouter(

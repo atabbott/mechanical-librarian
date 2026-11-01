@@ -1333,6 +1333,14 @@ export class AmbiguousMutationError extends ApiError {
     this.name = 'AmbiguousMutationError'
   }
 }
+// Server codes proven to be raised before any handler body runs, so an unsafe
+// request answered with one of them changed nothing. The sole member comes from
+// the session dependency; tests pin that proof on both sides.
+export const PRE_CALL_SERVER_CODES: ReadonlySet<string> = new Set(['react_assets_unavailable'])
+// Whether an unsafe write may have committed although it answered a failure.
+export const uncertainWriteOutcome = (error: unknown) =>
+  error instanceof AmbiguousMutationError ||
+  (error instanceof ApiError && error.status >= 500 && !PRE_CALL_SERVER_CODES.has(error.code))
 
 const csrfPattern = /^[A-Za-z0-9_-]{32,128}$/
 const buildPattern = /^[0-9a-f]{64}$/

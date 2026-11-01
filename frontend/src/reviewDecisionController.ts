@@ -2,7 +2,13 @@ import { invalidateBackgroundQueries } from './queryWork'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
-import { AmbiguousMutationError, ApiError, CsrfRenewedError, refusalCopy } from './api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  CsrfRenewedError,
+  PRE_CALL_SERVER_CODES,
+  refusalCopy,
+} from './api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome } from './api/http'
 import {
   beginDecisionEcho,
@@ -65,11 +71,9 @@ export const classifyDecisionFailure = (error: unknown): DecisionFailure => {
   if (error instanceof AmbiguousMutationError) return 'uncertain'
   if (error instanceof ApiError && error.code === 'stale') return 'stale'
   if (error instanceof CsrfRenewedError) return 'retryable'
-  if (
-    error instanceof ApiError &&
-    error.status === 503 &&
-    (error.code === 'persistence' || error.code === 'unavailable')
-  )
+  // A server failure may follow the commit; only a code proven to precede the
+  // handler changed nothing. The same-key retry is a safe replay either way.
+  if (error instanceof ApiError && error.status >= 500 && !PRE_CALL_SERVER_CODES.has(error.code))
     return 'retryable'
   return 'permanent'
 }
@@ -371,11 +375,13 @@ export const useReviewDecisionController = ({
         command.destination,
         classifyDecisionFailure(error) === 'uncertain'
           ? 'The response was lost. The current case was reloaded before any retry.'
-          : refusalCopy(
-              error,
-              ownerRefusalCopy(error, refreshedField) ??
-                'The decision was not recorded. Your choice is unchanged.',
-            ),
+          : retryableDecisionFailure(error) && !(error instanceof CsrfRenewedError)
+            ? 'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.'
+            : refusalCopy(
+                error,
+                ownerRefusalCopy(error, refreshedField) ??
+                  'The decision was not recorded. Your choice is unchanged.',
+              ),
       )
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route

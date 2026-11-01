@@ -34,6 +34,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_pipeline import (
     PipelineProgress,
+    ReviewPipelineError,
     ReviewPreparationSupervisor,
     pipeline_scan_id,
 )
@@ -942,6 +943,55 @@ def test_attached_reviewer_selection_returns_success_and_supported_invalidations
     finally:
         application.updates.release(subscription)
         persisted.close()
+
+
+def test_reviewer_change_publishes_when_preparation_refuses(
+    repository: FakeReviewRepository,
+) -> None:
+    requested: list[tuple[str, str]] = []
+
+    class RefusingPreparation:
+        recovery_required = True
+        recovery_incidents = ()
+        libraries: tuple[tuple[str, str, str], ...] = (
+            ("primary", "ebooks", "ebook"),
+            ("primary", "audio", "audiobook"),
+        )
+
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+        def request(self, connection: str, library: str) -> None:
+            requested.append((connection, library))
+            raise ReviewPipelineError("preparation_restart_required")
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", RefusingPreparation()),
+    )
+    subscription = application.updates.subscribe(application.updates.sequence)
+    try:
+        with pytest.raises(ReviewPipelineError):
+            application._reviewer_changed()
+        assert requested == [("primary", "ebooks")]
+        assert {event.topic for event in subscription.take()} == {
+            "preparation",
+            "case",
+            "library",
+        }
+    finally:
+        application.updates.release(subscription)
 
 
 def test_library_display_rename_preserves_case_and_target_identity(repository):

@@ -49,6 +49,11 @@ brackets are GitHub issues.
   image format (#1357, #1569).
 - Closing the Attention queue right after opening it no longer moves focus to
   the closing queue or scrolls the page to it first (#1563).
+- A browser change that may have been saved although its response failed is
+  no longer reported as failed or refused: the page reloads the current state
+  and asks you to check it before pressing again. A decision offers Try the
+  same decision again, which cannot record it twice. A saved reviewer-access
+  change now answers with its saved view (#1571).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

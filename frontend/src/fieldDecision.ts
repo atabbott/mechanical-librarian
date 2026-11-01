@@ -4,7 +4,8 @@ import type {
   DecisionCommand,
   TargetDestination,
 } from './api/http'
-import { coverSourceLabels, destinationPhrase, writeHoldReasons } from './labels'
+import { displayValue } from './api/http'
+import { coverSourceLabels, destinationPhrase, languageName, writeHoldReasons } from './labels'
 import { automaticChoiceSelected, humanChoiceSelected } from './reviewAutomaticSelection'
 
 export type ReviewField = CaseDetailView['fields'][number]
@@ -158,3 +159,42 @@ export const isLongDescription = (destination: string, value: string) =>
 export const decisionQuestion = (destination: TargetDestination) =>
   `Which ${destinationPhrase(destination)} should this work use?`
 export const audioFileFormat = (format: string) => ['m4b', 'm4a', 'mp3'].includes(format)
+export const authoredOwnerRecorded = (field: ReviewField) =>
+  field.descriptionAdvice?.selection?.origin === 'human' &&
+  Boolean(
+    field.descriptionAdvice.selected_advice?.current === true ||
+    field.descriptionAdvice.application_outcome,
+  )
+// A language value reads by its name beside its code, `English (en)` (#1286).
+export const valueText = (destination: TargetDestination, value: string) =>
+  destination === 'language' ? languageName(value) : value
+export const decisionValue = (field: ReviewField) => {
+  if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
+    return field.descriptionAdvice.selected_advice.candidate.output.description
+  // A hold carried from an earlier case keeps the library's value (ADR-0085).
+  const selected = (field.humanDecision ?? (field.manualHold ? null : field.automaticDecision))
+    ?.selected_value
+  if (field.destination === 'cover') {
+    const candidates = field.coverConsideration?.candidates ?? []
+    const candidate = candidates.find((item) => item.artifactId === selected?.value)
+    return candidate?.incumbent || !selected
+      ? 'Current cover'
+      : candidate
+        ? (coverNames(candidates).get(candidate.reference) ?? 'Selected cover')
+        : 'Selected cover'
+  }
+  return valueText(
+    field.destination,
+    selected === null || selected === undefined ? field.currentValue : displayValue(selected.value),
+  )
+}
+export const completionOutcome = (field: ReviewField) =>
+  authoredOwnerRecorded(field)
+    ? 'Advised description selected'
+    : field.humanDecision?.outcome === 'reject'
+      ? 'No action recorded'
+      : field.humanDecision?.outcome === 'keep_current'
+        ? 'Current value retained'
+        : field.humanDecision?.outcome === 'accept'
+          ? 'Proposed value selected'
+          : 'Recorded outcome'
