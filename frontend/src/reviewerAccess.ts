@@ -4,6 +4,7 @@
 // access panel under the function-size rule (#1571).
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 
 import { ApiError, CsrfRenewedError, sessionRefreshedCopy, uncertainWriteOutcome } from './api/http'
 import type { ReviewHttp, ReviewerAccessView } from './api/http'
@@ -64,6 +65,16 @@ export const useReviewerAccess = (http: ReviewHttp) => {
   const openrouterClearTrigger = useRef<HTMLButtonElement>(null)
   const codexReplaceTrigger = useRef<HTMLButtonElement>(null)
   const openrouterReplaceTrigger = useRef<HTMLButtonElement>(null)
+  const codexStartTrigger = useRef<HTMLButtonElement>(null)
+  const codexCancelTrigger = useRef<HTMLButtonElement>(null)
+  // A pressed sign-in button unmounts on success; move focus to the next
+  // control unless the owner already moved it (#1607).
+  const focusIfLost = (...targets: RefObject<HTMLButtonElement | null>[]) => {
+    window.setTimeout(() => {
+      if (document.activeElement !== null && document.activeElement !== document.body) return
+      targets.find((target) => target.current !== null)?.current?.focus()
+    }, 0)
+  }
   const cancelClear = (engine: 'codex' | 'openrouter') => {
     setConfirmClear(null)
     window.setTimeout(() => {
@@ -97,6 +108,9 @@ export const useReviewerAccess = (http: ReviewHttp) => {
           ['reviewer-access', 'codex-device'],
           await http.cancelCodexDevice(),
         )
+        // The start seeded access in an in-progress state; read the outcome
+        // before the button settles, so the waiting branch closes (#1607).
+        await query.refetch({ cancelRefetch: false })
         return null
       }
       if (action.kind === 'codex-clear') return http.clearCodex(action.revision)
@@ -128,8 +142,12 @@ export const useReviewerAccess = (http: ReviewHttp) => {
       setKey('')
       setConfirmClear(null)
       setConfirmReplace(null)
-      if (action.kind === 'codex-start') setDeviceActive(true)
+      if (action.kind === 'codex-start') {
+        setDeviceActive(true)
+        focusIfLost(codexCancelTrigger)
+      }
       if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
+      if (action.kind === 'codex-cancel') focusIfLost(codexStartTrigger, codexReplaceTrigger)
       if (action.kind === 'codex-clear') {
         queryClient.removeQueries({ queryKey: ['reviewer-access', 'codex-device'] })
       }
@@ -155,16 +173,22 @@ export const useReviewerAccess = (http: ReviewHttp) => {
         ? 1_000
         : false,
   })
+  const accessInProgress =
+    query.data !== undefined &&
+    ['starting', 'issued', 'waiting', 'validating'].includes(query.data.codex.state)
+  const { refetch } = query
   useEffect(() => {
     const state = deviceQuery.data?.state
     if (state && !['starting', 'issued', 'waiting', 'validating'].includes(state)) {
       const task = window.setTimeout(() => {
         setDeviceActive(false)
+        // A finished flow leaves access in progress until it is read again.
+        if (accessInProgress) void refetch({ cancelRefetch: false })
       }, 0)
       return () => window.clearTimeout(task)
     }
     return undefined
-  }, [deviceQuery.data?.state])
+  }, [deviceQuery.data?.state, accessInProgress, refetch])
   const mutationFailure =
     mutation.error instanceof CsrfRenewedError
       ? sessionRefreshedCopy
@@ -202,6 +226,8 @@ export const useReviewerAccess = (http: ReviewHttp) => {
     openrouterClearTrigger,
     codexReplaceTrigger,
     openrouterReplaceTrigger,
+    codexStartTrigger,
+    codexCancelTrigger,
   }
 }
 export type ReviewerAccessController = ReturnType<typeof useReviewerAccess>
