@@ -1,7 +1,7 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import type { SyntheticEvent } from 'react'
 
-import { refusalCopy } from '../api/http'
+import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { CoverObservationView, CoverCandidateView, DecisionCommand } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
@@ -281,10 +281,12 @@ function LibraryCoverChoicesContent({
         </button>
         {cover.prepare.isError ? (
           <p role="alert">
-            {refusalCopy(
-              cover.prepare.error,
-              'The comparison could not be prepared. The existing cover remains unchanged.',
-            )}
+            {uncertainWriteOutcome(cover.prepare.error)
+              ? 'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.'
+              : refusalCopy(
+                  cover.prepare.error,
+                  'The comparison could not be prepared. The existing cover remains unchanged.',
+                )}
           </p>
         ) : null}
       </section>
@@ -557,10 +559,12 @@ function LibraryCoverChoicesContent({
       ) : null}
       {cover.prepare.isError ? (
         <p role="alert">
-          {refusalCopy(
-            cover.prepare.error,
-            'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
-          )}
+          {uncertainWriteOutcome(cover.prepare.error)
+            ? 'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.'
+            : refusalCopy(
+                cover.prepare.error,
+                'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+              )}
         </p>
       ) : null}
       {expanded && incumbent ? (
