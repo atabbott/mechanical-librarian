@@ -3041,6 +3041,18 @@ def _register_policy_routes(
             category_suspensions=dict(state.category_suspensions),
         )
 
+    def _committed_automatic_safety_response() -> _AutomaticSafetyResponse:
+        # The command has committed, so a failed read-back is an uncertain
+        # outcome, never the refusal the command's own handler reports.
+        try:
+            return _automatic_safety_response()
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except ReviewApplicationError as error:
+            if error.code != "unavailable":
+                raise
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
     @app.get(
         "/api/v1/metadata-policy/automatic-safety",
         response_model=_AutomaticSafetyResponse,
@@ -3066,11 +3078,11 @@ def _register_policy_routes(
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             automatic_safety.pause(payload.paused, application.now())
-            return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
+        return _committed_automatic_safety_response()
 
     @app.post(
         "/api/v1/metadata-policy/automatic-safety/recover",
@@ -3090,11 +3102,11 @@ def _register_policy_routes(
             if category is not None and not category:
                 raise ValueError
             automatic_safety.recover(application.now(), category)
-            return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
+        return _committed_automatic_safety_response()
 
     @app.post(
         "/api/v1/metadata-policy/automatic-safety/suspend",
@@ -3115,11 +3127,11 @@ def _register_policy_routes(
             automatic_safety.suspend(
                 payload.reason, application.now(), payload.category
             )
-            return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
+        return _committed_automatic_safety_response()
 
     @app.get(
         "/api/v1/metadata-policy/shadow/leave-preview",

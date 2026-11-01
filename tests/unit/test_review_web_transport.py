@@ -1590,6 +1590,31 @@ def test_committed_automatic_pause_after_failed_read_answers_persistence(
     assert response.json()["error"]["code"] == "persistence"
 
 
+def test_admission_closed_after_committed_automatic_pause_is_not_a_refusal(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    application = web.client.app.state.review_application  # type: ignore[attr-defined]
+    operations = application.automatic_safety
+    real_pause = operations.pause
+
+    def pause_then_close(paused: object, at: object) -> None:
+        real_pause(paused, at)
+        # Shutdown closes admission between the commit and the read-back.
+        application._admission.close()
+
+    operations.pause = pause_then_close
+    response = web.client.post(
+        "/api/v1/metadata-policy/automatic-safety/pause",
+        headers=headers,
+        json={"paused": True},
+    )
+    assert web.repository.automatic_safety.paused is True
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("activated", "status", "code"),
     (("automatic", 503, "persistence"), ("review", 422, "automatic_unavailable")),
