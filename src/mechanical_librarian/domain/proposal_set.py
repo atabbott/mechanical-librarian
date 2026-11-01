@@ -1736,10 +1736,11 @@ def _unoffered_references(
         if provider.authority != HARDCOVER_AUTHORITY:
             continue
         for candidate in provider.candidates:
-            # One candidate's authors are one list: it is left out when at
-            # least one name is a rotated book author name and every other is
-            # a book author name as it stands, so no listed coauthor carries
-            # a rotated name back in.
+            # One candidate's authors are one list: it is left out when it
+            # names as many authors as the book, at least one is a rotated
+            # book author name and every other is a book author name as it
+            # stands, so no coauthor carries a rotated name back in and no
+            # shorter list is hidden.
             authors = [
                 claim
                 for claim in candidate.claims
@@ -1749,7 +1750,7 @@ def _unoffered_references(
             ]
             names = [claim.value for claim in authors]
             if (
-                names
+                len(names) == len(local)
                 and all(type(name) is str for name in names)
                 and any(_rotated_local_author(cast(str, name), local) for name in names)
                 and all(
