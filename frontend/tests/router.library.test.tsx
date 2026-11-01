@@ -1463,6 +1463,72 @@ describe('Library route', () => {
     expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
   })
 
+  it.each([
+    ['committed', true],
+    ['not committed', false],
+  ])('refreshes preparation after an unconfirmed dismissal that %s', async (_name, committed) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    const confirmed = terminalPreparation(runId)
+    let current: PreparationView = confirmed
+    http.getPreparation = vi.fn(async () => current)
+    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+      // Only the response was lost; the write may or may not have committed.
+      if (committed)
+        current = {
+          ...confirmed,
+          presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+        }
+      throw new ApiError(503, 'persistence')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await screen.findByRole('button', { name: 'Dismiss preparation' })
+    const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+
+    await waitFor(() =>
+      expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(
+        readsBeforeDismissal,
+      ),
+    )
+    if (committed) {
+      // The refreshed state no longer holds the run, so its detail and the
+      // control close; nothing claims the dismissal failed.
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Dismissal could not be confirmed. It may have been saved; the current preparation is shown. Check it before dismissing again.',
+      )
+      expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeEnabled()
+    }
+    expect(http.dismissPreparation).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a refused dismissal silent', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    http.getPreparation = vi.fn(async () => terminalPreparation(runId))
+    http.dismissPreparation = vi
+      .fn<ReviewHttp['dismissPreparation']>()
+      .mockRejectedValue(new ApiError(409, 'stale'))
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(
+      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+    )
+    await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
+    await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
+    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+  })
+
   it('retries a failed live confirmation until authoritative HTTP succeeds', async () => {
     const http = createHttp()
     const updates = createLiveStream()

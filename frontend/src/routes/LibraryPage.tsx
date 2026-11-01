@@ -1,5 +1,6 @@
 import {
   invalidateBackgroundQueries,
+  invalidateForegroundQueries,
   prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
@@ -25,7 +26,13 @@ import {
 import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  displayValue,
+  sessionRefreshedCopy,
+  uncertainWriteOutcome,
+} from '../api/http'
 import type {
   AutomaticOutcome,
   ChoiceContextView,
@@ -382,6 +389,7 @@ const PreparationDetail = ({
   recoveryRequired,
   animateChange,
   dismissing,
+  uncertain,
   onDismiss,
 }: {
   presentation: PreparationPresentation
@@ -389,6 +397,7 @@ const PreparationDetail = ({
   recoveryRequired: boolean
   animateChange: boolean
   dismissing: boolean
+  uncertain: boolean
   onDismiss: () => void
 }) => {
   const outcomeTotal = presentation.passage.ready + presentation.passage.failed
@@ -585,6 +594,12 @@ const PreparationDetail = ({
         <button type="button" disabled={recoveryRequired || dismissing} onClick={onDismiss}>
           {dismissing ? 'Dismissing…' : 'Dismiss preparation'}
         </button>
+      ) : null}
+      {uncertain ? (
+        <p role="alert">
+          Dismissal could not be confirmed. It may have been saved; the current preparation is
+          shown. Check it before dismissing again.
+        </p>
       ) : null}
     </div>
   )
@@ -1731,6 +1746,12 @@ export default function LibraryPage({
       searchIdentity: string
     }) => http.dismissPreparation(request.runId),
     retry: false,
+    // An uncertain dismissal may still have committed, so the preparation read
+    // decides; a refusal changed nothing and keeps the confirmed state.
+    onError: (error) =>
+      uncertainWriteOutcome(error)
+        ? invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
+        : undefined,
     onSuccess: async (value, request) => {
       dismissalCleanupSuppression.current = request
       if (!preparationState.adoptDismissal(request.runId, value)) {
@@ -3839,6 +3860,9 @@ export default function LibraryPage({
               recoveryRequired={preparationState.data?.recovery_required ?? false}
               animateChange={animatedPresentationVersion === presentationVersion}
               dismissing={dismissPreparation.isPending}
+              uncertain={
+                dismissPreparation.isError && uncertainWriteOutcome(dismissPreparation.error)
+              }
               onDismiss={() =>
                 dismissPreparation.mutate({
                   runId: presentation.run_id,
