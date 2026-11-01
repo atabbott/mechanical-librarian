@@ -705,10 +705,15 @@ describe('owner settings route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
 
     expect(await screen.findByText(copy)).toBeVisible()
-    const readAfterFailure = () =>
-      Math.max(...vi.mocked(http.getReviewerAccess).mock.invocationCallOrder) >
-      (vi.mocked(http.configureOpenRouter).mock.invocationCallOrder[0] ?? Infinity)
-    if (reloads) await waitFor(() => expect(readAfterFailure()).toBe(true))
+    // Nothing else reads reviewer access after the write, so a read after the
+    // failed call is the panel's own reload of the authoritative state.
+    const readsAfterFailure = () => {
+      const failedAt = vi.mocked(http.configureOpenRouter).mock.invocationCallOrder[0] ?? Infinity
+      return vi
+        .mocked(http.getReviewerAccess)
+        .mock.invocationCallOrder.filter((order) => order > failedAt).length
+    }
+    if (reloads) await waitFor(() => expect(readsAfterFailure()).toBe(1))
     expect(http.configureOpenRouter).toHaveBeenCalledOnce()
   })
 
