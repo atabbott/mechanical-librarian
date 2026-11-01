@@ -1036,13 +1036,13 @@ def test_regional_language_tag_withheld_reason_is_specific(tmp_path, audio):
     report = language_report(("English", "en"), "en-GB", audio=audio)
     with closing(open_repository(tmp_path / "region.sqlite")) as repository:
         case_id, _ = publish_language_case(repository, report)
+        document = repository.read_current_review_case(
+            case_id, None
+        ).final_outcome_document
+        assert document is not None
         outcome = next(
             value
-            for value in ShadowOutcomeSet.from_json(
-                repository.read_current_review_case(
-                    case_id, None
-                ).final_outcome_document
-            ).outcomes
+            for value in ShadowOutcomeSet.from_json(document).outcomes
             if value.destination == "language"
         )
         field = next(
@@ -1080,13 +1080,13 @@ def test_different_language_audiobook_replace_keeps_its_own_reason(tmp_path):
     report = language_report(("French",), "en-GB", audio=True)
     with closing(open_repository(tmp_path / "other.sqlite")) as repository:
         case_id, _ = publish_language_case(repository, report)
+        document = repository.read_current_review_case(
+            case_id, None
+        ).final_outcome_document
+        assert document is not None
         outcome = next(
             value
-            for value in ShadowOutcomeSet.from_json(
-                repository.read_current_review_case(
-                    case_id, None
-                ).final_outcome_document
-            ).outcomes
+            for value in ShadowOutcomeSet.from_json(document).outcomes
             if value.destination == "language"
         )
         field = next(
