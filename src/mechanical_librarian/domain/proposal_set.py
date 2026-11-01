@@ -1567,12 +1567,7 @@ def evaluate_report(
             else _unoffered_references(report, destination)
         )
         if unoffered:
-            result = _withhold_unoffered(
-                result,
-                unoffered,
-                targets[destination],
-                _observations(report, destination),
-            )
+            result = _withhold_unoffered(result, unoffered, targets[destination])
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1798,11 +1793,7 @@ def _withhold_unoffered_title(
         return combinations
     before = results[TargetDestination.TITLE]
     withheld = _withhold_unoffered(
-        before,
-        unoffered,
-        targets[TargetDestination.TITLE],
-        _observations(report, TargetDestination.TITLE),
-        keep_alone=False,
+        before, unoffered, targets[TargetDestination.TITLE], keep_alone=False
     )
     dropped = {value.alternative_id for value in before.alternatives} - {
         value.alternative_id for value in withheld.alternatives
@@ -1873,7 +1864,6 @@ def _withhold_unoffered(
     result: ProposalResult,
     unoffered: frozenset[str],
     target: TargetField,
-    observations: tuple[_Observed, ...],
     *,
     keep_alone: bool = True,
 ) -> ProposalResult:
@@ -1882,7 +1872,7 @@ def _withhold_unoffered(
         value
         for value in result.alternatives
         if value.assessment is ProposalAssessment.PRESERVES_TARGET
-        or not _offers_only_unoffered(value, unoffered, observations)
+        or not unoffered.issuperset(value.evidence_references)
     )
     if len(kept) == len(result.alternatives):
         return result
@@ -1956,33 +1946,6 @@ def _withhold_unoffered(
         selected,
         result.reasons,
         result.dependencies,
-    )
-
-
-def _offers_only_unoffered(
-    alternative: ProposalAlternative,
-    unoffered: frozenset[str],
-    observations: tuple[_Observed, ...],
-) -> bool:
-    """Whether an alternative would offer only what unoffered claims state.
-
-    That is so when every claim behind it is unoffered, and also when equal
-    values from offered claims merged into it but the value it shows is
-    stated only by unoffered ones, such as an article form beside its bare
-    title. Such an alternative is withheld whole: its shown value is never
-    swapped for another, so nothing the outcome did not decide is offered.
-    """
-    if unoffered.issuperset(alternative.evidence_references):
-        return True
-    behind = set(alternative.evidence_references)
-    shown = [
-        observed
-        for observed in observations
-        if observed.value == alternative.value
-        and behind.issuperset(observed.references)
-    ]
-    return bool(shown) and all(
-        unoffered.issuperset(observed.references) for observed in shown
     )
 
 

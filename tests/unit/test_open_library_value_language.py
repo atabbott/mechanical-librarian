@@ -588,16 +588,20 @@ def test_a_left_out_title_keeps_its_title_and_series_duplication_veto():
     assert "Пример" not in _offered(results[TargetDestination.TITLE])
 
 
-def test_a_left_out_article_form_is_not_offered_through_its_bare_title():
-    # The French edition's "The Example Title" merges with the other source's
-    # bare "Example Title" and would be shown as the article form, a value
-    # only the left-out edition states, so the merged choice is withheld
-    # whole rather than shown under the other source's name. Only the
-    # current title is left, so it is kept, which writes nothing.
-    result = _title(
-        titles=("Example Title", "The Example Title"),
-        provider_languages=(None, "fr"),
-        local_language="en",
-    )
+@pytest.mark.parametrize(
+    "titles, languages",
+    (
+        (("Example Title", "The Example Title"), (None, "fr")),
+        (("Example Title", "The Example Title", "Example Title"), (None, "fr", None)),
+    ),
+    ids=("one_source", "two_sources"),
+)
+def test_a_title_another_source_states_stays_offered_in_its_article_form(
+    titles, languages
+):
+    # Another source states the same title without its leading article, so
+    # the one title stays a choice, in its article form (#1496), as on base.
+    result = _title(titles=titles, provider_languages=languages, local_language="en")
 
-    assert (ProposalOutcome.KEEP, {_CURRENT}) == (result.outcome, _offered(result))
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert "The Example Title" in _offered(result)
