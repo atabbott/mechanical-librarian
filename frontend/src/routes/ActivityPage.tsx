@@ -1058,7 +1058,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               Previous
             </button>
             <PageJump
-              key={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
+              shownFor={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
               page={ledger.page}
               pageCount={ledger.page_count}
               onCommit={goToPage}

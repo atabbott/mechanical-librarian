@@ -16,15 +16,26 @@ export function RowTime({ seconds }: { seconds: number | null }) {
 export function PageJump({
   page,
   pageCount,
+  shownFor,
   onCommit,
   onEdit,
 }: {
   page: number
   pageCount: number
+  // The page and search the value was last reset for.
+  shownFor: string
   onCommit: (page: number, focusKey: string) => void
   onEdit: () => void
 }) {
   const [value, setValue] = useState(String(page))
+  // A changed page or search resets the value in place. Remounting the input
+  // instead dropped its focus to the document when the change landed after the
+  // owner had moved into it (#1554).
+  const [resetFor, setResetFor] = useState(shownFor)
+  if (resetFor !== shownFor) {
+    setResetFor(shownFor)
+    setValue(String(page))
+  }
   const cancelCommit = useRef(false)
   const commit = () => {
     if (cancelCommit.current) {

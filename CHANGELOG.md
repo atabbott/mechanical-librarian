@@ -155,6 +155,8 @@ brackets are GitHub issues.
   through real automatic decisions again, and its catalogue fake answers an
   operator book that carries its own ISBNs as a real catalogue would
   (#1427, #1545).
+- Activity's page number field keeps focus when a filter change finishes after
+  you have moved into it (#1554).
 
 ## 0.29.1 — Clarity and accessibility
 
