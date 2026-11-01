@@ -387,7 +387,18 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         case.to_json(),
                     ),
                 )
-            else:
+            # Reactivating an unchanged policy, as leaving Automatic does,
+            # retires a case only for it to return as itself. It continues its
+            # episode, so the owner's answers on it stay current (#1568).
+            elif not (
+                validated is not None
+                and self._connection.execute(
+                    "SELECT actor,from_review_case_id FROM review_case_transitions "
+                    "WHERE transition_id=?",
+                    (validated[3],),
+                ).fetchone()
+                == ("policy-activation-v1", case.review_case_id)
+            ):
                 # The work returned to this case's content, so the case starts
                 # a new episode: the owner decisions recorded on it so far are
                 # history and word, settle and hold nothing now (#1358).

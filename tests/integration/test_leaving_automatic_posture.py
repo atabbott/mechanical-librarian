@@ -2,8 +2,8 @@
 
 ``enter_shadow_preview`` reactivates the unchanged policy, which retires every
 current case for its successor. With the policy unchanged that successor is
-the same proposal set, so preparation admits the same case again, starting a
-new episode (#1568). An automatic decision recorded under Automatic stays on
+the same proposal set, so preparation admits the same case again, and it
+continues its episode with the owner's answers (#1568). An automatic decision recorded under Automatic stays on
 that case and plans and writes nothing outside the Automatic posture.
 
 The harness drives a real SQLite repository and the real
@@ -393,41 +393,65 @@ def test_leaving_automatic_with_an_unchanged_policy_keeps_the_review_case(
     )
 
 
-def test_an_owner_decision_from_before_leaving_automatic_asks_again(
+def test_owner_answers_from_before_leaving_automatic_are_kept(
     library: _Library, tmp_path: Path
 ) -> None:
     case = library.case()
-    destination = next(
+    asked = [
         str(value)
         for _, value in library.attention()
         if value in {proposal["destination"] for proposal in case.proposals}
-    )
-    decision = _accept(case, destination, "before-leaving-automatic", 11)
+    ]
+    assert len(asked) >= 2
+    planned_destination, waiting_destination = asked[:2]
+    decision = _accept(case, planned_destination, "before-leaving-automatic", 11)
     library.root.record_human_decision(decision)
-    library.root.grant_field_effect_consents("primary", ("ebooks",), (destination,), 12)
+    library.root.grant_field_effect_consents(
+        "primary", ("ebooks",), (planned_destination,), 12
+    )
     scheduler, service, target = _applier(library, tmp_path)
     library.now[0] = 13
     scheduler.schedule()
     unclaimed = _planned(library)[decision.decision_id]
     assert unclaimed.state == "planned"
-    assert (case.review_case_id, destination) not in library.attention()
+    # Answered after the applier ran, so nothing has planned it yet.
+    waiting = _accept(case, waiting_destination, "before-leaving-automatic-2", 14)
+    library.root.record_human_decision(waiting)
+    assert waiting.decision_id in library.pending()
+    answered = {(case.review_case_id, planned_destination)} | {
+        (case.review_case_id, waiting_destination)
+    }
+    assert not answered & set(library.attention())
 
     library.leave_automatic()
 
-    # The case is the same; the owner's decision is history of its earlier
-    # episode, so the field asks again and its unclaimed plan never applies.
+    # The same case continues its episode, so the owner's answers stay
+    # current: nothing asks again, and both still write (#1568).
     assert library.case_id() == case.review_case_id
-    assert (case.review_case_id, destination) in library.attention()
-    assert decision.decision_id not in library.pending()
-    assert not library.root.field_effect_authority_is_current(unclaimed.plan.authority)
+    assert library.root._connection.execute(
+        "SELECT count(*) FROM review_case_episodes WHERE review_case_id=?",
+        (case.review_case_id,),
+    ).fetchone() == (0,)
+    assert not answered & set(library.attention())
+    read = _read(library, scheduler)
+    for destination, recorded in (
+        (planned_destination, decision),
+        (waiting_destination, waiting),
+    ):
+        field = read["fields"][destination]
+        assert field["human_decision"]["decision_id"] == recorded.decision_id
+        assert field["classification"] == "human_recorded"
+        assert field["needs_attention"] is False
+    assert waiting.decision_id in library.pending()
+    assert library.root.field_effect_authority_is_current(unclaimed.plan.authority)
     target.seed(unclaimed.plan)
-    applied = service.apply(unclaimed.plan.plan_id)
-    assert applied.state != "verified"
-    assert not [
-        json.loads(event)["kind"]
-        for event in library.root.field_effect_event_documents(unclaimed.plan.plan_id)
-        if json.loads(event)["kind"] in {"claimed", "verified"}
-    ]
+    assert service.apply(unclaimed.plan.plan_id).state == "verified"
+    assert (unclaimed.plan.plan_id, "verified", planned_destination) in {
+        (event["change_id"], event["state"], event["destination"])
+        for event in cast(
+            list[dict[str, Any]], _read(library, scheduler)["activity"]["events"]
+        )
+    }
 
 
 def test_an_automatic_decision_writes_only_in_the_automatic_posture(

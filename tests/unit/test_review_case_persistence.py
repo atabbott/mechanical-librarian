@@ -500,6 +500,106 @@ def test_policy_activation_retirement_readmits_the_same_proposal_set() -> None:
         repository.close()
 
 
+def _owner_choice(repository, case_id: str, key: str) -> HumanDecision:
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    field = next(
+        value
+        for value in case.proposals
+        if value["result"]["outcome"] == "unresolved_choice"
+    )
+    decision = HumanDecision.create(
+        case,
+        proposal_id=field["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=field["destination"],
+        actor="owner",
+        outcome="accept",
+        selected_value=field["result"]["alternatives"][0]["value"],
+        idempotency_key=key,
+        occurred_at=1_000,
+    )
+    repository.record_human_decision(decision)
+    return decision
+
+
+def _activate(repository, profile, expected, generation, report) -> None:
+    resolved = resolve_policy(profile, report.target.library)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        expected.policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        generation + 1,
+        expected_active_generation=generation,
+        reconcile_current=True,
+    )
+
+
+def _admit_under(repository, profile, report) -> str:
+    proposal = evaluate_report(
+        report, resolve_policy(profile, report.target.library).resolved_id
+    )
+    repository.publish_proposal(proposal)
+    return json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+
+def _episodes(repository, case_id: str) -> tuple[int]:
+    return repository._connection.execute(
+        "SELECT count(*) FROM review_case_episodes WHERE review_case_id=?",
+        (case_id,),
+    ).fetchone()
+
+
+def test_reactivating_an_unchanged_policy_keeps_the_owner_answers() -> None:
+    """The case retired by an unchanged policy continues its episode (#1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        case_id = _admit_under(repository, builtin, report)
+        decision = _owner_choice(repository, case_id, "unchanged-policy-0001")
+        assert decision.to_json() in repository.pending_field_effect_decision_documents(
+            100
+        )
+        _activate(repository, builtin, builtin, 1, report)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _episodes(repository, case_id) == (0,)
+        assert decision.to_json() in repository.pending_field_effect_decision_documents(
+            100
+        )
+        repository.close()
+
+
+def test_returning_through_another_policy_starts_a_new_episode() -> None:
+    """A->B->A admits the first case again as a new episode (#1358, #1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        changed = MetadataPolicyProfile.create(
+            "Changed",
+            {**dict(builtin.options), "date_precision": "full_date"},
+            dict(builtin.destinations),
+        )
+        repository.create_metadata_policy_draft(changed.canonical_json)
+        case_id = _admit_under(repository, builtin, report)
+        decision = _owner_choice(repository, case_id, "changed-policy-0001")
+        _activate(repository, changed, builtin, 1, report)
+        other = _admit_under(repository, changed, report)
+        assert other != case_id
+        _activate(repository, builtin, changed, 2, report)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _episodes(repository, case_id) == (1,)
+        assert (
+            decision.to_json()
+            not in repository.pending_field_effect_decision_documents(100)
+        )
+        repository.close()
+
+
 def test_stale_and_cross_target_proposals_mutate_nothing() -> None:
     with tempfile.TemporaryDirectory() as directory:
         repository = open_repository(Path(directory) / "reports.sqlite")

@@ -149,11 +149,10 @@ brackets are GitHub issues.
   checking its library connection now waits and carries on, instead of
   marking the work as could not finish (#1547).
 - Switching from Automatic to Preview without changing the policy keeps every
-  work in Attention and Library. Once an automatic decision has been
-  recorded, decisions you had not yet written are asked again, on every work,
-  as after a policy change. An automatic decision recorded before the switch,
-  including a cover or description, writes nothing in Preview. No clean
-  rebuild is needed (#1568).
+  work in Attention and Library, and keeps your answers: a decision you had
+  not yet written stays decided and is still written. An automatic decision
+  recorded before the switch, including a cover or description, writes
+  nothing in Preview. No clean rebuild is needed (#1568).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
