@@ -4584,7 +4584,11 @@ def _series_titled_plan(title: str) -> MetadataDiscoveryPlan:
 
 
 def _series_titled_provider(
-    sent: list[str | None], *, catalogued: bool, series: list[str] | None = None
+    sent: list[str | None],
+    *,
+    catalogued: bool,
+    series: list[str] | None = None,
+    series_number: list[str] | None = None,
 ) -> OpenLibraryMetadataProvider:
     def handler(request: httpx.Request) -> httpx.Response:
         value: dict[str, object]
@@ -4610,6 +4614,8 @@ def _series_titled_provider(
             value = _work("/works/OL5W")
             if series is not None:
                 value["series"] = series
+            if series_number is not None:
+                value["series_number"] = series_number
         return httpx.Response(
             200, headers={"content-type": "application/json"}, json=value
         )
@@ -4686,3 +4692,21 @@ def test_an_ebook_whose_work_states_another_series_is_not_that_work() -> None:
 
     (lane,) = observation.lanes
     assert ProviderStatus.NO_MATCH is lane.status
+
+
+def test_another_series_position_does_not_hide_this_series_name() -> None:
+    """#1499: every stated series is considered, positioned or not."""
+    sent: list[str | None] = []
+    observation = (
+        _series_titled_provider(
+            sent,
+            catalogued=True,
+            series=["Other Saga", "Example Saga"],
+            series_number=["2"],
+        )
+        .observe(_series_titled_plan("Local work title (Example Saga)"))
+        .observation
+    )
+
+    (lane,) = observation.lanes
+    assert ProviderStatus.CANDIDATES is lane.status

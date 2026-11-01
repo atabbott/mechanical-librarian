@@ -3543,13 +3543,20 @@ def provider_candidate_work_identity_admission(
             )
         ),
         provider_series_memberships=memberships,
+        # Each stated series name no position claim directly follows.
         provider_series_names=tuple(
             claim.value
-            for claim in ordered
+            for index, claim in enumerate(ordered)
             if claim.kind is ClaimKind.SERIES
             and claim.scope is ClaimScope.WORK
             and claim.state is FieldState.VALID
             and claim.value is not None
+            and not (
+                index + 1 < len(ordered)
+                and ordered[index + 1].kind is ClaimKind.SERIES_SEQUENCE
+                and ordered[index + 1].scope is ClaimScope.WORK
+                and ordered[index + 1].raw_order == claim.raw_order + 1
+            )
         ),
         audiobook=audiobook,
         runtime_tight=runtime_tight,

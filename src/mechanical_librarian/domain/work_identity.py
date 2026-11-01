@@ -1049,8 +1049,8 @@ def replay_provider_work_identity_admission(
     of `provider_series_memberships`, the product's own stated series names and
     positions, to state the series the rung stripped. An ebook's series-name
     production also reads `provider_series_names`, every series name the
-    product states with or without a position, so a stated series always has
-    to be this one (#1499).
+    product states without a position, so a stated series always has to be
+    this one (#1499).
     """
     admission = admit_provider_work_identity(
         local_title=local_title,
@@ -2109,19 +2109,21 @@ def _ebook_series_decoration(
     no volume, part or collection and does not end in a number: "(Volume 2)",
     "(Part Two)" and "(Box Set)" are another work than the bare title.
     """
-    if memberships:
-        return _band_decoration_corroborated(
-            WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
-            local_title,
-            memberships,
-        )
     paren = _PAREN.search(_normalized_query_text(local_title))
     inside = "" if paren is None else _clean(paren.group(1))
     position = _PAREN_SERIES_POSITION.fullmatch(inside)
     name = inside if position is None else _clean(position.group("series"))
-    if names:
-        # A series stated without a position must still be this one.
-        return bool(name) and any(_closed_equal(stated, name) for stated in names)
+    if memberships or names:
+        # Any one stated series may be this one: a positioned membership
+        # must state its position too, an unpositioned name only the name.
+        return (
+            bool(memberships)
+            and _band_decoration_corroborated(
+                WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+                local_title,
+                memberships,
+            )
+        ) or (bool(name) and any(_closed_equal(stated, name) for stated in names))
     tokens = _PUNCTUATION.sub(" ", name).casefold().split()
     return bool(tokens) and not (
         any(token in _EBOOK_PART_WORDS for token in tokens)

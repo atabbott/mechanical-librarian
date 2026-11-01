@@ -1662,6 +1662,20 @@ def test_band_title_production_refusals(
             {"series": (), "names": ("Example Saga",)},
             True,
         ),
+        # Another series' position does not hide this one's name.
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"series": (("Other Saga", "2"),), "names": ("Example Saga",)},
+            True,
+        ),
+        # A positioned membership of this series must state this position.
+        (
+            "Plain Work (Example Saga, #2)",
+            "Plain Work",
+            {"series": (("Example Saga", "3"),), "names": ()},
+            False,
+        ),
         ("Plain Work (Trilogy)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Workbook)", "Plain Work", {"series": ()}, False),
         ("Plain Work (Collected Stories 2)", "Plain Work", {"series": ()}, False),
@@ -1698,6 +1712,8 @@ def test_band_title_production_refusals(
         "bare_roman",
         "other_unpositioned_series",
         "same_unpositioned_series",
+        "unpositioned_beside_other_positioned",
+        "positioned_wrong_position",
         "trilogy",
         "workbook",
         "collected_stories",
