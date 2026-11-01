@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -558,6 +559,7 @@ def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
     scheduler.schedule()
     plan = _planned(library)[automatic.decision_id].plan
     assert library.root.field_effect_authority_is_current(plan.authority)
+    assert _waiting(scheduler) == (1, "authors")
 
     library.leave_automatic()
 
@@ -572,18 +574,38 @@ def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
     target.seed(plan)
     before = target.read(plan).value
     if not confirm_automatic:
-        # Outside Automatic the plan waits rather than being consumed.
+        # Outside Automatic the plan waits rather than being consumed, and
+        # Activity neither counts it as ready nor names it as the next write.
+        assert _waiting(scheduler) == (0, None)
         assert library.root.next_field_effect_plan_id(None) is None
+        # A plan selected just before the posture changed is an empty poll.
+        with patch.object(
+            library.root,
+            "next_field_effect_plan_id",
+            return_value=(plan.plan_id, "ebooks"),
+        ):
+            assert scheduler.run_cycle() is True
         with pytest.raises(GuardedApplicationError, match="deferred"):
             service.apply(plan.plan_id)
         assert _planned(library)[automatic.decision_id].state == "planned"
         library.root.activate_qualified_automatic(40)
-    # In Automatic it is selected and goes stale: it belongs to the earlier
-    # generation.
+    # In Automatic it is ready again, and is selected and goes stale: it
+    # belongs to the earlier generation.
+    assert _waiting(scheduler) == (1, "authors")
     assert library.root.next_field_effect_plan_id(None) == (plan.plan_id, "ebooks")
     applied = service.apply(plan.plan_id)
     assert (applied.state, applied.failure) == ("stale", "authority")
     assert target.read(plan).value == before
+
+
+def _waiting(scheduler: ContinuousGuardedApplication) -> tuple[int, object]:
+    """Activity's ready count and the write it names as next."""
+    activity = scheduler.activity(
+        search=None, event_type="all", range_days=30, page=1, page_size=25
+    )
+    waiting = cast(dict[str, Any], activity["waiting"])
+    current = cast(dict[str, Any] | None, activity["current_waiting"])
+    return waiting["scheduled"], None if current is None else current["destination"]
 
 
 def _read(library: _Library, scheduler: ContinuousGuardedApplication) -> dict[str, Any]:

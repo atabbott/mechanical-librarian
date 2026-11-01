@@ -81,6 +81,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.schema import (
     _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_NOT_DEFERRED_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
     _validate_report_row,
     _validated_report_row,
@@ -1824,7 +1825,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             counts = {
                 state: count
                 for state, count in self._connection.execute(
-                    "SELECT state,count(*) FROM field_effects GROUP BY state"
+                    "SELECT state,count(*) FROM field_effects effect WHERE "
+                    + _FIELD_EFFECT_NOT_DEFERRED_SQL
+                    + " GROUP BY state"
                 ).fetchall()
             }
             owner_action = self._connection.execute(_OWNER_ACTION_COUNT_SQL).fetchone()
@@ -4008,6 +4011,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
             "WHERE effect.state IN "
             + _FIELD_EFFECT_WAITING_STATES_SQL
+            + " AND "
+            + _FIELD_EFFECT_NOT_DEFERRED_SQL
             + " ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
         ).fetchone()
         waiting_title = "Recorded work"
@@ -4459,8 +4464,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
             rows = self._connection.execute(
                 "SELECT connection_name,library_name,work_id,destination,state,document "
-                "FROM field_effects WHERE state NOT IN ('verified','superseded','abandoned') "
-                "ORDER BY updated_at DESC,plan_id LIMIT 256"
+                "FROM field_effects effect WHERE state NOT IN "
+                "('verified','superseded','abandoned') AND "
+                + _FIELD_EFFECT_NOT_DEFERRED_SQL
+                + " ORDER BY updated_at DESC,plan_id LIMIT 256"
             ).fetchall()
             for connection, library, work_id, destination, state, document in rows:
                 operation = FieldEffectOperation.from_json(document)

@@ -852,7 +852,10 @@ def _same_policy_retirement_sql(connection: str, library: str, item: str) -> str
 # reactivation of an unchanged policy has retired its case and preparation has
 # not admitted it again. Once the posture or case returns, the ordinary guards
 # decide it, so an effect of an earlier generation still goes stale (#1568).
+# A malformed document is never deferred: the readers that validate it refuse
+# it as before.
 _FIELD_EFFECT_DEFERRED_SQL = (
+    "(json_valid(effect.document) AND "
     "((json_extract(effect.document,'$.plan.authority.origin')='automatic_policy' "
     "AND NOT " + _AUTOMATIC_POSTURE_SQL + ") OR "
     "(json_extract(effect.document,'$.plan.authority.origin')='human' "
@@ -869,7 +872,7 @@ _FIELD_EFFECT_DEFERRED_SQL = (
     + _same_policy_retirement_sql(
         "awaiting.connection_name", "awaiting.library_name", "awaiting.item_id"
     )
-    + ")))"
+    + "))))"
 )
 
 # The scheduler's claim, the Activity page's waiting effect and description
@@ -882,6 +885,16 @@ _FIELD_EFFECT_DEFERRED_SQL = (
 _FIELD_EFFECT_READY_STATES_SQL = "('planned','retryable')"
 _FIELD_EFFECT_WAITING_STATES_SQL = (
     "('planned','claimed','applying','reconciling','retryable')"
+)
+# The effects that are not waiting for their authority to return. Activity
+# counts and names only these as ready or in progress: a deferred effect
+# cannot write now, so it is never presented as about to (#1568).
+_FIELD_EFFECT_NOT_DEFERRED_SQL = (
+    "NOT (effect.state IN "
+    + _FIELD_EFFECT_READY_STATES_SQL
+    + " AND "
+    + _FIELD_EFFECT_DEFERRED_SQL
+    + ")"
 )
 _FIELD_EFFECTS_READY_INDEX_SQL = (
     "CREATE INDEX field_effects_ready ON field_effects(updated_at,plan_id) "

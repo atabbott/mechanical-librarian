@@ -636,6 +636,15 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> 
             # Outside Automatic the planned cover waits: it is not selected,
             # and applying it directly defers without consuming it.
             target.seed(operation.plan)
+
+            def ready() -> int:
+                counts = cast(
+                    "dict[str, int]",
+                    repository.field_effect_activity_summary()["counts"],
+                )
+                return counts.get("planned", 0)
+
+            assert ready() == 0
             assert repository.next_field_effect_plan_id(None) is None
             with pytest.raises(GuardedApplicationError, match="deferred"):
                 application.apply(operation.plan.plan_id)
@@ -644,6 +653,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> 
             )
             repository.activate_qualified_automatic(8)
             assert authority.current(operation.plan.authority)
+            assert ready() == 1
             assert repository.next_field_effect_plan_id(None) == (
                 operation.plan.plan_id,
                 operation.plan.library,
