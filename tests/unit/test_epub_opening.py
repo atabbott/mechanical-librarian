@@ -705,7 +705,7 @@ def test_identifier_owner_spans_are_computed_once_per_element() -> None:
 
 def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
-    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v4"
+    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v5"
     assert all(
         claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims
@@ -4016,6 +4016,184 @@ def test_typed_credit_containers_preserve_roles_without_authors(
         else []
     )
     assert not [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+
+
+def _identifiers(body: str) -> list[str | None]:
+    report = _extract(_single(_xhtml(body)))
+    return [
+        claim.normalized_value
+        for claim in report.claims
+        if claim.field is OpeningField.IDENTIFIER
+    ]
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "Library of Congress Control Number: ",
+        "Library of Congress Control No. ",
+        "LC control number ",
+        "LC Control No.: ",
+        "LCCN ",
+        "LCCN# ",
+    ),
+    ids=("full", "full_no", "lc", "lc_no", "lccn", "lccn_hash"),
+)
+def test_a_labelled_control_number_is_no_isbn_candidate(label: str) -> None:
+    # 2012345670 passes the ISBN-10 checksum (#1497).
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        f"<p>{label}2012345670</p><p>eBook ISBN 9780306406157</p></section>"
+    ) == ["9780306406157"]
+
+
+def test_a_catalogue_record_block_keeps_only_its_isbns() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>Example, Ada.</p><p>Synthetic voyage / Ada Example.</p>"
+        "<p>ISBN 0306406152 (hardcover)</p><p>2012345670</p>"
+        "<p>eBook ISBN 9780306406157</p></section>"
+    ) == ["0306406152", "9780306406157"]
+
+
+def test_an_isbn_10_outside_the_catalogue_record_is_still_read() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page"><p>ISBN 2012345670</p>'
+        "<div><p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>2012345670</p></div></section>"
+    ) == ["2012345670"]
+    assert _identifiers(
+        '<section epub:type="copyright-page"><p>2012345670</p>'
+        "<p>Library of Congress number on request</p></section>"
+    ) == ["2012345670"]
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    (
+        ("eBook edition 0306406152", ["0306406152"]),
+        (
+            "ISBN 9780306406157 (hardcover), 0306406152 (pbk.)",
+            ["9780306406157", "0306406152"],
+        ),
+        ("0-306-40615-2 (pbk.)", ["0306406152"]),
+        ("2012345670", []),
+    ),
+    ids=("ebook_label", "print_label_after_separator", "hyphenated", "bare"),
+)
+def test_a_catalogue_record_keeps_every_labelled_or_hyphenated_isbn(
+    line: str, expected: list[str]
+) -> None:
+    assert (
+        _identifiers(
+            '<section epub:type="copyright-page">'
+            "<p>Library of Congress Cataloging-in-Publication Data</p>"
+            f"<p>{line}</p></section>"
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "<p><b>Library of Congress Cataloging-in-Publication Data</b></p>",
+        "<h2><span>Library of Congress Cataloging-in-Publication Data</span></h2>",
+    ),
+    ids=("bold", "span_heading"),
+)
+def test_a_wrapped_catalogue_record_heading_still_opens_the_block(heading: str) -> None:
+    assert (
+        _identifiers(
+            f'<section epub:type="copyright-page">{heading}'
+            "<p>Example, Ada.</p><p>2012345670</p></section>"
+        )
+        == []
+    )
+
+
+def test_a_long_whitespace_run_after_a_control_number_label_is_linear() -> None:
+    started = time.monotonic()
+    assert opening._LCCN_LABELLED.search("LCCN" + " " * 20000 + "x") is None
+    assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        '<f:p xmlns:f="urn:foreign">'
+        "Library of Congress Cataloging-in-Publication Data</f:p>",
+        '<div><f:p xmlns:f="urn:foreign">'
+        "Library of Congress Cataloging-in-Publication Data</f:p></div>",
+        '<h2 epub:type="preview">'
+        "Library of Congress Cataloging-in-Publication Data</h2>",
+        '<aside epub:type="preview"><p>'
+        "Library of Congress Cataloging-in-Publication Data</p></aside>",
+    ),
+    ids=("foreign", "foreign_in_html_wrapper", "preview", "inside_preview"),
+)
+def test_a_skipped_catalogue_heading_opens_no_block(heading: str) -> None:
+    assert _identifiers(
+        f'<section epub:type="copyright-page">{heading}<p>0306406152</p></section>'
+    ) == ["0306406152"]
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "<p>eBook ISBN</p>",
+        "<p>ISBN</p>",
+        "<p>Print ISBN:</p>",
+        "<p>ISBN-10:</p>",
+        "<p>ISBN 10</p>",
+    ),
+    ids=("ebook", "isbn", "print", "isbn_10", "isbn_10_spaced"),
+)
+def test_a_catalogue_isbn_labelled_by_the_element_before_is_still_read(
+    label: str,
+) -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        f"{label}<p>0306406152</p></section>"
+    ) == ["0306406152"]
+
+
+def test_a_catalogue_isbn_10_beside_an_isbn_13_line_is_still_read() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>ISBN-13:</p><p>9780306406157</p><p>ISBN-10:</p><p>0306406152</p>"
+        "</section>"
+    ) == ["9780306406157", "0306406152"]
+
+
+@pytest.mark.parametrize(
+    "note",
+    ("<p>Also available as an ebook.</p>", "<p>Electronic edition by Example</p>"),
+    ids=("ebook_note", "electronic_note"),
+)
+def test_a_note_beside_a_catalogue_control_number_is_no_label(note: str) -> None:
+    assert (
+        _identifiers(
+            '<section epub:type="copyright-page">'
+            "<p>Library of Congress Cataloging-in-Publication Data</p>"
+            f"<p>2012345670</p>{note}</section>"
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("label", ("(paperback)", "eBook", "(pbk.)"))
+def test_a_catalogue_isbn_10_with_its_form_on_the_next_line_is_still_read(
+    label: str,
+) -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        f"<p>0306406152</p><p>{label}</p></section>"
+    ) == ["0306406152"]
 
 
 _COVER_WRAPPER = "EPUB/wrap.xhtml"

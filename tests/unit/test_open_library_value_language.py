@@ -1,0 +1,622 @@
+"""Open Library values in another language or script stay out (#1497)."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from mechanical_librarian.application.review_web import (
+    _UNOFFERED_DISSENT_TEXT,
+    _lone_candidate_for_empty,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    LocalClaim,
+    MetadataReport,
+    TargetDestination,
+)
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalResult,
+    evaluate_report,
+)
+from mechanical_librarian.domain.provider_value_language import (
+    ProviderValueLanguageExclusion,
+    established_work_languages,
+    open_library_value_exclusion,
+)
+from tests.support.evidence_led_titles import isbn_title_report
+from tests.support.proposal_evidence import (
+    _claim,
+    _provider,
+    _report,
+    consensus_local_title,
+)
+from tests.support.same_name_series import same_name_series_report
+
+_CURRENT = "Example Series 03 - Example Title"
+
+
+def _title(**values: object) -> ProposalResult:
+    report = MetadataReport.from_json(
+        isbn_title_report(current=_CURRENT, **values).to_json()  # type: ignore[arg-type]
+    )
+    return next(
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.TITLE
+    )
+
+
+def _offered(result: ProposalResult) -> set[str]:
+    return {str(value.value.value) for value in result.alternatives}
+
+
+@pytest.mark.parametrize(
+    "other",
+    ("Пример заглавия", "示例标题", "Пример заглавия Example"),
+    ids=("cyrillic", "han", "mostly_cyrillic"),
+)
+def test_an_open_library_title_in_another_script_is_not_offered(other):
+    # The disagreeing ISBN-bound source still vetoes the election; its title
+    # is only no longer one of the choices.
+    result = _title(titles=("Example Title", other), local_language="en")
+
+    assert (ProposalOutcome.UNRESOLVED_CHOICE, ("isbn_title_material_conflict",)) == (
+        result.outcome,
+        result.reasons,
+    )
+    assert other not in _offered(result)
+    assert "Example Title" in _offered(result)
+
+
+def test_an_open_library_edition_in_another_language_is_not_offered():
+    # A translation's edition is still a variant-identity veto on the ISBN
+    # route; its title is just no longer one of the choices.
+    result = _title(
+        titles=("Example Title", "Titre Exemple"),
+        provider_languages=(None, "fre"),
+        local_language="en",
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert "Titre Exemple" not in _offered(result)
+    assert "Example Title" in _offered(result)
+
+
+def test_providers_that_agree_establish_the_language():
+    result = _title(
+        titles=("Example Title", "Titre Exemple", "Example Title"),
+        provider_languages=("en", "fre", "eng"),
+    )
+
+    assert "Titre Exemple" not in _offered(result)
+
+
+@pytest.mark.parametrize(
+    ("values", "reason"),
+    (
+        (
+            {"titles": ("Пример заглавия", "Example Title"), "local_language": "en"},
+            "hardcover_is_not_open_library",
+        ),
+        ({"titles": ("Example Title", "Пример заглавия")}, "no_established_language"),
+        (
+            {
+                "titles": ("Example Title", "Example Book"),
+                "local_language": "en",
+            },
+            "same_script_other_title",
+        ),
+        (
+            {
+                "titles": ("Example Title", "Titre Exemple"),
+                "provider_languages": (None, "fre"),
+            },
+            "one_provider_states_a_language",
+        ),
+        (
+            {
+                "titles": ("Example Title", "Titre Exemple"),
+                "provider_languages": (None, "fre"),
+                "local_language": "fr",
+            },
+            "work_in_that_language",
+        ),
+        (
+            {"titles": ("Example Title", "Пример заглавия"), "local_language": "ru"},
+            "work_in_another_script",
+        ),
+        (
+            {
+                "titles": ("Example Title", "Пример Example Title"),
+                "local_language": "en",
+            },
+            "mostly_latin",
+        ),
+    ),
+    ids=(
+        "hardcover",
+        "no_language",
+        "same_script",
+        "one_provider",
+        "work_in_french",
+        "work_in_russian",
+        "mostly_latin",
+    ),
+)
+def test_near_misses_still_offer_the_other_title(values, reason):
+    result = _title(**values)
+
+    assert (ProposalOutcome.UNRESOLVED_CHOICE, ("isbn_title_material_conflict",)) == (
+        result.outcome,
+        result.reasons,
+    ), reason
+    assert {"Example Title", *values["titles"]} <= _offered(result), reason
+
+
+def test_an_open_library_edition_naming_the_work_language_too_is_kept():
+    report = isbn_title_report(
+        current=_CURRENT,
+        titles=("Example Title", "Titre Exemple"),
+        provider_languages=(None, "fr"),
+        local_language="en",
+    )
+    open_library = next(
+        provider
+        for provider in report.providers
+        if provider.authority == "open_library"
+    )
+    candidate = open_library.candidates[0]
+    bilingual = replace(
+        candidate,
+        claims=(
+            *candidate.claims,
+            _claim(
+                "open_library",
+                candidate.identity,
+                ClaimKind.LANGUAGE,
+                "eng",
+                scope=ClaimScope.EDITION,
+                order=9,
+            ),
+        ),
+    )
+
+    assert (
+        open_library_value_exclusion(
+            "open_library",
+            bilingual,
+            TargetDestination.TITLE,
+            "Titre Exemple",
+            established_work_languages(report),
+        )
+        is None
+    )
+
+
+def _language(value: str) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.LANGUAGE,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        scope=ClaimScope.EDITION,
+        basis="package_metadata",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+    )
+
+
+def _synopsis(language: str | None, local: str | None) -> ProposalResult:
+    english = _claim(
+        "hardcover",
+        "hardcover-1",
+        ClaimKind.DESCRIPTION,
+        "A voyage reveals a hidden city.",
+        scope=ClaimScope.WORK,
+    )
+    french = [
+        _claim(
+            "open_library",
+            "open_library-1",
+            ClaimKind.DESCRIPTION,
+            "Un voyage révèle une ville.",
+            scope=ClaimScope.WORK,
+        )
+    ]
+    if language is not None:
+        french.append(
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.LANGUAGE,
+                language,
+                scope=ClaimScope.EDITION,
+                order=1,
+            )
+        )
+    report = _report(
+        title="Synthetic Voyage",
+        local_claims=(
+            consensus_local_title("Synthetic Voyage"),
+            *(() if local is None else (_language(local),)),
+        ),
+        providers=(
+            _provider("hardcover", "hardcover-1", (english,), authority="hardcover"),
+            _provider(
+                "open_library",
+                "open_library-1",
+                tuple(french),
+                authority="open_library",
+            ),
+        ),
+    )
+    return next(
+        result
+        for result in evaluate_report(
+            MetadataReport.from_json(report.to_json())
+        ).results
+        if result.destination is TargetDestination.DESCRIPTION
+    )
+
+
+def test_an_open_library_description_in_another_language_is_not_offered():
+    result = _synopsis("fre", "en")
+
+    assert {"A voyage reveals a hidden city."} == _offered(result)
+
+
+@pytest.mark.parametrize(
+    ("language", "local"),
+    ((None, "en"), ("fre", None), ("fre", "fr")),
+    ids=("no_edition_language", "no_work_language", "work_in_french"),
+)
+def test_an_open_library_description_is_kept_without_a_contradiction(language, local):
+    result = _synopsis(language, local)
+
+    assert "Un voyage révèle une ville." in _offered(result)
+
+
+@pytest.mark.parametrize(
+    ("value", "stated", "established", "reason"),
+    (
+        ("Пример", (), {("en", None)}, "value_script_contradicted"),
+        ("示例", (), {("en", "Latn")}, "value_script_contradicted"),
+        ("Example", ("fre",), {("en", None)}, "edition_language_contradicted"),
+        ("Example", ("fre",), {("fr", "Latn")}, None),
+        ("示例", (), {("zh", "Hans")}, None),
+        ("Example", (), set(), None),
+        ("1984", (), {("en", None)}, None),
+        ("Example", ("mul",), {("en", None)}, None),
+        ("Example", ("zxx",), {("en", None)}, None),
+    ),
+    ids=(
+        "cyrillic",
+        "han_latn",
+        "french",
+        "french_work",
+        "han_work",
+        "unknown",
+        "no_letters",
+        "edition_multiple",
+        "edition_no_language",
+    ),
+)
+def test_closed_reasons(value, stated, established, reason):
+    report = isbn_title_report(titles=("Example Title", "Example Title"))
+    candidate = next(
+        provider
+        for provider in report.providers
+        if provider.authority == "open_library"
+    ).candidates[0]
+    candidate = replace(
+        candidate,
+        claims=(
+            *candidate.claims,
+            *(
+                _claim(
+                    "open_library",
+                    candidate.identity,
+                    ClaimKind.LANGUAGE,
+                    language,
+                    scope=ClaimScope.EDITION,
+                    order=20 + index,
+                )
+                for index, language in enumerate(stated)
+            ),
+        ),
+    )
+    found = open_library_value_exclusion(
+        "open_library",
+        candidate,
+        TargetDestination.DESCRIPTION,
+        value,
+        frozenset(established),
+    )
+
+    assert (None if found is None else found.value) == reason
+    assert {member.value for member in ProviderValueLanguageExclusion} == {
+        "edition_language_contradicted",
+        "value_script_contradicted",
+    }
+    assert (
+        open_library_value_exclusion(
+            "hardcover",
+            candidate,
+            TargetDestination.DESCRIPTION,
+            value,
+            frozenset(established),
+        )
+        is None
+    )
+
+
+def test_fullwidth_latin_is_latin():
+    assert (
+        open_library_value_exclusion(
+            "open_library",
+            isbn_title_report(titles=("Example Title", "Example Title"))
+            .providers[1]
+            .candidates[0],
+            TargetDestination.TITLE,
+            "Ｅｘａｍｐｌｅ",
+            frozenset({("en", None)}),
+        )
+        is None
+    )
+
+
+def test_a_left_out_description_still_stops_an_automatic_choice():
+    # Leaving the value out only narrows: the outcome is decided with it, so
+    # no description write becomes possible that was not before (#1497).
+    result = _synopsis("fre", "en")
+
+    assert (ProposalOutcome.UNRESOLVED_CHOICE, ("competing_evidence",)) == (
+        result.outcome,
+        result.reasons,
+    )
+
+
+def test_a_left_out_title_still_stops_an_automatic_choice_off_the_isbn_route():
+    report = _report(
+        title="Synthetic_Voyage",
+        local_claims=(
+            consensus_local_title("Synthetic_Voyage"),
+            _language("en"),
+        ),
+        providers=(
+            _provider(
+                "hardcover",
+                "hardcover-1",
+                (
+                    _claim(
+                        "hardcover",
+                        "hardcover-1",
+                        ClaimKind.TITLE,
+                        "Synthetic Voyage",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority="hardcover",
+            ),
+            _provider(
+                "open_library",
+                "open_library-1",
+                (
+                    _claim(
+                        "open_library",
+                        "open_library-1",
+                        ClaimKind.TITLE,
+                        "Синтетическое путешествие",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority="open_library",
+            ),
+        ),
+    )
+    result = next(
+        value
+        for value in evaluate_report(MetadataReport.from_json(report.to_json())).results
+        if value.destination is TargetDestination.TITLE
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE is not result.outcome
+    assert "Синтетическое путешествие" not in _offered(result)
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        {"titles": ("Example Title", "Пример заглавия"), "local_language": "en"},
+        {
+            "titles": ("Example Title", "Titre Exemple"),
+            "provider_languages": (None, "fre"),
+            "local_language": "en",
+        },
+    ),
+    ids=("script", "edition_language"),
+)
+def test_a_correct_title_is_kept_when_nothing_else_is_left_to_choose(values):
+    # Asking the owner to choose with only the current value left would be a
+    # choice with nothing to choose (#1497).
+    report = MetadataReport.from_json(
+        isbn_title_report(current="Example Title", **values).to_json()
+    )
+    result = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.TITLE
+    )
+
+    assert (ProposalOutcome.KEEP, {"Example Title"}) == (
+        result.outcome,
+        _offered(result),
+    )
+
+
+@pytest.mark.parametrize(
+    "subtitle", (None, "A Novel", "Stories"), ids=("none", "a_novel", "stories")
+)
+def test_a_title_kept_only_after_leaving_a_value_out_lets_no_series_fill_through(
+    subtitle,
+):
+    # The combinations read the title as decided with the left-out value, so
+    # a same-name series fill stays blocked as before (#1497).
+    base = same_name_series_report("ebook")
+    generic = (
+        ()
+        if subtitle is None
+        else (
+            _provider(
+                "google_books",
+                "google_books-1",
+                (
+                    _claim(
+                        "google_books",
+                        "google_books-1",
+                        ClaimKind.SUBTITLE,
+                        subtitle,
+                        scope=ClaimScope.EDITION,
+                        applicability="ebook",
+                    ),
+                ),
+                authority="google_books",
+            ),
+        )
+    )
+    open_library = _provider(
+        "open_library",
+        "open_library-1",
+        (
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.TITLE,
+                "Первое путешествие",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _report(
+        fields=base.target.fields,
+        local_claims=(*base.local_claims, _language("en")),
+        providers=(*base.providers, *generic, open_library),
+    )
+    proposal = evaluate_report(MetadataReport.from_json(report.to_json()))
+    results = {result.destination: result for result in proposal.results}
+
+    assert not proposal.bibliographic_combinations
+    assert ProposalOutcome.PROPOSE_CHANGE is not (
+        results[TargetDestination.SERIES].outcome
+    )
+    assert "Первое путешествие" not in _offered(results[TargetDestination.TITLE])
+
+
+@pytest.mark.parametrize(
+    ("proposed", "state", "expected"),
+    (
+        (1, "empty", True),
+        (1, "missing", True),
+        (1, "value", False),
+        (2, "empty", False),
+    ),
+    ids=("empty", "missing", "populated", "two_candidates"),
+)
+def test_a_lone_candidate_for_an_empty_field_names_the_unoffered_dissent(
+    proposed, state, expected
+):
+    field = {
+        "current": {"state": state, "value": None},
+        "proposed_values": [{"kind": "text", "value": "x"}] * proposed,
+    }
+
+    assert expected is _lone_candidate_for_empty(field)
+    assert "isn\u2019t offered" in _UNOFFERED_DISSENT_TEXT
+
+
+def test_a_left_out_title_keeps_its_title_and_series_duplication_veto():
+    # The combinations are worked out with the left-out title, so a series
+    # that duplicates it is still refused rather than filled (#1497).
+    open_library = _provider(
+        "open_library",
+        "open_library-1",
+        (
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.TITLE,
+                "Пример",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.SERIES,
+                "Пример",
+                scope=ClaimScope.WORK,
+                order=1,
+            ),
+            _claim(
+                "open_library",
+                "open_library-1",
+                ClaimKind.SERIES_SEQUENCE,
+                "1",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+        ),
+        authority="open_library",
+    )
+    report = _report(
+        title="Voyage",
+        local_claims=(consensus_local_title("Voyage"), _language("en")),
+        providers=(open_library,),
+    )
+    proposal = evaluate_report(MetadataReport.from_json(report.to_json()))
+    results = {result.destination: result for result in proposal.results}
+
+    assert not proposal.bibliographic_combinations
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        ("no_safe_bibliographic_combination",),
+    ) == (
+        results[TargetDestination.SERIES].outcome,
+        results[TargetDestination.SERIES].reasons,
+    )
+    assert "Пример" not in _offered(results[TargetDestination.TITLE])
+
+
+@pytest.mark.parametrize(
+    "titles, languages",
+    (
+        (("Example Title", "The Example Title"), (None, "fr")),
+        (("Example Title", "The Example Title", "Example Title"), (None, "fr", None)),
+    ),
+    ids=("one_source", "two_sources"),
+)
+def test_a_title_another_source_states_stays_offered_in_its_article_form(
+    titles, languages
+):
+    # Another source states the same title without its leading article, so
+    # the one title stays a choice, in its article form (#1496), as on base.
+    result = _title(titles=titles, provider_languages=languages, local_language="en")
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert "The Example Title" in _offered(result)
+
+
+@pytest.mark.parametrize("package", ("mul", "mis"))
+def test_a_work_in_no_one_language_leaves_nothing_out(package):
+    result = _title(
+        titles=("Example Title", "Titre Exemple"),
+        provider_languages=(None, "fre"),
+        local_language=package,
+    )
+
+    assert "Titre Exemple" in _offered(result)

@@ -2506,11 +2506,12 @@ export const displayValue = (value: unknown): string =>
           : 'Unavailable'
 // A target field that holds no value says whether Audiobookshelf has none or
 // could not be read, in Audiobookshelf's own name (#1286).
+export const EMPTY_TARGET_TEXT = 'Not set in Audiobookshelf'
 export const targetValueText = (state: TargetFieldState, value: unknown) =>
   state === 'value'
     ? displayValue(value)
     : state === 'missing' || state === 'null' || state === 'empty'
-      ? 'Not set in Audiobookshelf'
+      ? EMPTY_TARGET_TEXT
       : 'Couldn’t be read from Audiobookshelf'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => {

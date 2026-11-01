@@ -257,6 +257,14 @@ with the claims read from it, so a v62 report cannot state what a v63 report
 records. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
 
+Issue #1497 also takes the clean-rebuild branch. A Library of Congress
+control number in opening matter is no longer an ISBN-10 (extractor
+`epub-opening-v5`), Hardcover author names are tidied or left unoffered, and an
+Open Library title or description that contradicts the work's language is no
+longer an alternative, so report contents change and the proposal policy moves
+to `fixed-conservative-v43`. The report schema is unchanged; no adoption is
+supplied.
+
 Issue #1496 also takes the clean-rebuild branch. Titles that differ only by a
 leading article form one alternative, a bracketed ISBN suffix is the explicit
 identifier decoration, a packaged generic subtitle is not observed, and a
@@ -315,3 +323,9 @@ a cover recovered from a malformed declaration as shadow evidence, so a v65
 report cannot state what a v66 report records. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
+
+Issue #1569 also takes the clean-rebuild branch. The EPUB cover child refuses
+a declared cover that `encryption.xml` lists, before reading it, as
+`unsupported_format`. The report schema is unchanged, but a report carries forward while
+its file and configuration fingerprints are unchanged, so a stored report would
+keep the earlier cover outcome. No adoption is supplied.

@@ -95,6 +95,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     canonical_json,
+    comma_inverted_name,
     comparison_links,
     finalize_candidate_comparisons,
     isbn_family,
@@ -1435,7 +1436,7 @@ def _parse_edition_enrichment_overflow(
             provider,
             work_identity,
             ClaimKind.CREATOR,
-            author["name"],
+            _author_name(author["name"], ()),
             ClaimScope.WORK,
             "not_applicable",
             "author",
@@ -2228,7 +2229,9 @@ def _contributions(
             provider,
             identity,
             kind,
-            author["name"],
+            _author_name(author["name"], local)
+            if kind is ClaimKind.CREATOR
+            else author["name"],
             scope,
             "not_applicable",
             role,
@@ -2266,6 +2269,35 @@ def _contributions(
             )
         )
     return claims
+
+
+def _author_name(value: object, local: tuple[LocalClaim, ...]) -> object:
+    """Read one Hardcover author name in display order (#1497).
+
+    Whitespace runs collapse. A name equal to one of the book's own author
+    names is kept as it is. Otherwise it is reordered only when Hardcover marks
+    it inverted, as one personal `Family, Given` comma. A name that is one of
+    the book's own only with its words rotated keeps its order here: it stays
+    creator evidence as stated, and the proposal set just does not offer it.
+    Every value another source states is left as it is.
+    """
+    if type(value) is not str or len(value) > MAX_SCALAR_CHARACTERS:
+        return value
+    name = " ".join(value.split())
+    local_names = {
+        " ".join(claim.canonical.split()).casefold()
+        for claim in local
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.state is FieldState.VALID
+        and type(claim.canonical) is str
+    }
+    if name.casefold() in local_names:
+        return name
+    if comma_inverted_name(name) is not None:
+        family, given = (part.strip() for part in name.split(",", 1))
+        return f"{given} {family}"
+    return name
 
 
 def _field_local_author(

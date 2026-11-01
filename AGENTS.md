@@ -127,6 +127,15 @@ Run the static architecture-boundary test whenever imports or packages move.
 - Split a function over about 200 lines, or a frontend route file over about
   1,500, when a unit already changes it. Never split as a standalone change:
   splitting adds lines and churn with no behaviour change.
+- Bootstrap holds wiring and entry points. When
+  `tests/architecture/test_bootstrap_ratchet.py` fails, edit its constants in
+  the same pull request: lowering is always allowed; raising a span, `CEILING`
+  or `DEF_COUNT` is allowed for straight-line wiring, stated in the PR body;
+  adding a `RESIDUAL` key or a bootstrap module, adding decisions or closures
+  to bootstrap that the layering allows in application, or raising
+  `REVIEWED_NCNC` or `REVIEW_BAND` needs the owner's instruction, quoted in
+  the PR body. A split follows the rule in the test's docstring, with
+  `scripts/measure_bootstrap.py` output in the PR.
 - Exact-type checks are deliberate. `type(value) is int` rejects `bool`, and
   `type(value) is str` rejects a `str` subclass, because a persisted document
   carries the exact canonical type. Use `isinstance` only where accepting a
