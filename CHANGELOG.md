@@ -47,6 +47,8 @@ brackets are GitHub issues.
   cover stays absent, and nothing is chosen or shown from it yet (#1357).
 - Closing the Attention queue right after opening it no longer moves focus to
   the closing queue or scrolls the page to it first (#1563).
+- Closing the Attention queue with its toolbar toggle keeps focus on the
+  toggle, as Close and Escape do (#1566).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
