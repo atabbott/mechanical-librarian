@@ -22,6 +22,8 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
+from mechanical_librarian.adapters import cover_evidence_observer
+from mechanical_librarian.adapters.evidence_extractors import isolated_audio
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.remote_cover import RemoteCover
 from mechanical_librarian.application.catalogue import CatalogueEntry
@@ -44,6 +46,7 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
 )
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain import metadata_report
 from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioTrackDigest,
@@ -273,7 +276,7 @@ class _FakeAudiobookProvider:
             # store adapter states for a plan carrying no work lane.
             self.calls.append((self.authority, ProviderQueryKind.NONE))
             return ProviderResult(
-                composition.ProviderObservation(
+                metadata_report.ProviderObservation(
                     self.name,
                     ProviderStatus.INSUFFICIENT_INPUT,
                     authority=self.authority,
@@ -406,7 +409,7 @@ def _run(
 
     with (
         patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
-        patch.object(composition, "_IsolatedAudioInspector", _AudioInspector),
+        patch.object(composition, "IsolatedAudioInspector", _AudioInspector),
         patch.object(composition, "audible_catalog_client", return_value=object()),
         patch.object(composition, "audnexus_client", return_value=object()),
         patch.object(composition, "audiosilo_client", return_value=object()),
@@ -749,7 +752,7 @@ def _published_with_covers(
         return RemoteCover(url, "image/jpeg", payloads[url])
 
     providers = _cover_providers(calls, audible_url=audible_url)
-    with patch.object(composition, "fetch_remote_cover", side_effect=fetch):
+    with patch.object(cover_evidence_observer, "fetch_remote_cover", side_effect=fetch):
         serialized, repository = _run(root, providers, covers=covers)
     repository.close()
     return MetadataReport.from_json(serialized)
@@ -905,7 +908,7 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             AudioInspectionOutcome.SUCCESS,
         ),
     ):
-        inspected = composition._IsolatedAudioInspector().inspect(
+        inspected = composition.IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
             268435456,
@@ -1210,7 +1213,7 @@ def test_recording_collision_cannot_add_owner_choices(
         "run_probe_child",
         return_value=(json.dumps(probe).encode(), AudioInspectionOutcome.SUCCESS),
     ):
-        inspected = composition._IsolatedAudioInspector().inspect(
+        inspected = composition.IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
             268435456,
@@ -1634,8 +1637,8 @@ def _alternative_flow(
         )
 
     target_file = TargetFile(_FILE_IDENTITY, relative, "m4b")
-    with patch.object(composition, "run_audio_inspector_child", child):
-        inspected = composition._IsolatedAudioInspector().inspect(
+    with patch.object(isolated_audio, "run_audio_inspector_child", child):
+        inspected = composition.IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (target_file,),
             268435456,
@@ -2473,7 +2476,7 @@ def _ebook_flow(root: Path) -> tuple[MetadataReport, tuple[object, ...], list[st
         ):
             stack.enter_context(patch.object(composition, name, return_value=double))
         stack.enter_context(
-            patch.object(composition, "_IsolatedEpubInspector", Inspector)
+            patch.object(composition, "IsolatedEpubInspector", Inspector)
         )
         serialized, repository = _run(
             root,

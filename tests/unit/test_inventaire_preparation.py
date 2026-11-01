@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.adapters import cover_evidence_observer
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support import inventaire_preparation
@@ -47,7 +47,7 @@ def test_concurrent_retrievals_cannot_restore_each_others_fetch_patch(
             if threading.current_thread().name == "first":
                 first_entered.set()
                 assert second_attempted.wait(5)
-                assert composition.fetch_remote_cover is fetch
+                assert cover_evidence_observer.fetch_remote_cover is fetch
                 assert phases == ["enter"]
             yield fetch
         phases.append("exit")
@@ -58,7 +58,9 @@ def test_concurrent_retrievals_cannot_restore_each_others_fetch_patch(
 
     monkeypatch.setattr(fixture, "_cover_fetch_lock", ObservedLock())
     monkeypatch.setattr(inventaire_preparation, "patch", observed_patch)
-    monkeypatch.setattr(composition, "fetch_remote_cover", no_external_fetch)
+    monkeypatch.setattr(
+        cover_evidence_observer, "fetch_remote_cover", no_external_fetch
+    )
 
     def retrieve(item: str) -> None:
         seed = _report()
@@ -89,4 +91,4 @@ def test_concurrent_retrievals_cannot_restore_each_others_fetch_patch(
         for report in reports
     )
     assert phases == ["enter", "exit", "enter", "exit"]
-    assert composition.fetch_remote_cover is no_external_fetch
+    assert cover_evidence_observer.fetch_remote_cover is no_external_fetch

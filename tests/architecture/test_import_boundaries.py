@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "mechanical_librarian"
 WORKBENCH_ROOT = (
@@ -118,11 +123,44 @@ def test_superseded_runtime_and_central_ports_are_absent() -> None:
         "adapters/persistence/jobs.py",
         "adapters/persistence/title_proposals.py",
         "infrastructure/persistence/sqlite.py",
+        "infrastructure/local_media.py",
         "domain/inventory.py",
         "domain/review.py",
         "domain/workflow.py",
     )
     assert [value for value in absent if (PACKAGE_ROOT / value).exists()] == []
+
+
+@pytest.mark.parametrize("child", ("epub_child", "audio_child", "cover_child"))
+def test_child_entry_points_load_no_parent_side_modules(child: str) -> None:
+    program = f"""
+import json
+import sys
+import mechanical_librarian.bootstrap.{child}
+forbidden = (
+    "httpx",
+    "pydantic",
+    "sqlite3",
+    "mechanical_librarian.adapters.library_services",
+    "mechanical_librarian.adapters.persistence",
+    "mechanical_librarian.adapters.cover_evidence_observer",
+    "mechanical_librarian.adapters.evidence_extractors.isolated_",
+    "mechanical_librarian.adapters.evidence_extractors.local_media",
+    "mechanical_librarian.infrastructure.security.target_secrets",
+)
+print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidden))))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", program],
+        cwd="/",
+        env={"PYTHONPATH": str(PACKAGE_ROOT.parent), "PYTHONDONTWRITEBYTECODE": "1"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert json.loads(completed.stdout) == []
 
 
 def test_http_interface_receives_only_composed_review_application() -> None:

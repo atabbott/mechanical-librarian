@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
+from mechanical_librarian.adapters.cover_evidence_observer import CoverEvidenceObserver
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.remote_cover import (
     CoverDeadline,
@@ -24,7 +25,6 @@ from mechanical_librarian.application.metadata_report import (
     TargetCover,
     TargetSnapshot,
 )
-from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -109,7 +109,7 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
         for index in range(5)
     )
     with tempfile.TemporaryDirectory() as directory:
-        values = _CoverEvidenceObserver(
+        values = CoverEvidenceObserver(
             _Target(None),
             CoverArtifactStore(Path(directory)),
             configurations,
@@ -186,7 +186,7 @@ def test_digest_deduplication_retains_every_provider_provenance(
     with (
         tempfile.TemporaryDirectory() as directory,
         patch(
-            "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+            "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
             return_value=RemoteCover(
                 "https://example.com/cover.jpg",
                 "image/jpeg",
@@ -194,7 +194,7 @@ def test_digest_deduplication_retains_every_provider_provenance(
             ),
         ),
     ):
-        values = _CoverEvidenceObserver(
+        values = CoverEvidenceObserver(
             _Target(None),
             CoverArtifactStore(Path(directory)),
             (configuration,),
@@ -253,9 +253,11 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch(
     )
     with (
         tempfile.TemporaryDirectory() as directory,
-        patch("mechanical_librarian.bootstrap.composition.fetch_remote_cover") as fetch,
+        patch(
+            "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover"
+        ) as fetch,
     ):
-        values = _CoverEvidenceObserver(
+        values = CoverEvidenceObserver(
             _Target(None),
             CoverArtifactStore(Path(directory)),
             (configuration,),
@@ -310,7 +312,7 @@ def _provider_cover_rows(
     with (
         tempfile.TemporaryDirectory() as directory,
         patch(
-            "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+            "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
             return_value=RemoteCover(
                 "https://example.com/cover.jpg",
                 "image/jpeg",
@@ -318,7 +320,7 @@ def _provider_cover_rows(
             ),
         ) as fetch,
     ):
-        values = _CoverEvidenceObserver(
+        values = CoverEvidenceObserver(
             _Target(None),
             CoverArtifactStore(Path(directory)),
             (_CATALOGUE,),
@@ -398,7 +400,7 @@ def test_an_unresolved_work_descriptor_is_refused_before_any_cover_fetch(
 def test_abs_result_is_recorded_without_a_request() -> None:
     with tempfile.TemporaryDirectory() as directory:
         target = _Target(b"unexpected")
-        value = _CoverEvidenceObserver(
+        value = CoverEvidenceObserver(
             target, CoverArtifactStore(Path(directory))
         ).observe_current(TargetSnapshot("ebook", "Title", (), None), ())
     assert (CoverSourceKind.ABS, CoverSourceState.ABSENT) == (
@@ -412,7 +414,7 @@ def test_retrieves_and_stages_one_declared_abs_cover() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = CoverArtifactStore(Path(directory))
         target = _Target(_jpeg())
-        value = _CoverEvidenceObserver(target, store).observe_current(
+        value = CoverEvidenceObserver(target, store).observe_current(
             TargetSnapshot(
                 "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
             ),
@@ -425,7 +427,7 @@ def test_retrieves_and_stages_one_declared_abs_cover() -> None:
 
 def test_timeout_is_an_explicit_attempted_outcome() -> None:
     with tempfile.TemporaryDirectory() as directory:
-        value = _CoverEvidenceObserver(
+        value = CoverEvidenceObserver(
             _Target(CoverTimeoutError("elapsed")), CoverArtifactStore(Path(directory))
         ).observe_current(
             TargetSnapshot(
@@ -441,7 +443,7 @@ def test_timeout_is_an_explicit_attempted_outcome() -> None:
 
 def test_changed_abs_source_is_recorded_without_publication() -> None:
     with tempfile.TemporaryDirectory() as directory:
-        value = _CoverEvidenceObserver(
+        value = CoverEvidenceObserver(
             _Target(CoverSourceChangedError("changed")),
             CoverArtifactStore(Path(directory)),
         ).observe_current(
@@ -465,7 +467,7 @@ def test_abs_terminal_read_classifications_are_preserved(
     state: str, expected: CoverSourceState
 ) -> None:
     with tempfile.TemporaryDirectory() as directory:
-        value = _CoverEvidenceObserver(
+        value = CoverEvidenceObserver(
             _Target(CoverReadError(state)),
             CoverArtifactStore(Path(directory)),
         ).observe_current(
@@ -482,11 +484,11 @@ def test_abs_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout() -> Non
     with (
         tempfile.TemporaryDirectory() as directory,
         patch(
-            "mechanical_librarian.bootstrap.composition.decode_cover",
+            "mechanical_librarian.adapters.cover_evidence_observer.decode_cover",
             side_effect=CoverDecodeTimeout("elapsed"),
         ) as decode,
     ):
-        value = _CoverEvidenceObserver(
+        value = CoverEvidenceObserver(
             _Target(_jpeg()),
             CoverArtifactStore(Path(directory)),
         ).observe_current(
@@ -517,7 +519,7 @@ def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout(
     with (
         tempfile.TemporaryDirectory() as directory,
         patch(
-            "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+            "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
             return_value=RemoteCover(
                 "https://example.com/cover.jpg",
                 "image/jpeg",
@@ -525,11 +527,11 @@ def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout(
             ),
         ),
         patch(
-            "mechanical_librarian.bootstrap.composition.decode_cover",
+            "mechanical_librarian.adapters.cover_evidence_observer.decode_cover",
             side_effect=CoverDecodeTimeout("elapsed"),
         ) as decode,
     ):
-        value = _CoverEvidenceObserver(
+        value = CoverEvidenceObserver(
             _Target(None),
             CoverArtifactStore(Path(directory)),
         )._remote(
@@ -563,10 +565,10 @@ def test_inventaire_remote_nonretrieved_outcomes(outcome: str, tmp_path: Path) -
         wait=(lambda _: False) if outcome == "deadline" else None,
     )
     with patch(
-        "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
         side_effect=RemoteCoverError("unavailable"),
     ) as fetch:
-        source = _CoverEvidenceObserver(
+        source = CoverEvidenceObserver(
             _Target(None), CoverArtifactStore(tmp_path)
         )._remote(
             descriptor, CoverDeadline(time.monotonic() + 10, time.monotonic() + 10)
@@ -593,7 +595,7 @@ def test_expired_current_acquisition_does_not_dispatch(declared, tmp_path):
         (),
         TargetCover("descriptor", "/cover.jpg") if declared else None,
     )
-    sources = _CoverEvidenceObserver(
+    sources = CoverEvidenceObserver(
         target, CoverArtifactStore(tmp_path)
     ).observe_current(snapshot, (), time.monotonic() - 1)
     assert target.calls == 0
@@ -631,9 +633,9 @@ def test_expired_provider_preserves_known_outcome_before_pacing_or_transport(
         wait=wait,
     )
     with patch(
-        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover"
     ) as fetch:
-        sources = _CoverEvidenceObserver(
+        sources = CoverEvidenceObserver(
             _Target(None), CoverArtifactStore(tmp_path), (_CATALOGUE,)
         ).observe(
             TargetSnapshot("ebook", "Title", (), None),
