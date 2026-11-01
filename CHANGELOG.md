@@ -44,7 +44,9 @@ brackets are GitHub issues.
 - **Clean rebuild required.** An EPUB whose cover declaration is malformed
   now records, as shadow evidence only, whether its own cover could be
   recovered from a legacy cover entry, a guide reference or a cover page. The
-  cover stays absent, and nothing is chosen or shown from it yet (#1357).
+  cover stays absent, and nothing is chosen or shown from it yet. A declared
+  cover the EPUB lists as encrypted is never read and shows as an unsupported
+  image format (#1357, #1569).
 - Closing the Attention queue right after opening it no longer moves focus to
   the closing queue or scrolls the page to it first (#1563).
 
