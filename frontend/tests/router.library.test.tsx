@@ -8017,14 +8017,73 @@ describe('Library route', () => {
       expect(focused).not.toHaveBeenCalled()
       expect(scrollsOf(heading)).toBe(0)
       await railGone()
-      // Close and Escape hand focus back to the toggle. The toggle closes
-      // without that hand-back, so route-ready focus moves to the Library
-      // controls that hold it, as when it closes after the reveal.
-      await waitFor(() =>
-        expect(closer === 'toggle' ? toggle.closest('[data-route-focus]') : toggle).toHaveFocus(),
-      )
+      // Every closer hands focus back to the toggle, the toggle included,
+      // rather than leaving it on the Library controls that route-ready focus
+      // moves to first (#1566).
+      await waitFor(() => expect(toggle).toHaveFocus())
       expect(focused).not.toHaveBeenCalled()
       expect(scrollsOf(heading)).toBe(0)
+    },
+  )
+
+  it.each([
+    ['wide, with no selection', '/library?lens=all', false],
+    ['wide, with a selected work', '/library?lens=all&preview=case-1', false],
+    ['760px and below, with a selected work', '/library?lens=all&preview=case-1', true],
+  ] as const)(
+    'returns focus as Close does when the toggle closes the rail, %s (#1566)',
+    async (_layout, path, narrow) => {
+      if (narrow) {
+        const previousMatchMedia = window.matchMedia
+        vi.stubGlobal('matchMedia', (query: string) => ({
+          matches: query === '(max-width: 760px)' || query === '(max-width: 1024px)',
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(() => true),
+        }))
+        onTestFinished(() => {
+          vi.stubGlobal('matchMedia', previousMatchMedia)
+        })
+      }
+      const user = userEvent.setup()
+      renderRoute(path, createHttp())
+      const toggle = await screen.findByRole('button', { name: /Attention/ })
+      await routeSettled()
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      }
+
+      await user.click(toggle)
+      const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      const heading = within(rail).getByRole('heading', { name: 'Attention' })
+      act(runFrames)
+      expect(heading).toHaveFocus()
+      await user.click(toggle)
+      await waitFor(() =>
+        expect(screen.queryByRole('complementary', { name: 'Attention queue' })).toBeNull(),
+      )
+      act(runFrames)
+      // Like Close and Escape, the toggle keeps focus, except at 760px and
+      // below, where closing reveals the selected work and focus goes to it.
+      const work = document.querySelector('.selected-work-header')
+      if (path.includes('preview')) expect(work).toBeInstanceOf(HTMLElement)
+      await waitFor(() => expect(narrow ? work : toggle).toHaveFocus())
+      expect(document.querySelector('header.library-header')).not.toHaveFocus()
+      if (!narrow && work) expect(work).not.toHaveFocus()
     },
   )
 
