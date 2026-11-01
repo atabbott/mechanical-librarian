@@ -2881,3 +2881,24 @@ def test_configured_activity_reprojects_authored_dependents_before_search(
     finally:
         reader.close()
         repository.close()
+
+
+def test_an_automatic_no_change_reopens_after_leaving_automatic(
+    tmp_path: Path,
+) -> None:
+    """Startup binds a no-change to its own generation's outcomes (#1568)."""
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+
+    repository, _, _, _, deterministic = _prepared(tmp_path)
+    assert repository.record_current_field_effect_no_change(deterministic, 12)
+    assert repository.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    repository.admit_review_case(
+        ProposalSet.from_json(repository.get_proposal(deterministic.proposal_set_id))
+    )
+    repository.persist_shadow_outcome(deterministic.review_case_id, 30)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM shadow_decision_outcomes WHERE review_case_id=?",
+        (deterministic.review_case_id,),
+    ).fetchone() == (2,)
+    repository.close()
+    open_repository(tmp_path / "reports.sqlite").close()

@@ -2041,22 +2041,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     decision.report_id,
                     decision.proposal_set_id,
                     decision.resolved_policy_id,
+                    decision.policy_generation,
                 )
                 for decision in automatic_decisions.values()
                 if type(decision) is AutomaticDecision
             }
         )
+        # Each decision binds the outcome set of its own policy generation:
+        # leaving Automatic with the policy unchanged projects the same case,
+        # report, proposal set and policy again under a new generation (#1568).
         automatic_authority: dict[
-            tuple[str, str, str, str],
+            tuple[str, str, str, str, int],
             tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
         ] = {}
         if automatic_identities:
             authority_rows = _bounded_fetch(
                 self._connection.execute(
-                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id) AS (VALUES "
-                    + ",".join("(?,?,?,?)" for _ in automatic_identities)
+                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id,policy_generation) AS (VALUES "
+                    + ",".join("(?,?,?,?,?)" for _ in automatic_identities)
                     + ") SELECT requested.review_case_id,requested.report_id,"
                     "requested.proposal_set_id,requested.resolved_policy_id,"
+                    "requested.policy_generation,"
                     "review.document,proposal.document,outcome.document "
                     "FROM requested "
                     "JOIN review_cases review "
@@ -2070,7 +2075,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "ON outcome.review_case_id=requested.review_case_id "
                     "AND outcome.report_id=requested.report_id "
                     "AND outcome.proposal_set_id=requested.proposal_set_id "
-                    "AND outcome.resolved_policy_id=requested.resolved_policy_id",
+                    "AND outcome.resolved_policy_id=requested.resolved_policy_id "
+                    "AND json_extract(outcome.document,'$.policy_generation')"
+                    "=requested.policy_generation",
                     tuple(
                         value for identity in automatic_identities for value in identity
                     ),
@@ -2082,6 +2089,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 authority_report_id,
                 proposal_set_id,
                 resolved_policy_id,
+                policy_generation,
                 case_document,
                 proposal_document,
                 outcome_document,
@@ -2091,6 +2099,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     authority_report_id,
                     proposal_set_id,
                     resolved_policy_id,
+                    policy_generation,
                 )
                 if identity in automatic_authority or any(
                     type(value) is not str
@@ -2717,6 +2726,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                 projected_automatic.report_id,
                                 projected_automatic.proposal_set_id,
                                 projected_automatic.resolved_policy_id,
+                                cast(
+                                    AutomaticDecision, projected_automatic
+                                ).policy_generation,
                             )
                         )
                         if authority is None:

@@ -47,7 +47,10 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
 )
-from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    InspectCurrentReviewCase,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -490,3 +493,58 @@ def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
     applied = service.apply(plan.plan_id)
     assert (applied.state, applied.failure) == ("stale", "authority")
     assert target.read(plan).value == before
+
+
+def _read(library: _Library, scheduler: ContinuousGuardedApplication) -> dict[str, Any]:
+    """Read the case page and Activity as the review API does."""
+    detail = InspectCurrentReviewCase(library.root).run(library.case_id())
+    activity = scheduler.activity(
+        search=None, event_type="all", range_days=30, page=1, page_size=25
+    )
+    fields = {
+        str(field["destination"]): field
+        for field in cast(list[dict[str, Any]], detail["fields"])
+    }
+    return {"fields": fields, "activity": activity}
+
+
+def test_the_case_and_activity_read_after_leaving_automatic(
+    library: _Library, tmp_path: Path
+) -> None:
+    scheduler, _, _ = _applier(library, tmp_path)
+    automatic = library.automatic()
+    before = _read(library, scheduler)
+    authors = before["fields"]["authors"]
+    assert authors["automatic_decision"]["decision_id"] == automatic.decision_id
+    assert authors["classification"] == "automatic_recorded"
+
+    library.leave_automatic()
+
+    # The earlier automatic decision decides nothing in the new generation, so
+    # the case reads its field as any case of that generation does, and
+    # Activity keeps it as history with nothing waiting to write.
+    for posture in ("preview", "automatic"):
+        if posture == "automatic":
+            library.root.activate_qualified_automatic(40)
+            library.now[0] = 41
+        assert library.root.shadow_posture() == posture
+        read = _read(library, scheduler)
+        fields = read["fields"]
+        assert fields["authors"]["automatic_decision"] is None
+        assert fields["authors"]["classification"] != "automatic_recorded"
+        assert fields["authors"]["needs_attention"] is False
+        assert {
+            destination
+            for destination, field in fields.items()
+            if field["needs_attention"]
+        } == {destination for _, destination in library.attention()}
+        activity = read["activity"]
+        (recorded,) = (
+            event
+            for event in cast(list[dict[str, Any]], activity["events"])
+            if event["event_id"] == automatic.decision_id
+        )
+        assert (recorded["state"], recorded["failure"]) == ("recorded", None)
+        if posture == "preview":
+            (configured,) = cast(list[dict[str, Any]], activity["configured_libraries"])
+            assert configured["prepared"]["automatic"] == 0
