@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from playwright.sync_api import (
     APIResponse,
     BrowserContext,
+    ConsoleMessage,
     Locator,
     Page,
     Request,
@@ -2391,6 +2392,30 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
         assert errors == []
 
 
+# Reports, on the console, each cross-document navigation the page starts and
+# each settled Library read two tasks late: a 401's expiry hand-off is a 0 ms
+# timer queued as that response settles, so by then it has run and navigated,
+# if it would. (A navigating page can no longer be evaluated.) The probe marks
+# its reads, so only they are held, not reads of the page it replaced.
+_SIGN_OUT_NAVIGATION_PROBE = """
+navigation.addEventListener('navigate', (event) => {
+  if (!event.destination.sameDocument) console.debug('ml-1588 navigate', event.destination.url)
+})
+const send = window.fetch
+window.fetch = function (input, init) {
+  if (!String(input instanceof Request ? input.url : input).includes('/api/v1/library'))
+    return send.call(this, input, init)
+  const headers = new Headers(init?.headers)
+  headers.set('x-ml-1588-probe', '1')
+  const sent = send.call(this, input, { ...init, headers })
+  const settle = () =>
+    setTimeout(() => setTimeout(() => console.debug('ml-1588 read-settled'), 0), 0)
+  sent.then(settle, settle)
+  return sent
+}
+"""
+
+
 @pytest.mark.parametrize("read_answers", ["before_login_commits", "before_logout_ends"])
 def test_sign_out_lands_on_login_when_a_held_read_answers_401(
     read_answers: str,
@@ -2398,7 +2423,8 @@ def test_sign_out_lands_on_login_when_a_held_read_answers_401(
     """A Library read held across Sign out answers 401 once the session is
     revoked. Sign out alone navigates, to /login exactly: the read's expiry
     must neither abort that navigation nor replace it with /login?next (#1588).
-    Every /login document request is held, so each navigation is counted."""
+    /login documents are held, so the signed-in page records every navigation
+    it starts."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         hash_path = root / "owner.hash"
@@ -2419,15 +2445,39 @@ def test_sign_out_lands_on_login_when_a_held_read_answers_401(
                 reads: list[Route] = []
                 documents: list[Route] = []
                 logouts: list[tuple[Route, APIResponse]] = []
+                navigations: list[str] = []
+                settled: list[str] = []
 
-                def until(condition: Callable[[], bool], polls: int = 250) -> bool:
-                    for _ in range(polls):
+                def observe(message: ConsoleMessage) -> None:
+                    kind, _, value = message.text.removeprefix("ml-1588 ").partition(
+                        " "
+                    )
+                    if message.text.startswith("ml-1588 "):
+                        (navigations if kind == "navigate" else settled).append(value)
+
+                def until(condition: Callable[[], bool]) -> None:
+                    for _ in range(500):
                         if condition():
-                            return True
+                            return
                         page.wait_for_timeout(20)
-                    return condition()
+                    raise AssertionError("condition not reached")
 
-                page.route("**/api/v1/library?*", lambda route: reads.append(route))
+                def release_reads() -> None:
+                    held = len(reads)
+                    for route in reads:
+                        route.continue_()
+                    until(lambda: len(settled) >= held)
+
+                page.add_init_script(_SIGN_OUT_NAVIGATION_PROBE)
+                page.on("console", observe)
+                page.route(
+                    "**/api/v1/library?*",
+                    lambda route: (
+                        reads.append(route)
+                        if route.request.headers.get("x-ml-1588-probe")
+                        else route.continue_()
+                    ),
+                )
                 page.route(
                     re.compile(r".*/login(\?.*)?$"),
                     lambda route: (
@@ -2443,23 +2493,23 @@ def test_sign_out_lands_on_login_when_a_held_read_answers_401(
                         lambda route: logouts.append((route, route.fetch())),
                     )
                 page.goto(f"{origin}/library?lens=all")
-                assert until(lambda: len(reads) == 1)
-                page.get_by_role("button", name="Sign out").click()
+                until(lambda: len(reads) >= 1)
+                # The /login document is held, so the click must not wait for it.
+                page.get_by_role("button", name="Sign out").click(no_wait_after=True)
                 if read_answers == "before_login_commits":
-                    assert until(lambda: len(documents) == 1)
-                    reads[0].continue_()
+                    until(lambda: len(documents) >= 1)
+                    release_reads()
                 else:
-                    assert until(lambda: len(logouts) == 1)
-                    reads[0].continue_()
-                    until(lambda: len(documents) > 0, 25)
+                    until(lambda: len(logouts) == 1)
+                    release_reads()
                     logout, response = logouts[0]
                     logout.fulfill(response=response)
-                    assert until(lambda: len(documents) > 0)
-                # Room for a second, expiry-driven navigation to show itself.
-                until(lambda: len(documents) > 1, 25)
-                assert [route.request.url for route in documents] == [f"{origin}/login"]
+                login = f"{origin}/login"
+                until(lambda: login in navigations)
+                assert navigations == [login]
+                until(lambda: len(documents) >= 1)
                 documents[0].continue_()
-                page.wait_for_url(f"{origin}/login")
+                page.wait_for_url(login)
                 expect(page.get_by_role("button", name="Sign in")).to_be_visible()
             browser.close()
 
