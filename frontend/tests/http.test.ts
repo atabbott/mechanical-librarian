@@ -3774,8 +3774,10 @@ describe('Activity check group (#1281)', () => {
       new ApiError(502, 'invalid_activity_check_group'),
     )
   })
-  it('maps the recorded fixture, which carries no key', () => {
-    expect(currentActivity.events.some((event) => 'check_group' in event)).toBe(false)
+  it('maps the captured fixture, whose events all carry the key', () => {
+    expect(currentActivity.events.every((event) => 'check_group' in event)).toBe(true)
+    const events = mapActivity(currentActivity).events
+    expect(events.length).toBe(currentActivity.events.length)
   })
 })
 
