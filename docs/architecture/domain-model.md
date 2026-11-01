@@ -27,7 +27,7 @@ The evidence and decision records follow these rules:
 
 ## Catalogue
 
-A `CatalogueGeneration` is one complete, bounded observation of every
+A catalogue generation is one complete, bounded observation of every
 configured Audiobookshelf book library: at most 10,000 `CatalogueEntry`
 values, a monotonic generation number and a configuration fingerprint. Each
 entry has the connection, library and item identity, display title and

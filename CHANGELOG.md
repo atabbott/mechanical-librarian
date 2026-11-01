@@ -131,7 +131,7 @@ brackets are GitHub issues.
   changed reads "Item changed; closed safely", and other closed writes read
   "Closed safely", instead of "Stale" (#1542).
 
-## 0.29.2 — Delivery reliability and hygiene (in progress)
+## 0.29.2 — Delivery reliability and hygiene
 
 - **Clean rebuild required.** Automatic authority binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it;
@@ -141,7 +141,7 @@ brackets are GitHub issues.
   or marked-up rewrites. No clean rebuild is needed (#1400).
 - OpenRouter checks work however large the model list grows; timeouts,
   oversized answers, data-policy refusals and too many images each get their
-  own reason and remedy in Settings and setup (#1330).
+  own reason and remedy in Settings and setup (#1330, #1331, #1332).
 - Setup describes iTunes as a check of an ebook's title and author against
   iTunes audiobook listings. An audiobook inspection with no recording facts
   fails that item instead of being planned without them (#1303).
@@ -152,9 +152,15 @@ brackets are GitHub issues.
 - The activity projector's events now reach the service log as JSON lines
   (#1304).
 - Renovate moves Node, Python and uv pins together in one pull request; a new
-  Node major or Python minor version waits for approval (#1448).
+  Node major or Python minor version waits for approval (#1177, #1448).
 - The standalone Attention page is gone; Attention lives in Library. An old
   `/attention` bookmark opens Library with Attention open (#700).
+- The Audiobookshelf field-effect canary proves title, authors and language
+  through real automatic decisions again, and its catalogue fake answers an
+  operator book that carries its own ISBNs as a real catalogue would
+  (#1427, #1545).
+- Activity's page number field keeps focus when a filter change finishes after
+  you have moved into it (#1554).
 
 ## 0.29.1 — Clarity and accessibility
 

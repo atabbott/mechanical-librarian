@@ -1375,65 +1375,6 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 (run_id,),
             ).fetchone()[0]:
                 raise ValueError("foreign presentation run")
-            common = {"row_id", "row_kind", "run_id", "updated_at"}
-            allowed = {
-                "run": common
-                | {
-                    "state",
-                    "started_at",
-                    "completed_at",
-                    "total",
-                    "active_count",
-                    "read",
-                    "searches_finished",
-                    "compared",
-                    "checked",
-                    "ready",
-                    "failed",
-                    "completion_count",
-                },
-                "trigger": common
-                | {
-                    "trigger",
-                    "trigger_ordinal",
-                    "accepted_count",
-                    "first_accepted_at",
-                    "last_accepted_at",
-                },
-                "enrollment": common
-                | {
-                    "scan_id",
-                    "connection_name",
-                    "library_name",
-                    "cycle_id",
-                    "pending_cycle_id",
-                    "cycle_state",
-                    "ordinal",
-                },
-                "deferred_enrollment": common
-                | {
-                    "connection_name",
-                    "library_name",
-                    "ordinal",
-                    "accepted_at",
-                    "settings_revision",
-                },
-                "work": common
-                | {
-                    "scan_id",
-                    "cycle_id",
-                    "work_id",
-                    "ordinal",
-                    "enrollment_ordinal",
-                    "display_name",
-                    "work_stage",
-                    "current_work_state",
-                    "work_outcome",
-                    "recovery_high_water_stage",
-                    "recovery_high_water_outcome",
-                    "completion_sequence",
-                },
-            }
             columns = tuple(
                 row[1]
                 for row in connection.execute(
@@ -1445,17 +1386,8 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
             ):
                 values = dict(zip(columns, row, strict=True))
                 row_kind = values["row_kind"]
-                relevant = allowed.get(row_kind)
-                if relevant is None:
-                    raise ValueError("invalid presentation row kind")
-                if any(
-                    value is not None and column not in relevant
-                    for column, value in zip(columns, row, strict=True)
-                ):
-                    raise ValueError("irrelevant presentation columns")
                 if (
                     type(values["row_id"]) is not str
-                    or type(row_kind) is not str
                     or not preparation_run_identity(values["run_id"])
                     or not non_negative_integer(values["updated_at"])
                     or (
@@ -1480,27 +1412,12 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                         )
                     )
                     if (
-                        values["row_id"] != "run"
-                        or type(values["state"]) is not str
-                        or values["state"]
-                        not in {state.value for state in PreparationRunState}
-                        or not non_negative_integer(values["started_at"])
+                        not non_negative_integer(values["started_at"])
                         or any(not non_negative_integer(value) for value in counters)
-                        or values["updated_at"] < values["started_at"]
-                        or (
-                            (
-                                values["state"]
-                                in {
-                                    state.value for state in TERMINAL_PREPARATION_STATES
-                                }
-                            )
-                            != (values["completed_at"] is not None)
-                        )
                         or (
                             values["completed_at"] is not None
                             and (
                                 not non_negative_integer(values["completed_at"])
-                                or values["completed_at"] < values["started_at"]
                                 or values["completed_at"] > values["updated_at"]
                             )
                         )
@@ -1508,18 +1425,11 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                         raise ValueError("invalid presentation run")
                 elif row_kind == "trigger":
                     if (
-                        type(values["trigger"]) is not str
-                        or values["trigger"]
-                        not in {trigger.value for trigger in PreparationTrigger}
-                        or type(values["trigger_ordinal"]) is not int
-                        or not 0 <= values["trigger_ordinal"] < len(PreparationTrigger)
+                        type(values["trigger_ordinal"]) is not int
                         or type(values["accepted_count"]) is not int
-                        or values["accepted_count"] <= 0
                         or not non_negative_integer(values["first_accepted_at"])
                         or not non_negative_integer(values["last_accepted_at"])
-                        or not values["first_accepted_at"]
-                        <= values["last_accepted_at"]
-                        <= values["updated_at"]
+                        or values["last_accepted_at"] > values["updated_at"]
                         or values["first_accepted_at"] < started_at
                         or (
                             completed_at is not None
@@ -1542,16 +1452,6 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                                 values["pending_cycle_id"]
                             )
                         )
-                        or values["cycle_id"] == values["pending_cycle_id"]
-                        or type(values["cycle_state"]) is not str
-                        or values["cycle_state"]
-                        not in {
-                            "queued",
-                            "discovering",
-                            "processing",
-                            "completed",
-                            "completed_with_failures",
-                        }
                         or not non_negative_integer(values["ordinal"])
                     ):
                         raise ValueError("invalid presentation enrollment")
@@ -1565,57 +1465,23 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                         <= values["accepted_at"]
                         <= values["updated_at"]
                         or type(values["settings_revision"]) is not int
-                        or values["settings_revision"] <= 0
                     ):
                         raise ValueError("invalid deferred enrollment")
                 elif (
                     not review_scan_identity(values["scan_id"])
                     or not preparation_cycle_identity(values["cycle_id"])
                     or not review_work_identity(values["work_id"])
+                    # The CHECK bounds the store's own encoding; the domain
+                    # bound is UTF-8 bytes, which a UTF-16 store can exceed.
+                    or not _preparation_display_name(values["display_name"])
                     or not non_negative_integer(values["ordinal"])
                     or not non_negative_integer(values["enrollment_ordinal"])
-                    or not _preparation_display_name(values["display_name"])
-                    or type(values["work_stage"]) is not str
-                    or values["work_stage"] not in _STAGE_ORDER
-                    or type(values["current_work_state"]) is not str
-                    or values["current_work_state"]
-                    not in {
-                        "queued",
-                        "delayed",
-                        "running",
-                        "complete",
-                        "failed",
-                        "stale",
-                    }
-                    or (
-                        values["work_outcome"] is not None
-                        and type(values["work_outcome"]) is not str
-                    )
-                    or values["work_outcome"] not in {None, "ready", "failed"}
-                    or values["recovery_high_water_stage"]
-                    not in {
-                        None,
-                        *tuple(_STAGE_ORDER),
-                    }
-                    or values["recovery_high_water_outcome"]
-                    not in {None, "ready", "failed"}
-                    or (
-                        values["recovery_high_water_stage"] is None
-                        and values["recovery_high_water_outcome"] is not None
-                    )
                     or (
                         completed_at is not None and values["updated_at"] > completed_at
                     )
                     or (
-                        (values["work_outcome"] is None)
-                        != (values["completion_sequence"] is None)
-                    )
-                    or (
                         values["completion_sequence"] is not None
-                        and (
-                            type(values["completion_sequence"]) is not int
-                            or values["completion_sequence"] <= 0
-                        )
+                        and type(values["completion_sequence"]) is not int
                     )
                 ):
                     raise ValueError("invalid presentation work")
@@ -1788,7 +1654,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                 ordinal,
                 enrollment_ordinal,
                 row_id,
-                display_name,
+                _display_name,
                 work_stage,
                 current_state,
                 work_outcome,
@@ -1850,35 +1716,23 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     observed_rank = _STAGE_ORDER[observed_stage]
                     recovery = recovery_stage is not None
                     witnessed = witness_cycle is not None
-                    if (
-                        (witness_cycle is None) != (witness_stage is None)
-                        or (witness_cycle is None and witness_outcome is not None)
-                        or recovery != witnessed
-                        or (
-                            witnessed
-                            and (
-                                enrollment[2]
-                                or not preparation_cycle_identity(witness_cycle)
-                                or witness_cycle != cycle_id
-                                or type(witness_stage) is not str
-                                or witness_stage not in _STAGE_ORDER
-                                or witness_stage != recovery_stage
+                    if recovery != witnessed or (
+                        witnessed
+                        and (
+                            enrollment[2]
+                            or not preparation_cycle_identity(witness_cycle)
+                            or witness_cycle != cycle_id
+                            or witness_stage != recovery_stage
+                            or witness_outcome != recovery_outcome
+                            or recovery_stage != work_stage
+                            or recovery_outcome != work_outcome
+                            or current_state != authoritative_state
+                            or not (
+                                _STAGE_ORDER[observed_stage]
+                                < _STAGE_ORDER[recovery_stage]
                                 or (
-                                    witness_outcome is not None
-                                    and type(witness_outcome) is not str
-                                )
-                                or witness_outcome not in {None, "ready", "failed"}
-                                or witness_outcome != recovery_outcome
-                                or recovery_stage != work_stage
-                                or recovery_outcome != work_outcome
-                                or current_state != authoritative_state
-                                or not (
-                                    _STAGE_ORDER[observed_stage]
-                                    < _STAGE_ORDER[recovery_stage]
-                                    or (
-                                        recovery_outcome is not None
-                                        and observed_outcome != recovery_outcome
-                                    )
+                                    recovery_outcome is not None
+                                    and observed_outcome != recovery_outcome
                                 )
                             )
                         )
@@ -1902,8 +1756,6 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                         raise ValueError("invalid presentation work observation")
                 elif recovery_stage is not None:
                     raise ValueError("orphan preparation recovery high water")
-                if not _preparation_display_name(display_name):
-                    raise ValueError("invalid presentation display name")
                 rank = _STAGE_ORDER[work_stage]
                 retained_passage[0] += rank >= 1
                 retained_passage[1] += rank >= 2
@@ -1946,6 +1798,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
             preparation_presentation_snapshot(connection, 0)
         except (
             PreparationPresentationError,
+            KeyError,
             TypeError,
             ValueError,
             sqlite3.Error,

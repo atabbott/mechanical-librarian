@@ -2261,6 +2261,53 @@ describe('Activity route', () => {
     expect(page).toHaveFocus()
   })
 
+  it('keeps Page jump focus when a search change lands after the owner moved into it', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) =>
+        activity({
+          ledger: {
+            event_type: search.eventType,
+            page: search.page,
+            page_count: 3,
+            page_size: search.pageSize,
+            query: search.q ?? null,
+            range_days: search.rangeDays,
+            total: 75,
+          },
+        }),
+      ),
+    }
+    const { router } = renderRoute('/activity?page=2', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await waitFor(() => expect(page).toHaveValue(2))
+    await waitFor(() =>
+      expect(document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/activity',
+      ),
+    )
+    await user.click(page)
+    await user.clear(page)
+    await user.type(page, '3')
+    // A range chosen a moment earlier resolves only now (#1554).
+    await act(() =>
+      router.navigate({
+        to: '/activity',
+        search: { eventType: 'all', rangeDays: 90, page: 1, pageSize: 25 },
+      }),
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1),
+    )
+    expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toBe(page)
+    expect(page).toHaveFocus()
+  })
+
   it('lets no pending Activity search pull the owner back once another route is loading', async () => {
     const { router } = renderRoute('/activity', createHttp())
     const search = await screen.findByRole('searchbox', { name: 'Search activity' })

@@ -385,6 +385,7 @@ configuration and data paths:
 
 | Command | Purpose |
 | --- | --- |
+| `review-serve` | Serve the owner workspace and API ([review case](review-case.md)) |
 | `policy-preview` | Read-only preview of a metadata policy |
 | `cover-review` | Show or record one current cover consideration |
 | `review-activity` | Read-only guarded-write and recovery history |
