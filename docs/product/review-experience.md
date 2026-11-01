@@ -254,7 +254,9 @@ The server classifies every field, and the tab status follows from it:
 - **Decided:** an owner decision is recorded.
 - **Automatic:** decided automatically. It can be inspected and deliberately
   overridden, but it is not queued.
-- **Optional:** choosable but not counted; Next skips it.
+- **Optional:** choosable but not counted; Next skips it. Its one reason says
+  why no review is needed, and no comparison condition asking for a choice is
+  shown beside it.
 - **No change:** context only. Keeping the current value is a choice only when
   an eligible alternative exists. Unsupported fields show their value and a
   reason, never a selectable `Not set`.

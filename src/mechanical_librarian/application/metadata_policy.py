@@ -647,6 +647,10 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
             scope = (
                 "none"
                 if not item["automatic_available"]
+                # A current language is respelled to its display name, never
+                # replaced by another language (#1496).
+                else "fill_or_respell"
+                if field == "language_rendering"
                 else "fill"
                 if (field == "cover_order" and option == "replace_if_strictly_better")
                 or field
@@ -655,8 +659,6 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
                     "description_fill",
                     "isbn_form",
                     "series",
-                    # A current language is only ever respelled by the owner.
-                    "language_rendering",
                 }
                 or option == "fill_empty"
                 else "add"

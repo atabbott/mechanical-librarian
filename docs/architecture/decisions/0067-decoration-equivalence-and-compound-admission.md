@@ -402,6 +402,22 @@ covering the post-walk retry, the leading-number rung, the dispatch bound,
 forged-narrator replay refusal, retained refused products and carried-lane
 verification.
 
+### Bracketed identifier suffix (#1496)
+
+A title-and-author work whose title ended in `[ISBN 978…]` stayed the owner's
+choice while ISBN-matched works with the same decoration were tidied: the
+`explicit_identifier` step read only a bare `ISBN 978…` suffix, and `(ISBN
+978…)` was read as a parenthesized series name. The step now also removes a
+square or round bracket that encloses exactly one labelled, checksum-valid
+ISBN, and the election grammar reads that suffix as `explicit_identifier`
+before any parenthesized family. An invalid checksum, an ASIN, other words in
+the bracket or text after it stay unmatched. The provider-consensus and
+decoration-equivalence guards are unchanged, so one provider alone still
+tidies nothing. The same step shapes the work lookup, so such a title is
+looked up as its bare title, with no empty bracket left behind. The proposal
+policy moves to `fixed-conservative-v42`.
+**Clean rebuild required** under ADR-0013.
+
 ## Consequences
 
 ### Positive

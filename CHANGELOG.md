@@ -18,6 +18,11 @@ brackets are GitHub issues.
 - An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
   Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
   request or retry and no longer appear in an ebook's lookups (#1486).
+- **Clean rebuild required.** A title that only drops a leading "The", "A" or
+  "An", a bracketed ISBN suffix on a title-matched work, and a packaged "A
+  Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
+  `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
+  automatically (#1496).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
@@ -120,6 +125,10 @@ brackets are GitHub issues.
   attention needed". Library gives such works their own Could not finish lens,
   lists them after the works needing a decision, and names their count beside
   Works. No clean rebuild is needed (#1413).
+- An optional description or genre choice says once why no review is needed
+  (the proposed values only shorten or extend the current one), instead of
+  also showing a note that the sources disagree or that a change needs you
+  (#1450).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

@@ -61,6 +61,7 @@ def classify_review_field(
     owner_choosable: bool = False,
     changeable: bool = True,
     owner_entry: bool = False,
+    immaterial_alternatives: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -69,7 +70,9 @@ def classify_review_field(
     Every other input decides first. `changeable` says whether any owner
     control could replace a recorded decision, and `owner_entry` whether the
     owner may type a value or choose genres; each changes only the reason
-    (ADR-0085).
+    (ADR-0085). `immaterial_alternatives` says an optional choice is optional
+    because its alternatives only trim or extend the current value (#1253), so
+    its one statement says why no review is needed (#1450).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -162,8 +165,14 @@ def classify_review_field(
     if owner_choosable:
         return ReviewFieldClassification(
             "owner_choosable",
-            "No review is needed. You can still keep the current value or "
-            "choose a proposed one.",
+            (
+                "The proposed values only shorten or extend the current one, so "
+                "no review is needed. You can still keep the current value or "
+                "choose a proposed one."
+                if immaterial_alternatives
+                else "No review is needed. You can still keep the current value or "
+                "choose a proposed one."
+            ),
             False,
             True,
             False,

@@ -257,6 +257,15 @@ with the claims read from it, so a v62 report cannot state what a v63 report
 records. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
 
+Issue #1496 also takes the clean-rebuild branch. Titles that differ only by a
+leading article form one alternative, a bracketed ISBN suffix is the explicit
+identifier decoration, a packaged generic subtitle is not observed, and a
+language respelling is automatic (ADR-0065), so the proposal policy moves to
+`fixed-conservative-v42`, the decision policy to
+`deterministic-shadow-decision-policy-v26` and the F46 digest rotates. An
+automatic decision minted under the earlier F46 digest no longer decodes. The
+report schema is unchanged; no adoption is supplied.
+
 Issue #1314 also takes the clean-rebuild branch. Every language is written as
 its class's display name and the `preserve` language option is retired
 (ADR-0065), so the proposal policy moves to `fixed-conservative-v41` and the

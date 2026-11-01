@@ -665,6 +665,17 @@ _IDENTIFIER = re.compile(
     r"(?P<value>[0-9A-Z][0-9A-Z -]{7,20})\b",
     re.IGNORECASE,
 )
+# An identifier may be printed as a bracketed suffix, "[ISBN 978...]" or
+# "(ISBN 978...)"; the brackets go with a valid identifier they enclose whole
+# (#1496).
+_BRACKETED_IDENTIFIER = re.compile(
+    r"\[[\t\n\r\f\v ]*(?P<square>[^\[\]]*?)[\t\n\r\f\v ]*\]"
+    r"|\([\t\n\r\f\v ]*(?P<round>[^()]*?)[\t\n\r\f\v ]*\)"
+)
+_ELECTION_BRACKETED_ISBN = re.compile(
+    r"(?P<title>.*?\S)[\t\n\r\f\v ]+"
+    r"(?:\[(?P<square>[^\[\]]*)\]|\((?P<round>[^()]*)\))[\t\n\r\f\v ]*"
+)
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 _VARIANT = re.compile(
     r"\b(?:abridg(?:e?ment|ed)|adapt(?:ation|ed)|translat(?:ion|ed)|variant)\b",
@@ -1382,7 +1393,12 @@ def apply_work_title_transformation(
     if family is WorkTitleTransformationFamily.BRACKET_SOURCE_TAG:
         return _clean(_BRACKET_SOURCE.sub("", title))
     if family is WorkTitleTransformationFamily.EXPLICIT_IDENTIFIER:
-        return _clean(_IDENTIFIER.sub(_remove_valid_identifier, title))
+        return _clean(
+            _IDENTIFIER.sub(
+                _remove_valid_identifier,
+                _BRACKETED_IDENTIFIER.sub(_remove_bracketed_identifier, title),
+            )
+        )
     if family is WorkTitleTransformationFamily.EDITION_LABEL:
         return _clean(_EDITION.sub("", title))
     if family in {
@@ -1655,6 +1671,26 @@ def _election_preserved_component(
 
 
 def _election_isbn_component(title: str) -> tuple[str, str] | None:
+    bracketed = _ELECTION_BRACKETED_ISBN.fullmatch(title)
+    if bracketed is not None:
+        inner = bracketed.group("square")
+        identifier = _IDENTIFIER.fullmatch(
+            (inner if inner is not None else bracketed.group("round")).strip()
+        )
+        if identifier is None or identifier.group("label").casefold() == "asin":
+            return None
+        compact = re.sub(r"[^0-9X]", "", identifier.group("value").upper())
+        prefix = bracketed.group("title")
+        # One step only: a title carrying another identifier, bracketed or
+        # bare, stays competing (ADR-0067).
+        if _IDENTIFIER.search(prefix) is not None:
+            return None
+        clean_title = _clean(prefix)
+        return (
+            (clean_title, compact)
+            if _valid_isbn(compact) and clean_title and clean_title != title
+            else None
+        )
     match = re.fullmatch(
         r"(?P<title>.+?)[\\t\\n\\r\\f\\v ]+"
         r"(?P<label>isbn(?:-1[03])?)[\\t\\n\\r\\f\\v ]*[:#-]?"
@@ -2081,6 +2117,18 @@ def _remove_valid_identifier(match: re.Match[str]) -> str:
     else:
         valid = _valid_isbn(compact)
     return " " if valid else match.group(0)
+
+
+def _remove_bracketed_identifier(match: re.Match[str]) -> str:
+    inner = match.group("square")
+    identifier = _IDENTIFIER.fullmatch(
+        inner if inner is not None else match.group("round")
+    )
+    return (
+        " "
+        if identifier is not None and _remove_valid_identifier(identifier) == " "
+        else match.group(0)
+    )
 
 
 def _valid_isbn(value: str) -> bool:

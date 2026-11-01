@@ -691,7 +691,11 @@ const completionOutcome = (field: ReviewField) =>
           : 'Recorded outcome'
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
+// An optional choice's reason is its one statement: a condition worded as
+// asking the owner would contradict "no review is needed", so none is shown
+// beside it (#1450).
 const comparisonNotices = (field: ReviewField) =>
+  field.classification === 'owner_choosable' ||
   field.choiceContexts.some((context) =>
     context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
@@ -708,13 +712,11 @@ const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
       ? 'Different source descriptions'
       : materialReasonLabel(notice)
 // A notice that says again what the reason under the question already says is
-// left out: the language respelling reason, or the condition that is that
-// line (#1519).
+// left out: the condition that is that line (#1519).
 const restatesReason = (field: ReviewField, notice: string) =>
   notice === questionNotice(field) ||
   (field.automaticWithheldReason !== null &&
-    (notice === 'language_display_name' ||
-      `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason))
+    `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason)
 // Under an actionable field's question, one line gives its own reason: why it
 // was withheld, else its first comparison condition, else its disposition. The
 // classification sentence, the same on every field, is only the last fallback

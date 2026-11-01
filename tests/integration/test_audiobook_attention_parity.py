@@ -351,6 +351,14 @@ def test_an_immaterial_work_description_is_choosable_without_asking(
         assert field["classification"] == (
             "needs_attention" if counted else "owner_choosable"
         )
+        # The optional choice's one statement says why no review is needed,
+        # beside conditions that would otherwise ask the owner (#1450).
+        assert (
+            field["classification_reason"]
+            == "The proposed values only shorten or extend the current one, so "
+            "no review is needed. You can still keep the current value or choose "
+            "a proposed one."
+        ) is not counted
         attention = BrowseReviewLibrary(repository).attention(
             search=None, limit=50, cursor=None
         )
