@@ -1415,6 +1415,8 @@ describe('Application shell', () => {
       )
       expect(alert).not.toHaveTextContent('Try again')
       const resume = await within(popover).findByRole('button', { name: 'Resume' })
+      // The message sits with the control it describes, not below the fold.
+      expect(resume.nextElementSibling).toBe(alert)
       expect(http.preparationAction).toHaveBeenCalledOnce()
       await user.click(resume)
       expect(http.preparationAction).toHaveBeenLastCalledWith('resume')
