@@ -5527,6 +5527,198 @@ describe('Library route', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
   })
 
+  const retryableCover = (
+    reviewerStatus: 'completed' | 'failed',
+  ): NonNullable<CaseDetailView['fields'][number]['coverConsideration']> => ({
+    id: `cover_consideration_${'r'.repeat(64)}`,
+    current: true,
+    choiceContexts: [
+      {
+        alternativeId: null,
+        selection: 'current',
+        evidence: [],
+        limitations: [],
+        rationale: 'Keep the local cover.',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+      },
+      {
+        alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
+        selection: 'proposed',
+        evidence: [],
+        limitations: [],
+        rationale: 'Selectable retained cover.',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+      },
+    ],
+    candidates: [
+      {
+        artifactId: `cover_${'a'.repeat(64)}`,
+        deterministicCitations: ['citation-a'],
+        deterministicRank: 1,
+        deterministicRankKey: [
+          1,
+          0,
+          -960000,
+          -800,
+          -1200,
+          1,
+          `cover_transport_ref_${'a'.repeat(64)}`,
+        ],
+        height: 1200,
+        identity: { outcome: 'verified_work_match' },
+        incumbent: false,
+        matchState: 'same_book',
+        observation: null,
+        originalSha256: 'a'.repeat(64),
+        ordinal: 1,
+        previewSha256: 'a'.repeat(64),
+        reference: `cover_transport_ref_${'a'.repeat(64)}`,
+        selectable: true,
+        manualEligible: true,
+        sourceKinds: ['open_library'],
+        state: 'acceptable',
+        width: 800,
+      },
+    ],
+    incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' },
+    omissions: [],
+    policy: null,
+    policyPreferences: {
+      avoidPromotionalText: false,
+      avoidTieInBranding: false,
+      preferMinimalComposition: false,
+    },
+    policyReference: `cover_policy_${'r'.repeat(64)}`,
+    providerFetching: false,
+    ready: true,
+    reviewerAccessRevision: null,
+    reviewerEngine: null,
+    reviewerModel: null,
+    reviewerStatus,
+    reviewerUnavailableReason: null,
+    targetFingerprint: 'fingerprint-cover',
+  })
+
+  it.each([
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      new ApiError(503, 'persistence'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      new ApiError(409, 'stale_cover'),
+      'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+    ],
+  ])('reports a cover advisory retry failing with %s', async (failure, copy) => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const access: ReviewerAccessView = {
+      schema_version: 'reviewer-access-view-v2',
+      cover_metadata: null,
+      cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+      revision: 9,
+      mapping: { engine: 'codex' },
+      description_mapping: null,
+      description_metadata: null,
+      description: null,
+      openrouter_key_configured: false,
+      codex: {
+        engine: 'codex',
+        state: 'failed',
+        reason: null,
+        model: null,
+        tier: null,
+        host_headroom_bytes: null,
+      },
+      openrouter: {
+        engine: 'openrouter',
+        state: 'unconfigured',
+        reason: null,
+        model: null,
+        tier: null,
+        host_headroom_bytes: null,
+      },
+      recommendations: [],
+      candidates: [],
+      free_tier_caveat: '',
+      data_use_caveat: '',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+            coverConsideration: retryableCover('failed'),
+          },
+        ],
+      })),
+      getReviewerAccess: vi.fn(async () => access),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        throw failure
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+    // A reload that keeps the consideration keeps the alert on screen.
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
+    ],
+    [
+      new ApiError(409, 'stale'),
+      'The comparison could not be prepared. The existing cover remains unchanged.',
+    ],
+  ])('reports preparing a cover comparison failing with %s', async (failure, copy) => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+            coverConsideration: null,
+          },
+        ],
+      })),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        throw failure
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Prepare cover comparison' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+  })
+
   it('offers only preparation for an authenticated historical cover comparison', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -8017,14 +8209,73 @@ describe('Library route', () => {
       expect(focused).not.toHaveBeenCalled()
       expect(scrollsOf(heading)).toBe(0)
       await railGone()
-      // Close and Escape hand focus back to the toggle. The toggle closes
-      // without that hand-back, so route-ready focus moves to the Library
-      // controls that hold it, as when it closes after the reveal.
-      await waitFor(() =>
-        expect(closer === 'toggle' ? toggle.closest('[data-route-focus]') : toggle).toHaveFocus(),
-      )
+      // Every closer hands focus back to the toggle, the toggle included,
+      // rather than leaving it on the Library controls that route-ready focus
+      // moves to first (#1566).
+      await waitFor(() => expect(toggle).toHaveFocus())
       expect(focused).not.toHaveBeenCalled()
       expect(scrollsOf(heading)).toBe(0)
+    },
+  )
+
+  it.each([
+    ['wide, with no selection', '/library?lens=all', false],
+    ['wide, with a selected work', '/library?lens=all&preview=case-1', false],
+    ['760px and below, with a selected work', '/library?lens=all&preview=case-1', true],
+  ] as const)(
+    'returns focus as Close does when the toggle closes the rail, %s (#1566)',
+    async (_layout, path, narrow) => {
+      if (narrow) {
+        const previousMatchMedia = window.matchMedia
+        vi.stubGlobal('matchMedia', (query: string) => ({
+          matches: query === '(max-width: 760px)' || query === '(max-width: 1024px)',
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(() => true),
+        }))
+        onTestFinished(() => {
+          vi.stubGlobal('matchMedia', previousMatchMedia)
+        })
+      }
+      const user = userEvent.setup()
+      renderRoute(path, createHttp())
+      const toggle = await screen.findByRole('button', { name: /Attention/ })
+      await routeSettled()
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      }
+
+      await user.click(toggle)
+      const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      const heading = within(rail).getByRole('heading', { name: 'Attention' })
+      act(runFrames)
+      expect(heading).toHaveFocus()
+      await user.click(toggle)
+      await waitFor(() =>
+        expect(screen.queryByRole('complementary', { name: 'Attention queue' })).toBeNull(),
+      )
+      act(runFrames)
+      // Like Close and Escape, the toggle keeps focus, except at 760px and
+      // below, where closing reveals the selected work and focus goes to it.
+      const work = document.querySelector('.selected-work-header')
+      if (path.includes('preview')) expect(work).toBeInstanceOf(HTMLElement)
+      await waitFor(() => expect(narrow ? work : toggle).toHaveFocus())
+      expect(document.querySelector('header.library-header')).not.toHaveFocus()
+      if (!narrow && work) expect(work).not.toHaveFocus()
     },
   )
 

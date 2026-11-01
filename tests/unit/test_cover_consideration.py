@@ -280,6 +280,34 @@ def test_identical_replay_reopens_and_explicit_retry_creates_successor(
     ]
 
 
+def test_retry_projection_failure_after_commit_is_not_a_refusal(
+    case: _Case,
+) -> None:
+    # The browser reads this bare failure as uncertain because the retry's
+    # record has already landed (#1572).
+    case_id = "review_case_" + "r" * 64
+    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    case.now += 1
+    with (
+        patch.object(
+            CoverConsiderationService,
+            "_project",
+            side_effect=ValueError("synthetic projection failure"),
+        ),
+        pytest.raises(ValueError, match="synthetic projection failure") as raised,
+    ):
+        case.service.ensure(case_id, case.report.to_json(), case.proposal, retry=True)
+    assert not isinstance(raised.value, CoverConsiderationError)
+    assert [event["kind"] for event in case.store.events] == [
+        "automatic_prepared",
+        "superseded",
+        "owner_retry_prepared",
+    ]
+    successor = case.service.current(case_id)
+    assert successor is not None
+    assert successor["consideration_id"] != first["consideration_id"]
+
+
 def test_active_fetching_blocks_readiness_and_quiescence_creates_successor(
     case: _Case,
 ) -> None:

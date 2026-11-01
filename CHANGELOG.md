@@ -54,6 +54,8 @@ brackets are GitHub issues.
   and asks you to check it before pressing again. A decision offers Try the
   same decision again, which cannot record it twice. A saved reviewer-access
   change now answers with its saved view (#1571).
+- Closing the Attention queue with its toolbar toggle keeps focus on the
+  toggle, as Close and Escape do (#1566).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
@@ -171,6 +173,9 @@ brackets are GitHub issues.
 - The Audiobookshelf field-effect canary composes the installed application
   around one shared operation admission, as the product does, so its
   preparation lanes queue instead of meeting at the database (#1561).
+- A cover advisory retry or comparison whose result cannot be confirmed now
+  reloads the case and says it may have been requested, instead of saying it
+  failed safely (#1572).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
