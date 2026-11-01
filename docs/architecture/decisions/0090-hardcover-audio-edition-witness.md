@@ -91,7 +91,7 @@ from Audible.
    the search returned and the recording-lookup hints, inside the unchanged
    cap of four lanes. A lead obtains evidence only: the identifier-lane gate
    admits the product only on an exact work match inside the tight runtime
-   band, and the owner reviews the ASIN and narrators it proposes. The
+   band, and the owner reviews what it proposes, as for any admitted recording. The
    challenged match itself already proposes nothing, because the runtime veto
    keeps it out. An edition ASIN may be ISBN-shaped, as some Audible
    productions are; the work-level Hardcover ASIN rule is unchanged.
