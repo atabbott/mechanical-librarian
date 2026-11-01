@@ -1874,6 +1874,9 @@ export default function LibraryPage({
   // Close and Escape hand focus back to the toggle that opened the rail.
   const returnToToggle = useRef(false)
   const returnToWork = useRef(false)
+  // A close reaches the route one navigation later, so the opening reveal
+  // must not focus or scroll a rail that is already going away (#1563).
+  const cancelOpeningReveal = useRef<(() => void) | null>(null)
   const revealWorkspace = useRef(false)
   const revealQueueChoice = useRef(false)
   const workSelectionGeneration = useRef(0)
@@ -2906,9 +2909,14 @@ export default function LibraryPage({
         }
       })
     })
-    return () => {
+    const cancel = () => {
       cancelAnimationFrame(routeFrame)
       cancelAnimationFrame(focusFrame)
+    }
+    if (opened) cancelOpeningReveal.current = cancel
+    return () => {
+      cancel()
+      if (cancelOpeningReveal.current === cancel) cancelOpeningReveal.current = null
     }
   }, [search.attention])
   // From 761 to 1199px the rail is a drawer over the workspace: everything
@@ -3129,7 +3137,10 @@ export default function LibraryPage({
   const changeAttention = (open: boolean) => {
     // Only a narrow rail covers the work; from 761px it overlays the page,
     // which stays where it was with the toggle in view.
-    if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && narrowWidth()
+    if (!open) {
+      revealWorkspace.current = Boolean(search.preview ?? search.work) && narrowWidth()
+      cancelOpeningReveal.current?.()
+    }
     pendingSearchQuery.current = {
       q: searchPending ? queryText.trim() : null,
       attention: open,
