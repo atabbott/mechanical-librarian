@@ -557,7 +557,11 @@ describe('ReviewApiClient', () => {
       ],
       [
         'conflict-same-book',
-        { candidates: [candidate({ identity: coverIdentity({ outcome: 'conflict' }) })] },
+        {
+          candidates: [
+            candidate({ identity: coverIdentity({ outcome: 'conflict' }), manual_eligible: false }),
+          ],
+        },
       ],
       [
         'manifestation-wrong-label',
