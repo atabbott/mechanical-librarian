@@ -14,7 +14,7 @@ run() {  # label, seconds, pytest args...
     ps -ef --forest | grep -E "chrome|playwright|node|pytest" | grep -v grep | cut -c1-220
     for p in $(pgrep -f "python -m pytest"); do sudo .venv/bin/py-spy dump --pid $p || true; done
     for p in $(pgrep -f "chrome-headless-shell"); do echo "-- chrome $p $(tr '\0' ' ' < /proc/$p/cmdline | grep -o -- '--type=[a-z-]*')"; for t in /proc/$p/task/*; do echo "   $(cat $t/comm) $(grep State $t/status | cut -f2) $(sudo cat $t/wchan)"; done; done
-    echo "--- protocol tail"; tail -n 120 /tmp/pw-debug.log | cut -c1-600
+    echo "--- protocol tail"; tail -n 40 /tmp/pw-debug.log | cut -c1-600
     pkill -9 -f "python -m pytest"; pkill -9 -f chrome-headless-shell
     echo "RESULT $label hang"
   else
@@ -23,4 +23,8 @@ run() {  # label, seconds, pytest args...
   echo "::endgroup::"
 }
 uv pip install py-spy >/dev/null 2>&1 || true
-for i in $(seq 1 60); do run "single-$i" 30 "$TEST"; done
+for i in $(seq 1 40); do
+  export DIAG_INIT=; run "base-$i" 30 "$TEST"
+  export DIAG_INIT="HTMLElement.prototype.focus = function () {};"; run "nofocus-$i" 30 "$TEST"
+  export DIAG_INIT="window.scrollTo = window.scrollBy = function () {}; Element.prototype.scrollIntoView = function () {};"; run "noscroll-$i" 30 "$TEST"
+done

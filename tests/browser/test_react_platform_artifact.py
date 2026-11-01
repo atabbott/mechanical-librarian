@@ -4022,6 +4022,8 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         page.on("crash", lambda _: _diag("PAGE CRASH"))
 
         page.on("pageerror", lambda e: _diag(f"pageerror {e}"))
+        if os.environ.get("DIAG_INIT"):
+            page.add_init_script(os.environ["DIAG_INIT"])
         page.on("dialog", lambda d: _diag(f"DIALOG {d.type} {d.message[:100]}"))
         page.on(
             "request",
