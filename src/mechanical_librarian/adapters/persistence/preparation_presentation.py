@@ -1471,6 +1471,9 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
                     not review_scan_identity(values["scan_id"])
                     or not preparation_cycle_identity(values["cycle_id"])
                     or not review_work_identity(values["work_id"])
+                    # The CHECK bounds the store's own encoding; the domain
+                    # bound is UTF-8 bytes, which a UTF-16 store can exceed.
+                    or not _preparation_display_name(values["display_name"])
                     or not non_negative_integer(values["ordinal"])
                     or not non_negative_integer(values["enrollment_ordinal"])
                     or (
