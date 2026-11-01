@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 import zipfile
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -467,6 +468,18 @@ _PAPERBACK_LABEL = re.compile(r"(?<![\w])paperback(?![\w])", re.I)
 _HARDCOVER_LABEL = re.compile(r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I)
 _NON_ISBN_IDENTIFIER = re.compile(
     r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
+)
+# A Library of Congress control number named by its label, with or without a
+# colon, owns the digits after it (#1497).
+_LCCN_LABELLED = re.compile(
+    r"(?i)(?<![\w])(?:library\s+of\s+congress\s+control\s+(?:number|no\.?)"
+    r"|lc\s+control\s+(?:number|no\.?)|lccn)\s*(?:[:#.]\s*)?\d[\d\s-]{6,14}\d"
+    r"(?![\dXx])"
+)
+# The heading of a Library of Congress catalogue record (CIP data block), whose
+# bare ten-digit run is its control number, not an ISBN-10 (#1497).
+_CATALOGUE_RECORD_HEADING = re.compile(
+    r"(?i)(?<![\w])library\s+of\s+congress\s+cataloging[\s-]+in[\s-]+publication"
 )
 _INDICIA_PROMOTION_NOTICE = re.compile(
     r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
@@ -2482,7 +2495,123 @@ def _non_isbn_identifier_spans(value: str) -> tuple[tuple[int, int], ...]:
         ):
             continue
         spans.append(owner.span())
+    spans.extend(owner.span() for owner in _LCCN_LABELLED.finditer(value))
     return tuple(spans)
+
+
+def _catalogue_record_starts(
+    elements: list[_Element], eligible: set[int]
+) -> dict[int, int]:
+    """Map each element inside a catalogue-record block to where it starts.
+
+    The block opens at its heading. The heading is read on the innermost
+    element that states it, widened through wrappers that hold only the same
+    text (a `<b>` inside a `<p>`), and the block runs through every later
+    element of the widened heading's container. A heading element counts only
+    from the heading on, and every later member from its start (#1497).
+
+    Only an element the recognizer would read can state the heading or widen
+    it, so foreign, promotional, excluded and body content opens no block.
+    """
+    by_ordinal = {element.ordinal: element for element in elements}
+    headings = {
+        element.ordinal
+        for element in elements
+        if _CATALOGUE_RECORD_HEADING.search(element.exact_text) is not None
+    }
+    # A container's text holds its children's, so only the innermost element
+    # stating the heading opens a block.
+    ancestors_of_headings = {
+        ancestor for ordinal in headings for ancestor in by_ordinal[ordinal].ancestors
+    }
+    starts: dict[int, int] = {}
+    blocks: list[tuple[int, int | None]] = []
+    for ordinal in sorted(headings - ancestors_of_headings):
+        node = by_ordinal[ordinal]
+        if ordinal not in eligible:
+            # Content the recognizer skips is isolated as elsewhere: a heading
+            # stated only inside it opens no block, and neither do its
+            # ancestors.
+            continue
+        chain = [node]
+        while (
+            node.ancestors
+            and (parent := by_ordinal.get(node.ancestors[-1])) is not None
+            and parent.ordinal in eligible
+            and parent.exact_text.strip() == node.exact_text.strip()
+        ):
+            node = parent
+            chain.append(node)
+        for member in chain:
+            heading = _CATALOGUE_RECORD_HEADING.search(member.exact_text)
+            if heading is not None:
+                starts[member.ordinal] = min(
+                    starts.get(member.ordinal, heading.start()), heading.start()
+                )
+        blocks.append((node.ordinal, node.ancestors[-1] if node.ancestors else None))
+    for element in elements:
+        if any(
+            element.ordinal > head
+            and (container is None or container in element.ancestors)
+            for head, container in blocks
+        ):
+            starts.setdefault(element.ordinal, 0)
+    return starts
+
+
+_ISBN_FORM_DESIGNATOR = re.compile(r"isbn[\s-]*1[03]")
+_FORM_WORD_ONLY = re.compile(
+    r"\W*(?:e-?book|paperback|hardcover|hardback|pbk\.?|hbk\.?)\W*"
+)
+
+
+def _catalogue_neighbor_labels(
+    elements: list[_Element],
+    element: _Element,
+    admissible: Callable[[_Element], bool],
+) -> bool:
+    """Whether the element read just before or after is only an ISBN label.
+
+    These are the neighbours the recognizer reads a label from, so a bare
+    run such a label names stays an ISBN inside a catalogue record. Only a
+    short line that names an ISBN and holds no number of its own, or is only
+    an ebook or print form word such as "(paperback)", counts, so
+    a note or another line's own ISBN never lets a control number back in
+    (#1497).
+    """
+    previous = next(
+        (
+            candidate
+            for candidate in reversed(elements)
+            if candidate.end <= element.start and admissible(candidate)
+        ),
+        None,
+    )
+    following = next(
+        (
+            candidate
+            for candidate in elements
+            if candidate.start >= element.end and admissible(candidate)
+        ),
+        None,
+    )
+    return any(
+        neighbor is not None and _isbn_label_only(neighbor.exact_text)
+        for neighbor in (previous, following)
+    )
+
+
+def _isbn_label_only(text: str) -> bool:
+    label = " ".join(text.casefold().split())
+    if len(label) > 32:
+        return False
+    if _FORM_WORD_ONLY.fullmatch(label) is not None:
+        return True
+    if "isbn" not in label:
+        return False
+    return not any(
+        character.isdigit() for character in _ISBN_FORM_DESIGNATOR.sub("", label)
+    )
 
 
 def _isbn_owned_by_non_isbn_identifier(
@@ -3347,6 +3476,9 @@ def _recognize(
         projection.elements,
         eligible_ordinals,
     )
+    catalogue_record_starts = _catalogue_record_starts(
+        projection.elements, eligible_ordinals
+    )
     for element in projection.elements:
         text = element.exact_text
         if element.active or not _is_html_namespace(element.namespace):
@@ -3668,6 +3800,24 @@ def _recognize(
                 _EBOOK_LABEL.search(right_vicinity)
                 or _PRINT_LABEL.search(right_vicinity)
             )
+            catalogue_start = catalogue_record_starts.get(element.ordinal)
+            if (
+                catalogue_start is not None
+                and match.start() >= catalogue_start
+                and identifier.isdigit()
+                and len(identifier) == 10
+                and "isbn" not in lowered[catalogue_start : match.start()]
+                and "isbn" not in right_vicinity
+                and not left_has_labels
+                and not right_has_labels
+                and not _catalogue_neighbor_labels(
+                    projection.elements, element, admissible_context_element
+                )
+            ):
+                # A bare ten-digit run in a catalogue record, with no ISBN label
+                # before it in its line or in the element read beside it, is its
+                # control number; the record's ISBNs carry a label or hyphens.
+                continue
             if left_has_labels and right_has_labels:
                 left_ebook = bool(_EBOOK_LABEL.search(left_vicinity))
                 left_print = bool(_PRINT_LABEL.search(left_vicinity))

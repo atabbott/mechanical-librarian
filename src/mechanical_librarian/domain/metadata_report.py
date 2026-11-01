@@ -6669,6 +6669,15 @@ def _has_creator_duplicates(values: tuple[str, ...]) -> bool:
     return len({creator_comparison_key(value) for value in values}) != len(values)
 
 
+def comma_inverted_name(value: str) -> str | None:
+    """Return one personal `Family, Given` name in display order, if it is one.
+
+    Organisations, joined names, name suffixes and non-personal tokens give
+    None, so a source's comma is read as an inversion only for one person.
+    """
+    return _comma_inverted(value)
+
+
 def _comma_inverted(value: str) -> str | None:
     if value.count(",") != 1:
         return None

@@ -51,6 +51,25 @@ assessment, stable evidence references and hashed correlation groups. It never
 copies report excerpts, raw provider responses, URLs, paths or image bytes.
 Provider access times stay in the referenced report.
 
+An Open Library title or description is never offered as an alternative when
+it contradicts the work's established language, which is its package and target
+languages or, with neither, one language that two provider authorities state.
+A code for several, uncoded or no languages (`mul`, `mis`, `zxx`) names no one
+language: a work stated that way has no established language, and an edition
+stated that way contradicts none.
+That is the case when its edition states only other languages, or when a work in
+Latin-script languages gets a value written mostly in another script. The
+proposal set records no reason for a value it leaves out. With no established
+language nothing is left out, and the same value from any other provider stays.
+A title that another source states without its leading article is the same
+title, so that choice stays offered in the article form.
+Such a value still counts when the outcome is decided, so leaving it out never
+makes a change automatic: two descriptions still ask you to choose with only one
+of them offered, and on the ISBN route such a title still counts against the
+title election. When the current value is then the only one left, it is kept
+rather than offered as a choice with nothing to choose, unless the title,
+subtitle and series have no safe combination, which still asks you.
+
 ### Bibliographic combinations
 
 A separate bibliographic-relationships projection lists the allowed title,
@@ -174,6 +193,14 @@ independent authorities state the same complete list and the local list is the
 only equivalent dissent; the local claims stay as provenance. A bracketed
 source suffix grants election authority only when it is exactly `[retail]`;
 any other bracketed suffix abstains.
+
+Hardcover author names collapse their whitespace runs. A name equal to a book
+author name stays as it is; otherwise it is put in display order only when
+Hardcover marks it inverted, as one personal `Family, Given` comma (not an
+organisation, joined names or a name suffix). A Hardcover author list that
+names exactly the book's authors, with at least one only with its words rotated
+(such as `Example Ada` beside the book's `Ada Example`), is not offered; its
+names stay creator evidence as stated.
 
 ### Series
 

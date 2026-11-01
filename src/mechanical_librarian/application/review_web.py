@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
 from types import MappingProxyType
-from typing import Generic, Literal, Protocol, TypeVar, cast
+from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
@@ -1173,12 +1173,21 @@ class InspectCurrentReviewCase:
                     "unsupported",
                 }:
                     message = (
-                        None
-                        if field["proposed_values"]
-                        else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
-                    ) or _AUTOMATIC_REFUSAL_TEXT.get(
-                        outcome.reason_code,
-                        "No value was chosen for you, and no more specific reason is known.",
+                        (
+                            None
+                            if field["proposed_values"]
+                            else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
+                        )
+                        or (
+                            _UNOFFERED_DISSENT_TEXT
+                            if outcome.reason_code == "ambiguous_evidence"
+                            and _lone_candidate_for_empty(field)
+                            else None
+                        )
+                        or _AUTOMATIC_REFUSAL_TEXT.get(
+                            outcome.reason_code,
+                            "No value was chosen for you, and no more specific reason is known.",
+                        )
                     )
                 else:
                     continue
@@ -2196,6 +2205,24 @@ def _report_title(report: dict[str, object]) -> str:
                 if type(value) is str and value:
                     return value
     return "Untitled"
+
+
+# A choice with one candidate for an empty field shows no disagreement: the
+# value it disagrees with is not offered, such as one in another language
+# (#1497).
+_UNOFFERED_DISSENT_TEXT = (
+    "Another source gave a value that isn\u2019t offered here; "
+    "choose whether to use this one."
+)
+
+
+def _lone_candidate_for_empty(field: Mapping[str, Any]) -> bool:
+    current = field["current"]
+    return (
+        len(field["proposed_values"]) == 1
+        and isinstance(current, Mapping)
+        and current.get("state") in {"missing", "null", "empty"}
+    )
 
 
 def _presented_field(field: TargetField) -> dict[str, object]:

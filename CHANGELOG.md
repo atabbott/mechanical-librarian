@@ -34,6 +34,13 @@ brackets are GitHub issues.
   Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
   `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
   automatically (#1496).
+- **Clean rebuild required.** A Library of Congress control number in an
+  EPUB's opening pages is no longer read as an ISBN, Hardcover author names
+  that differ from the book's only by spacing, a `Family, Given` comma or word
+  order are no longer offered as other authors, and Open Library titles or
+  descriptions in another language or script than the work's are no longer
+  offered as choices. Those values still keep a change from being automatic, so
+  a field may still ask you to choose, with fewer options (#1497).
 - **Clean rebuild required.** An EPUB whose cover declaration is malformed
   now records, as shadow evidence only, whether its own cover could be
   recovered from a legacy cover entry, a guide reference or a cover page. The
