@@ -302,3 +302,10 @@ decision minted under any earlier digest no longer decodes. Rich outcome action
 identities embed the F20 digest, so outcomes move to `shadow-outcome-set-v11`
 and a v10 outcome cannot be read as current. Every earlier application database
 is rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1498 also takes the clean-rebuild branch. `metadata-report-v65` adds the
+`adapter_fault` provider diagnostic, which names a lookup the adapter itself
+failed instead of `unknown` (ADR-0017), so a v64 report cannot state what a v65
+report records. The report browse facts gain an `adapter_fault` match state, so
+such a work reads as its own Not matched reason, never as unavailable. Every earlier application database is rejected before mutation
+and needs a clean rebuild; no adoption is supplied.

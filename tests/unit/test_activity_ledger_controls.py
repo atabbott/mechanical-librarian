@@ -158,7 +158,7 @@ def test_search_narrows_on_the_work_the_field_and_the_status(
     assert by_field
     assert {str(row["destination"]) for row in by_field} == {"isbn"}
 
-    by_status = _all_rows(ledger, search="stale")
+    by_status = _all_rows(ledger, search="item changed")
     assert by_status
     assert {str(row["state"]) for row in by_status} == {"stale"}
 
@@ -284,7 +284,7 @@ def test_paging_forward_and_back_lands_on_the_same_window(
 def test_a_filter_and_a_search_narrow_together_rather_than_replacing_each_other(
     ledger: ContinuousGuardedApplication,
 ) -> None:
-    combined = _all_rows(ledger, event_type="safety", search="stale")
+    combined = _all_rows(ledger, event_type="safety", search="item changed")
     assert combined
     assert {str(row["category"]) for row in combined} == {"recovery"}
     assert {str(row["state"]) for row in combined} == {"stale"}

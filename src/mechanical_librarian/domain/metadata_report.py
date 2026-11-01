@@ -95,7 +95,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v64"
+REPORT_SCHEMA = "metadata-report-v65"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2918,6 +2918,7 @@ class ProviderConvergence:
 
 
 _PROVIDER_DIAGNOSTIC_STAGES = {
+    FailureCategory.ADAPTER_FAULT: FailureStage.EXECUTION,
     FailureCategory.AUTHENTICATION: FailureStage.RESPONSE,
     FailureCategory.BURST_THROTTLE: FailureStage.RESPONSE,
     FailureCategory.CANDIDATE_LIMIT_EXCEEDED: FailureStage.RESPONSE,
@@ -3180,8 +3181,12 @@ class ProviderObservation:
                     }
                 )
             )
+            # An inactive aggregate claims no inputs, so its lanes' inputs are
+            # not its own: a disabled provider's, or one whose every lane had
+            # too little to search with (#1498).
             if (
-                self.status is not ProviderStatus.DISABLED
+                self.status
+                not in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT}
                 and self.input_references != expected_inputs
             ):
                 raise ReportValueError("provider aggregate inputs are inconsistent")

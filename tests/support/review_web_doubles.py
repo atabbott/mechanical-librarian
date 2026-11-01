@@ -64,6 +64,7 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
     ProviderLaneObservation,
+    ProviderObservation,
     ProviderStatus,
     TargetDestination,
     TargetFacts,
@@ -625,8 +626,20 @@ class FakeReviewRepository:
             for lane in lanes
         ):
             return "refused"
-        if any(lane.status.value in _LIMITING_STATUSES for lane in lanes):
+
+        def faulted(lane: ProviderObservation | ProviderLaneObservation) -> bool:
+            return any(
+                value.category is FailureCategory.ADAPTER_FAULT
+                for value in lane.diagnostics
+            )
+
+        if any(
+            lane.status.value in _LIMITING_STATUSES and not faulted(lane)
+            for lane in lanes
+        ):
             return "unavailable"
+        if any(faulted(lane) for lane in lanes):
+            return "adapter_fault"
         return "no_match"
 
     @staticmethod

@@ -26,9 +26,9 @@ The same rule applies to the first report and to every retry:
 | Authentication, authorisation or configuration | Dormant until **Retry now** |
 
 A scope shows as exhausted when its jobs have used all five execution
-attempts, or when the canary fails in a way that cannot be retried. Burst and
-daily-quota waits do not use up an attempt. A burst or quota wait can lengthen
-a scheduled retry but never bring it forward.
+attempts, or when the canary fails in a way that cannot be retried. Burst,
+daily-quota and pacing waits do not use up an attempt. A later throttle can
+lengthen a scheduled retry but never bring it forward.
 
 Provider specifics:
 
@@ -133,6 +133,9 @@ without a request.
   and is not retried. Fix the cause, then use **Scan now** or **Retry**.
 - Missing ISBNs, malformed evidence, too many candidates and insufficient input
   are final for that report.
+- A lookup the adapter itself failed is recorded as `adapter_fault` and is not
+  retried: it fails the same way each time. A provider that could not be
+  reached is still retried.
 - An iTunes Search lookup (ebook libraries only) that returns more than five
   candidates is final; the adapter does not truncate or repeat the query.
 - A construction or dispatch error during a retry publishes nothing; only the

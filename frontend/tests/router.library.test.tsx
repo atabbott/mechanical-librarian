@@ -377,6 +377,18 @@ it('keeps Attention in the Library search scope with its own cursor', async () =
   expect(screen.queryByRole('button', { name: /^Title · .*, Later scoped work$/u })).toBeNull()
 })
 
+// The shell moves focus to the route a frame after it is ready, unless focus
+// has moved since. A choice made inside that frame whose control re-renders
+// returns focus to the body, so the route takes it from the control the test
+// expects; a test that acts at once waits for the route to settle (#1552).
+const routeSettled = () =>
+  waitFor(() =>
+    expect(document.getElementById('main-content')).toHaveAttribute(
+      'data-restored-path',
+      '/library',
+    ),
+  )
+
 describe('Library route', () => {
   it('retains a setup handoff until the first authoritative preparation snapshot selects it', async () => {
     const runId = `preparation_run_${'9'.repeat(64)}`
@@ -2192,6 +2204,7 @@ describe('Library route', () => {
         | 'not_matched_refused'
         | 'not_matched_unavailable_scheduled'
         | 'not_matched_unavailable'
+        | 'not_matched_adapter_fault'
         | 'not_matched_no_match',
     ) => ({
       ...baseWork,
@@ -2210,19 +2223,20 @@ describe('Library route', () => {
       unmatched('refused', 'not_matched_refused'),
       unmatched('scheduled', 'not_matched_unavailable_scheduled'),
       unmatched('unavailable', 'not_matched_unavailable'),
+      unmatched('fault', 'not_matched_adapter_fault'),
       unmatched('nothing', 'not_matched_no_match'),
     ]
     const getLibrary = vi.fn(async (search: LibrarySearch) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 4, clear: 0, notMatched: 4, failed: 0 },
+      counts: { attention: 0, all: 5, clear: 0, notMatched: 5, failed: 0 },
       works,
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
 
     const lens = await screen.findByRole('link', { name: 'Not matched' })
     // The count sits beside the Works count, in the same words.
-    expect(await screen.findByText('4 works · 4 not matched')).toBeVisible()
+    expect(await screen.findByText('5 works · 5 not matched')).toBeVisible()
     expect(
       within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
     ).toHaveLength(5)
@@ -2231,6 +2245,7 @@ describe('Library route', () => {
       ['refused', 'Found, but not this work'],
       ['scheduled', 'Providers unavailable; will be checked again'],
       ['unavailable', 'Providers unavailable'],
+      ['fault', 'Failed in Mechanical Librarian'],
       ['nothing', 'No provider matched'],
     ] as const) {
       const row = screen.getByRole('button', { name: new RegExp(`^Unmatched ${key}\\.`, 'u') })
@@ -6777,7 +6792,9 @@ describe('Library route', () => {
     }
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
-    await user.click(await screen.findByRole('radio', { name: /Open Library cover/u }))
+    const proposed = await screen.findByRole('radio', { name: /Open Library cover/u })
+    await routeSettled()
+    await user.click(proposed)
     if (retainSameConsideration) {
       await screen.findByText(
         'This cover comparison changed before your choice was recorded. No cover was changed.',
@@ -7102,6 +7119,7 @@ describe('Library route', () => {
     })
 
     const retry = await screen.findByRole('button', { name: 'Try again' })
+    await routeSettled()
     retry.focus()
     expect(retry).toHaveFocus()
     await user.click(retry)
@@ -7133,6 +7151,7 @@ describe('Library route', () => {
     })
 
     const retry = await screen.findByRole('button', { name: 'Try again' })
+    await routeSettled()
     retry.focus()
     await user.click(retry)
     expect(await screen.findByText('Loading selected work…')).toBeVisible()

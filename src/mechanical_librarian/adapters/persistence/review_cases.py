@@ -129,7 +129,9 @@ _LIBRARY_LENS_CONDITIONS = {
     "not_matched": "attention=0 AND match_reason IS NOT NULL",
     "preparation_failed": _PREPARATION_FAILED_SQL,
 }
-_MATCH_REASONS = frozenset({None, "refused", "unavailable", "no_match"})
+_MATCH_REASONS = frozenset(
+    {None, "refused", "unavailable", "adapter_fault", "no_match"}
+)
 
 # The exact column shape of the current_review_case_lineages pointer selected
 # by _validated_review_pointer.  Nullability follows the schema below:

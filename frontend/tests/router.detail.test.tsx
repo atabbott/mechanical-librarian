@@ -1225,6 +1225,16 @@ it.each(['evidence', 'history'])(
           candidate,
           selected: false,
         },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
+          outcome: 'description_application',
+          state: 'stale' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: false,
+        },
       ],
     }))
     renderRoute(`/review/case-1?field=description&subview=${subview}`, http)
@@ -1238,6 +1248,11 @@ it.each(['evidence', 'history'])(
       expect(
         await screen.findByText('Applied and verified in the library.', { exact: false }),
       ).toBeVisible()
+      // The store's "stale" reads in the owner's words (#1542).
+      expect(
+        screen.getByText('Guarded application: closed safely.', { exact: false }),
+      ).toBeVisible()
+      expect(document.body.textContent).not.toMatch(/\bstale\b/iu)
       expect(
         screen.getByText('This authored selection was superseded by a later decision.', {
           exact: false,
@@ -1245,7 +1260,7 @@ it.each(['evidence', 'history'])(
       ).toBeVisible()
       expect(
         screen.getAllByRole('heading', { name: 'Advised description · Authored content' }),
-      ).toHaveLength(3)
+      ).toHaveLength(4)
     } else {
       await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
       expect(screen.queryByText(candidate.output.description)).toBeNull()

@@ -2884,6 +2884,40 @@ def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> Non
     previous.pop("report_id")
     previous["report_id"] = d.report_content_address(previous)
 
-    assert "metadata-report-v64" == report.schema_version
+    assert "metadata-report-v65" == report.schema_version
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(d.canonical_json(previous))
+
+
+def test_an_ebook_plan_with_only_an_isbn_lane_is_insufficient_input() -> None:
+    """#1498: the catalogue cannot search by ISBN, so the plan sends nothing.
+
+    Its one lane keeps the ISBN it had too little to search with. The aggregate
+    once claimed that input too, which an inactive aggregate may not, so the
+    whole observation failed to build and the lookup ended unavailable.
+    """
+    claim = d.LocalClaim.create(
+        kind=d.ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    snapshot = m.TargetSnapshot(
+        "ebook", None, (m.TargetFile("b" * 64, "book.epub", "epub"),)
+    )
+    plan = m.metadata_discovery_plan(snapshot, (claim,))
+    assert (d.ProviderQueryKind.ISBN,) == tuple(lane.kind for lane in plan.lanes)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        pytest.fail("the catalogue was sent a request")
+
+    observation = _provider(handle).observe(plan).observation
+
+    assert d.ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert () == observation.input_references
+    assert ((claim.reference,),) == tuple(
+        lane.input_references for lane in observation.lanes
+    )

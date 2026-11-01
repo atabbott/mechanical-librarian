@@ -990,7 +990,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     ("Synthetic completed cover advice", "Cover advice completed"),
                     ("Synthetic unavailable cover advice", "Cover advice unavailable"),
                     ("Synthetic failed cover advice", "Cover advice failed safely"),
-                    ("Synthetic stale cover advice", "Stale"),
+                    ("Synthetic stale cover advice", "Closed safely"),
                     ("Synthetic superseded cover advice", "Superseded"),
                 ):
                     row = activity_ledger.get_by_text(work, exact=True).locator(

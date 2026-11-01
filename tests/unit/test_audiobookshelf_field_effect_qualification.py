@@ -36,6 +36,9 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
+from mechanical_librarian.adapters.providers.hardcover_metadata import (
+    HardcoverMetadataProvider,
+)
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -45,6 +48,10 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import authority_from_decision
+from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectConsent,
@@ -52,6 +59,14 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
 )
 from mechanical_librarian.domain.human_decision import validate_cover_confirmation
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    LocalClaim,
+    ProviderQueryKind,
+    ProviderStatus,
+    isbn_family,
+)
 from mechanical_librarian.infrastructure.configuration import ConfigurationInput
 from mechanical_librarian.interfaces.web.app import _DecisionRequest
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
@@ -474,6 +489,62 @@ def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane
     work_data = json.loads(work_response.content)["data"]
     assert isbn_data["editions"][0]["id"] != work_data["editions"][0]["id"]
     assert isbn_data["books"][0]["id"] != work_data["books"][0]["id"]
+
+
+def test_hardcover_fixture_answers_each_isbn_family_on_its_own() -> None:
+    # #1545: a real book carries opening-matter ISBNs beside the one the canary
+    # injects, so discovery asks one lane per family. One record answering for
+    # two ISBNs is an identity conflict that drops every lane, and an operator
+    # catalogue that answered an ISBN it does not hold would split the work's
+    # evidence.
+    claims = tuple(
+        LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed=value,
+            canonical=value,
+            excerpt="ISBN: " + value,
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        for value in ("9780306406157", "9780140328721")
+    )
+    lanes = tuple(
+        MetadataDiscoveryLane(
+            "lane_" + str(index) * 64,
+            ProviderQueryKind.ISBN,
+            (claim.reference,),
+            isbn_family(claim.canonical),
+            (str(claim.canonical),),
+        )
+        for index, claim in enumerate(claims, 1)
+    )
+    plan = MetadataDiscoveryPlan(claims, lanes)
+    synthetic = _qualification_hardcover_client({}, {}, {}, {})
+    operator = _qualification_hardcover_client(
+        {},
+        {},
+        {"9780306406157": "Operator qualification 1"},
+        {"9780306406157": "Operator Author."},
+    )
+
+    statuses = [
+        [
+            lane.status
+            for lane in HardcoverMetadataProvider(
+                "qualification-catalogue-a", client, 65_536
+            )
+            .observe(plan)
+            .observation.lanes
+        ]
+        for client in (synthetic, operator)
+    ]
+
+    assert [
+        [ProviderStatus.CANDIDATES, ProviderStatus.CANDIDATES],
+        [ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH],
+    ] == statuses
 
 
 def test_generated_canary_catalogues_agree_with_the_generated_epub() -> None:

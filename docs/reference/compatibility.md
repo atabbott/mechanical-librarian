@@ -81,7 +81,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v64` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v65` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v43` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
@@ -126,12 +126,13 @@ of their own and no separate version string.
 
 ### HTTP API
 
-The owner API is served under `/api/v1`. Its exact response versions are
-defined in the generated [OpenAPI document](review-openapi-v1.json). The main
-ones are `review-session-v1`, `review-library-v4`, `review-preparation-v2`,
-`review-case-detail-v6`, `review-case-evidence-v4`, `review-report-detail-v5`,
-`review-case-history-v3`, `review-attention-v1` and
-`continuous-field-activity-v3`.
+The owner API is served under `/api/v1`, and each response names its version
+in `schema_version`. The main ones are `review-session-v1`,
+`review-library-v4`, `review-preparation-v2`, `review-case-detail-v6`,
+`review-case-evidence-v4`, `review-report-detail-v5`, `review-case-history-v3`,
+`review-attention-v1` and `continuous-field-activity-v3`. The generated
+[OpenAPI document](review-openapi-v1.json) pins each of them except
+`review-session-v1` and `review-attention-v1`, which the server sets.
 
 ## Browser bundle identity
 
