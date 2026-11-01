@@ -11532,6 +11532,44 @@ it('retries an advised selection through the ordinary controller with the same a
   expect(first[1].authoredDescription?.binding).toEqual(advice.binding)
 })
 
+it('places the decision failure directly under its retry, before the external update status (#1584)', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // An earlier recorded change gives the field an external update status.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  http.recordDecision = vi.fn(async () => {
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
+  const message = await screen.findByRole('alert')
+  expect(message).toHaveTextContent('The decision could not be confirmed.')
+  const status = screen.getByLabelText('External update status')
+  expect(retry.nextElementSibling).toBe(message)
+  expect(message.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
 it.each(['verified', 'no_change_required'] as const)(
   'shows the exact authored %s outcome without renewing a stale binding',
   async (outcome) => {
