@@ -4181,3 +4181,14 @@ def test_a_note_beside_a_catalogue_control_number_is_no_label(note: str) -> None
         )
         == []
     )
+
+
+@pytest.mark.parametrize("label", ("(paperback)", "eBook", "(pbk.)"))
+def test_a_catalogue_isbn_10_with_its_form_on_the_next_line_is_still_read(
+    label: str,
+) -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        f"<p>0306406152</p><p>{label}</p></section>"
+    ) == ["0306406152"]

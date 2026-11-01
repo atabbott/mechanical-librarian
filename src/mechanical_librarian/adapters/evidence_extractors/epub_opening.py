@@ -2552,6 +2552,9 @@ def _catalogue_record_starts(
 
 
 _ISBN_FORM_DESIGNATOR = re.compile(r"isbn[\s-]*1[03]")
+_FORM_WORD_ONLY = re.compile(
+    r"\W*(?:e-?book|paperback|hardcover|hardback|pbk\.?|hbk\.?)\W*"
+)
 
 
 def _catalogue_neighbor_labels(
@@ -2563,7 +2566,8 @@ def _catalogue_neighbor_labels(
 
     These are the neighbours the recognizer reads a label from, so a bare
     run such a label names stays an ISBN inside a catalogue record. Only a
-    short line that names an ISBN and holds no number of its own counts, so
+    short line that names an ISBN and holds no number of its own, or is only
+    an ebook or print form word such as "(paperback)", counts, so
     a note or another line's own ISBN never lets a control number back in
     (#1497).
     """
@@ -2591,7 +2595,11 @@ def _catalogue_neighbor_labels(
 
 def _isbn_label_only(text: str) -> bool:
     label = " ".join(text.casefold().split())
-    if len(label) > 32 or "isbn" not in label:
+    if len(label) > 32:
+        return False
+    if _FORM_WORD_ONLY.fullmatch(label) is not None:
+        return True
+    if "isbn" not in label:
         return False
     return not any(
         character.isdigit() for character in _ISBN_FORM_DESIGNATOR.sub("", label)
