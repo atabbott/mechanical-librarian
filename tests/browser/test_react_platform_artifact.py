@@ -3984,62 +3984,18 @@ def test_attention_beside_a_work_never_clips_its_choices() -> None:
         expect(heading).to_be_in_viewport()
 
 
-_RAF_PROBE = """() => new Promise(done => {
-  const start = performance.now();
-  const timer = setTimeout(() => done({result: 'timeout', ms: performance.now() - start}), 3000);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    clearTimeout(timer); done({result: 'raf', ms: performance.now() - start});
-  }));
-})"""
-_PAGE_STATE = """() => ({visibility: document.visibilityState, focus: document.hasFocus(),
-  scrollY, height: document.documentElement.scrollHeight, url: location.href,
-  active: document.activeElement?.className, animations: document.getAnimations().length})"""
-
-
-def _diag(label: str) -> None:
-    import sys, time
-
-    print(f"DIAG {time.time():.3f} {label}", file=sys.__stderr__, flush=True)
-
-
 def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
     """Closing the Attention rail over a compact selection, with its Close or
     the toolbar's toggle, brings the workspace's top, where Back to works leads
     it, back into view (#1284)."""
-    _diag("enter")
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
-        _diag("playwright started")
-        browser = playwright.chromium.launch(
-            headless=True,
-            args=[a for a in os.environ.get("DIAG_ARGS", "").split() if a],
-        )
-        _diag("launched")
-        stack.callback(
-            lambda: (_diag("closing browser"), browser.close(), _diag("browser closed"))
-        )
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
-        page.on("crash", lambda _: _diag("PAGE CRASH"))
-
-        page.on("pageerror", lambda e: _diag(f"pageerror {e}"))
-        if os.environ.get("DIAG_INIT"):
-            page.add_init_script(os.environ["DIAG_INIT"])
-        page.on("dialog", lambda d: _diag(f"DIALOG {d.type} {d.message[:100]}"))
-        page.on(
-            "request",
-            lambda r: _diag(f"req> {r.resource_type} {r.method} {r.url[:140]}"),
-        )
-        page.on("requestfinished", lambda r: _diag(f"req< {r.url[:140]}"))
-        page.on("requestfailed", lambda r: _diag(f"req! {r.url[:140]} {r.failure}"))
-        page.on("framenavigated", lambda f: _diag(f"nav {f.url[:140]}"))
-        page.on("console", lambda m: _diag(f"console {m.type} {m.text[:160]}"))
-        page.on("worker", lambda w: _diag(f"worker {w.url[:100]}"))
-        page.context.on("page", lambda pg: _diag(f"NEW PAGE {pg.url[:100]}"))
         _serve_cohort(
             page,
-            stylesheet=lambda: (
-                "html { font-size: 200% !important; }" + os.environ.get("DIAG_CSS", "")
-            ),
+            stylesheet=lambda: "html { font-size: 200% !important; }",
             writes_off_handoff=True,
         )
         rail = page.get_by_role("complementary", name="Attention queue")
@@ -4051,72 +4007,23 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         for closer, control in closers.items():
             for width in (390, 320):
                 where = f"{closer}, 200% text at {width}px"
-                _diag(f"{where}: set_viewport_size")
                 page.set_viewport_size({"width": width, "height": 844})
-                _diag(f"{where}: goto")
                 page.goto("https://react-platform.invalid/library?lens=all")
                 rows = page.locator("button.library-work-row")
-                _diag(f"{where}: rows visible")
                 expect(rows.first).to_be_visible()
                 last = rows.nth(rows.count() - 1)
-                _diag(f"{where}: scroll last")
                 last.scroll_into_view_if_needed()
-                _diag(f"{where}: click last")
                 last.click()
-                _diag(f"{where}: wait back")
                 page.locator(".compact-workspace-back").wait_for()
-                _diag(f"{where}: open toggle")
                 toggle.click()
                 expect(toggle).to_have_attribute("aria-expanded", "true")
-                if os.environ.get("DIAG_WAITFOCUS"):
-                    expect(rail.get_by_role("heading", name="Attention")).to_be_focused()
-                _diag(f"{where}: click closer")
                 control.click()
-                _diag(f"{where}: rail gone")
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
-                _diag(f"{where}: responsive?")
-                try:
-                    page.wait_for_function("() => true", timeout=8_000)
-                    _diag(f"{where}: responsive")
-                except Exception as error:
-                    _diag(f"UNRESPONSIVE {where}: {type(error).__name__}")
-                    try:
-                        page.screenshot(timeout=8_000)
-                        _diag("screenshot ok")
-                    except Exception as error2:
-                        _diag(f"screenshot failed {type(error2).__name__}")
-                    try:
-                        _diag(f"title {page.title()}")
-                    except Exception as error3:
-                        _diag(f"title failed {error3}")
-                    import time as _t
-
-                    _t.sleep(20)
-                    raise
-                _diag(f"{where}: two frames")
-                outcome = page.evaluate(_RAF_PROBE)
-                _diag(f"{where}: frames {outcome}")
-                if outcome["result"] == "timeout":
-                    _diag(f"STALL {where}: state {page.evaluate(_PAGE_STATE)}")
-                    _diag(f"STALL {where}: again {page.evaluate(_RAF_PROBE)}")
-                    page.mouse.move(5, 5)
-                    _diag(f"STALL {where}: after mouse {page.evaluate(_RAF_PROBE)}")
-                    page.screenshot(timeout=10_000)
-                    _diag(
-                        f"STALL {where}: after screenshot {page.evaluate(_RAF_PROBE)}"
-                    )
-                    page.set_viewport_size({"width": width, "height": 845})
-                    _diag(f"STALL {where}: after resize {page.evaluate(_RAF_PROBE)}")
-                    raise AssertionError(f"rAF stall: {where}")
-                _diag(f"{where}: back in view")
+                page.evaluate(_TWO_FRAMES)
                 back = page.evaluate(_BACK_IN_VIEW)
-                _diag(f"{where}: back={back}")
                 assert back["visible"], f"{where}: {back}"
                 assert not page.evaluate(_FOCUS_ON_BODY), where
-                _diag(f"{where}: done")
-        _diag("body done")
-    _diag("exit")
 
 
 def test_attention_drawer_holds_focus_and_returns_it() -> None:
