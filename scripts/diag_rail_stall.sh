@@ -28,7 +28,7 @@ arm() {  # name, prefix-js
   for i in $(seq 1 40); do run "$1-$i" 30 "$TEST"; done
 }
 arm control ''
-arm noanchor 'document.documentElement.style.overflowAnchor = "none";'
-arm nosiv 'Element.prototype.scrollIntoView = function () {};'
-arm noscrollto 'window.scrollTo = function () {};'
-arm nofocus 'HTMLElement.prototype.focus = function () {};'
+git apply scripts/diag_candidate.patch
+(cd frontend && ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/react-assets-fix" npm run build >/dev/null 2>&1) || echo "BUILD FAILED"
+export ML_REACT_ASSET_DIR="$RUNNER_TEMP/react-assets-fix"
+for n in 1 2 3; do arm "scrollby$n" ''; done
