@@ -62,7 +62,8 @@ Such a value still counts when the outcome is decided, so leaving it out never
 makes a change automatic: two descriptions still ask you to choose with only one
 of them offered, and on the ISBN route such a title still counts against the
 title election. When the current value is then the only one left, it is kept
-rather than offered as a choice with nothing to choose.
+rather than offered as a choice with nothing to choose, unless the title,
+subtitle and series have no safe combination, which still asks you.
 
 ### Bibliographic combinations
 

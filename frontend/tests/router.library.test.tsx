@@ -3793,6 +3793,59 @@ describe('Library route', () => {
     },
   )
 
+  it('names an unoffered dissent when one candidate fills an empty field', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('workspace fixture requires a field')
+    const field = {
+      ...base,
+      destination: 'description' as const,
+      notices: ['competing_evidence'],
+      currentValue: 'Not set in Audiobookshelf',
+      currentRaw: null,
+      automaticDecision: null,
+      automaticWithheldReason: null,
+      humanDecision: null,
+      decisionActions: ['keep_current', 'accept'] as const,
+      editable: true,
+      needsAttention: true,
+      navigationRole: 'attention' as const,
+      proposedValues: [{ kind: 'text' as const, value: 'A voyage reveals a hidden city.' }],
+      choiceContexts: [
+        {
+          alternativeId: 'source-description',
+          evidence: [
+            {
+              observation: 'Description: A voyage reveals a hidden city.',
+              role: 'external_corroboration' as const,
+              source: 'Source record 1',
+            },
+          ],
+          limitations: [],
+          rationale: 'Source description.',
+          recommendation: 'no_recommendation' as const,
+          recommendationReason: 'Source alternative retained.',
+          selection: 'proposed' as const,
+        },
+      ],
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind: 'epub' },
+        fields: [field],
+      })),
+    })
+    expect(
+      (
+        await screen.findAllByText(
+          /^Another source gave a value that isn’t offered here; choose whether to use this one\.?$/u,
+        )
+      ).length,
+    ).toBeGreaterThan(0)
+    expect(screen.queryByText(/^The sources disagree; choose the value yourself\.?$/u)).toBeNull()
+  })
+
   it('keeps the provider-consensus contributor statement visible while revisiting choices', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('workspace fixture requires a field')

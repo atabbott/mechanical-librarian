@@ -25,7 +25,13 @@ import {
 import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  displayValue,
+  EMPTY_TARGET_TEXT,
+  sessionRefreshedCopy,
+} from '../api/http'
 import type {
   AutomaticOutcome,
   DecisionCommand,
@@ -710,7 +716,13 @@ const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
     ? 'Different source tag lists'
     : notice === 'competing_evidence' && selectedAutomaticSynopsis(field, mediaKind)
       ? 'Different source descriptions'
-      : materialReasonLabel(notice)
+      : notice === 'competing_evidence' && loneCandidateForEmpty(field)
+        ? 'Another source gave a value that isn’t offered here; choose whether to use this one'
+        : materialReasonLabel(notice)
+// One candidate for an empty field shows no disagreement: the value it
+// disagrees with is not offered, such as one in another language (#1497).
+const loneCandidateForEmpty = (field: ReviewField) =>
+  field.proposedValues.length === 1 && field.currentValue === EMPTY_TARGET_TEXT
 // A notice that says again what the reason under the question already says is
 // left out: the condition that is that line (#1519).
 const restatesReason = (field: ReviewField, notice: string) =>

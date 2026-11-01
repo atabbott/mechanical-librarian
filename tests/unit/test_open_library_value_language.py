@@ -6,6 +6,10 @@ from dataclasses import replace
 
 import pytest
 
+from mechanical_librarian.application.review_web import (
+    _UNOFFERED_DISSENT_TEXT,
+    _lone_candidate_for_empty,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -508,3 +512,25 @@ def test_a_title_kept_only_after_leaving_a_value_out_lets_no_series_fill_through
         results[TargetDestination.SERIES].outcome
     )
     assert "Первое путешествие" not in _offered(results[TargetDestination.TITLE])
+
+
+@pytest.mark.parametrize(
+    ("proposed", "state", "expected"),
+    (
+        (1, "empty", True),
+        (1, "missing", True),
+        (1, "value", False),
+        (2, "empty", False),
+    ),
+    ids=("empty", "missing", "populated", "two_candidates"),
+)
+def test_a_lone_candidate_for_an_empty_field_names_the_unoffered_dissent(
+    proposed, state, expected
+):
+    field = {
+        "current": {"state": state, "value": None},
+        "proposed_values": [{"kind": "text", "value": "x"}] * proposed,
+    }
+
+    assert expected is _lone_candidate_for_empty(field)
+    assert "isn't offered" in _UNOFFERED_DISSENT_TEXT
