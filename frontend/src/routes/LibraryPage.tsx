@@ -46,6 +46,7 @@ import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useRouteReadyFocus } from '../focus'
 import {
   audioSurfaceLabels,
+  choiceRequestReasons,
   claimBasisLabels,
   claimKindLabels,
   destinationLabel,
@@ -691,17 +692,19 @@ const completionOutcome = (field: ReviewField) =>
           : 'Recorded outcome'
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
-// An optional choice's reason is its one statement: a condition worded as
-// asking the owner would contradict "no review is needed", so none is shown
-// beside it (#1450).
+// An optional choice already says no review is needed, so a condition worded
+// as asking the owner to choose is left off it (#1450). Other conditions still
+// explain the choice, such as a language respelling (#1496, #1557).
 const comparisonNotices = (field: ReviewField) =>
-  field.classification === 'owner_choosable' ||
   field.choiceContexts.some((context) =>
     context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
     ? []
     : field.notices.filter(
-        (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
+        (notice) =>
+          materialReasonLabel(notice) !== undefined &&
+          !restatesReason(field, notice) &&
+          !(field.classification === 'owner_choosable' && choiceRequestReasons.has(notice)),
       )
 // A comparison condition in words; differing source tag lists or synopses are
 // named as such rather than as a disagreement.
