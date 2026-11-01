@@ -377,6 +377,18 @@ it('keeps Attention in the Library search scope with its own cursor', async () =
   expect(screen.queryByRole('button', { name: /^Title · .*, Later scoped work$/u })).toBeNull()
 })
 
+// The shell moves focus to the route a frame after it is ready, unless focus
+// has moved since. A choice made inside that frame whose control re-renders
+// returns focus to the body, so the route takes it from the control the test
+// expects; a test that acts at once waits for the route to settle (#1552).
+const routeSettled = () =>
+  waitFor(() =>
+    expect(document.getElementById('main-content')).toHaveAttribute(
+      'data-restored-path',
+      '/library',
+    ),
+  )
+
 describe('Library route', () => {
   it('retains a setup handoff until the first authoritative preparation snapshot selects it', async () => {
     const runId = `preparation_run_${'9'.repeat(64)}`
@@ -6718,7 +6730,9 @@ describe('Library route', () => {
     }
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
-    await user.click(await screen.findByRole('radio', { name: /Open Library cover/u }))
+    const proposed = await screen.findByRole('radio', { name: /Open Library cover/u })
+    await routeSettled()
+    await user.click(proposed)
     if (retainSameConsideration) {
       await screen.findByText(
         'This cover comparison changed before your choice was recorded. No cover was changed.',
@@ -7043,6 +7057,7 @@ describe('Library route', () => {
     })
 
     const retry = await screen.findByRole('button', { name: 'Try again' })
+    await routeSettled()
     retry.focus()
     expect(retry).toHaveFocus()
     await user.click(retry)
@@ -7074,6 +7089,7 @@ describe('Library route', () => {
     })
 
     const retry = await screen.findByRole('button', { name: 'Try again' })
+    await routeSettled()
     retry.focus()
     await user.click(retry)
     expect(await screen.findByText('Loading selected work…')).toBeVisible()

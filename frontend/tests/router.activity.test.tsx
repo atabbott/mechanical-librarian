@@ -677,7 +677,15 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         events: [{ work_label: 'Stale work', state: 'stale' }],
       },
-      'Stale',
+      'Closed safely',
+    ],
+    [
+      'item changed',
+      {
+        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        events: [{ work_label: 'Changed work', state: 'stale', failure: 'target_changed' }],
+      },
+      'Item changed; closed safely',
     ],
     [
       'connection-waiting',
@@ -693,7 +701,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         events: [{ work_label: 'Exhausted work', state: 'stale', failure: 'connection_exhausted' }],
       },
-      'Stale',
+      'Closed safely',
     ],
     [
       'stopped',
@@ -836,6 +844,21 @@ describe('Activity route', () => {
       expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
     },
   )
+
+  it.each([
+    ['no filter', '/activity', 'widen the range.'],
+    ['a search', '/activity?q=title', 'widen the range or clear filters.'],
+    ['an event type', '/activity?eventType=safety', 'widen the range or clear filters.'],
+  ])('says how to find a stopped change hidden by %s (#1542)', async (_name, path, ending) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity({ owner_action_required: 1 })),
+    }
+    renderRoute(path, http)
+
+    const detail = await screen.findByText(/^Its “Prepared change closed” entry/u)
+    expect(detail.textContent.endsWith(`If it isn’t listed, ${ending}`)).toBe(true)
+  })
 
   it('stays calm when nothing waits on the owner', async () => {
     const http: ReviewHttp = {
@@ -1442,7 +1465,8 @@ describe('Activity route', () => {
 
   it.each([
     ['connection', 'Waiting safely'],
-    ['connection_exhausted', 'Stale'],
+    ['connection_exhausted', 'Closed safely'],
+    ['target_changed', 'Item changed; closed safely'],
   ])('labels each lifecycle stale from its own %s failure', async (failure, latest) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
@@ -2234,6 +2258,53 @@ describe('Activity route', () => {
     await user.clear(page)
     await user.type(page, '2{Escape}')
     expect(page).toHaveValue(1)
+    expect(page).toHaveFocus()
+  })
+
+  it('keeps Page jump focus when a search change lands after the owner moved into it', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) =>
+        activity({
+          ledger: {
+            event_type: search.eventType,
+            page: search.page,
+            page_count: 3,
+            page_size: search.pageSize,
+            query: search.q ?? null,
+            range_days: search.rangeDays,
+            total: 75,
+          },
+        }),
+      ),
+    }
+    const { router } = renderRoute('/activity?page=2', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await waitFor(() => expect(page).toHaveValue(2))
+    await waitFor(() =>
+      expect(document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/activity',
+      ),
+    )
+    await user.click(page)
+    await user.clear(page)
+    await user.type(page, '3')
+    // A range chosen a moment earlier resolves only now (#1554).
+    await act(() =>
+      router.navigate({
+        to: '/activity',
+        search: { eventType: 'all', rangeDays: 90, page: 1, pageSize: 25 },
+      }),
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1),
+    )
+    expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toBe(page)
     expect(page).toHaveFocus()
   })
 

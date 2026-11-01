@@ -43,7 +43,10 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
-from mechanical_librarian.adapters.persistence.schema import _REVIEW_WORK_SQL
+from mechanical_librarian.adapters.persistence.schema import (
+    _REVIEW_WORK_SQL,
+    _check_constraint_violation,
+)
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
@@ -1891,9 +1894,18 @@ _PRESENTATION_REFUSAL = (
 
 
 def _assert_presentation_validator_refuses(path: Path) -> None:
-    """Reach the content validator the read-only CHECK sweep now pre-empts."""
+    """One at-rest layer refuses the row: a CHECK or the content validator.
+
+    The read-only CHECK sweep runs before the validator on every open, so a
+    rule that a CHECK states is no longer restated in Python (#1394).
+    """
     connection = sqlite3.connect(path)
     try:
+        objects = connection.execute(
+            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+        ).fetchall()
+        if _check_constraint_violation(connection, objects) is not None:
+            return
         with pytest.raises(
             MetadataReportError, match="^database is unavailable or incompatible$"
         ):
@@ -2232,6 +2244,51 @@ def test_retained_failed_completion_is_a_counter_lower_bound(tmp_path: Path) -> 
     )
     connection.commit()
     connection.close()
+    _assert_presentation_reopen_refuses_without_mutation(path)
+
+
+def test_utf16_store_display_name_over_the_utf8_bound_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The CHECK counts the store's own bytes; the domain bound is UTF-8 (#1394)."""
+    source = tmp_path / "utf8.sqlite3"
+    repository = open_repository(source)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        100,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("First", "1" * 64),), 102
+    )
+    repository.close()
+    original = sqlite3.connect(source)
+    user_version = original.execute("PRAGMA user_version").fetchone()[0]
+    application_id = original.execute("PRAGMA application_id").fetchone()[0]
+    dump = "\n".join(original.iterdump())
+    original.close()
+    path = tmp_path / "utf16.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA encoding='UTF-16le'")
+    connection.execute(f"PRAGMA application_id={application_id}")
+    connection.execute(f"PRAGMA user_version={user_version}")
+    connection.executescript(dump)
+    # 800 characters: 1,600 UTF-16 bytes pass the CHECK, 2,400 UTF-8 bytes do not
+    # fit the 2,048-byte display-name bound.
+    connection.execute(
+        "UPDATE review_preparation_presentation SET display_name=? "
+        "WHERE row_kind='work'",
+        ("界" * 800,),
+    )
+    connection.commit()
+    assert connection.execute("PRAGMA encoding").fetchone() == ("UTF-16le",)
+    connection.close()
+    path.chmod(0o600)
     _assert_presentation_reopen_refuses_without_mutation(path)
 
 
