@@ -3993,9 +3993,6 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
-        if os.environ.get("DIAG_INIT"):  # temporary diagnostic, not for merge
-            page.add_init_script(os.environ["DIAG_INIT"])
-            page.on("console", lambda m: print(f"console {m.text[:200]}", file=sys.__stderr__, flush=True))
         _serve_cohort(
             page,
             stylesheet=lambda: "html { font-size: 200% !important; }",
@@ -4024,8 +4021,7 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 # The owner sees the opened rail, its heading focused, before
                 # closing it; a close in the same frame as the open is the
                 # Library route's Vitest case (#1563).
-                if not os.environ.get("DIAG_NOWAIT"):
-                    expect(heading).to_be_focused()
+                expect(heading).to_be_focused()
                 control.click()
                 expect(rail).to_have_count(0)
                 expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
