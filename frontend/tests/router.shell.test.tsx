@@ -1222,6 +1222,10 @@ describe('Application shell', () => {
   it.each([
     [new Error('mutation failed'), 'Connection checking could not be completed'],
     [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
+    [
+      new ApiError(503, 'persistence'),
+      'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.',
+    ],
   ])(
     'restores the actionable paused connection notice when %s and refetch fail',
     async (failure, copy) => {
@@ -1386,6 +1390,54 @@ describe('Application shell', () => {
       expect(queued).toHaveFocus()
       await user.click(queued)
       expect(http.preparationAction).toHaveBeenCalledTimes(3)
+    })
+
+    it('reports an unconfirmed pause from refreshed state without offering a retry', async () => {
+      const user = userEvent.setup()
+      let current = view('completed')
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => current),
+        preparationAction: vi.fn(async () => {
+          // The pause committed; only the response was lost to a failed read.
+          current = view('completed', { paused: true })
+          throw new ApiError(503, 'persistence')
+        }),
+      }
+      renderRoute('/library?lens=all', http)
+      await user.click(await screen.findByRole('button', { name: 'Preparation idle' }))
+      const popover = screen.getByRole('region', { name: 'Background activity' })
+      await user.click(within(popover).getByRole('button', { name: 'Pause' }))
+
+      const alert = await within(popover).findByRole('alert')
+      expect(alert).toHaveTextContent(
+        'The preparation change could not be confirmed. It may have been saved; the current state is shown. Check it before pressing again.',
+      )
+      expect(alert).not.toHaveTextContent('Try again')
+      const resume = await within(popover).findByRole('button', { name: 'Resume' })
+      expect(http.preparationAction).toHaveBeenCalledOnce()
+      await user.click(resume)
+      expect(http.preparationAction).toHaveBeenLastCalledWith('resume')
+      expect(http.preparationAction).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps the safe-failure copy for a refused preparation control', async () => {
+      const user = userEvent.setup()
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => view('completed')),
+        preparationAction: vi.fn(async () => {
+          throw new ApiError(422, 'request')
+        }),
+      }
+      renderRoute('/library?lens=all', http)
+      await user.click(await screen.findByRole('button', { name: 'Preparation idle' }))
+      const popover = screen.getByRole('region', { name: 'Background activity' })
+      await user.click(within(popover).getByRole('button', { name: 'Pause' }))
+
+      expect(await within(popover).findByRole('alert')).toHaveTextContent(
+        'Preparation control failed safely. Try again.',
+      )
     })
 
     it('keeps the open popover and focus when activity settles to idle', async () => {
