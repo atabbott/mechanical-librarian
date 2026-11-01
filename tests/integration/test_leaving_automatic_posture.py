@@ -507,9 +507,11 @@ def test_an_automatic_decision_writes_only_in_the_automatic_posture(
     assert automatic.decision_id not in _planned(library)
 
 
+@pytest.mark.parametrize("confirm_automatic", [False, True])
 def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
-    library: _Library, tmp_path: Path
+    library: _Library, tmp_path: Path, confirm_automatic: bool
 ) -> None:
+    """The plan stays stale in Preview and after Confirm Automatic."""
     automatic = library.automatic()
     library.root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
     scheduler, service, target = _applier(library, tmp_path)
@@ -522,6 +524,12 @@ def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
 
     assert library.case_id() == automatic.review_case_id
     assert not library.root.field_effect_authority_is_current(plan.authority)
+    if confirm_automatic:
+        # The plan was never claimed, and its decision is pending again in the
+        # Automatic posture, but it belongs to the earlier generation.
+        library.root.activate_qualified_automatic(40)
+        assert library.root.shadow_posture() == "automatic"
+        assert not library.root.field_effect_authority_is_current(plan.authority)
     target.seed(plan)
     before = target.read(plan).value
     applied = service.apply(plan.plan_id)

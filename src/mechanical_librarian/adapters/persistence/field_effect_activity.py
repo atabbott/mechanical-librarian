@@ -1083,6 +1083,24 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 decision = AutomaticDecision.from_json(automatic_row[0])
             except AutomaticDecisionError:
                 return False
+            # The same newest-outcome-set binding as ``_authority_source``: a
+            # decision recorded before leaving Automatic belongs to an earlier
+            # generation, so a plan from it is stale after Confirm Automatic
+            # (#1568).
+            if self._connection.execute(
+                "SELECT json_extract(document,'$.policy_generation') FROM "
+                "shadow_decision_outcomes WHERE review_case_id=? AND report_id=? "
+                "AND proposal_set_id=? AND resolved_policy_id=? "
+                "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+                "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
+                (
+                    decision.review_case_id,
+                    decision.report_id,
+                    decision.proposal_set_id,
+                    decision.resolved_policy_id,
+                ),
+            ).fetchone() != (decision.policy_generation,):
+                return False
             paired_row = (
                 self._connection.execute(
                     "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination='subtitle' AND json_extract(document,'$.bundle_id')=? AND json_extract(document,'$.policy_option')='corroborated_split:audiobook_subtitle_fill'",

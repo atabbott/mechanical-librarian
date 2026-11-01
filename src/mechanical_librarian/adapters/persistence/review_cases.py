@@ -389,7 +389,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 )
             # Reactivating an unchanged policy, as leaving Automatic does,
             # retires a case only for it to return as itself. It continues its
-            # episode, so the owner's answers on it stay current (#1568).
+            # episode, so the owner's answers on it stay current (#1568). Only
+            # when the active generation is that reactivation and retired this
+            # case: a retirement left by an earlier change of policy, whose
+            # successor never arrived, still starts a new episode.
             elif not (
                 validated is not None
                 and self._connection.execute(
@@ -398,6 +401,18 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     (validated[3],),
                 ).fetchone()
                 == ("policy-activation-v1", case.review_case_id)
+                and self._connection.execute(
+                    "SELECT 1 FROM metadata_policy_state state "
+                    "JOIN metadata_policy_transitions activation "
+                    "ON activation.generation=state.generation "
+                    "AND activation.from_policy_id=activation.to_policy_id "
+                    "JOIN metadata_policy_transition_items cohort "
+                    "ON cohort.transition_id=activation.transition_id "
+                    "AND cohort.connection_name=? AND cohort.library_name=? "
+                    "AND cohort.item_id=? WHERE state.singleton=1",
+                    lineage,
+                ).fetchone()
+                is not None
             ):
                 # The work returned to this case's content, so the case starts
                 # a new episode: the owner decisions recorded on it so far are

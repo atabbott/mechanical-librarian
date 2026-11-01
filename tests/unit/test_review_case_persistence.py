@@ -600,6 +600,44 @@ def test_returning_through_another_policy_starts_a_new_episode() -> None:
         repository.close()
 
 
+@pytest.mark.parametrize("reactivations", [0, 1])
+def test_returning_after_an_unreconciled_change_starts_a_new_episode(
+    reactivations: int,
+) -> None:
+    """A->B whose successor never arrives, then A (and A->A), resets (#1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        changed = MetadataPolicyProfile.create(
+            "Changed",
+            {**dict(builtin.options), "date_precision": "full_date"},
+            dict(builtin.destinations),
+        )
+        repository.create_metadata_policy_draft(changed.canonical_json)
+        case_id = _admit_under(repository, builtin, report)
+        decision = _owner_choice(repository, case_id, "unreconciled-0001")
+        # B's reconciliation never admits B's case, so the lineage keeps the
+        # retirement of A's case through every later activation.
+        _activate(repository, changed, builtin, 1, report)
+        _activate(repository, builtin, changed, 2, report)
+        for generation in range(3, 3 + reactivations):
+            _activate(repository, builtin, builtin, generation, report)
+        assert repository._connection.execute(
+            "SELECT actor,from_review_case_id FROM review_case_transitions "
+            "WHERE transition_id=(SELECT transition_id FROM "
+            "current_review_case_lineages)"
+        ).fetchone() == ("policy-activation-v1", case_id)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _episodes(repository, case_id) == (1,)
+        assert (
+            decision.to_json()
+            not in repository.pending_field_effect_decision_documents(100)
+        )
+        repository.close()
+
+
 def test_stale_and_cross_target_proposals_mutate_nothing() -> None:
     with tempfile.TemporaryDirectory() as directory:
         repository = open_repository(Path(directory) / "reports.sqlite")
