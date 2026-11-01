@@ -376,7 +376,7 @@ export const useReviewDecisionController = ({
         classifyDecisionFailure(error) === 'uncertain'
           ? 'The response was lost. The current case was reloaded before any retry.'
           : retryableDecisionFailure(error) && !(error instanceof CsrfRenewedError)
-            ? 'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.'
+            ? 'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.'
             : refusalCopy(
                 error,
                 ownerRefusalCopy(error, refreshedField) ??

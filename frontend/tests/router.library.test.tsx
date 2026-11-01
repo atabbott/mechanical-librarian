@@ -6391,11 +6391,11 @@ describe('Library route', () => {
   it.each([
     [
       new ApiError(503, 'persistence'),
-      'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.',
+      'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
     ],
     [
       new ApiError(500, 'invalid_error_response'),
-      'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.',
+      'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
     ],
     [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
   ])(
@@ -7074,7 +7074,7 @@ describe('Library route', () => {
       )
       expect(
         await screen.findByText(
-          'The decision could not be confirmed. Retry sends the same choice again and cannot record it twice.',
+          'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.',
         ),
       ).toBeVisible()
       scrollTo.mockClear()
