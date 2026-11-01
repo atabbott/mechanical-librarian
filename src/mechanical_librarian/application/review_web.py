@@ -107,49 +107,45 @@ from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
 # A degraded value with nothing proposed beside it is the current one (#1283).
 _CURRENT_VALUE_REFUSAL_TEXT = {
-    "candidate_credit_prefixed": 'The current value carries a credit label such as "Narrated by", so automatic handling never confirms it.',
-    "candidate_promotional_title": 'The current title carries an announcement such as "Now a Major Motion Picture", so automatic handling never confirms it.',
+    "candidate_credit_prefixed": 'The current value starts with a credit label such as "Narrated by", so it is never confirmed for you.',
+    "candidate_promotional_title": 'The current title carries an announcement such as "Now a Major Motion Picture", so it is never confirmed for you.',
 }
-_LANGUAGE_DISPLAY_NAME_TEXT = (
-    "The current value names the same language in another spelling. "
-    "Writing its display name is always your choice, never automatic."
-)
 _AUTOMATIC_REFUSAL_TEXT = {
     "isbn_title_material_conflict": "The sources disagree about the work or title; choose the title yourself.",
-    "no_candidate": "No eligible value was found in the retained evidence.",
-    "ambiguous_evidence": "The retained evidence does not select one value for automatic handling.",
-    "target_work_contradicted": "The retained evidence contradicts applicability to this work.",
-    "target_work_applicability_unproved": "The retained evidence does not establish that this value describes this work.",
-    "target_state_unusable": "The current field value cannot be used safely for this automatic operation.",
-    "automatic_unqualified": "This policy option is not qualified for automatic handling.",
-    "manifestation_verification_required": "The retained evidence does not verify the ISBN for this edition.",
-    "description_quality_floor_not_met": "Retained source text does not meet the automatic synopsis rules.",
-    "candidate_language_differs": "The retained value comes from a source in another language than this item.",
-    "candidate_credit_prefixed": 'The proposed value carries a credit label such as "Narrated by", so automatic handling never writes it.',
-    "candidate_strips_marks": "The proposed value drops accents from a name you already have, so automatic handling never writes it.",
-    "candidate_promotional_title": 'The proposed title carries an announcement such as "Now a Major Motion Picture", so automatic handling never writes it.',
-    "insufficient_support": "The retained evidence is not strong enough for automatic handling to choose a value.",
-    "series_membership_incomplete": "Series membership or position evidence is incomplete or malformed.",
-    "series_conflicting_membership": "The retained evidence does not resolve series membership for automatic handling.",
-    "series_provider_evidence_required": "Provider evidence supporting this series value is required.",
-    "subtitle_local_corroboration_required": "Independent evidence does not corroborate this subtitle.",
-    "subtitle_segment_provider_dissent": "Provider subtitle evidence disagrees with the proposed title split.",
-    "subtitle_segment_decorated_consensus": "The retained title evidence does not support separating this text into a subtitle.",
-    "atomic_bundle_unavailable": "The required linked field selection is unavailable.",
-    "corroborated_split_unavailable": "The corroborated title and subtitle do not match the current combined title.",
-    "option_evidence_unavailable": "Evidence required by the selected representation is unavailable.",
-    "policy_option_unavailable": "The selected policy option is unavailable for this projection.",
-    "target_projection_oversized": "The resulting field would exceed the supported size limit.",
+    "no_candidate": "No source offered a value that can be used here.",
+    "ambiguous_evidence": "The sources do not agree on one value.",
+    "target_work_contradicted": "The sources suggest this value belongs to a different work.",
+    "target_work_applicability_unproved": "The sources do not show that this value describes this work.",
+    "target_state_unusable": "The current value cannot safely be changed for you.",
+    "automatic_unqualified": "Your settings leave this kind of change to you.",
+    "manifestation_verification_required": "The sources do not confirm this ISBN for this edition.",
+    "description_quality_floor_not_met": "No source description meets the rules for a synopsis.",
+    "candidate_language_differs": "The value comes from a source in another language than this item.",
+    "candidate_credit_prefixed": 'The proposed value starts with a credit label such as "Narrated by", so it is never written for you.',
+    "candidate_strips_marks": "The proposed value drops accents from a name you already have, so it is never written for you.",
+    "candidate_promotional_title": 'The proposed title carries an announcement such as "Now a Major Motion Picture", so it is never written for you.',
+    "insufficient_support": "Not enough sources agree to choose a value for you.",
+    "series_membership_incomplete": "The sources give an incomplete or unreadable series or position.",
+    "series_conflicting_membership": "The sources disagree about the series.",
+    "series_provider_evidence_required": "No metadata source confirms this series.",
+    "subtitle_local_corroboration_required": "No other source confirms this subtitle.",
+    "subtitle_segment_provider_dissent": "The sources disagree with splitting the title this way.",
+    "subtitle_segment_decorated_consensus": "The sources do not support splitting this text into a subtitle.",
+    "atomic_bundle_unavailable": "A linked field this choice depends on is unavailable.",
+    "corroborated_split_unavailable": "The confirmed title and subtitle do not match the current combined title.",
+    "option_evidence_unavailable": "The source details your chosen setting needs are unavailable.",
+    "policy_option_unavailable": "The setting you chose does not apply to this field.",
+    "target_projection_oversized": "The result would be longer than the library accepts.",
     "policy_off": "Tag handling is off.",
-    "explicit_unsupported": "Automatic explicit-content handling is unavailable for this option.",
-    "source_value_malformed_or_incomplete": "ISBN evidence is malformed or incomplete.",
-    "source_values_conflict": "Conflicting ISBN values remain.",
-    "source_value_insufficient_association": "Association with this recording is insufficient.",
-    "source_unavailable": "Source evidence is unavailable.",
-    "source_value_absent": "No ISBN value was supplied.",
-    "series_provider_failure_isbn": "A contributing ISBN lookup did not supply usable evidence.",
-    "series_provider_failure_work": "A contributing work lookup did not supply usable evidence.",
-    "series_provider_failure_asin": "A contributing ASIN lookup did not supply usable evidence.",
+    "explicit_unsupported": "Explicit content is never marked for you with this setting.",
+    "source_value_malformed_or_incomplete": "The sources give a malformed or incomplete ISBN.",
+    "source_values_conflict": "The sources give different ISBNs.",
+    "source_value_insufficient_association": "The sources do not tie this ISBN closely enough to this recording.",
+    "source_unavailable": "The sources could not be read.",
+    "source_value_absent": "No source supplied an ISBN.",
+    "series_provider_failure_isbn": "An ISBN lookup did not return a usable answer.",
+    "series_provider_failure_work": "A work lookup did not return a usable answer.",
+    "series_provider_failure_asin": "An ASIN lookup did not return a usable answer.",
 }
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
@@ -268,6 +264,8 @@ class ReviewLibrarySnapshot:
     # `unavailable` or `no_match` -- or None for any other row.
     not_matched_total: int
     match_reasons: tuple[str | None, ...]
+    # #1413: the works with nothing open whose latest preparation failed.
+    preparation_failed_total: int
     # The scope each row's human decisions were validated in, when the store
     # projected one, so the row projection need not project the case again.
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
@@ -325,13 +323,17 @@ class CurrentReviewCaseStore(Protocol):
 LibraryLabels = tuple[tuple[str, str, str], ...]
 # The Library lenses a store filters by; None reads every work, the `all` lens.
 # A work no provider matched is neither needing attention nor needing none, so
-# it has a lens of its own (#1407).
-LibraryLensFilter = Literal["needs_attention", "no_attention_needed", "not_matched"]
+# it has a lens of its own (#1407), and so has a work with nothing open whose
+# latest preparation failed (#1413).
+LibraryLensFilter = Literal[
+    "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
+]
 _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
     "all": None,
     "needs_attention": "needs_attention",
     "no_attention_needed": "no_attention_needed",
     "not_matched": "not_matched",
+    "preparation_failed": "preparation_failed",
 }
 
 _Validated = TypeVar("_Validated")
@@ -975,6 +977,7 @@ class InspectCurrentReviewCase:
                 # With no alternative to list, an unsupported field is a
                 # contextual row, which offers no controls (below).
                 owner_entry=owner_entry and bool(alternatives),
+                immaterial_alternatives="work_alternative_immaterial" in reasons,
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
@@ -1003,8 +1006,13 @@ class InspectCurrentReviewCase:
                 "automatic_decision": automatic_decision,
                 "automatic_withheld_reason": None,
                 "automatic_selection_sources": automatic_selection_sources,
-                "manual_hold": carried_hold
-                or (decision is not None and automatic_decision is not None),
+                # Held only while the hold row is in force: Return to
+                # automatic releases it on the deciding case too (#1358).
+                "manual_hold": destination in snapshot.held_destinations
+                and (
+                    carried_hold
+                    or (decision is not None and automatic_decision is not None)
+                ),
                 "classification": classification.state,
                 "classification_reason": classification.reason,
                 "editable": classification.editable and has_owner_action,
@@ -1165,17 +1173,12 @@ class InspectCurrentReviewCase:
                     "unsupported",
                 }:
                     message = (
-                        # Respelling a current language is never automatic
-                        # (#1314), so it says so rather than "no reason".
-                        _LANGUAGE_DISPLAY_NAME_TEXT
-                        if destination == "language"
-                        and "language_display_name" in field.get("notices", ())
-                        else None
+                        None
                         if field["proposed_values"]
                         else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
                     ) or _AUTOMATIC_REFUSAL_TEXT.get(
                         outcome.reason_code,
-                        "The recorded evaluation did not select an automatic action; no more specific reason was recorded.",
+                        "No value was chosen for you, and no more specific reason is known.",
                     )
                 else:
                     continue
@@ -1184,8 +1187,7 @@ class InspectCurrentReviewCase:
                     *snapshot.suspended_destinations,
                 ):
                     message = (
-                        "Automatic handling is currently suspended. Recorded evaluation: "
-                        + message
+                        "Changes made for you are paused for this field. " + message
                     )
                 field["automatic_withheld_reason"] = message
         except Exception as error:
@@ -1755,8 +1757,10 @@ class BrowseReviewLibrary:
                 "needs_attention": snapshot.attention_total,
                 "no_attention_needed": snapshot.total
                 - snapshot.attention_total
-                - snapshot.not_matched_total,
+                - snapshot.not_matched_total
+                - snapshot.preparation_failed_total,
                 "not_matched": snapshot.not_matched_total,
+                "preparation_failed": snapshot.preparation_failed_total,
             },
             "items": items,
             "lens": lens,
@@ -1778,7 +1782,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v3",
+            "schema_version": "review-library-v4",
         }
 
     def attention(
@@ -2392,22 +2396,13 @@ def _choice_contexts(
             "limitations": _choice_limitations(preserves[0], result)
             if preserves
             else [],
-            "rationale": (
-                (
-                    "Deterministic policy retained the local value."
-                    if current_recommended
-                    else "Keep the value currently held by the local library."
-                )
-                if local_value_present
-                else "The local library has no retained value for this field."
-            ),
+            # The current value's card shows its value and nothing more (#1519).
+            "rationale": "",
             "recommendation": "recommended"
             if current_recommended
             else "no_recommendation",
             "recommendation_reason": (
-                "Deterministic policy retained the local value."
-                if current_recommended
-                else "No deterministic recommendation is retained for the current value."
+                "Your settings keep the current value." if current_recommended else ""
             ),
             "selection": "current",
         }
@@ -2434,12 +2429,10 @@ def _choice_contexts(
                 "alternative_id": alternative_id,
                 "evidence": rows,
                 "limitations": _choice_limitations(alternative, result),
-                "rationale": _choice_rationale(alternative, bool(rows)),
+                "rationale": _choice_rationale(rows),
                 "recommendation": "recommended" if recommended else "no_recommendation",
                 "recommendation_reason": (
-                    "Deterministic policy selected this retained alternative."
-                    if recommended
-                    else "No deterministic recommendation is retained for this alternative."
+                    "Your settings choose this value." if recommended else ""
                 ),
                 "selection": "proposed",
             }
@@ -2482,29 +2475,20 @@ def _current_value_present(value: object) -> bool:
     return not (type(value) is list and not value)
 
 
-def _choice_rationale(alternative: dict[str, object], supported: bool) -> str:
-    assessment = cast(
-        "dict[object, str]",
-        {
-            "fills_empty": "fills an empty local value",
-            "preserves_target": "preserves the local value",
-            "replaces_target": "replaces the local value",
-        },
-    ).get(alternative.get("assessment"), "retains a proposal value")
-    scope = cast(
-        "dict[object, str]",
-        {
-            "cover": "cover-specific",
-            "edition": "edition-specific",
-            "work": "work-level",
-        },
-    ).get(alternative.get("scope"), "retained")
-    evidence = (
-        "with retained supporting evidence"
-        if supported
-        else "from the retained proposal"
+def _choice_rationale(rows: list[dict[str, object]]) -> str:
+    """Name the sources an alternative came from, or nothing when none is known (#1519)."""
+    named = set(PROVIDER_LABELS.values())
+    return ", ".join(
+        sorted(
+            {
+                source
+                for row in rows
+                if type(source := row["source"]) is str
+                and row["role"] != "local_presence"
+                and source in named
+            }
+        )
     )
-    return f"This alternative {assessment} using {scope} evidence {evidence}."
 
 
 def _choice_evidence(
@@ -3308,7 +3292,9 @@ def _library_item(
                 return {
                     "authors": authors,
                     "attention_count": 0,
-                    "attention_state": "no_attention_needed",
+                    # Failed is its own lens, never counted as needing no
+                    # attention (#1413).
+                    "attention_state": "preparation_failed",
                     # A work that stopped before a report has no retained cover.
                     "cover": None,
                     "detail_url": None,
@@ -3497,9 +3483,13 @@ def _library_item(
             ),
             "width": report.cover.width,
         },
+        # The lens this work is read under: a later failure outranks the
+        # retained report's own state unless a decision is still open (#1413).
         "attention_state": (
             "needs_attention"
             if current_attention_count
+            else "preparation_failed"
+            if terminal_document is not None
             else "not_matched"
             if match_state is not None
             else "no_attention_needed"

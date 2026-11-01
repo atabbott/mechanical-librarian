@@ -54,7 +54,7 @@ export const recordedAcknowledgement = (
 export const library: LibraryView = {
   lens: 'all',
   page: 1,
-  counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
+  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
   works: [
     {
       id: 'case-1',
@@ -145,6 +145,7 @@ export const activity = (
   return {
     schema_version: 'continuous-field-activity-v3',
     backup_ready: null,
+    owner_action_required: 0,
     paused: false,
     configured_libraries: [],
     consented_libraries: [],

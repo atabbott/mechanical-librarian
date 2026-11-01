@@ -136,13 +136,32 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     + _SHADOW_ABSTENTION_SQL
     + ")"
 )
-# A field is decided by its latest owner decision unless that withdrew it
-# (ADR-0085); an earlier decision never settles a field the owner took back.
+
+
+def _episode_decision_sql(decision: str) -> str:
+    """Whether the owner decision row `decision` is of its case's episode.
+
+    A case id is a content hash, so a work that returns to an earlier content
+    admits that case again as a new episode. The owner decisions recorded on
+    it before then are history: they settle, word and hold nothing in it
+    (#1358, ADR-0085). A case admitted once has no episode row.
+    """
+    return (
+        f"{decision}.ordinal>COALESCE((SELECT episode.decision_floor "
+        "FROM review_case_episodes episode "
+        f"WHERE episode.review_case_id={decision}.review_case_id),0)"
+    )
+
+
+# A field is decided by its latest owner decision of the case's episode unless
+# that withdrew it (ADR-0085); an earlier decision never settles a field the
+# owner took back, nor one the work has since left and returned to.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=result.destination "
-    "ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
+    "AND decision.destination=result.destination AND "
+    + _episode_decision_sql("decision")
+    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description') "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
@@ -299,14 +318,21 @@ _ATTENTION_FACTS_JOIN_SQL = (
 # count and the masthead's preparation buckets read it alike. A work whose
 # latest preparation failed terminally is that failure rather than unmatched,
 # so it stays where it was: the same latest-work rule Library's row reads.
-_NOT_MATCHED_PACKAGE_SQL = (
-    "(ml.review_case_id IS NULL AND (ml.outcome='evidence_only' "
-    "OR facts.provider_match_state<>'matched') AND COALESCE(("
+# Whether a current package's latest preparation failed for good: the failure
+# its Library row carries and outranks the package's own outcome (#1407, #1413).
+_LATEST_PREPARATION_FAILED_SQL = (
+    "COALESCE(("
     "SELECT latest.state='failed' AND latest.failure_code IS NOT NULL "
     "FROM review_preparation_work latest "
     "WHERE latest.connection_name=ml.connection_name "
     "AND latest.library_name=ml.library_name AND latest.item_id=ml.item_id "
-    "ORDER BY latest.updated_at DESC,latest.work_id DESC LIMIT 1),0)=0)"
+    "ORDER BY latest.updated_at DESC,latest.work_id DESC LIMIT 1),0)"
+)
+_NOT_MATCHED_PACKAGE_SQL = (
+    "(ml.review_case_id IS NULL AND (ml.outcome='evidence_only' "
+    "OR facts.provider_match_state<>'matched') AND "
+    + _LATEST_PREPARATION_FAILED_SQL
+    + "=0)"
 )
 # Its one reason, NULL for any other package. Candidates on an unmatched
 # package are an audiobook's that no work identity admitted: found, but refused.
@@ -352,6 +378,7 @@ __all__ = [
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
+    "_LATEST_PREPARATION_FAILED_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",
     "_REPORT_BROWSE_FACTS_JOIN_SQL",
@@ -361,6 +388,7 @@ __all__ = [
     "_REVIEW_SEARCH_SQL",
     "_SHADOW_ABSTENTION_SQL",
     "_SHADOW_OUTCOME_HISTORY_SQL",
+    "_episode_decision_sql",
 ]
 
 

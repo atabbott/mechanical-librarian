@@ -49,6 +49,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _LATEST_PREPARATION_WORK_SQL,
     _POLICY_ASK_ATTENTION_SQL,
+    _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -336,7 +337,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "ON effect.rowid IN (SELECT rowid FROM field_effects WHERE "
             "decision_id=human.decision_id UNION ALL SELECT rowid FROM field_effects "
             "WHERE " + _FIELD_EFFECT_COMPANION_DECISION_SQL + "=human.decision_id) "
-            "WHERE human.review_case_id=? AND human.ordinal=(SELECT MAX(latest.ordinal) "
+            "WHERE human.review_case_id=? AND "
+            + _episode_decision_sql("human")
+            + " AND human.ordinal=(SELECT MAX(latest.ordinal) "
             "FROM human_decisions latest WHERE latest.review_case_id=human.review_case_id "
             "AND latest.destination=human.destination) GROUP BY human.destination "
             "ORDER BY human.destination",
@@ -583,6 +586,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 attention_total=page.attention_total,
                 not_matched_total=page.not_matched_total,
                 match_reasons=page.match_reasons,
+                preparation_failed_total=page.preparation_failed_total,
                 decision_scopes=tuple(scopes),
             )
         return snapshot
@@ -608,7 +612,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "SELECT decision_id,proposal_id,target_fingerprint,destination,"
             "actor,outcome,selected_value_document,idempotency_digest,"
             "request_digest,occurred_at,document FROM human_decisions "
-            "WHERE review_case_id=? ORDER BY ordinal",
+            "WHERE review_case_id=? AND "
+            + _episode_decision_sql("human_decisions")
+            + " ORDER BY ordinal",
             (review_case_id,),
         ).fetchall()
         documents: list[str] = []

@@ -1791,7 +1791,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "JOIN current_review_case_lineages c ON c.connection_name=w.connection_name "
             "AND c.library_name=w.library_name AND c.item_id=w.item_id "
             "AND c.report_id=w.report_id AND c.proposal_set_id=w.proposal_set_id "
-            "AND c.review_case_id=w.review_case_id AND c.outcome='admitted' "
+            "AND c.review_case_id=w.review_case_id AND c.outcome IN ('admitted','superseded') "
             "JOIN current_review_packages p ON p.connection_name=c.connection_name "
             "AND p.library_name=c.library_name AND p.item_id=c.item_id "
             "AND p.report_id=c.report_id AND p.proposal_set_id=c.proposal_set_id "

@@ -318,6 +318,35 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         (("human_decisions", "insert"),),
         lambda: _human_decision(repository, title[3], "title"),
     )
+    # #1358: the case is admitted again, so its decision is history and the
+    # field asks again; lowering the floor or deleting the row settles it.
+    decided = title[3]
+    latest = "(SELECT MAX(ordinal) FROM human_decisions WHERE review_case_id=?)"
+    yield (
+        "case recurs",
+        (("review_case_episodes", "insert"),),
+        lambda: run(
+            f"INSERT INTO review_case_episodes VALUES(?,{latest},0)",
+            (decided, decided),
+        ),
+    )
+    yield (
+        "episode floor lowers",
+        (("review_case_episodes", "update"),),
+        lambda: run("UPDATE review_case_episodes SET decision_floor=0"),
+    )
+    yield (
+        "episode floor rises",
+        (("review_case_episodes", "update"),),
+        lambda: run(
+            f"UPDATE review_case_episodes SET decision_floor={latest}", (decided,)
+        ),
+    )
+    yield (
+        "episode delete",
+        (("review_case_episodes", "delete"),),
+        lambda: run("DELETE FROM review_case_episodes"),
+    )
     title = _attentive(connection, "title")
     yield (
         "automation decides",

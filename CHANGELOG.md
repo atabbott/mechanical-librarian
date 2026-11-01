@@ -10,6 +10,17 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
+
+- An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
+  Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
+  request or retry and no longer appear in an ebook's lookups (#1486).
+- **Clean rebuild required.** A title that only drops a leading "The", "A" or
+  "An", a bracketed ISBN suffix on a title-matched work, and a packaged "A
+  Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
+  `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
+  automatically (#1496).
+
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
 - **Clean rebuild required.** Hardcover's audio editions are read for every
@@ -76,9 +87,45 @@ brackets are GitHub issues.
 - Retry now no longer parks a provider scope that has no outstanding lookups,
   so lookups that fail there later are retried and Activity stops asking for a
   correction nothing needs (#1375).
+- Resuming automatic handling, or lifting a title suspension, now also gives an
+  automatic title decision to a work re-read while handling was paused; an
+  owner's hold carried to it shows as held (#1364).
 - Opening Mechanical Librarian's address while signed in goes to Library, and
   a link opened while signed out returns to its page after sign-in. Sign-in
   returns only to a page of this workspace (#1371).
+- Activity's header and summary say how many stopped changes wait on you,
+  such as a description to restore in Audiobookshelf, instead of reading "No
+  action required" (#1430).
+- The Works panel's lenses sit in one row that scrolls sideways, the pager
+  offers only the moves that exist (none for a single page), and search is a
+  rounded field with a × inside to clear it (#1520).
+- Library names one current page: the current lens is marked current within
+  it. Choosing an Attention item on a phone keeps Back to works in view, and at
+  enlarged text Attention's work titles no longer break mid-word (#1530).
+- A work's collapsed list of fields with nothing to decide is headed "No
+  change:" and their names, counts waiting or unavailable fields separately,
+  and says no source offered a different value (#1514).
+- A cover write held up because Audiobookshelf could not be reached now waits
+  and is applied once the connection is back, up to three times, like every
+  other field, instead of stopping. No clean rebuild is needed (#1415).
+- A field decision shows the question, one line with the field's own reason,
+  and the values: a proposed value names its sources, and generic lines,
+  empty sections, idle library cards and "No recommendation retained" are
+  gone. Reminders that writes are protected remain only in the guided first
+  review and Activity's permission control (#1519).
+- **Clean rebuild required.** A work that returns to an earlier content, for
+  example after you choose the previous value again, reads as new: it no
+  longer shows its earlier decision as written while the library holds
+  another value. Return to automatic also stops a field showing as held
+  (#1358).
+- A work whose preparation could not finish is no longer counted under "No
+  attention needed". Library gives such works their own Could not finish lens,
+  lists them after the works needing a decision, and names their count beside
+  Works. No clean rebuild is needed (#1413).
+- An optional description or genre choice says once why no review is needed
+  (the proposed values only shorten or extend the current one), instead of
+  also showing a note that the sources disagree or that a change needs you
+  (#1450).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
@@ -102,6 +149,8 @@ brackets are GitHub issues.
   (#1304).
 - Renovate moves Node, Python and uv pins together in one pull request; a new
   Node major or Python minor version waits for approval (#1448).
+- The standalone Attention page is gone; Attention lives in Library. An old
+  `/attention` bookmark opens Library with Attention open (#700).
 
 ## 0.29.1 — Clarity and accessibility
 

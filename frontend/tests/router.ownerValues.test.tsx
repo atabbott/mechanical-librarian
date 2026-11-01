@@ -73,14 +73,14 @@ const decision = (
 const enteredTitle: Field = {
   ...contextTitle,
   classification: 'human_recorded',
-  classificationReason: 'Your recorded decision is retained. You can change it here.',
+  classificationReason: 'You decided this field. You can change it here.',
   editable: true,
   humanDecision: decision('owner_entered', { kind: 'text', value: 'The Silent Orchard' }),
   ownerControl: control({ ...entry, withdraw: 'available' }),
 }
 const quietLibrary = {
   ...library,
-  counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
+  counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
   works: library.works.map((work) => ({ ...work, attentionCount: 0 })),
 }
 

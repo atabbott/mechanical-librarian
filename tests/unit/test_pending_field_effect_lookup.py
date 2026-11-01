@@ -28,6 +28,9 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _episode_decision_sql,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_READY_STATES_SQL,
@@ -1329,13 +1332,15 @@ def test_lineage_membership_restores_the_1204_text(
 ) -> None:
     connection, _ = store
     # #1285 later let an owner-entered value plan as an accept does, and held
-    # an automatic description under the owner's hold as it holds the rest.
+    # an automatic description under the owner's hold as it holds the rest;
+    # #1358 then left an earlier episode's decision unplanned.
     restored = {
         name: hashlib.sha256(
             _before_1205(name, statement)
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)
+            .replace(_episode_decision_sql("human") + " AND ", "")
             .encode()
         ).hexdigest()
         for name, statement in _statements(connection).items()

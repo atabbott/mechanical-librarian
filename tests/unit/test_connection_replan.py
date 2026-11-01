@@ -10,6 +10,7 @@ and nothing here ever sends again a write whose outcome is unknown.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
@@ -24,7 +25,10 @@ from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObser
 from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
     AudiobookshelfFieldEffectCapabilities,
 )
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -39,6 +43,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
+    canonical_json,
 )
 from mechanical_librarian.domain.human_decision import HumanDecisionError
 from tests.support.automatic_decisions import _automatic_decisions
@@ -49,6 +54,7 @@ from tests.support.field_effects import (
     _EffectEnvironment,
     _plan,
     _replan,
+    metadata_report,
 )
 from tests.support.field_effects import (
     effects as effects,
@@ -174,7 +180,9 @@ def test_every_other_stale_stays_terminal_and_is_never_planned_again(
             desired="cover_" + "a" * 64,
             suffix="1",
         )
-        effects.capabilities.category = "connection_unavailable"
+        # A cover waits for its connection like any field (#1415); a field
+        # refusal still ends it.
+        effects.capabilities.category = "field_unavailable"
     else:
         operation = _plan(effects, suffix="1")
     if refusal == "field_unavailable":
@@ -1199,3 +1207,208 @@ def test_a_restart_schedules_a_waiting_decision_from_the_start(
         lambda *_: None,
     )
     _recovered(effects, restarted, decisions, sent)
+
+
+def _cover(effects: _EffectEnvironment, suffix: str = "1") -> FieldEffectOperation:
+    return _plan(
+        effects,
+        destination="cover",
+        pre=None,
+        desired="cover_" + "a" * 64,
+        suffix=suffix,
+    )
+
+
+def _cover_again(effects: _EffectEnvironment) -> FieldEffectOperation | None:
+    return _replan(
+        effects, destination="cover", pre=None, desired="cover_" + "a" * 64, suffix="1"
+    )
+
+
+def _cleanup(effects: _EffectEnvironment, plan_id: str) -> list[tuple[object, ...]]:
+    return effects.repository._connection.execute(
+        "SELECT state FROM field_effect_cleanups WHERE plan_id=?", (plan_id,)
+    ).fetchall()
+
+
+def _lose_connection_after_capture(effects: _EffectEnvironment) -> None:
+    def lose(_: FieldEffectPlan) -> None:
+        effects.capabilities.category = "connection_unavailable"
+
+    effects.preclaim.callback = lose
+
+
+def test_a_cover_a_lost_connection_staled_is_planned_again_and_written_once(
+    effects: _EffectEnvironment,
+) -> None:
+    """A cover waits for its connection like any field (#1415)."""
+    operation = _cover(effects)
+    plan_id = operation.plan.plan_id
+    sent = _sent(effects)
+    _lose_connection_after_capture(effects)
+    stale = effects.service.apply(plan_id)
+    assert (stale.state, stale.failure) == ("stale", "connection")
+    # The restore point stays, and nothing waits to delete it.
+    assert effects.recovery.exists(plan_id)
+    assert _cleanup(effects, plan_id) == []
+    effects.capabilities.category = "allowed"
+    revived = _cover_again(effects)
+    assert revived is not None
+    assert (
+        revived.plan.plan_id,
+        revived.state,
+        revived.attempt,
+        revived.claim_token,
+    ) == (plan_id, "planned", stale.attempt, stale.claim_token)
+    verified = effects.service.apply(plan_id)
+    assert verified.state == "verified"
+    assert sent == [plan_id]
+    assert _cleanup(effects, plan_id) == [("completed",)]
+    assert not effects.recovery.exists(plan_id)
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+    assert effects.repository.get_field_effect(plan_id).to_data() == verified.to_data()
+
+
+def test_a_cover_waits_three_times_then_stops_and_is_cleaned_up(
+    effects: _EffectEnvironment,
+) -> None:
+    report = metadata_report("Paper Moons", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    operation = _cover(effects)
+    plan_id = operation.plan.plan_id
+    sent = _sent(effects)
+    for prepared in range(3):
+        _lose_connection_after_capture(effects)
+        waiting = effects.service.apply(plan_id)
+        assert (waiting.state, waiting.failure) == ("stale", "connection")
+        assert effects.recovery.exists(plan_id)
+        assert _cleanup(effects, plan_id) == []
+        if prepared == 1:
+            row = next(event for event in _ledger(effects) if event["state"] == "stale")
+            assert row["change"] == "Prepared change waiting"
+            assert _facts(row)["What happens next"].endswith(
+                "Prepared again 1 of 3 times."
+            )
+        effects.capabilities.category = "allowed"
+        revived = _cover_again(effects)
+        assert revived is not None and revived.state == "planned"
+    effects.recovery.fail_remove_next = True
+    _lose_connection_after_capture(effects)
+    stopped = effects.service.apply(plan_id)
+    assert (stopped.state, stopped.failure) == ("stale", "connection_exhausted")
+    assert effects.repository.field_effect_cleanup_pending(plan_id)
+    row = next(event for event in _ledger(effects) if event["state"] == "stale")
+    assert _facts(row)["Why it stopped"] == (
+        "Audiobookshelf could not be reached for this book, and this change "
+        "stopped after it was prepared again 3 times"
+    )
+    assert effects.service.recover_pending() == (0, 1)
+    assert not effects.recovery.exists(plan_id)
+    effects.capabilities.category = "allowed"
+    again = _cover_again(effects)
+    assert again is not None
+    assert (again.state, again.failure) == ("stale", "connection_exhausted")
+    assert sent == []
+
+
+@pytest.mark.parametrize("withdrawal", ("supersede", "revoke_consent"))
+def test_a_withdrawn_waiting_cover_is_cleaned_up(
+    effects: _EffectEnvironment, withdrawal: str
+) -> None:
+    """A waiting cover that is withdrawn deletes its restore point."""
+    operation = _cover(effects)
+    plan_id = operation.plan.plan_id
+    _lose_connection_after_capture(effects)
+    assert effects.service.apply(plan_id).failure == "connection"
+    assert effects.recovery.exists(plan_id)
+    if withdrawal == "supersede":
+        assert effects.service.supersede(operation.plan.authority.decision_id) == 1
+        assert effects.service.status(plan_id).state == "superseded"
+    else:
+        assert effects.service.revoke_consent(operation.plan.consent.consent_id) == 1
+    assert _cleanup(effects, plan_id) == [("completed",)]
+    assert not effects.recovery.exists(plan_id)
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+
+
+def test_a_cover_whose_write_landed_waits_and_is_verified_without_a_second_write(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _cover(effects)
+    plan_id = operation.plan.plan_id
+    sent = _sent(effects)
+    effects.target.fail_read_after_apply_for.add(plan_id)
+    assert effects.service.apply(plan_id).state == "reconciling"
+    unknown = effects.service.reconcile(plan_id)
+    assert (unknown.state, unknown.failure) == ("retryable", "target_failure")
+    effects.target.fail_reads_for.clear()
+    effects.capabilities.category = "connection_unavailable"
+    assert effects.service.apply(plan_id).failure == "connection"
+    assert effects.recovery.exists(plan_id)
+    assert _cleanup(effects, plan_id) == []
+    effects.capabilities.category = "allowed"
+    revived = _cover_again(effects)
+    assert revived is not None
+    assert (revived.state, revived.failure, revived.attempt) == (
+        "retryable",
+        "target_failure",
+        unknown.attempt,
+    )
+    assert effects.service.apply(plan_id).state == "verified"
+    assert sent == [plan_id]
+    assert _cleanup(effects, plan_id) == [("completed",)]
+    assert not effects.recovery.exists(plan_id)
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+
+
+def test_only_a_waiting_cover_may_lack_its_cleanup(
+    effects: _EffectEnvironment,
+) -> None:
+    waiting = _cover(effects)
+    _lose_connection_after_capture(effects)
+    assert effects.service.apply(waiting.plan.plan_id).failure == "connection"
+    effects.capabilities.category = "allowed"
+    stopped = _cover(effects, "2")
+    effects.capabilities.category = "field_unavailable"
+    assert effects.service.apply(stopped.plan.plan_id).failure == "capability"
+    assert _cleanup(effects, stopped.plan.plan_id) == [("completed",)]
+    effects.repository.close()
+    open_repository(effects.database_path, create=False).close()
+    pristine = effects.database_path.read_bytes()
+    for statement, parameters in (
+        (
+            "INSERT INTO field_effect_cleanups(plan_id,state,attempt,updated_at,"
+            "document) VALUES(?,?,?,?,?)",
+            (
+                waiting.plan.plan_id,
+                "pending",
+                0,
+                1,
+                canonical_json(
+                    {
+                        "attempt": 0,
+                        "plan_id": waiting.plan.plan_id,
+                        "schema_version": "field-effect-cleanup-v1",
+                        "state": "pending",
+                        "updated_at": 1,
+                    }
+                ),
+            ),
+        ),
+        (
+            "DELETE FROM field_effect_cleanups WHERE plan_id=?",
+            (stopped.plan.plan_id,),
+        ),
+    ):
+        effects.database_path.write_bytes(pristine)
+        connection = sqlite3.connect(effects.database_path)
+        assert connection.execute(statement, parameters).rowcount == 1
+        connection.commit()
+        connection.close()
+        with pytest.raises(MetadataReportError):
+            open_repository(effects.database_path, create=False)
+    effects.database_path.write_bytes(pristine)
+    effects.repository = open_repository(effects.database_path, create=False)

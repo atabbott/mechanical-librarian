@@ -13,6 +13,7 @@ from enum import StrEnum
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -34,6 +35,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
 )
 from mechanical_librarian.application.configuration import (
     AUDIOBOOK_DISPATCH_ADAPTERS,
+    EBOOK_DISPATCH_ADAPTERS,
     ApplicationConfiguration,
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -77,6 +79,7 @@ from mechanical_librarian.application.provider_evidence import (
 from mechanical_librarian.application.provider_recovery_evidence import (
     provider_recovery_jobs,
 )
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
     AudioChapterComposition,
@@ -567,7 +570,11 @@ def test_repository_closes_when_inspection_or_provider_validation_fails() -> Non
         target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
         inspector=inspector,
         repository_factory=lambda: cast(ReportRepository, repository),
-        providers=(ProviderBinding("catalogue", True, MismatchedProvider),),
+        providers=(
+            ProviderBinding(
+                "catalogue", True, MismatchedProvider, authority="hardcover"
+            ),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -607,7 +614,9 @@ def test_actual_extraction_and_provider_boundaries_have_separate_timings() -> No
         target=FakeTarget([snapshot, snapshot]),
         inspector=FakeInspector(InspectionResult("c" * 64, ())),
         repository_factory=FakeReportRepository,
-        providers=(ProviderBinding("catalogue", True, Provider),),
+        providers=(
+            ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -645,7 +654,9 @@ def test_provider_factory_credential_failure_binds_public_provider_identity() ->
         target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
         inspector=FakeInspector(InspectionResult("c" * 64, ())),
         repository_factory=FakeReportRepository,
-        providers=(ProviderBinding("catalogue", True, unavailable),),
+        providers=(
+            ProviderBinding("catalogue", True, unavailable, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -684,7 +695,7 @@ def test_provider_factory_fault_is_not_reported_as_a_credential_failure() -> Non
         target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
         inspector=FakeInspector(InspectionResult("c" * 64, ())),
         repository_factory=FakeReportRepository,
-        providers=(ProviderBinding("catalogue", True, broken),),
+        providers=(ProviderBinding("catalogue", True, broken, authority="hardcover"),),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -729,7 +740,7 @@ def test_repository_release_failure_cannot_displace_the_failure_it_reports() -> 
         target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
         inspector=FakeInspector(InspectionResult("c" * 64, ())),
         repository_factory=UnreleasableRepository,
-        providers=(ProviderBinding("catalogue", True, broken),),
+        providers=(ProviderBinding("catalogue", True, broken, authority="hardcover"),),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -794,7 +805,9 @@ def test_failing_access_time_still_yields_the_promised_unavailable_lane(
             target=FakeTarget([snapshot, snapshot]),
             inspector=FakeInspector(InspectionResult("c" * 64, (claim,))),
             repository_factory=lambda: cast(ReportRepository, repository),
-            providers=(ProviderBinding("catalogue", True, Provider),),
+            providers=(
+                ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+            ),
             connection=TargetConnectionConfiguration(
                 "primary", "https://example.invalid", "/private/target"
             ),
@@ -870,6 +883,7 @@ def test_application_replays_after_file_reorder_and_constructs_provider_once() -
                 "catalogue",
                 True,
                 lambda: constructions.append("one") or Provider(),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the construction and still yields the provider.
+                authority="hardcover",
             ),
         ),
         connection=TargetConnectionConfiguration(
@@ -928,7 +942,9 @@ def test_application_shares_aggregate_with_covers_and_caps_the_metadata_share(
         target=target,
         inspector=inspector,
         repository_factory=lambda: cast(ReportRepository, repository),
-        providers=(ProviderBinding("catalogue", True, Provider),),
+        providers=(
+            ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -986,7 +1002,9 @@ def test_incomplete_cause_property_is_mapped_without_private_material() -> None:
         target=target,
         inspector=inspector,
         repository_factory=lambda: cast(ReportRepository, repository),
-        providers=(ProviderBinding("catalogue", True, Provider),),
+        providers=(
+            ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -1070,7 +1088,9 @@ def test_ambiguous_provider_identity_reserves_the_malformed_response_category() 
         target=target,
         inspector=inspector,
         repository_factory=lambda: cast(ReportRepository, repository),
-        providers=(ProviderBinding("catalogue", True, Provider),),
+        providers=(
+            ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -1163,7 +1183,9 @@ def test_provider_parser_attempt_and_incomplete_diagnostics_merge_once_on_reopen
             repository_factory=lambda: cast(
                 ReportRepository, open_repository(database)
             ),
-            providers=(ProviderBinding("catalogue", True, Provider),),
+            providers=(
+                ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+            ),
             connection=TargetConnectionConfiguration(
                 "primary",
                 "https://example.invalid",
@@ -1347,7 +1369,12 @@ def test_unsupported_media_precedes_inspector_provider_and_repository(
             activity.append("repository") or cast(ReportRepository, repository)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
         ),
         providers=(
-            ProviderBinding("catalogue", True, lambda: activity.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+            ProviderBinding(
+                "catalogue",
+                True,
+                lambda: activity.append("provider"),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+                authority="hardcover",
+            ),
         ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
@@ -1382,7 +1409,12 @@ def test_currentness_drift_inside_publication_precondition_publishes_nothing() -
             activity.append("repository") or cast(ReportRepository, repository)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
         ),
         providers=(
-            ProviderBinding("catalogue", False, lambda: activity.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+            ProviderBinding(
+                "catalogue",
+                False,
+                lambda: activity.append("provider"),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+                authority="hardcover",
+            ),
         ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
@@ -2502,7 +2534,9 @@ def test_initial_failure_passes_exact_partial_descriptors_to_cover_observer():
         target=FakeTarget([target, target]),
         inspector=FakeInspector(InspectionResult("c" * 64, (isbn_claim(),))),
         repository_factory=lambda: cast(ReportRepository, repository),
-        providers=(ProviderBinding("catalogue", True, Provider),),
+        providers=(
+            ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -3080,9 +3114,10 @@ def test_early_cover_failure_releases_repository_preserving_original(media, fail
     assert any("close failed" in note for note in failure.__notes__)
 
 
-# #1247 and #1254: an audiobook dispatches only to the connected providers in
-# `AUDIOBOOK_DISPATCH_ADAPTERS`; an ebook dispatches exactly as it did. Each
-# binding is named for its adapter, so a name is also its authority.
+# #1247, #1254 and #1486: each media kind dispatches only to the connected
+# providers in its own set, `AUDIOBOOK_DISPATCH_ADAPTERS` or
+# `EBOOK_DISPATCH_ADAPTERS`. Each binding is named for its adapter, so a name
+# is also its authority.
 _EVERY_ADAPTER = (
     "audible_catalog",
     "audiosilo",
@@ -3094,6 +3129,7 @@ _EVERY_ADAPTER = (
     "open_library",
 )
 _EXCLUDED_ON_AUDIOBOOKS = ("google_books", "inventaire", "itunes_search")
+_EXCLUDED_ON_EBOOKS = ("audible_catalog", "audiosilo", "audnexus")
 
 
 class _UnavailableProvider:
@@ -3209,8 +3245,8 @@ def _mixed_configuration() -> ApplicationConfiguration:
     )
 
 
-def test_a_mixed_library_dispatches_audiobooks_only_to_the_dispatch_set() -> None:
-    """The audiobook reaches five providers; the ebook still reaches all eight."""
+def test_a_mixed_library_dispatches_each_media_kind_only_to_its_set() -> None:
+    """Of eight connected providers, each media kind reaches its own five."""
     constructed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
     observed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
     reports: dict[str, MetadataReport] = {}
@@ -3221,17 +3257,23 @@ def test_a_mixed_library_dispatches_audiobooks_only_to_the_dispatch_set() -> Non
         )
         reports[item] = MetadataReport.from_json(_mixed_service(bindings).run(item, 0))
 
-    dispatched = [
-        name for name in _EVERY_ADAPTER if name in AUDIOBOOK_DISPATCH_ADAPTERS
+    dispatched = {
+        "audiobook": [
+            name for name in _EVERY_ADAPTER if name in AUDIOBOOK_DISPATCH_ADAPTERS
+        ],
+        "ebook": [name for name in _EVERY_ADAPTER if name in EBOOK_DISPATCH_ADAPTERS],
+    }
+    assert dispatched["ebook"] == [
+        "google_books",
+        "hardcover",
+        "inventaire",
+        "itunes_search",
+        "open_library",
     ]
-    assert dispatched == constructed["audiobook"] == observed["audiobook"]
-    assert dispatched == [value.provider for value in reports["audiobook"].providers]
+    for item in ("audiobook", "ebook"):
+        assert dispatched[item] == constructed[item] == observed[item]
+        assert dispatched[item] == [value.provider for value in reports[item].providers]
     assert reports["audiobook"].audio is not None
-    # Ebook dispatch is unchanged: every connected binding, in binding order.
-    assert list(_EVERY_ADAPTER) == constructed["ebook"] == observed["ebook"]
-    assert list(_EVERY_ADAPTER) == [
-        value.provider for value in reports["ebook"].providers
-    ]
     assert reports["ebook"].audio is None
 
     configuration = _mixed_configuration()
@@ -3244,8 +3286,8 @@ def test_a_mixed_library_dispatches_audiobooks_only_to_the_dispatch_set() -> Non
         )
         for item, report in reports.items()
     }
-    assert dispatched == [job.adapter for job in jobs["audiobook"]]
-    assert list(_EVERY_ADAPTER) == [job.adapter for job in jobs["ebook"]]
+    for item in ("audiobook", "ebook"):
+        assert dispatched[item] == [job.adapter for job in jobs[item]]
 
 
 @pytest.mark.parametrize(
@@ -3291,6 +3333,70 @@ def test_a_disabled_excluded_binding_records_nothing_on_an_audiobook() -> None:
     report = MetadataReport.from_json(_mixed_service(bindings).run("audiobook", 0))
 
     assert [("hardcover", ProviderStatus.DISABLED)] == [
+        (value.provider, value.status) for value in report.providers
+    ]
+
+
+def test_an_ebooks_source_ledger_names_only_its_dispatch_set() -> None:
+    """The case evidence page lists the five ebook sources and no other (#1486)."""
+    bindings = tuple(_dispatch_binding(name, [], []) for name in _EVERY_ADAPTER)
+    report = MetadataReport.from_json(_mixed_service(bindings).run("ebook", 0))
+    cases = InspectCurrentReviewCase(Mock())
+    with patch.object(cases, "_read", return_value=({"fields": []}, report, ())):
+        evidence = cases.evidence("review_case_" + "c" * 64)
+
+    ledger = cast("list[dict[str, object]]", evidence["source_ledger"])
+    assert {
+        "Google Books",
+        "Hardcover",
+        "Inventaire",
+        "iTunes",
+        "Open Library",
+    } == {row["provider"] for row in ledger}
+
+
+@pytest.mark.parametrize(
+    "connected,dispatched",
+    (
+        (("audible_catalog", "hardcover"), ("hardcover",)),
+        (_EXCLUDED_ON_EBOOKS, ()),
+    ),
+)
+def test_an_ebooks_connections_narrow_the_dispatch_set_and_never_widen_it(
+    connected: tuple[str, ...], dispatched: tuple[str, ...]
+) -> None:
+    """An excluded binding is never built, sent a request or recorded (#1486)."""
+    observed: list[str] = []
+    bindings = tuple(
+        _never_built(name)
+        if name in _EXCLUDED_ON_EBOOKS
+        else _dispatch_binding(name, [], observed)
+        for name in connected
+    )
+
+    report = MetadataReport.from_json(_mixed_service(bindings).run("ebook", 0))
+
+    assert list(dispatched) == observed
+    assert dispatched == tuple(value.provider for value in report.providers)
+
+
+def test_an_ebook_binding_without_an_authority_is_never_dispatched() -> None:
+    binding = replace(_never_built("catalogue"), authority=None)
+
+    report = MetadataReport.from_json(_mixed_service((binding,)).run("ebook", 0))
+
+    assert () == report.providers
+
+
+def test_a_disabled_excluded_binding_records_nothing_on_an_ebook() -> None:
+    bindings = tuple(
+        _never_built(name, enabled=False)
+        for name in ("audible_catalog", "audnexus", "open_library")
+    )
+
+    report = MetadataReport.from_json(_mixed_service(bindings).run("ebook", 0))
+
+    assert [("open_library", ProviderStatus.DISABLED)] == [
         (value.provider, value.status) for value in report.providers
     ]
 

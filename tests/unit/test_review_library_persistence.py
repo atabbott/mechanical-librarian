@@ -1843,7 +1843,7 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
             value for value in suspended["fields"] if value["destination"] == "series"
         )
         assert (
-            "This field is waiting for an external service recovery."
+            "This field is waiting for an outside service to recover."
             == field["classification_reason"]
         )
         assert [
@@ -2161,6 +2161,7 @@ def test_sqlite_library_excludes_epub_conflicting_narrators_from_attention() -> 
             "needs_attention": 1,
             "no_attention_needed": 1,
             "not_matched": 0,
+            "preparation_failed": 0,
         }
         assert [item["title"] for item in first["items"]] == ["Mistborn Secret History"]
         assert first["next_cursor"] is not None
@@ -2823,6 +2824,7 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
                 "needs_attention": 1,
                 "no_attention_needed": 0,
                 "not_matched": 0,
+                "preparation_failed": 0,
             }
         )
         assert {"title", component} <= {
@@ -2951,7 +2953,7 @@ def test_provider_withheld_reason_requires_exact_contributing_automatic_evidence
     assert (series["automatic_withheld_reason"] is not None) is expected
     if expected:
         assert series["needs_attention"] is True
-        assert "contributing ISBN lookup" in series["automatic_withheld_reason"]
+        assert "An ISBN lookup" in series["automatic_withheld_reason"]
     assert tuple(repository._connection.iterdump()) == before
     assert repository._connection.total_changes == changes
     repository.close()
@@ -3054,13 +3056,13 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             assert "series" not in reasons
             assert (
                 reasons["description"]
-                == "No eligible value was found in the retained evidence."
+                == "No source offered a value that can be used here."
             )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
         if mode == "human":
             assert (
                 reasons["title"]
-                == "The recorded evaluation did not select an automatic action; no more specific reason was recorded."
+                == "No value was chosen for you, and no more specific reason is known."
             )
     repository.close()
 
@@ -3177,13 +3179,9 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
             for f in detail["fields"]
             if f["automatic_withheld_reason"] is not None
         }
+        assert reasons["series"] == "An ISBN lookup did not return a usable answer."
         assert (
-            reasons["series"]
-            == "A contributing ISBN lookup did not supply usable evidence."
-        )
-        assert (
-            reasons["description"]
-            == "No eligible value was found in the retained evidence."
+            reasons["description"] == "No source offered a value that can be used here."
         )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
         writer_thread.join(timeout=5)
@@ -3210,8 +3208,7 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
         }
         assert "series" not in reasons
         assert (
-            reasons["description"]
-            == "No eligible value was found in the retained evidence."
+            reasons["description"] == "No source offered a value that can be used here."
         )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
     finally:
@@ -3315,8 +3312,7 @@ def test_non_provider_abstention_keeps_review_without_provider_claim(tmp_path):
     )
     assert field["needs_attention"] is True
     assert (
-        field["automatic_withheld_reason"]
-        == "The retained evidence does not resolve series membership for automatic handling."
+        field["automatic_withheld_reason"] == "The sources disagree about the series."
     )
     repository.close()
 
@@ -3444,7 +3440,7 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
         )
         assert (
             series["automatic_withheld_reason"]
-            == "A contributing ISBN lookup did not supply usable evidence."
+            == "An ISBN lookup did not return a usable answer."
         )
         successor = InspectCurrentReviewCase(reader).run(case_id)
         series = next(
@@ -3452,7 +3448,7 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
         )
         assert (
             series["automatic_withheld_reason"]
-            == "Automatic handling is currently suspended. Recorded evaluation: A contributing ISBN lookup did not supply usable evidence."
+            == "Changes made for you are paused for this field. An ISBN lookup did not return a usable answer."
         )
         assert (
             reader.read_current_review_case(case_id, None).final_outcome_document
@@ -3512,11 +3508,13 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             tick += 2
         browser = BrowseReviewLibrary(repository)
         first = browser.library(lens="all", search="100%_", limit=2, cursor=None)
+        # Failed works are counted as failed, never as needing no attention (#1413).
         assert first["counts"] == {
             "all": 3,
             "needs_attention": 0,
-            "no_attention_needed": 3,
+            "no_attention_needed": 0,
             "not_matched": 0,
+            "preparation_failed": 3,
         }
         items = cast(list[dict[str, object]], first["items"])
         assert [item["title"] for item in items] == ["Shared 100%_ title"] * 2
@@ -3850,7 +3848,7 @@ def test_combined_browse_validates_empty_marker_and_totals(
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != (12 if surface == "library" else 10):
+        if len(cursor.description) != (13 if surface == "library" else 10):
             return row
         reached = True
         values = list(row)
@@ -3954,15 +3952,22 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
 
         browser = BrowseReviewLibrary(repository)
         # The settled work has no provider evidence, so it is not matched; the
-        # stopped one is a terminal failure and stays clear (#1413).
+        # stopped one is a terminal failure, counted as failed (#1413).
         summary = {
             "all": 3,
             "needs_attention": 1,
-            "no_attention_needed": 1,
+            "no_attention_needed": 0,
             "not_matched": 1,
+            "preparation_failed": 1,
         }
         observed = []
-        for lens in ("all", "needs_attention", "no_attention_needed", "not_matched"):
+        for lens in (
+            "all",
+            "needs_attention",
+            "no_attention_needed",
+            "not_matched",
+            "preparation_failed",
+        ):
             for limit in (1, 25):
                 first = browser.library(
                     lens=lens, search=None, limit=limit, cursor=None
@@ -3993,6 +3998,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "needs_attention": 1,
                     "no_attention_needed": 0,
                     "not_matched": 0,
+                    "preparation_failed": 0,
                 },
             ),
             (
@@ -4000,8 +4006,9 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                 {
                     "all": 1,
                     "needs_attention": 0,
-                    "no_attention_needed": 1,
+                    "no_attention_needed": 0,
                     "not_matched": 0,
+                    "preparation_failed": 1,
                 },
             ),
             (
@@ -4011,6 +4018,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "needs_attention": 0,
                     "no_attention_needed": 0,
                     "not_matched": 1,
+                    "preparation_failed": 0,
                 },
             ),
             (
@@ -4020,6 +4028,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "needs_attention": 0,
                     "no_attention_needed": 0,
                     "not_matched": 0,
+                    "preparation_failed": 0,
                 },
             ),
         ):
@@ -4030,3 +4039,111 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     ]
                     == expected
                 ), (search, lens)
+
+
+def test_a_failed_preparation_leaves_an_open_decision_in_needs_attention(
+    tmp_path: Path,
+) -> None:
+    """A retained case's later failure moves it only once nothing is open (#1413).
+
+    Both works hold a case and then fail their latest preparation. The one with
+    a decision still open stays in Needs attention; the settled one is counted
+    as failed. Every item reads the lens it is listed under, and the counts
+    partition All.
+    """
+    from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+
+    def at_item(source: MetadataReport, item: str) -> MetadataReport:
+        return MetadataReport.create(
+            target=TargetFacts(
+                source.target.connection,
+                source.target.library,
+                item,
+                source.target.fields,
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+        )
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    catalogue = open_catalogue(tmp_path / "catalogue.sqlite", create=True)
+    try:
+        for report in (
+            at_item(_report("Attention work", actionable=True), "attention"),
+            at_item(_report("Settled work", "c", "d", actionable=False), "settled"),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "ebooks",
+                "lib-1",
+                item,
+                1,
+                f"Title {item}",
+                ("Writer",),
+                True,
+                False,
+                "singular-supported",
+                digit * 64,
+                "/synthetic.epub",
+                "epub",
+                "/media",
+            )
+            for item, digit in (("attention", "1"), ("settled", "2"))
+        )
+        catalogue.acquire_refresh()
+        generation = catalogue.publish("a" * 64, entries)
+        repository.bind_library_catalogue(tmp_path / "catalogue.sqlite", "a" * 64)
+        repository.request_review_scan("primary", "ebooks", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, generation, "a" * 64, entries, 12
+        )
+        tick = 13
+        while action := repository.claim_review_pipeline_action(tick):
+            repository.fail_review_pipeline_action(
+                action, "unreadable_media", False, tick + 1, "track_1"
+            )
+            tick += 2
+
+        browser = BrowseReviewLibrary(repository)
+        listed: dict[str, list[tuple[str, str]]] = {}
+        for lens in (
+            "all",
+            "needs_attention",
+            "no_attention_needed",
+            "not_matched",
+            "preparation_failed",
+        ):
+            page = browser.library(lens=lens, search=None, limit=25, cursor=None)
+            assert page["counts"] == {
+                "all": 2,
+                "needs_attention": 1,
+                "no_attention_needed": 0,
+                "not_matched": 0,
+                "preparation_failed": 1,
+            }
+            listed[lens] = [
+                (cast(str, item["item"]), cast(str, item["attention_state"]))
+                for item in cast(list[dict[str, object]], page["items"])
+            ]
+        assert listed["needs_attention"] == [("attention", "needs_attention")]
+        assert listed["preparation_failed"] == [("settled", "preparation_failed")]
+        assert listed["no_attention_needed"] == listed["not_matched"] == []
+        # All reads the open decision first, then the failure.
+        assert listed["all"] == [
+            ("attention", "needs_attention"),
+            ("settled", "preparation_failed"),
+        ]
+    finally:
+        repository.close()
+        catalogue.close()

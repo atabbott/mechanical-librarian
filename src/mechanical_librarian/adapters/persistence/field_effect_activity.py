@@ -75,6 +75,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _episode_decision_sql,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
@@ -201,6 +204,28 @@ _RECORDED_ONLY_EXCLUDED_SQL = (
 _FIELD_EFFECT_HOLDS_DECISION_SQL = (
     "state NOT IN ('superseded','abandoned') AND NOT (state='stale' "
     "AND json_extract(document,'$.failure')='connection')"
+)
+
+# A change stopped on one of these waits for the owner: it keeps its decision,
+# so nothing plans it again.  Activity counts the ones whose authority is still
+# current and whose case is still the work's current case: a later decision
+# revokes the authority, and a later report admits a new case (#1430).
+_OWNER_ACTION_FAILURES = (
+    "target_changed",
+    "third_value",
+    "readback",
+    "restore_unavailable",
+)
+_OWNER_ACTION_COUNT_SQL = (
+    "SELECT count(*) FROM field_effects effect JOIN field_effect_authorities authority "
+    "ON authority.decision_id=effect.decision_id AND authority.current=1 "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.connection_name=effect.connection_name "
+    "AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+    "AND lineage.review_case_id=json_extract(effect.document,'$.plan.authority.review_case_id') "
+    "WHERE effect.state='stale' AND json_extract(effect.document,'$.failure') IN ("
+    + ",".join(f"'{failure}'" for failure in _OWNER_ACTION_FAILURES)
+    + ")"
 )
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
@@ -691,6 +716,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
                 + _FIELD_EFFECT_COMPANION_DECISION_SQL
                 + ") WHERE effect.state='verified' "
+                # A write planned before the case was admitted again is not
+                # what the library holds now: the work has left that content
+                # and returned to the case's own (#1358).
+                "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
+                "review_case_episodes WHERE review_case_id=?),0) "
                 "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
                 (
                     decision.review_case_id,
@@ -698,6 +728,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     decision.decision_id,
                     decision.review_case_id,
                     decision.destination,
+                    decision.review_case_id,
                 ),
             ).fetchone()
             if decision.destination == "description":
@@ -705,8 +736,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "SELECT effect.document FROM field_effects effect "
                     "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
                     "WHERE authored.review_case_id=? AND effect.state='verified' "
+                    "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
+                    "review_case_episodes WHERE review_case_id=?),0) "
                     "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
-                    (decision.review_case_id,),
+                    (decision.review_case_id, decision.review_case_id),
                 ).fetchone()
                 if authored_predecessor is not None and (
                     predecessor is None
@@ -930,6 +963,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             == (1,)
             and self._review_case_accepts_authority(authority.review_case_id)
+            # An owner decision from before its case was admitted again
+            # authorizes nothing in the new episode (#1358).
+            and self._connection.execute(
+                "SELECT 1 FROM human_decisions WHERE decision_id=? AND NOT "
+                + _episode_decision_sql("human_decisions"),
+                (authority.decision_id,),
+            ).fetchone()
+            is None
         )
         description = self._connection.execute(
             "SELECT document FROM description_decisions WHERE decision_id=?",
@@ -1240,7 +1281,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "stale.decision_id=human.decision_id AND stale.kind='stale'))) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) AND NOT EXISTS ("
+                "current.destination=human.destination) AND "
+                # An earlier episode's decision of a case admitted again is
+                # history, never pending work (#1358).
+                 + _episode_decision_sql("human") + " AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds returned WHERE "
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
@@ -1335,7 +1379,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) "
                 "THEN human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) END AND NOT EXISTS ("
+                "current.destination=human.destination) END AND "
+                + _episode_decision_sql("human")
+                + " AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds returned WHERE "
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
@@ -1730,6 +1776,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "SELECT state,count(*) FROM field_effects GROUP BY state"
                 ).fetchall()
             }
+            owner_action = self._connection.execute(_OWNER_ACTION_COUNT_SQL).fetchone()
             cleanup = self._connection.execute(
                 "SELECT count(*),"
                 "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
@@ -1813,6 +1860,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     for connection, library, reason in sorted(lapsed)
                 ],
                 "counts": counts,
+                "owner_action_required": owner_action[0],
                 "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},
                 "events": events,
                 "report_documents": report_documents,
@@ -4354,12 +4402,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             for connection, library, work_id, destination, state, document in rows:
                 operation = FieldEffectOperation.from_json(document)
                 failure = operation.failure
-                if failure in {
-                    "target_currentness",
-                    "third_value",
-                    "readback",
-                    "restore_unavailable",
-                }:
+                if failure in _OWNER_ACTION_FAILURES:
                     kind, cause = "owner_action_required", "currentness_conflict"
                     scope = "field"
                     signal_library, signal_work, signal_field = (

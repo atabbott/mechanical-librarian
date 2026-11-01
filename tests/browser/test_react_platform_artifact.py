@@ -465,8 +465,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     const style = getComputedStyle(rail)
                     const left = box.left + parseFloat(style.paddingLeft)
                     const right = box.right - parseFloat(style.paddingRight)
-                    return [...rail.querySelectorAll(
-                        `.lenses a, .library-search input, .library-search button,
+                    // Lenses scroll sideways inside their own row, so the row,
+                    // not each lens, must stay within the panel's border.
+                    const lenses = rail.querySelector('.lenses')?.getBoundingClientRect()
+                    const lensOverrun = !lenses || lenses.left < box.left || lenses.right > box.right
+                        ? [['lenses', 'overrun the panel', 0, 0, 0, 0]] : []
+                    return lensOverrun.concat([...rail.querySelectorAll(
+                        `.library-search input, .library-search button,
                          .library-pager button, .library-work-title,
                          .library-work-author, .library-work-origin,
                          .library-works-heading > *`)]
@@ -476,7 +481,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         .map(([node, r]) => [node.className || node.tagName,
                             (node.textContent || '').trim().slice(0, 28),
                             Math.round(r.left), Math.round(r.right),
-                            Math.round(left), Math.round(right)])
+                            Math.round(left), Math.round(right)]))
                     }"""
                 ),
             )
@@ -618,7 +623,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.route("**/*", fulfill)
         routes = (
             ("/library?lens=all", "Works"),
-            ("/attention", "Needs your attention"),
             (
                 "/review/case-1?field=title&subview=evidence",
                 "Evidence",
@@ -724,16 +728,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     # restored after a restart; keep the route's navigation
                     # accounting scoped to its original direct entry.
                     before_entry += 2
-            if path == "/attention":
-                page.get_by_text(
-                    "This field needs your review.", exact=True
-                ).first.wait_for()
-                assert (
-                    0
-                    == page.get_by_text(
-                        "Conflicting retained evidence", exact=True
-                    ).count()
-                )
             if path.startswith("/policy"):
                 section = path.rsplit("=", 1)[-1]
                 expect(page.locator(f"#policy-{section}")).to_be_focused()
@@ -1414,7 +1408,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     in unconfirmed.inner_text()
                 )
                 unconfirmed_choice = unconfirmed.get_by_role(
-                    "radio", name="Choose Alternative 2 cover", exact=True
+                    "radio", name="Choose Open Library cover", exact=True
                 )
                 # The card states the unconfirmed match before any tap, and a
                 # tap on it is the explicit choice; no dialog asks again (#1290).
@@ -1433,14 +1427,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     comparison.locator(".library-cover-card.is-current")
                 ).to_have_attribute("aria-checked", "false")
                 alternative_evidence = comparison.get_by_role(
-                    "button", name="Evidence for Alternative 1 cover"
+                    "button", name="Evidence for Hardcover cover"
                 )
                 alternative_evidence.focus()
                 page.keyboard.press("Enter")
                 expect(alternative_evidence).to_have_count(1)
                 expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
                 expect(alternative_evidence).to_have_text("Hide evidence")
-                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                comparison.get_by_label("Hardcover cover evidence").get_by_text(
                     "Open Library", exact=True
                 ).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
@@ -1453,11 +1447,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(recommended).to_be_enabled()
                 recommended.get_by_text("Same book", exact=True).wait_for()
                 recommended_evidence = comparison.get_by_role(
-                    "button", name="Evidence for Alternative 1 cover"
+                    "button", name="Evidence for Hardcover cover"
                 )
                 recommended_evidence.click()
                 expect(recommended_evidence).to_have_attribute("aria-expanded", "true")
-                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                comparison.get_by_label("Hardcover cover evidence").get_by_text(
                     "Open Library", exact=True
                 ).wait_for()
                 unavailable_evidence = comparison.get_by_role(
@@ -1483,10 +1477,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             exact=True,
         ).wait_for()
         evidence = recorded_isbn.get_by_role(
-            "button", name="Evidence for Alternative 1: 9780306406157"
+            "button", name="Evidence for proposed value: 9780306406157"
         )
         evidence.click()
-        recorded_isbn.get_by_text("Open Library", exact=True).wait_for()
+        recorded_isbn.locator(".choice-evidence").get_by_text(
+            "Open Library", exact=True
+        ).wait_for()
 
         stage[0] = "cover-library:cached-work-reset"
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -1618,10 +1614,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Local presence" in workspace_evidence
         assert (
             "No recommendation retained"
-            in page.locator(".metadata-choice.is-current").inner_text()
+            not in page.locator(".metadata-choice.is-current").inner_text()
         )
         proposed_evidence = page.get_by_role(
-            "button", name="Evidence for Alternative 1: The Clockmaker's Cartography"
+            "button",
+            name="Evidence for proposed value: The Clockmaker's Cartography",
+            exact=True,
         )
         proposed_evidence.focus()
         page.keyboard.press("Enter")
@@ -1630,10 +1628,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-2")
         expect(page.locator(".choice-evidence")).to_have_count(0)
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-1")
-        assert (
-            "Guarded from external update"
-            in page.locator(".field-apply-context").inner_text()
-        )
+        # A guarded field with no recorded change has no library card (#1519).
+        expect(page.locator(".field-apply-context")).to_have_count(0)
         # The workspace never grows a field stepper. The Library pager is a
         # separate, list-scoped control and is asserted where the list is.
         detail_workspace = page.locator(".workspace-detail")
@@ -1758,7 +1754,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
         page.get_by_text("Page 1", exact=False).wait_for()
         capture_visual_proof("library-pager")
-        assert page.get_by_role("button", name="\u2190 Previous").is_disabled()
+        # The first page offers no way back (#1520).
+        assert page.get_by_role("button", name="\u2190 Previous").count() == 0
         page.get_by_role("button", name="Next \u2192").click()
         page.get_by_text("Unicode shelves:", exact=False).wait_for()
         page.get_by_role("button", name="\u2190 Previous").click()
@@ -1770,17 +1767,20 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         # Searching narrows as the owner types and returns to the first page.
         search_box.fill("Spoken stories")
         expect(page.locator(".library-work-row")).to_have_count(3)
-        page.get_by_text("Page 1", exact=False).wait_for()
+        # Three works are one page, which has no pager (#1520).
+        expect(page.locator(".library-pager")).to_have_count(0)
+        assert "cursor=" not in page.url
         assert search_box.input_value() == "Spoken stories"
         search_box.fill("no synthetic work has this phrase")
         page.get_by_text(
             "No exact-current works match this search and lens."
         ).wait_for()
-        page.get_by_role("button", name="Clear search").click()
+        page.get_by_role("button", name="Clear search", exact=True).click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
         assert search_box.input_value() == ""
         stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
+        page.locator(".lenses a").first.wait_for()
         for control in page.locator(
             ".masthead nav a, .shell-status button, .shell-actions button"
         ).all():
@@ -1791,6 +1791,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert control.bounding_box()["height"] >= 44
         for lens in page.locator(".lenses a").all():
             assert lens.bounding_box()["width"] >= 44
+        # The lenses are one row that scrolls sideways, its far edge faded (#1520).
+        lens_row = page.evaluate(
+            """() => {
+              const row = document.querySelector('.lenses')
+              const tops = [...row.querySelectorAll('a')].map(a => a.getBoundingClientRect().top)
+              return {rows: new Set(tops).size, scrolls: row.scrollWidth > row.clientWidth,
+                      more: row.dataset.more}
+            }"""
+        )
+        assert lens_row == {"rows": 1, "scrolls": True, "more": "end"}, lens_row
         page.locator(".library-work-row").first.wait_for()
         assert overrunning_rail_controls() == []
         assert page.evaluate(_SHORT_SUMMARIES) == []
@@ -2070,10 +2080,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert compact_evidence.bounding_box()["height"] >= 44
         compact_evidence.click()
         expect(page.locator("#choice-evidence-current")).to_be_visible()
-        assert (
-            "Guarded from external update"
-            in page.locator(".field-apply-context").inner_text()
-        )
+        # A guarded field with no recorded change has no library card (#1519).
+        expect(page.locator(".field-apply-context")).to_have_count(0)
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
         # One toolbar in both states; Back to works leads the workspace (#1284).
@@ -3581,7 +3589,7 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         expect(page.locator(".attention-toggle strong")).to_have_text("5 works")
         expect(page).to_have_url(re.compile(r"preview=case-1"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
-            "20 works"
+            "20 works · 1 could not finish"
         )
 
         # B2: the rail groups six field rows under four works.
@@ -4764,6 +4772,10 @@ _UI_LABELS = (
     )
 )
 _WORKS_ROWS = ".library-work-row"
+# A work's title and authors in the Attention rail and on a decision's
+# choices: data words that must stay whole wherever their line could hold them,
+# at every width (#1530).
+_WORK_TITLES = ".attention-work-identity, .workspace-detail .value-choice strong"
 # Of the split words `_POLICY_MID_WORD` found, those the layout split without
 # need. A word may break only when it is wider than its whole line box. For a
 # word of the interface that box must also hold at least half the page's
@@ -4808,7 +4820,9 @@ def test_words_break_only_where_they_must() -> None:
     """No interface word splits where the layout could have kept it whole, on
     every route state at every frozen width and both text sizes, and no page
     is wider than the window (#1291). Enlarged text is root font-size 200%.
-    From 1100px up a works row's words, title included, stay whole too."""
+    From 1100px up a works row's words, title included, stay whole too, and a
+    work's title in the Attention rail and on its choices does at every width
+    (#1530)."""
     routes = {
         "library": "/library?lens=all",
         "selected": "/library?lens=all&preview=case-1",
@@ -4845,6 +4859,12 @@ def test_words_break_only_where_they_must() -> None:
                     if rows and width >= 1100:
                         needless = page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, rows])
                         failures += [f"{where}: works row {word}" for word in needless]
+                    titles = page.evaluate(_POLICY_MID_WORD, _WORK_TITLES)
+                    if titles:
+                        needless = page.evaluate(
+                            _NEEDLESS_SPLITS, [_WORK_TITLES, titles]
+                        )
+                        failures += [f"{where}: work title {word}" for word in needless]
                     overflow = page.evaluate(
                         "document.scrollingElement.scrollWidth - innerWidth"
                     )

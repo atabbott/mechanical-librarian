@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _LATEST_PREPARATION_FAILED_SQL,
     _LIBRARY_ATTENTION_SQL,
     _NOT_MATCHED_REASON_SQL,
     _POLICY_ASK_ATTENTION_SQL,
@@ -116,11 +117,17 @@ from mechanical_librarian.domain.review_field_classification import ReviewFieldC
 
 # What each filtering Library lens selects from the candidate relation. A
 # work no provider matched has no case and so no attention, and it is neither
-# needing attention nor needing none (#1407).
+# needing attention nor needing none (#1407). Nor is a work whose latest
+# preparation failed for good, with or without an earlier report: its row reads
+# as that failure, so it is counted as one, and the four lenses partition All.
+# A decision still open on a retained case keeps it in Needs attention (#1413).
+_PREPARATION_FAILED_SQL = "attention=0 AND preparation_failed=1"
 _LIBRARY_LENS_CONDITIONS = {
     "needs_attention": "attention=1",
-    "no_attention_needed": "attention=0 AND match_reason IS NULL",
+    "no_attention_needed": "attention=0 AND match_reason IS NULL "
+    "AND preparation_failed=0",
     "not_matched": "attention=0 AND match_reason IS NOT NULL",
+    "preparation_failed": _PREPARATION_FAILED_SQL,
 }
 _MATCH_REASONS = frozenset({None, "refused", "unavailable", "no_match"})
 
@@ -141,6 +148,8 @@ class ReviewLibraryPage:
     # matched, case or terminal row.
     not_matched_total: int
     match_reasons: tuple[str | None, ...]
+    # #1413: the works with nothing open whose latest preparation failed.
+    preparation_failed_total: int
     # Each row's case (with its identity) and report as this read validated
     # them, None for a terminal row, so a projection of the same read uses them
     # rather than parsing the same bytes again (#1202).
@@ -369,6 +378,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         case.report_id,
                         case.to_json(),
                     ),
+                )
+            else:
+                # The work returned to this case's content, so the case starts
+                # a new episode: the owner decisions recorded on it so far are
+                # history and word, settle and hold nothing now (#1358).
+                self._connection.execute(
+                    "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
+                    "effect_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
+                    "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
+                    "MAX(rowid) FROM field_effects),0)) ON CONFLICT(review_case_id) "
+                    "DO UPDATE SET decision_floor=excluded.decision_floor,"
+                    "effect_floor=excluded.effect_floor",
+                    (case.review_case_id, case.review_case_id),
                 )
             outcome = "superseded" if prior_case_id is not None else "admitted"
             # The owner's hold follows the work, not the case (ADR-0085): the
@@ -677,7 +699,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ]
             terminal_union = (
                 " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-                "item_id,NULL,0,0,NULL,ml_casefold(display_title),'',work_id,"
+                "item_id,NULL,0,0,NULL,1,ml_casefold(display_title),'',work_id,"
                 "attempt,stage,failure_root,recovery_attempt,failure_code,"
                 "display_title,display_authors,display_format FROM terminal"
                 + _TERMINAL_LIBRARY_SEARCH_SQL
@@ -713,6 +735,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "facts.provider_limited AS provider_limited,"
                 + _NOT_MATCHED_REASON_SQL
                 + " AS match_reason,"
+                + _LATEST_PREPARATION_FAILED_SQL
+                + " AS preparation_failed,"
                 "facts.title_key AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order,"
                 "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -725,17 +749,23 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + terminal_union
                 + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
                 "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
-                "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total "
+                "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
+                "COALESCE(sum(CASE WHEN "
+                + _PREPARATION_FAILED_SQL
+                + " THEN 1 ELSE 0 END),0) AS preparation_failed_total "
                 "FROM candidates),page AS MATERIALIZED (SELECT "
                 "1 AS present,case_id,report_id,proposal_set_id,"
                 "connection_name,library_name,item_id,outcome,"
                 "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
                 "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
                 "AS provider_order,"
-                # Unmatched works follow the attention group as one block, so
-                # the `all` lens keeps them together ahead of clear works.
-                "CASE WHEN attention=0 AND match_reason IS NOT NULL THEN 0 ELSE 1 END "
-                "AS match_order,CASE WHEN attention=0 THEN match_reason END "
+                # Failed preparations, then unmatched works, follow the
+                # attention group as blocks, so the `all` lens keeps each
+                # together ahead of clear works.
+                "CASE WHEN "
+                + _PREPARATION_FAILED_SQL
+                + " THEN 0 WHEN attention=0 AND match_reason IS NOT NULL THEN 1 "
+                "ELSE 2 END AS match_order,CASE WHEN attention=0 THEN match_reason END "
                 "AS match_reason,title_order,case_order,work_id,attempt,stage,"
                 "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
                 + condition
@@ -750,7 +780,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
                 "page.connection_name,page.library_name,page.item_id,page.outcome, "
                 "page.match_reason,COALESCE(page.present,0),totals.total,"
-                "totals.attention_total,totals.not_matched_total "
+                "totals.attention_total,totals.not_matched_total,"
+                "totals.preparation_failed_total "
                 "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
                 "ORDER BY page.attention_order,page.provider_order,page.match_order,"
@@ -760,15 +791,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ).fetchall()
             if not rows:
                 raise MetadataReportError("review library count is invalid")
-            totals = rows[0][-3:]
-            total, attention_total, not_matched_total = totals
+            totals = rows[0][-4:]
+            total, attention_total, not_matched_total, failed_total = totals
             if (
                 type(total) is not int
                 or total < 0
                 or type(attention_total) is not int
                 or type(not_matched_total) is not int
                 or not 0 <= attention_total <= total
+                or type(failed_total) is not int
                 or not 0 <= not_matched_total <= total - attention_total
+                or not 0 <= failed_total <= total - attention_total - not_matched_total
             ):
                 raise MetadataReportError("review library count is invalid")
             values: list[tuple[str | None, str]] = []
@@ -778,7 +811,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ] = []
             for row in rows:
                 if (
-                    len(row) != 12
+                    len(row) != 13
                     or type(row[8]) is not int
                     or row[8] not in (0, 1)
                     or row[9:] != totals
@@ -850,6 +883,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 attention_total,
                 not_matched_total,
                 tuple(reasons),
+                failed_total,
                 tuple(envelopes),
             )
         except (

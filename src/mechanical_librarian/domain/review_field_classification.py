@@ -22,11 +22,11 @@ ReviewFieldCause = Literal[
     "external_recovered",
 ]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
-    "unsupported": "This field is unavailable for the current service capability.",
-    "automatic_safety_suspended": "Automatic handling is suspended pending a safety recovery.",
-    "external_field_failure": "This field is waiting for an external service recovery.",
-    "external_connection_failure": "This connection is waiting for an external service recovery.",
-    "external_recovered": "External recovery completed; this field can be reviewed again.",
+    "unsupported": "Your library service cannot change this field.",
+    "automatic_safety_suspended": "Changes made for you are waiting for a safety recovery.",
+    "external_field_failure": "This field is waiting for an outside service to recover.",
+    "external_connection_failure": "This connection is waiting for an outside service to recover.",
+    "external_recovered": "The outside service recovered; you can review this field again.",
 }
 
 
@@ -61,6 +61,7 @@ def classify_review_field(
     owner_choosable: bool = False,
     changeable: bool = True,
     owner_entry: bool = False,
+    immaterial_alternatives: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -69,7 +70,9 @@ def classify_review_field(
     Every other input decides first. `changeable` says whether any owner
     control could replace a recorded decision, and `owner_entry` whether the
     owner may type a value or choose genres; each changes only the reason
-    (ADR-0085).
+    (ADR-0085). `immaterial_alternatives` says an optional choice is optional
+    because its alternatives only trim or extend the current value (#1253), so
+    its one statement says why no review is needed (#1450).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -83,11 +86,11 @@ def classify_review_field(
         return ReviewFieldClassification(
             "human_recorded",
             (
-                "Your recorded decision is retained. You can change it here."
+                "You decided this field. You can change it here."
                 if override_available and changeable
-                else "Your recorded decision is retained."
+                else "You decided this field."
                 if override_available
-                else "Your recorded decision is being applied and cannot be changed yet."
+                else "Your decision is being applied and cannot be changed yet."
             ),
             False,
             override_available,
@@ -108,7 +111,7 @@ def classify_review_field(
     if automatic_outcome == "abstention":
         return ReviewFieldClassification(
             "manual_fallback",
-            "Automatic handling abstained, so this field needs your review.",
+            "This field needs your choice.",
             True,
             True,
             False,
@@ -119,9 +122,9 @@ def classify_review_field(
         return ReviewFieldClassification(
             "automatic_recorded",
             (
-                "Automatic handling recorded this field; you may inspect or override it."
+                "This field was decided for you; you can inspect or change it."
                 if override_available
-                else "Automatic handling is being applied and cannot be overridden yet."
+                else "The change made for you is being applied and cannot be changed yet."
             ),
             False,
             override_available,
@@ -162,8 +165,14 @@ def classify_review_field(
     if owner_choosable:
         return ReviewFieldClassification(
             "owner_choosable",
-            "No review is needed. You can still keep the current value or "
-            "choose a proposed one.",
+            (
+                "The proposed values only shorten or extend the current one, so "
+                "no review is needed. You can still keep the current value or "
+                "choose a proposed one."
+                if immaterial_alternatives
+                else "No review is needed. You can still keep the current value or "
+                "choose a proposed one."
+            ),
             False,
             True,
             False,
@@ -174,7 +183,7 @@ def classify_review_field(
         "unsupported",
         "There is no other value to choose from. You can enter your own."
         if owner_entry
-        else "There is no owner decision available for this field.",
+        else "There is nothing to decide for this field.",
         False,
         False,
         False,

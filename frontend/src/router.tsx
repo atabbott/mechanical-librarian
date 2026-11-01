@@ -31,7 +31,6 @@ import { ApiError, BuildMismatchError, SessionExpiredError, refusalCopy } from '
 import type {
   ActivitySearch,
   ScanState,
-  AttentionSearch,
   AutomaticSafetyView,
   DetailSearch,
   LibraryLens,
@@ -59,7 +58,6 @@ import { useLibraryName } from './libraryNames'
 import { handoffNeedsLibraryNames } from './writeConsent'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
-const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
 const DetailPage = recoverableLazy(() => import('./routes/DetailPage'))
 const PolicyPage = recoverableLazy(() => import('./routes/PolicyPage'))
 const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
@@ -82,7 +80,10 @@ export interface RouterContext {
 const bounded = (value: unknown) =>
   typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : undefined
 const libraryLens = (value: unknown): LibraryLens =>
-  value === 'needs_attention' || value === 'no_attention_needed' || value === 'not_matched'
+  value === 'needs_attention' ||
+  value === 'no_attention_needed' ||
+  value === 'not_matched' ||
+  value === 'preparation_failed'
     ? value
     : 'all'
 export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => {
@@ -107,11 +108,6 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
     ...(preparation ? { preparation } : {}),
     ...(search.attention === 'open' ? { attention: 'open' } : {}),
   }
-}
-export const normalizeAttentionSearch = (search: Record<string, unknown>): AttentionSearch => {
-  const q = bounded(search.q)
-  const cursor = bounded(search.cursor)
-  return { ...(q ? { q } : {}), ...(cursor ? { cursor } : {}) }
 }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => {
   const field = bounded(search.field)
@@ -218,14 +214,6 @@ export const handoffConsentQuery = (http: ReviewHttp) =>
     staleTime: 4_000,
     retry: false,
   })
-export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) =>
-  queryOptions({
-    queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const,
-    queryFn: (queryContext) =>
-      http.getAttention(search, queryContext.signal, queryWorkClass(queryContext)),
-    staleTime: 15_000,
-    retry: false,
-  })
 export const detailQuery = (http: ReviewHttp, id: string) =>
   queryOptions({
     queryKey: ['review-case', id] as const,
@@ -304,15 +292,13 @@ const routeTitle = (path: string) =>
     ? 'Review case'
     : path === '/library'
       ? 'Library'
-      : path === '/attention'
-        ? 'Attention'
-        : path === '/policy'
-          ? 'Policy'
-          : path === '/activity'
-            ? 'Activity'
-            : path === '/settings'
-              ? 'Settings'
-              : 'Page unavailable'
+      : path === '/policy'
+        ? 'Policy'
+        : path === '/activity'
+          ? 'Activity'
+          : path === '/settings'
+            ? 'Settings'
+            : 'Page unavailable'
 
 export const useLiveStream = () => {
   const { updates } = rootRoute.useRouteContext()
@@ -1093,10 +1079,10 @@ const Shell = () => {
   const navigation = useRouterState({
     select: (state) => ({ href: state.location.href, status: state.status }),
   })
-  // A review and the attention queue are both parts of Library, so Library
-  // stays the current destination while either is open.
+  // A review is part of Library, as is the attention rail, so Library stays the
+  // current destination while a review is open.
   const libraryCurrent = useRouterState({
-    select: (state) => /^\/(?:library|attention)(?:\/|$)|^\/review\//.test(state.location.pathname),
+    select: (state) => /^\/library(?:\/|$)|^\/review\//.test(state.location.pathname),
   })
   const { http, queryClient, updates } = rootRoute.useRouteContext()
   useLiveInvalidation(updates, queryClient)
@@ -1353,22 +1339,6 @@ const LibraryRouteComponent = () => {
     />
   )
 }
-const AttentionRouteComponent = () => {
-  const { http } = rootRoute.useRouteContext()
-  const search = attentionRoute.useSearch()
-  const query = useRetainedQuery(attentionQuery(http, search))
-  useAnnounceRetaining(query.isPlaceholderData)
-  return (
-    <div className="attention-route" aria-busy={query.isPlaceholderData || undefined}>
-      <AttentionPage
-        data={query.data}
-        retained={query.isPlaceholderData}
-        failed={query.isError}
-        retry={() => void query.refetch()}
-      />
-    </div>
-  )
-}
 const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
   const { http } = rootRoute.useRouteContext()
@@ -1418,12 +1388,6 @@ export const libraryRoute = createRoute({
   validateSearch: normalizeLibrarySearch,
   // Each route component preloads its page chunk on intent through the lazy wrapper.
   component: Object.assign(LibraryRouteComponent, { preload: () => LibraryPage.preload?.() }),
-})
-export const attentionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/attention',
-  validateSearch: normalizeAttentionSearch,
-  component: Object.assign(AttentionRouteComponent, { preload: () => AttentionPage.preload?.() }),
 })
 export const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -1503,7 +1467,6 @@ export const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   libraryRoute,
-  attentionRoute,
   detailRoute,
   policyRoute,
   activityRoute,

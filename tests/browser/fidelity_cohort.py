@@ -73,7 +73,13 @@ def _work(
         "media_kind": media_kind,
         "item": f"synthetic-item-{number}",
         "attention_count": attention,
-        "attention_state": ("needs_attention" if attention else "no_attention_needed"),
+        "attention_state": (
+            "needs_attention"
+            if attention
+            else "preparation_failed"
+            if preparation is not None
+            else "no_attention_needed"
+        ),
         "detail_url": f"/review/{case}" if case else None,
         # The row says what its address opens; every work in this cohort that
         # has one has a review case behind it.
@@ -411,9 +417,9 @@ def _field(
     inferred_reason = (
         "This field needs your review."
         if needs_attention
-        else "Automatic handling recorded this field; you may inspect or override it."
+        else "This field was decided for you; you can inspect or change it."
         if automatic_decision is not None
-        else "There is no owner decision available for this field."
+        else "There is nothing to decide for this field."
     )
     return {
         "classification": resolved_classification,
@@ -460,9 +466,9 @@ def _field(
                     }
                 ],
                 "limitations": notices or [],
-                "rationale": "Keep the value currently held by the local library.",
+                "rationale": "",
                 "recommendation": "no_recommendation",
-                "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+                "recommendation_reason": "",
                 "selection": "current",
             },
             *[
@@ -476,9 +482,9 @@ def _field(
                         }
                     ],
                     "limitations": notices or [],
-                    "rationale": "This retained alternative is eligible for owner selection.",
+                    "rationale": "Open Library",
                     "recommendation": "no_recommendation",
-                    "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+                    "recommendation_reason": "",
                     "selection": "proposed",
                 }
                 for index, _ in enumerate(proposed, start=1)
@@ -688,9 +694,9 @@ def _case(case_id: str) -> dict[str, object]:
             ],
             classification="unsupported",
             classification_reason=(
-                "There is no owner decision available for this field."
+                "There is nothing to decide for this field."
                 if current_only
-                else "This field is unavailable for the current service capability."
+                else "Your library service cannot change this field."
             ),
             editable=False,
             navigation_role="inspect",
@@ -705,7 +711,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "No eligible proposed value is supported by the retained evidence."
             ],
             classification="unsupported",
-            classification_reason="This field is unavailable for the current service capability.",
+            classification_reason="Your library service cannot change this field.",
             editable=False,
             navigation_role="inspect",
             inventory_role="primary",
@@ -913,9 +919,9 @@ def _case(case_id: str) -> dict[str, object]:
                             ]
                             if case_id == "case-3"
                             else [],
-                            "rationale": "Keep the cover currently held by the local library.",
+                            "rationale": "",
                             "recommendation": "no_recommendation",
-                            "recommendation_reason": "No recommendation retained.",
+                            "recommendation_reason": "",
                         },
                         {
                             "alternative_id": "cover-ref-choice",
@@ -928,7 +934,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 }
                             ],
                             "limitations": [],
-                            "rationale": "This retained cover candidate is selectable for owner review.",
+                            "rationale": "",
                             "recommendation": "recommended",
                             "recommendation_reason": "Deterministic confirmed-cover policy recommends this retained cover.",
                         },
@@ -1025,11 +1031,8 @@ def _case(case_id: str) -> dict[str, object]:
 
 
 def _clear(item: dict[str, object]) -> bool:
-    """Nothing to decide, and a provider matched it (#1407)."""
-    return (
-        int(cast(int, item["attention_count"])) == 0
-        and item["attention_state"] != "not_matched"
-    )
+    """Nothing to decide, a provider matched it (#1407), and it finished (#1413)."""
+    return item["attention_state"] == "no_attention_needed"
 
 
 def _library(query: dict[str, list[str]]) -> dict[str, object]:
@@ -1055,14 +1058,14 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         works = [item for item in works if int(cast(int, item["attention_count"])) > 0]
     elif lens == "no_attention_needed":
         works = [item for item in works if _clear(item)]
-    elif lens == "not_matched":
-        works = [item for item in works if item["attention_state"] == "not_matched"]
+    elif lens in ("not_matched", "preparation_failed"):
+        works = [item for item in works if item["attention_state"] == lens]
     cursor = query.get("cursor", [""])[0]
     page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
     end = start + 6
     return {
-        "schema_version": "review-library-v3",
+        "schema_version": "review-library-v4",
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
@@ -1076,6 +1079,9 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
             "no_attention_needed": sum(_clear(item) for item in matched),
             "not_matched": sum(
                 item["attention_state"] == "not_matched" for item in matched
+            ),
+            "preparation_failed": sum(
+                item["attention_state"] == "preparation_failed" for item in matched
             ),
         },
         "items": deepcopy(works[start:end]),
@@ -1362,6 +1368,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     return {
         "schema_version": "continuous-field-activity-v3",
         "current_waiting": None,
+        "owner_action_required": 0,
         "backup_ready": True,
         "paused": False,
         "configured_libraries": [

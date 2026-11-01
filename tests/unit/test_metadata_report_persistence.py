@@ -591,6 +591,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_sets",),
             ("provider_recovery_outbox",),
             ("review_attention_facts",),
+            ("review_case_episodes",),
             ("review_case_field_facts",),
             ("review_case_transitions",),
             ("review_cases",),
@@ -844,6 +845,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP INDEX description_decisions_case;"
                 "DROP INDEX current_review_case_lineages_case;"
                 "DROP INDEX current_review_packages_case;"
+                "DROP TABLE review_case_episodes;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
@@ -2590,7 +2592,11 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP INDEX description_decisions_case;"
                     "DROP INDEX current_review_case_lineages_case;"
                     "DROP INDEX current_review_packages_case;"
+                    "DROP TABLE review_case_episodes;"
                 )
+            else:
+                # The v20 producer predates #1358's case episodes.
+                repository._connection.execute("DROP TABLE review_case_episodes")
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()

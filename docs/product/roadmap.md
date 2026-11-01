@@ -35,11 +35,11 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
   reviews, across Library, Activity, Settings, tests and the Codex reviewer.
 - **0.30.0 Audiobook matching and editions.** Audiobooks match the edition the
   library holds, keep that match, and get better data.
+- **0.31.0 Coverage.** More of the evidence already retrieved is admitted
+  safely, and covers are chosen by measured rules before any model helps.
 
 ## Next
 
-- **0.31.0 Coverage.** More of the evidence already retrieved is admitted
-  safely, and covers are chosen by measured rules before any model helps.
 - **0.32.0 Series and structure.** One identity per series, and a read-only
   view of what each series is missing.
 - **0.33.0 First library.** A first install with thousands of works shows the

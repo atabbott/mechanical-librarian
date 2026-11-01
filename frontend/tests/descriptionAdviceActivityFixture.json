@@ -382,6 +382,7 @@
     "total": 5
   },
   "current_waiting": null,
+  "owner_action_required": 0,
   "paused": false,
   "prepared": {
     "automatic": 0,

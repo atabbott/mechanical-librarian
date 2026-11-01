@@ -148,6 +148,7 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_connection_replan(
         self, decision_id: str
     ) -> FieldEffectOperation | None: ...
+    def field_effect_cleanup_pending(self, plan_id: str) -> bool: ...
     def next_field_effect_connection_replan(
         self, connection: str, library: str, after: str | None
     ) -> tuple[str, str, str] | None: ...
@@ -323,6 +324,9 @@ class ContinuousGuardedApplication:
         self._replan_probe_after: dict[tuple[str, str], str] = {}
         self._unplanned_probes: dict[tuple[str, str], dict[str, _CapabilityProbe]] = {}
         self._unplanned_turn: set[tuple[str, str]] = set()
+        # Superseded covers whose revive waits for their own cleanup; the
+        # schedule starts over once one completes (#1415).
+        self._revives_awaiting_cleanup: set[str] = set()
         self._manual_return_cursor: tuple[int, str, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
@@ -503,6 +507,7 @@ class ContinuousGuardedApplication:
             self._schedule_generation += 1
             self._schedule_cursor = None
             self._unplanned_probes.clear()
+            self._revives_awaiting_cleanup.clear()
 
     def _wait_for_connection(
         self,
@@ -1145,6 +1150,16 @@ class ContinuousGuardedApplication:
                 )
             if operation is not None:
                 planned += 1
+                if (
+                    snapshot.destination == "cover"
+                    and operation.state == "superseded"
+                    and self._repository.field_effect_cleanup_pending(
+                        operation.plan.plan_id
+                    )
+                ):
+                    # Its revive was refused until its recovery bytes are gone.
+                    with self._schedule_lock:
+                        self._revives_awaiting_cleanup.add(operation.plan.plan_id)
             self._advance_schedule_cursor(decision, generation)
         if planned and not affected_review_case_ids:
             self._announce("activity", None)
@@ -1467,6 +1482,10 @@ class ContinuousGuardedApplication:
                 project_readable_activity_event(event, report)
             except ActivityProjectionError as error:
                 raise GuardedApplicationError("activity") from error
+        # Read with the same default as ``counts``: no field effects, none stopped.
+        owner_action = data.setdefault("owner_action_required", 0)
+        if type(owner_action) is not int or owner_action < 0:
+            raise GuardedApplicationError("activity")
         cleanup = data.pop("cleanup", None)
         if cleanup is not None and (
             type(cleanup) is not dict
@@ -1874,6 +1893,16 @@ class ContinuousGuardedApplication:
             else self._operation_admission.classify("background")
         ):
             next(iter(self._applications.values())).run_pending_cleanups(limit=100)
+            # A revive refused for its pending cleanup is planned again once
+            # that cleanup completes; starting over drops every member, and
+            # one still refused rejoins (#1415).
+            with self._schedule_lock:
+                awaiting = tuple(self._revives_awaiting_cleanup)
+            if any(
+                not self._repository.field_effect_cleanup_pending(plan_id)
+                for plan_id in awaiting
+            ):
+                self._restart_schedule()
             # A read-back that failed mid-run leaves a queued targeted read that
             # no cycle selects; resolve one page of them per pass rather than
             # wait for a restart (#1382). One page, not the restart drain: a

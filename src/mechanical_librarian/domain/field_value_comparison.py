@@ -86,6 +86,35 @@ def title_identity_key(value: str) -> str:
     return canonical_text(TargetDestination.TITLE, value.replace("’", "'"))
 
 
+_LEADING_TITLE_ARTICLES: Final = frozenset({"the", "a", "an"})
+
+
+def title_article_key(value: str) -> str:
+    """Compare material titles without one leading `The`, `A` or `An` (#1496).
+
+    The article belongs to the title as read, so this form only decides that
+    two titles are the same; it never replaces either one's text.
+    """
+    key = title_identity_key(value)
+    first, _, rest = key.partition(" ")
+    return rest if first in _LEADING_TITLE_ARTICLES and rest else key
+
+
+def title_has_leading_article(value: str) -> bool:
+    """Whether a title opens with an article that `title_article_key` folds."""
+    return title_leading_article(value) is not None
+
+
+def title_leading_article(value: str) -> str | None:
+    """Name the one leading article `title_article_key` folds, if any.
+
+    Only a dropped article names the same title: two titles that lead with
+    different articles stay different titles.
+    """
+    first, _, rest = title_identity_key(value).partition(" ")
+    return first if first in _LEADING_TITLE_ARTICLES and rest else None
+
+
 def values_match(
     destination: TargetDestination,
     current: object,

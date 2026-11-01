@@ -99,7 +99,8 @@ Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. There is no reset in the app;
 see [Forgotten owner password](../operations/deployment.md#forgotten-owner-password).
 Signing in returns to the page you opened, or to Library, and opening the
-address while signed in goes straight to Library.
+address while signed in goes straight to Library. Attention has no page of its
+own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
 It is sticky only while it takes at most a quarter of the window; taller, it
@@ -174,14 +175,18 @@ badge counts works needing a decision. Under a search the status reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
-The lenses are All (the default), Needs attention, No attention needed and Not
-matched. Lens, search, cursors, selected work and field live in the URL, so
-deep links and Back and Forward work.
+The lenses are All (the default), Needs attention, No attention needed, Not
+matched and Could not finish, in one row that scrolls sideways when the panel is narrow. Lens,
+search, cursors, selected work and field live in the URL, so deep links and
+Back and Forward work. The pager offers only the moves that exist and is absent
+when the works fit on one page.
 
 Works needing a decision come first: those with complete provider evidence,
 then those with a limited lane, under **Provider evidence complete** and
 **Provider evidence limited**. Complete does not promise a match, and limited
-does not promise a retry. The other lenses are alphabetical.
+does not promise a retry. Works that could not finish follow under
+**Could not finish**, then Not matched, then the rest. The other
+lenses are alphabetical.
 
 A work with no case, nothing to decide and no admitted provider evidence is
 **Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
@@ -191,10 +196,11 @@ only while a recovery job is scheduled), or **No provider matched**. If the
 recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
 
-A work whose preparation could not finish stays a Preparation failed safely
-row, not Not matched, even if an earlier report was unmatched. An ebook whose
-candidates were found but not admitted as proposals stays in No attention
-needed.
+A work whose latest preparation could not finish is a **Preparation failed
+safely** row in **Could not finish**, counted beside Works as `2 could not
+finish`, even if an earlier report was retained or unmatched. A decision still
+open on a retained case keeps it in Needs attention. An ebook whose candidates
+were found but not admitted as proposals stays in No attention needed.
 
 ### Rows and selection
 
@@ -229,10 +235,17 @@ A rail lists the work's fields in order and stays after a decision. Each tab
 names its status: Needs you, Decided, Automatic, Optional or No change. Empty
 fields sit behind one `Show N more fields` tab.
 
-The canvas shows current against proposed before evidence. Each choice carries
-its evidence. `Recommended` appears only for an authoritative deterministic
-selection. Recorded observations are listed separately and read-only. A
-disclosure never chooses a value.
+The canvas shows the question, one line under it with the field's own reason,
+and current against proposed. The current value's card shows only its value; a
+proposed card shows its value and, when known, the sources it came from, and
+cards carry no `Alternative N` label. Each card's Evidence control sits
+directly under its value. `Recommended` and its reason appear only for an
+authoritative deterministic selection; nothing says when there is none.
+Recorded observations appear only when the field has some or they could not be
+read, and the external-library card only when a change for the field is
+recorded. A notice never restates the reason already shown, and a decision
+carries no reminder that writes are protected. A disclosure never chooses a
+value.
 
 The server classifies every field, and the tab status follows from it:
 
@@ -241,10 +254,16 @@ The server classifies every field, and the tab status follows from it:
 - **Decided:** an owner decision is recorded.
 - **Automatic:** decided automatically. It can be inspected and deliberately
   overridden, but it is not queued.
-- **Optional:** choosable but not counted; Next skips it.
+- **Optional:** choosable but not counted; Next skips it. Its one reason says
+  why no review is needed, and no comparison condition asking for a choice is
+  shown beside it.
 - **No change:** context only. Keeping the current value is a choice only when
   an eligible alternative exists. Unsupported fields show their value and a
   reason, never a selectable `Not set`.
+
+Fields with nothing to decide sit in one collapsed panel headed `No change:`
+and their names, with any field waiting for a recovery or unavailable counted
+separately; each row gives its value and why nothing changed.
 
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An
@@ -285,7 +304,9 @@ cannot be replaced; a verified reversible field write can.
 There is no Undo and there are no bulk decisions. Going back means choosing
 the earlier value: after a write, Enter a value suggests the value it replaced ("Use
 previous value") and Choose genres tags those genres **Previous**. Authors return to an earlier value only when a
-provider proposes it.
+provider proposes it. A work that returns to an earlier content reads as new:
+the decisions recorded on it before are history, and the field shows only
+what you decide now.
 
 ### Audiobooks
 
@@ -365,7 +386,9 @@ and activating grants none. Rule codes appear only under "Technical detail".
 
 Activity is a permanent destination with no badge. Guarded state, recovery and
 recent outcomes lead the page. Pause, resume and revoke are its only prominent
-controls.
+controls. While a change is stopped until you act, for example a description
+to restore in Audiobookshelf, the header and summary say how many wait on you
+and never read as calm.
 
 ### Write permission
 
@@ -444,7 +467,8 @@ otherwise; future times are never relative.
 - From 761 to 1199 pixels Attention is a drawer: everything behind it except
   the toolbar with the Attention toggle is inert, and Tab stays inside. At 760
   pixels and below, the list, the work and Attention are separate steps, and
-  choosing a work scrolls Back to works just below the masthead.
+  choosing a work, from the list or Attention, scrolls Back to works just below
+  the masthead.
 - No page scrolls horizontally at 1440, 884, 390 or 320 pixels in either
   theme. At 200% text, Library, Policy, Activity and Settings keep every
   control reachable inside its container at every width, and Activity rows

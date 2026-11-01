@@ -7559,7 +7559,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
             assert title["decision_actions"] == []
             assert not title["needs_attention"]
             assert (
-                "Automatic handling is suspended pending a safety recovery."
+                "Changes made for you are waiting for a safety recovery."
                 == title["classification_reason"]
             )
             library = repository.read_review_library(None, 50, 0, "needs_attention")
@@ -7586,7 +7586,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
             )
             assert attention.total == projected["total"]
             assert ["subtitle"] == [item["destination"] for item in projected["items"]]
-            assert "Automatic handling is suspended pending a safety recovery." == next(
+            assert "Changes made for you are waiting for a safety recovery." == next(
                 item["classification_reason"]
                 for item in projected["items"]
                 if item["destination"] == "subtitle"
@@ -8946,6 +8946,88 @@ def test_title_recovery_reprojects_a_successor_that_carries_the_owners_hold(
     repository.close()
 
 
+@pytest.mark.parametrize("held", [False, True])
+@pytest.mark.parametrize("blocker", ["pause", "suspension"])
+def test_resume_projects_a_direct_successor_completed_while_titles_waited(
+    tmp_path, blocker, held
+):
+    """#1364: a work re-read while automatic handling is paused or titles are
+    suspended is admitted as a direct successor (``superseded``) with nothing
+    projected. Resuming projects it exactly once, and a carried hold shows."""
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import (
+        complete_title_work,
+        isbn_title_report,
+        publish_title_case,
+    )
+
+    repository = open_repository(tmp_path / "title.sqlite")
+    first = isbn_title_report()
+    prior, _ = publish_title_case(repository, first)
+    assert len(_automatic_titles(repository, prior)) == 1
+    hold = None
+    if held:
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(prior))["case"]
+        )
+        title = next(
+            value for value in case.proposals if value["destination"] == "title"
+        )
+        hold = HumanDecision.create(
+            case,
+            proposal_id=title["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination="title",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="title-owner-hold",
+            occurred_at=5,
+        )
+        repository.record_human_decision(hold)
+    controls = AutomaticSafetyControls(repository)
+    if blocker == "pause":
+        controls.pause(True, 6)
+    else:
+        controls.suspend("automatic_admission_failed", 6, "title_layout")
+    successor, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Series 3 - Example Title"),
+        successor_of=first,
+    )
+    assert successor != prior
+    assert repository._connection.execute(
+        "SELECT outcome FROM current_review_case_lineages WHERE review_case_id=?",
+        (successor,),
+    ).fetchone() == ("superseded",)
+    assert _automatic_titles(repository, successor) == []
+    if blocker == "pause":
+        controls.pause(False, 30)
+    else:
+        controls.recover(30, "title_layout")
+    action = repository.claim_review_pipeline_action(32)
+    assert action is not None and action.stage == "projection"
+    assert action.review_case_id == successor
+    repository.persist_shadow_outcome(successor, 33, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 34)
+    automatic = _automatic_titles(repository, successor)
+    assert len(automatic) == 1
+    field = next(
+        value
+        for value in InspectCurrentReviewCase(repository).run(successor)["fields"]
+        if value["destination"] == "title"
+    )
+    assert (field["manual_hold"], field["human_decision"]) == (held, None)
+    assert _pending_titles(repository, successor) == ([] if held else automatic)
+    # Blocking and releasing titles again projects nothing more: the decided
+    # successor is no longer eligible.
+    controls.suspend("automatic_admission_failed", 35, "title_layout")
+    controls.recover(35, "title_layout")
+    assert repository.claim_review_pipeline_action(36) is None
+    assert _automatic_titles(repository, successor) == automatic
+    repository.close()
+
+
 @pytest.mark.parametrize(
     "excluded",
     [
@@ -9739,47 +9821,47 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         (
             "absent",
             "no_candidate",
-            "No eligible value was found in the retained evidence.",
+            "No source offered a value that can be used here.",
         ),
         (
             "quality",
             "description_quality_floor_not_met",
-            "Retained source text does not meet the automatic synopsis rules.",
+            "No source description meets the rules for a synopsis.",
         ),
         (
             "unproved",
             "target_work_applicability_unproved",
-            "The retained evidence does not establish that this value describes this work.",
+            "The sources do not show that this value describes this work.",
         ),
         (
             "competition",
             "ambiguous_evidence",
-            "The retained evidence does not select one value for automatic handling.",
+            "The sources do not agree on one value.",
         ),
         (
             "unusable",
             "target_state_unusable",
-            "The current field value cannot be used safely for this automatic operation.",
+            "The current value cannot safely be changed for you.",
         ),
         (
             "unavailable",
             "series_provider_failure_isbn",
-            "A contributing ISBN lookup did not supply usable evidence.",
+            "An ISBN lookup did not return a usable answer.",
         ),
         (
             "edition",
             "manifestation_verification_required",
-            "The retained evidence does not verify the ISBN for this edition.",
+            "The sources do not confirm this ISBN for this edition.",
         ),
         (
             "unqualified",
             "automatic_unqualified",
-            "This policy option is not qualified for automatic handling.",
+            "Your settings leave this kind of change to you.",
         ),
         (
             "contradicted",
             "target_work_contradicted",
-            "The retained evidence contradicts applicability to this work.",
+            "The sources suggest this value belongs to a different work.",
         ),
     ],
 )

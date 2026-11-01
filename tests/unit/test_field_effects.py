@@ -3472,6 +3472,29 @@ def test_cover_cleanup_faults_do_not_masquerade_as_claim_contention(
     assert effects.repository.field_effect_cleanup_pending(cover.plan.plan_id)
 
 
+def test_a_failed_claim_keeps_a_waiting_covers_recovery_copy(
+    effects: _EffectEnvironment,
+) -> None:
+    """A claim lost to a connection stale keeps the restore point its re-plan
+    resumes with, and schedules no cleanup for it (#1415)."""
+    cover = _plan(effects, "cover", None, "cover_" + "1" * 64, "c")
+    effects.claim_hook.callback = lambda plan: (
+        effects.repository.transition_field_effect(
+            plan.plan_id, "planned", "stale", effects.clock(), "connection"
+        )
+    )
+    with pytest.raises(GuardedApplicationError, match="claim_conflict"):
+        effects.service.apply(cover.plan.plan_id)
+    waiting = effects.service.status(cover.plan.plan_id)
+    assert (waiting.state, waiting.failure) == ("stale", "connection")
+    assert effects.recovery.exists(cover.plan.plan_id)
+    assert not effects.repository.field_effect_cleanup_pending(cover.plan.plan_id)
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM field_effect_cleanups WHERE plan_id=?",
+        (cover.plan.plan_id,),
+    ).fetchone() == (0,)
+
+
 def test_cover_cleanup_separates_a_vanished_row_from_a_storage_fault(
     effects: _EffectEnvironment,
 ) -> None:
@@ -7911,12 +7934,12 @@ def test_activity_witness_encoding_distinguishes_exact_sqlite_scalar_types():
 def test_owner_accepted_language_respelling_writes_the_display_name(
     effects, audio, current
 ):
-    """A respelling is the owner's choice; once accepted it writes the name (#1314)."""
+    """Under Ask, an owner-accepted respelling writes the name (#1314, #1496)."""
     from mechanical_librarian.domain.human_decision import HumanDecision
     from tests.support.language_reports import language_report, publish_language_case
 
     report = language_report(("English", "en"), current, audio=audio)
-    case_id, _ = publish_language_case(effects.repository, report)
+    case_id, _ = publish_language_case(effects.repository, report, destination="ask")
     effects.repository.persist_shadow_outcome(case_id, 4)
     assert not any(
         json.loads(value)["destination"] == "language"

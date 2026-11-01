@@ -188,28 +188,72 @@ def test_owner_choosable_is_an_uncounted_inspectable_choice() -> None:
     assert not re.search(r"needs (?:your )?review", value.reason, re.IGNORECASE)
 
 
+def test_an_immaterial_optional_choice_says_why_no_review_is_needed() -> None:
+    """One statement explains an optional choice beside its conditions (#1450)."""
+    plain, immaterial = (
+        classify_review_field(
+            **_BASE_INPUTS,
+            current_value="Title",
+            proposed_values=("Other",),
+            owner_choosable=True,
+            immaterial_alternatives=flag,
+        )
+        for flag in (False, True)
+    )
+
+    assert plain.reason == (
+        "No review is needed. You can still keep the current value or "
+        "choose a proposed one."
+    )
+    assert immaterial.reason == (
+        "The proposed values only shorten or extend the current one, so no "
+        "review is needed. You can still keep the current value or choose a "
+        "proposed one."
+    )
+    assert immaterial == plain.__class__(
+        plain.state,
+        immaterial.reason,
+        plain.needs_attention,
+        plain.editable,
+        plain.recorded,
+        plain.navigation_role,
+        plain.preservation_only,
+    )
+    # Every state that decides first keeps its own reason.
+    assert (
+        classify_review_field(
+            **{**_BASE_INPUTS, "attention_candidate": True},
+            current_value="Title",
+            proposed_values=("Other",),
+            owner_choosable=True,
+            immaterial_alternatives=True,
+        ).reason
+        == "This field needs your review."
+    )
+
+
 @pytest.mark.parametrize(
     ("cause", "guidance"),
     (
         (
             "unsupported",
-            "This field is unavailable for the current service capability.",
+            "Your library service cannot change this field.",
         ),
         (
             "automatic_safety_suspended",
-            "Automatic handling is suspended pending a safety recovery.",
+            "Changes made for you are waiting for a safety recovery.",
         ),
         (
             "external_field_failure",
-            "This field is waiting for an external service recovery.",
+            "This field is waiting for an outside service to recover.",
         ),
         (
             "external_connection_failure",
-            "This connection is waiting for an external service recovery.",
+            "This connection is waiting for an outside service to recover.",
         ),
         (
             "external_recovered",
-            "External recovery completed; this field can be reviewed again.",
+            "The outside service recovered; you can review this field again.",
         ),
     ),
 )
@@ -291,7 +335,7 @@ def test_advanced_automatic_effect_is_inspect_only() -> None:
     assert not value.editable
     # A verified automatic effect is inspect-only while its authority is still
     # being resolved; it may become replaceable again once that state settles.
-    assert "cannot be overridden yet" in value.reason
+    assert "cannot be changed yet" in value.reason
 
 
 def test_attention_continues_after_two_contradictory_batches(

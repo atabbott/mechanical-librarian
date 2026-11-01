@@ -624,6 +624,17 @@ _HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL = (
     "CREATE INDEX human_decisions_case_destination "
     "ON human_decisions(review_case_id,destination)"
 )
+# A case admitted again after the work left it starts a new episode (#1358).
+# Its owner decisions up to `decision_floor` and the writes planned up to
+# `effect_floor`, the latest ordinal and field effect rowid when it was
+# admitted again, are history. Only re-admission writes a row.
+_REVIEW_CASE_EPISODES_SQL = (
+    "CREATE TABLE review_case_episodes ("
+    "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
+    "decision_floor INTEGER NOT NULL CHECK(typeof(decision_floor)='integer' AND decision_floor>=0), "
+    "effect_floor INTEGER NOT NULL CHECK(typeof(effect_floor)='integer' AND effect_floor>=0)) "
+    "WITHOUT ROWID"
+)
 _HUMAN_DECISION_EVENTS_SQL = (
     "CREATE TABLE human_decision_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'human_decision_event_[0-9a-f]*' AND length(event_id)=85), "
@@ -1079,6 +1090,10 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         ("insert",),
         _packages_of_case("{row}.destination"),
     ),
+    "review_case_episodes": (
+        ("insert", "update", "delete"),
+        _packages_of_case("NULL"),
+    ),
     "automatic_decisions": (
         ("insert",),
         _packages_of_case("{row}.destination"),
@@ -1139,6 +1154,7 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "global_suspension",
         "category_suspensions_document",
     ),
+    "review_case_episodes": ("review_case_id", "decision_floor"),
     "current_description_decisions": ("review_case_id",),
     "current_cover_considerations": ("review_case_id", "consideration_id"),
     "current_cover_selection_authorities": (
@@ -1282,6 +1298,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_HUMAN_DECISIONS_SQL)
     connection.execute(_HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL)
     connection.execute(_HUMAN_DECISION_EVENTS_SQL)
+    connection.execute(_REVIEW_CASE_EPISODES_SQL)
     connection.execute(_COVER_CONSIDERATIONS_SQL)
     connection.execute(_CURRENT_COVER_CONSIDERATIONS_SQL)
     connection.execute(_COVER_SELECTION_AUTHORITIES_SQL)
@@ -1586,6 +1603,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
             ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
             ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
+            ("table", "review_case_episodes", _REVIEW_CASE_EPISODES_SQL),
             ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
             ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
             ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),

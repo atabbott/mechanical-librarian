@@ -809,6 +809,45 @@ describe('Activity route', () => {
     expect(screen.getAllByText(rowStatus).at(-1)).toBeVisible()
   })
 
+  it.each([
+    [
+      1,
+      'A stopped change needs you',
+      'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.',
+    ],
+    [
+      2,
+      '2 stopped changes need you',
+      'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.',
+    ],
+  ])(
+    'never reads calm while %i changes wait on the owner',
+    async (owner_action_required, heading, detail) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () => activity({ owner_action_required })),
+      }
+      renderRoute('/activity', http)
+
+      expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
+      expect(screen.getByText(detail)).toBeVisible()
+      expect(screen.getByText('Action needed')).toBeVisible()
+      expect(screen.queryByText('No action required')).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
+    },
+  )
+
+  it('stays calm when nothing waits on the owner', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity({ owner_action_required: 0 })),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(screen.getByText('No action required')).toBeVisible()
+  })
+
   it('keeps failed outcomes bounded in ledger rows', async () => {
     const failures = [
       'target_changed',

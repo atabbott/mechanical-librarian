@@ -70,7 +70,7 @@ it('keeps the active search caret through debounced Library URL changes', async 
   await user.clear(search)
   await user.type(search, 'replacement')
   await waitFor(() => expect(router.state.location.search.q).toBe('replacement'))
-  await user.click(screen.getByRole('button', { name: 'Clear' }))
+  await user.click(screen.getByRole('button', { name: 'Clear search text' }))
   expect(search).toHaveFocus()
   await waitFor(() => expect(router.state.location.search.q).toBeUndefined())
   expect(screen.getByText('1 work', { selector: '[role=status]' })).toHaveAttribute(
@@ -1759,7 +1759,7 @@ describe('Library route', () => {
       id: 'failed-work',
       title: 'Preparation unavailable',
       attentionCount: 0,
-      attention: 'no_attention_needed' as const,
+      attention: 'preparation_failed' as const,
       // Neither a case nor a report: there is nothing here to open.
       detailUrl: null,
       detailKind: null,
@@ -1791,16 +1791,21 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getLibrary: vi.fn(async () => ({
-        lens: 'all' as const,
+      getLibrary: vi.fn(async (search: LibrarySearch) => ({
+        lens: search.lens,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 0, failed: 1 },
         works: [failed],
       })),
     }
     renderRoute('/library?lens=all', http)
 
     expect(await screen.findByText('Preparation failed safely')).toBeVisible()
+    // Counted as failed beside the Works count, never as needing no attention,
+    // under its own heading in All (#1413).
+    expect(await screen.findByText('1 work · 1 could not finish')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     const terminal = document.querySelector('.library-work-row.is-terminal')
     expect(terminal?.tagName).toBe('ARTICLE')
     expect(terminal).toHaveAttribute('aria-label', 'Terminal preparation failure')
@@ -1810,6 +1815,22 @@ describe('Library route', () => {
       'Update the configured provider credentials, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
+
+    // Its own lens reads only failed works, alphabetically and without a group.
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Could not finish' }))
+    await waitFor(() =>
+      expect(http.getLibrary).toHaveBeenCalledWith(
+        expect.objectContaining({ lens: 'preparation_failed' }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    )
+    expect(await screen.findByRole('link', { name: 'Could not finish' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    expect(screen.queryByRole('heading', { name: 'Could not finish' })).toBeNull()
+    expect(screen.getByText('Preparation failed safely')).toBeVisible()
   })
 
   it.each([
@@ -1939,7 +1960,7 @@ describe('Library route', () => {
         getLibrary: vi.fn(async () => ({
           lens: 'all' as const,
           page: 1,
-          counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+          counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
           works: [...library.works, recorded],
         })),
       }
@@ -2141,7 +2162,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
         works: [masked],
       })),
     }
@@ -2154,7 +2175,7 @@ describe('Library route', () => {
     expect(row).not.toHaveTextContent('No provider matched')
     expect(row).toHaveAccessibleName(/Preparation failed safely/u)
     expect(row).not.toHaveAccessibleName(/No provider matched/u)
-    expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.status-pill.is-notice')).not.toBeNull()
   })
@@ -2194,7 +2215,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: LibrarySearch) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 4, clear: 0, notMatched: 4 },
+      counts: { attention: 0, all: 4, clear: 0, notMatched: 4, failed: 0 },
       works,
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -2204,7 +2225,7 @@ describe('Library route', () => {
     expect(await screen.findByText('4 works · 4 not matched')).toBeVisible()
     expect(
       within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
-    ).toHaveLength(4)
+    ).toHaveLength(5)
     expect(screen.getByRole('heading', { name: 'Not matched' })).toBeVisible()
     for (const [key, reason] of [
       ['refused', 'Found, but not this work'],
@@ -2229,7 +2250,7 @@ describe('Library route', () => {
     )
     expect(await screen.findByRole('link', { name: 'Not matched' })).toHaveAttribute(
       'aria-current',
-      'page',
+      'true',
     )
     // Inside its own lens the rows need no group heading.
     expect(screen.queryByRole('heading', { name: 'Not matched' })).toBeNull()
@@ -2246,11 +2267,11 @@ describe('Library route', () => {
     expect(screen.getByRole('link', { name: 'Not matched' })).toBeVisible()
   })
 
-  it('adds Not matched to the Works count only when there is one to state and no search (#1407)', async () => {
-    const page = (search: LibrarySearch, notMatched: number) => ({
+  it('adds Not matched and Could not finish to the Works count only when there is one to state and no search (#1407, #1413)', async () => {
+    const page = (search: LibrarySearch, notMatched: number, failed = 0) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2 - notMatched, notMatched },
+      counts: { attention: 0, all: 2, clear: 2 - notMatched - failed, notMatched, failed },
       works: [],
     })
     const counted = async (getLibrary: ReviewHttp['getLibrary']) => {
@@ -2267,7 +2288,13 @@ describe('Library route', () => {
         search.lens === 'all' ? new Promise<never>(() => undefined) : page(search, 1),
       ),
     )
-    await waitFor(() => expect(status).toHaveTextContent(/^2 works · … not matched$/u))
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · …$/u))
+    status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 1, 1)))
+    await waitFor(() =>
+      expect(status).toHaveTextContent(/^2 works · 1 not matched · 1 could not finish$/u),
+    )
+    status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 0, 1)))
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · 1 could not finish$/u))
     status = await counted(
       vi.fn(async (search: LibrarySearch) => {
         if (search.lens === 'all') throw new ApiError(503, 'unavailable')
@@ -2290,6 +2317,9 @@ describe('Library route', () => {
   it('keeps an unknown lens out of the URL it reads (#1407)', () => {
     expect(normalizeLibrarySearch({ lens: 'not_matched' })).toEqual({ lens: 'not_matched' })
     expect(normalizeLibrarySearch({ lens: 'not_matched_refused' })).toEqual({ lens: 'all' })
+    expect(normalizeLibrarySearch({ lens: 'preparation_failed' })).toEqual({
+      lens: 'preparation_failed',
+    })
   })
 
   it('states media health on an openable row whose latest preparation could not read a file', async () => {
@@ -2332,7 +2362,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
         works: [retained],
       })),
     }
@@ -2372,7 +2402,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
+        counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
         works: [current],
       })),
     }
@@ -2415,7 +2445,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
       works: search.q ? [] : [listed],
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -2463,7 +2493,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2, notMatched: 0 },
+      counts: { attention: 0, all: 2, clear: 2, notMatched: 0, failed: 0 },
       works: search.q ? [] : [first, second],
     }))
     const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -2652,13 +2682,66 @@ describe('Library route', () => {
     )
   })
 
-  it('closes the last page in plain words (#1286)', async () => {
-    // The fixture page has no next cursor, so it is the last page.
-    const last = { ...library, page: 3, previousCursor: 'page-2' }
-    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => last) }
-    renderRoute('/library?lens=all&cursor=page-3', http)
-    expect(await screen.findByText('Page 3 · Last page')).toBeVisible()
-    expect(screen.queryByText(/bounded current result/u)).toBeNull()
+  it.each([
+    ['first', { page: 1, nextCursor: 'page-2' }, false, true],
+    ['middle', { page: 2, nextCursor: 'page-3', previousCursor: 'page-1' }, true, true],
+    ['last', { page: 3, previousCursor: 'page-2' }, true, false],
+  ] as const)(
+    'offers only the moves the %s page has (#1520)',
+    async (_name, cursors, previous, next) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getLibrary: vi.fn(async () => ({ ...library, ...cursors })),
+      }
+      renderRoute('/library?lens=all', http)
+      expect(await screen.findByText(`Page ${String(cursors.page)}`)).toBeVisible()
+      expect(screen.queryAllByRole('button', { name: '← Previous' })).toHaveLength(previous ? 1 : 0)
+      expect(screen.queryAllByRole('button', { name: 'Next →' })).toHaveLength(next ? 1 : 0)
+      expect(screen.queryByText(/Last page|bounded current result/u)).toBeNull()
+    },
+  )
+
+  it('shows no pager when the works fit on one page (#1520)', async () => {
+    renderRoute('/library?lens=all')
+    await screen.findByRole('button', { name: /^A Book\./u })
+    expect(document.querySelector('.library-pager')).toBeNull()
+    expect(screen.queryByText(/^Page /u)).toBeNull()
+  })
+
+  it('clears the search from inside the field, only while it has text (#1520)', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all')
+    const box = await screen.findByRole('searchbox')
+    expect(box).toHaveAttribute('maxLength', '128')
+    expect(screen.queryByRole('button', { name: 'Clear search text' })).toBeNull()
+    await user.type(box, 'book')
+    await waitFor(() => expect(router.state.location.search.q).toBe('book'))
+    const clear = screen.getByRole('button', { name: 'Clear search text' })
+    expect(box.parentElement).toContainElement(clear)
+    await user.click(clear)
+    expect(box).toHaveFocus()
+    expect(box).toHaveValue('')
+    await waitFor(() => expect(router.state.location.search.q).toBeUndefined())
+    expect(screen.queryByRole('button', { name: 'Clear search text' })).toBeNull()
+  })
+
+  it('names one current page, with the current lens current within it (#1530)', async () => {
+    renderRoute('/library?lens=needs_attention')
+    const lenses = await screen.findByRole('navigation', { name: 'Library lenses' })
+    await waitFor(() =>
+      expect(within(lenses).getByRole('link', { name: 'Needs attention' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    )
+    for (const link of within(lenses).getAllByRole('link'))
+      if (link.textContent !== 'Needs attention') expect(link).not.toHaveAttribute('aria-current')
+    expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
+    expect(
+      within(screen.getByRole('navigation', { name: 'Primary workspace' })).getByRole('link', {
+        name: 'Library',
+      }),
+    ).toHaveAttribute('aria-current', 'page')
   })
 
   describe('retention and intent prefetch', () => {
@@ -2919,7 +3002,7 @@ describe('Library route', () => {
         q: 'clock',
       }),
     )
-    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    await user.click(screen.getByRole('button', { name: 'Clear search text' }))
     await waitFor(() =>
       expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1' }),
     )
@@ -3005,10 +3088,9 @@ describe('Library route', () => {
               {
                 alternativeId: null,
                 selection: 'current',
-                rationale: 'Keep the value currently held by the local library.',
+                rationale: '',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for the current value.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -3023,8 +3105,7 @@ describe('Library route', () => {
                 selection: 'proposed',
                 rationale: 'This retained alternative is eligible for owner selection.',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for this alternative.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -3039,8 +3120,7 @@ describe('Library route', () => {
                 selection: 'proposed',
                 rationale: 'This retained alternative preserves the local value.',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for this alternative.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -3061,14 +3141,16 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
-    expect(screen.getByText('Eligible for a library update')).toBeVisible()
+    // A field that is merely eligible has no external-library card (#1519).
+    expect(screen.queryByLabelText('External update status')).toBeNull()
+    expect(screen.queryByText('Eligible for a library update')).toBeNull()
     const evidenceButtons = screen.getAllByRole('button', { name: /Evidence for/u })
     const currentEvidence = evidenceButtons[0]
     const proposedEvidence = evidenceButtons[1]
     if (!currentEvidence || !proposedEvidence)
       throw new Error('choice evidence controls are missing')
     expect(currentEvidence).toHaveAccessibleName('Evidence for Current value: Old title')
-    expect(proposedEvidence).toHaveAccessibleName('Evidence for Alternative 1: New title')
+    expect(proposedEvidence).toHaveAccessibleName('Evidence for proposed value: New title')
     await user.click(currentEvidence)
     expect(
       screen.getByRole('button', { name: 'Evidence for Current value: Old title' }),
@@ -3079,7 +3161,7 @@ describe('Library route', () => {
     expect(await screen.findByText('Local library record')).toBeVisible()
     expect(screen.getByText('Title: Old title')).toBeVisible()
     expect(screen.getByText('Local presence')).toBeVisible()
-    expect(screen.getAllByText('No recommendation retained').length).toBeGreaterThan(0)
+    expect(screen.queryByText('No recommendation retained')).toBeNull()
     expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
     await user.click(proposedEvidence)
     expect(await screen.findByText('Open Library')).toBeVisible()
@@ -3087,7 +3169,7 @@ describe('Library route', () => {
     expect(screen.getByText('External corroboration')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(
-      screen.getAllByText('The sources disagree; choose the value yourself').length,
+      screen.getAllByText(/^The sources disagree; choose the value yourself\.?$/u).length,
     ).toBeGreaterThan(0)
     expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
@@ -3202,7 +3284,7 @@ describe('Library route', () => {
       if (!editable) expect(screen.queryByText('Current value')).toBeNull()
       await userEvent.setup().click(
         screen.getByRole('button', {
-          name: editable ? /Evidence for Alternative 1/u : 'Evidence',
+          name: editable ? /Evidence for proposed value: New series/u : 'Evidence',
         }),
       )
       expect(await screen.findByText('Candidate source')).toBeVisible()
@@ -3259,18 +3341,19 @@ describe('Library route', () => {
         })),
       })
       const neutral = selected && ['m4b', 'm4a', 'mp3'].includes(mediaKind)
+      // The field's one condition is the line under the question (#1519).
       expect(
         await screen.findByText(
           neutral
-            ? 'Different source descriptions'
-            : 'The sources disagree; choose the value yourself',
+            ? 'Different source descriptions.'
+            : 'The sources disagree; choose the value yourself.',
         ),
       ).toBeVisible()
       expect(
         screen.queryByText(
           neutral
-            ? 'The sources disagree; choose the value yourself'
-            : 'Different source descriptions',
+            ? /^The sources disagree; choose the value yourself\.?$/u
+            : /^Different source descriptions\.?$/u,
         ),
       ).toBeNull()
     },
@@ -3537,12 +3620,15 @@ describe('Library route', () => {
       })),
     })
 
-    const notice = await screen.findByRole('complementary', {
-      name: 'Comparison condition',
-    })
-    expect(notice).toHaveTextContent(
-      'Another provider states a different subtitle; choose the subtitle yourself',
-    )
+    // The first condition is the line under the question; the box keeps the
+    // rest and never says it again (#1519).
+    expect(
+      await screen.findByText(
+        'Another provider states a different subtitle; choose the subtitle yourself.',
+      ),
+    ).toBeVisible()
+    const notice = screen.getByRole('complementary', { name: 'Comparison condition' })
+    expect(notice).not.toHaveTextContent('Another provider states a different subtitle')
     expect(notice).toHaveTextContent(
       'The colon segment reads as title text: no provider carries it, or no more providers state the plain title than carry the decorated form',
     )
@@ -4068,7 +4154,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Keep the local cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: reference(2),
@@ -4083,7 +4169,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: reference(3),
@@ -4101,7 +4187,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: reference(5),
@@ -4116,7 +4202,7 @@ describe('Library route', () => {
           limitations: ['insufficient_identity_evidence'],
           rationale: 'This retained candidate requires explicit owner confirmation.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
       ],
       current: true,
@@ -4230,7 +4316,9 @@ describe('Library route', () => {
       defectHeading.compareDocumentPosition(preferenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(within(cleanChecks).getByText('Small-preview title')).toBeVisible()
-    const singleFlagChecks = within(comparison).getByLabelText('Alternative 4 cover visual checks')
+    const singleFlagChecks = within(comparison).getByLabelText(
+      'Open Library cover, 800 × 1200 px (4) visual checks',
+    )
     const singleFlagSummary = singleFlagChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!singleFlagSummary) throw new Error('single-flag cover summary is missing')
     if (mediaKind === 'epub') {
@@ -4240,7 +4328,9 @@ describe('Library route', () => {
       expect(within(singleFlagSummary).getByText('No visual defects flagged')).toBeVisible()
       expect(within(singleFlagSummary).queryByText('Audiobook branding')).toBeNull()
     }
-    const flaggedChecks = within(comparison).getByLabelText('Alternative 5 cover visual checks')
+    const flaggedChecks = within(comparison).getByLabelText(
+      'Open Library cover, 800 × 1200 px (5) visual checks',
+    )
     const flaggedSummary = flaggedChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!flaggedSummary) throw new Error('flagged cover summary is missing')
     expect(
@@ -4295,14 +4385,16 @@ describe('Library route', () => {
     const mixedComparison = await screen.findByLabelText('Choose a cover')
     // The card itself says the match is not confirmed before any tap.
     expect(
-      within(mixedComparison).getByRole('radio', { name: /^Choose Alternative 4 cover/u }),
+      within(mixedComparison).getByRole('radio', {
+        name: /^Choose Open Library cover, 800 × 1200 px \(4\)/u,
+      }),
     ).toHaveTextContent('Match not confirmed')
     const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
     const currentCard = within(mixedComparison).getByRole('radio', {
       name: 'Choose Current cover',
     })
     const forwardCard = within(mixedComparison).getByRole('radio', {
-      name: /Alternative 3 cover/u,
+      name: /Open Library cover, 800 × 1200 px \(3\)/u,
     })
     const forwardChoice = forwardCard.closest<HTMLElement>('.cover-choice')
     const currentChoice = currentCard.closest<HTMLElement>('.cover-choice')
@@ -4342,10 +4434,12 @@ describe('Library route', () => {
     expect(pinnedTrack.scrollLeft).toBe(190)
 
     await user.click(
-      within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 4 cover' }),
+      within(mixedComparison).getByRole('button', {
+        name: 'Evidence for Open Library cover, 800 × 1200 px (4)',
+      }),
     )
     const ineligibleEvidence = within(mixedComparison).getByLabelText(
-      'Alternative 4 cover evidence',
+      'Open Library cover, 800 × 1200 px (4) evidence',
     )
     await user.click(ineligibleEvidence)
     fireEvent.keyDown(ineligibleEvidence, { key: 'Enter' })
@@ -4353,13 +4447,17 @@ describe('Library route', () => {
     expect(recordDecision).not.toHaveBeenCalled()
 
     await user.click(
-      within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 1 cover' }),
+      within(mixedComparison).getByRole('button', {
+        name: 'Evidence for Open Library cover, 800 × 1200 px (1)',
+      }),
     )
-    await user.click(within(mixedComparison).getByLabelText('Alternative 1 cover evidence'))
+    await user.click(
+      within(mixedComparison).getByLabelText('Open Library cover, 800 × 1200 px (1) evidence'),
+    )
     expect(recordDecision).not.toHaveBeenCalled()
     // One tap records; there is no dialog to confirm or cancel (#1290).
     const firstAlternative = within(mixedComparison).getByRole('radio', {
-      name: /^Choose Alternative 1 cover/u,
+      name: /^Choose Open Library cover, 800 × 1200 px \(1\)/u,
     })
     await user.click(firstAlternative)
     expect(recordDecision).toHaveBeenCalledOnce()
@@ -4393,7 +4491,9 @@ describe('Library route', () => {
         ],
       })),
     })
-    await user.click(await screen.findByRole('radio', { name: 'Choose Alternative 4 cover' }))
+    await user.click(
+      await screen.findByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (4)' }),
+    )
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(revision).toHaveBeenCalledOnce()
     expect(revision.mock.calls[0]?.[1].coverConfirmation).toEqual({
@@ -4453,9 +4553,13 @@ describe('Library route', () => {
     })
     const recommendedComparison = await screen.findByLabelText('Choose a cover')
     expect(within(recommendedComparison).getByText('Recommended cover ready')).toBeVisible()
+    // A proposed cover card is named by its sources, never "Alternative N" (#1519).
     expect(
-      within(recommendedComparison).getByText('Alternative 2 cover · Recommended'),
-    ).toBeVisible()
+      within(recommendedComparison)
+        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
+        .querySelector('small'),
+    ).toHaveTextContent(/^Recommended$/u)
+    expect(within(recommendedComparison).queryByText(/Alternative \d cover/u)).toBeNull()
 
     for (const [reason, explanation] of [
       [
@@ -4552,7 +4656,9 @@ describe('Library route', () => {
         expect(image).toHaveAttribute('loading', 'lazy')
         expect(image).toHaveAttribute('decoding', 'async')
       }
-      const merged = within(group).getByRole('radio', { name: 'Choose Alternative 2 cover' })
+      const merged = within(group).getByRole('radio', {
+        name: 'Choose Hardcover and Open Library cover',
+      })
       expect(merged.querySelector('.cover-dimensions')).toHaveTextContent('305 × 480 px')
       expect(merged.querySelector('.cover-sources')).toHaveTextContent('Hardcover · Open Library')
       expect(within(merged).getByText('Selectable retained cover.')).toBeVisible()
@@ -4617,11 +4723,15 @@ describe('Library route', () => {
       await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
       current.focus()
       await user.keyboard('{ArrowRight}')
-      expect(within(group).getByRole('radio', { name: 'Choose Alternative 1 cover' })).toHaveFocus()
+      expect(
+        within(group).getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (1)' }),
+      ).toHaveFocus()
       expect(http.recordDecision).not.toHaveBeenCalled()
       // The card states the unconfirmed match before the tap; the tap itself
       // is the explicit choice.
-      const unconfirmed = within(group).getByRole('radio', { name: 'Choose Alternative 4 cover' })
+      const unconfirmed = within(group).getByRole('radio', {
+        name: 'Choose Open Library cover, 800 × 1200 px (4)',
+      })
       expect(unconfirmed).toHaveTextContent('Match not confirmed')
       await user.click(unconfirmed)
       expect(screen.queryByRole('dialog')).toBeNull()
@@ -4634,11 +4744,7 @@ describe('Library route', () => {
           coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
         }),
       )
-      expect(
-        within(screen.getByRole('region', { name: 'Choose a cover' })).getByText(
-          'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.',
-        ),
-      ).toBeVisible()
+      expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
     })
   })
 
@@ -4671,7 +4777,7 @@ describe('Library route', () => {
             limitations: ['Preview unavailable for this retained cover.'],
             rationale: 'Keep the retained local cover.',
             recommendation: 'no_recommendation',
-            recommendationReason: 'No recommendation retained.',
+            recommendationReason: '',
           },
           {
             alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
@@ -4680,7 +4786,7 @@ describe('Library route', () => {
             limitations: [],
             rationale: 'Selectable retained cover.',
             recommendation: 'no_recommendation',
-            recommendationReason: 'No recommendation retained.',
+            recommendationReason: '',
           },
         ],
         current: true,
@@ -4805,7 +4911,7 @@ describe('Library route', () => {
       )
       expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
       const compactTrack = currentCover.closest<HTMLElement>('.library-cover-layout')
-      const alternativeCover = screen.getByRole('radio', { name: /Alternative 1 cover/u })
+      const alternativeCover = screen.getByRole('radio', { name: /Open Library cover/u })
       const alternativeChoice = alternativeCover.closest<HTMLElement>('.cover-choice')
       const compactCurrentChoice = currentCover.closest<HTMLElement>('.cover-choice')
       if (!compactTrack || !alternativeChoice || !compactCurrentChoice) {
@@ -4848,7 +4954,7 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', acceptOnlyHttp)
       expect(await screen.findByRole('radio', { name: 'Keep current cover' })).toBeDisabled()
-      expect(screen.getByRole('radio', { name: /Alternative 1 cover/u })).toBeEnabled()
+      expect(screen.getByRole('radio', { name: /Open Library cover/u })).toBeEnabled()
       await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
       expect(screen.queryByRole('radio', { name: 'Choose Current cover' })).not.toBeInTheDocument()
       expect(acceptOnlyHttp.recordDecision).not.toHaveBeenCalled()
@@ -4911,7 +5017,7 @@ describe('Library route', () => {
             }),
           }
           renderRoute('/library?lens=all&preview=case-1&field=cover', capabilityHttp)
-          await screen.findByRole('radio', { name: /Alternative 1 cover/u })
+          await screen.findByRole('radio', { name: /Open Library cover/u })
           await waitFor(() => expect(capabilityHttp.getReviewerAccess).toHaveBeenCalledOnce())
           if (capability === 'configured') {
             await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
@@ -5076,7 +5182,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Keep the local cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
@@ -5085,7 +5191,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
       ],
       candidates: [
@@ -5244,10 +5350,9 @@ describe('Library route', () => {
               {
                 alternativeId: null,
                 selection: 'current',
-                rationale: 'Keep the value currently held by the local library.',
+                rationale: '',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for the current value.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -5262,8 +5367,7 @@ describe('Library route', () => {
                 selection: 'proposed',
                 rationale: 'This retained alternative is eligible for owner selection.',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for this alternative.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -5456,7 +5560,8 @@ describe('Library route', () => {
     await screen.findByRole('heading', { name: 'Review complete' })
     // The preserved title is inspectable, but no decision was recorded for it.
     expect(screen.getByText('1 recorded · work complete')).toBeVisible()
-    expect(screen.getByText('1 recorded field outcome. No library data changed.')).toBeVisible()
+    expect(screen.getByText('1 recorded field outcome.')).toBeVisible()
+    expect(screen.queryByText(/No library data changed/u)).toBeNull()
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
     await user.click(within(rail).getByRole('button', { name: /^Title/u }))
     expect(await screen.findByRole('heading', { name: 'Title' })).toBeVisible()
@@ -5502,10 +5607,13 @@ describe('Library route', () => {
         target_fingerprint: series.targetFingerprint,
       },
     }
-    const initialLibrary = { ...library, counts: { all: 1, attention: 1, clear: 0, notMatched: 0 } }
+    const initialLibrary = {
+      ...library,
+      counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+    }
     const settledLibrary = {
       ...initialLibrary,
-      counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
+      counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
       works: [{ ...work, attention: 'no_attention_needed' as const, attentionCount: 0 }],
     }
     let currentDetail: CaseDetailView = { ...detail, fields: [series] }
@@ -6010,11 +6118,11 @@ describe('Library route', () => {
       // button stays in its own card, in reading order (#1290).
       await user.tab()
       expect(
-        screen.getByRole('button', { name: 'Evidence for Alternative 1: New title' }),
+        screen.getByRole('button', { name: 'Evidence for proposed value: New title' }),
       ).toHaveFocus()
       await user.tab()
       expect(
-        screen.getByRole('button', { name: 'Evidence for Alternative 2: Newer title' }),
+        screen.getByRole('button', { name: 'Evidence for proposed value: Newer title' }),
       ).toHaveFocus()
       await user.tab({ shift: true })
       await user.tab({ shift: true })
@@ -6041,6 +6149,8 @@ describe('Library route', () => {
     }
     const contextualField = {
       ...contextOnly,
+      classification: 'unsupported' as const,
+      classificationReason: 'There is nothing to decide for this field.',
       destination: 'authors' as const,
       inventoryRole: 'contextual' as const,
       proposalId: 'proposal-authors',
@@ -6050,7 +6160,7 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
+        counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
         works: library.works.map((work) => ({
           ...work,
           workAttentionCount: 0,
@@ -6079,12 +6189,16 @@ describe('Library route', () => {
     expect(screen.getByLabelText('Title current value')).toHaveTextContent('Current valueOld title')
     const evidence = screen.getByRole('button', { name: 'Evidence' })
     await user.click(evidence)
-    expect(screen.getByText('Retained evidence is unavailable for this choice.')).toBeVisible()
+    expect(
+      screen.getByText('No owner-readable source observation is retained for this choice.'),
+    ).toBeVisible()
     const hideEvidence = screen.getByRole('button', { name: 'Hide evidence' })
     expect(hideEvidence).toHaveFocus()
     await user.click(hideEvidence)
     expect(screen.getByRole('button', { name: 'Evidence' })).toHaveFocus()
-    expect(screen.queryByText('Retained evidence is unavailable for this choice.')).toBeNull()
+    expect(
+      screen.queryByText('No owner-readable source observation is retained for this choice.'),
+    ).toBeNull()
     expect(screen.queryByText('Which title should this work use?')).toBeNull()
     expect(screen.queryByText('Queue position')).toBeNull()
     expect(screen.queryByText('Choices')).toBeNull()
@@ -6102,8 +6216,8 @@ describe('Library route', () => {
     ).toBeNull()
     expect(screen.getByText('Sources')).toBeVisible()
     expect(screen.getByText('1 lookup recorded for this work')).toBeVisible()
-    expect(screen.getByText('1 field has context')).toBeVisible()
-    expect(screen.queryByText('field with contexts')).toBeNull()
+    expect(screen.getByText('No change: Authors')).toBeVisible()
+    expect(screen.queryByText(/fields? ha(?:s|ve) context/u)).toBeNull()
     await user.click(screen.getByRole('button', { name: /Subtitle.*No change/u }))
     expect(await screen.findByRole('heading', { name: 'Subtitle' })).toBeVisible()
     expect(screen.queryByText('This field needs your review.')).toBeNull()
@@ -6116,15 +6230,20 @@ describe('Library route', () => {
     expect(screen.getByText('Sources')).toBeVisible()
   })
 
-  it('keeps needs-review and recordability wording for an actionable field', async () => {
+  it('says only the field reason under the question, without the generic lines (#1519)', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', createHttp())
 
-    expect(await screen.findByText(/This field needs your review\./u)).toBeVisible()
+    // With no withheld reason or condition, the disposition is the reason.
     expect(
-      screen.getByText(
-        'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.',
-      ),
+      await screen.findByText('A change is proposed; compare it with the current value.'),
     ).toBeVisible()
+    expect(screen.queryByText('This field needs your review.')).toBeNull()
+    expect(screen.queryByText(/Title · /u)).toBeNull()
+    expect(screen.queryByText(/Automatic handling abstained/u)).toBeNull()
+    expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
+    expect(screen.queryByText(/until writes are enabled/u)).toBeNull()
+    expect(screen.queryByText('No recommendation retained')).toBeNull()
+    expect(screen.queryByText(/^Alternative \d/u)).toBeNull()
   })
 
   it.each([
@@ -6376,6 +6495,41 @@ describe('Library route', () => {
       expect(recordDecision.mock.calls[0]?.[1].destination).toBe('asin')
     })
 
+    it('states one reason beside conditions that would ask the owner (#1450)', async () => {
+      const user = userEvent.setup()
+      const reason =
+        'The proposed values only shorten or extend the current one, so no review is needed. You can still keep the current value or choose a proposed one.'
+      const description = {
+        ...asin,
+        destination: 'description' as const,
+        classificationReason: reason,
+        currentValue: 'A voyage reveals a hidden city. The crew must choose who returns home.',
+        proposedValues: [{ kind: 'text' as const, value: 'A voyage reveals a hidden city.' }],
+        notices: [
+          'competing_evidence',
+          'populated_subjective_field',
+          'work_alternative_immaterial',
+        ],
+      }
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...recording,
+          fields: [title, description],
+        })),
+      })
+      await user.click(await screen.findByRole('button', { name: /^Description/u }))
+      const canvas = document.querySelector('.decision-canvas')
+      if (!(canvas instanceof HTMLElement)) throw new Error('decision canvas missing')
+      await waitFor(() => expect(within(canvas).getByText(reason)).toBeVisible())
+      expect(
+        within(canvas).queryByRole('complementary', { name: 'Comparison condition' }),
+      ).toBeNull()
+      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toContain('so a change needs you')
+      expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
+    })
+
     it('is skipped when the field that needed review is decided', async () => {
       const user = userEvent.setup()
       const { decision, settled } = settle(title, 'keep_current')
@@ -6561,7 +6715,7 @@ describe('Library route', () => {
     }
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
-    await user.click(await screen.findByRole('radio', { name: /Alternative 1 cover/u }))
+    await user.click(await screen.findByRole('radio', { name: /Open Library cover/u }))
     if (retainSameConsideration) {
       await screen.findByText(
         'This cover comparison changed before your choice was recorded. No cover was changed.',
@@ -6569,7 +6723,7 @@ describe('Library route', () => {
       // The stale tap fails inline, beside the cover it came from; a stale
       // decision is not retried as it was (#1290).
       expect(recordDecision).toHaveBeenCalledOnce()
-      expect(screen.getByRole('radio', { name: /Alternative 1 cover/u })).toHaveFocus()
+      expect(screen.getByRole('radio', { name: /Open Library cover/u })).toHaveFocus()
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
       retainSameConsideration = false
@@ -6600,7 +6754,7 @@ describe('Library route', () => {
 
     if (directChoice) {
       const currentAlternative = screen.getByRole('radio', {
-        name: /Alternative 1 cover/u,
+        name: /Open Library cover/u,
       })
       expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
         'src',
@@ -6620,7 +6774,7 @@ describe('Library route', () => {
             'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
           ),
         ).toBeVisible()
-        expect(screen.queryByRole('radio', { name: /Alternative 1 cover/u })).toBeNull()
+        expect(screen.queryByRole('radio', { name: /Open Library cover/u })).toBeNull()
         const reconciliation = queryClient.getQueryData<{
           destination: string
           message: string
@@ -6635,7 +6789,7 @@ describe('Library route', () => {
         expect(successfulDecisions).toBe(1)
         recordedRefreshAvailable = true
         await user.click(screen.getByRole('button', { name: 'Reload current case' }))
-        expect(await screen.findByRole('radio', { name: /Alternative 1 cover/u })).toBeVisible()
+        expect(await screen.findByRole('radio', { name: /Open Library cover/u })).toBeVisible()
         await waitFor(() =>
           expect(queryClient.getQueryData(reconciliationKey('case-1'))).toBeNull(),
         )
@@ -6651,7 +6805,7 @@ describe('Library route', () => {
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
     const currentAlternative = await screen.findByRole('radio', {
-      name: /Alternative 1 cover/u,
+      name: /Open Library cover/u,
     })
     expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
       'src',
@@ -7636,7 +7790,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
+                counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
                 works: [],
               },
       ),
@@ -7838,7 +7992,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+                counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
                 works: [],
               },
       ),
@@ -8879,12 +9033,10 @@ describe('Library route', () => {
         },
       ],
     })
+    // Without consent nothing reminds the owner that nothing was written (#1519).
     for (const [writesConsented, expected] of [
-      [false, 'Nothing is written yet — applying happens separately, behind your consent.'],
-      [
-        true,
-        'Every write is logged in Activity, and read-back verification remains a separate guarded stage.',
-      ],
+      [false, '1 recorded field outcome.'],
+      [true, 'Every write is logged in Activity.'],
     ] as const) {
       const user = userEvent.setup()
       let current: CaseDetailView = { ...detail, writesConsented }
@@ -8918,13 +9070,9 @@ describe('Library route', () => {
       if (!latest) throw new Error('the current route rendered no choice')
       await user.click(latest)
       expect(await screen.findByText(expected)).toBeVisible()
-      expect(
-        screen.queryByText(
-          writesConsented
-            ? 'Nothing is written yet — applying happens separately, behind your consent.'
-            : 'Every write is logged in Activity, and read-back verification remains a separate guarded stage.',
-        ),
-      ).toBeNull()
+      expect(screen.queryByText(/Nothing is written yet|No library data changed/u)).toBeNull()
+      if (!writesConsented)
+        expect(screen.queryByText('Every write is logged in Activity.')).toBeNull()
       cleanup()
     }
   })
@@ -9251,11 +9399,100 @@ describe('Library route', () => {
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
     expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Subtitle/u })).toBeNull()
-    expect(screen.getByText('1 field has context')).toBeVisible()
-    await userEvent.setup().click(screen.getByText('1 field has context'))
+    expect(screen.getByText('1 field unavailable')).toBeVisible()
+    expect(screen.queryByText(/^No change:/u)).toBeNull()
+    await userEvent.setup().click(screen.getByText('1 field unavailable'))
     expect(
       screen.getByText('This field is unavailable for the current service capability.'),
     ).toBeVisible()
+  })
+
+  describe('the fields with nothing to decide (#1514)', () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const context = (destination: 'subtitle' | 'publisher' | 'language', reason: string) => ({
+      ...titleField,
+      classification: 'unsupported' as const,
+      classificationReason: reason,
+      destination,
+      editable: false,
+      inventoryRole: 'contextual' as const,
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      proposalId: `proposal-${destination}`,
+      proposedValues: [],
+      targetFingerprint: `fingerprint-${destination}`,
+    })
+    const unchanged = 'There is nothing to decide for this field.'
+    const waiting = 'This field is waiting for an outside service to recover.'
+    const open = async (fields: CaseDetailView['fields'][number][]) => {
+      renderRoute('/library?lens=all&preview=case-1&field=title', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [titleField, ...fields],
+        })),
+      })
+      await screen.findByRole('navigation', { name: 'Review fields' })
+      const details = document.querySelector<HTMLDetailsElement>('.automatic-resolution-details')
+      if (!details) throw new Error('the panel is missing')
+      return details
+    }
+    const rowOf = (details: HTMLElement, name: string) => {
+      const row = within(details).getByText(name).closest('.automatic-resolution-row')
+      if (!(row instanceof HTMLElement)) throw new Error(`no row for ${name}`)
+      return row
+    }
+
+    it('names one unchanged field and why nothing changed', async () => {
+      const details = await open([context('subtitle', unchanged)])
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: SubtitleShow why$/u)
+      await userEvent.setup().click(within(details).getByText('Show why'))
+      const row = rowOf(details, 'Subtitle')
+      expect(row).toHaveTextContent('No source offered a different value.')
+      expect(row).not.toHaveTextContent(/✓|No eligible change|nothing to decide/u)
+      expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
+    })
+
+    it('names every unchanged field in their order', async () => {
+      const details = await open([
+        context('subtitle', unchanged),
+        context('publisher', 'There is no other value to choose from. You can enter your own.'),
+      ])
+      expect(details.querySelector('summary')).toHaveTextContent(
+        /^No change: Subtitle, PublisherShow why$/u,
+      )
+    })
+
+    it('says a waiting field is waiting, apart from the unchanged ones', async () => {
+      const details = await open([context('publisher', waiting)])
+      expect(details.querySelector('summary')).toHaveTextContent(
+        /^1 field waiting for a recoveryShow why$/u,
+      )
+      await userEvent.setup().click(within(details).getByText('Show why'))
+      const row = rowOf(details, 'Publisher')
+      expect(row).toHaveClass('is-waiting')
+      expect(within(row).getByText('Waiting')).toBeVisible()
+      expect(row).toHaveTextContent(waiting)
+    })
+
+    it('names both kinds when the list holds both, keeping the field order', async () => {
+      const details = await open([
+        context('subtitle', unchanged),
+        context('publisher', waiting),
+        context('language', unchanged),
+      ])
+      expect(details.querySelector('summary')).toHaveTextContent(
+        /^No change: Subtitle, Language1 field waiting for a recoveryShow why$/u,
+      )
+      expect(
+        [...details.querySelectorAll('.automatic-resolution-row strong')].map(
+          (node) => node.firstChild?.textContent,
+        ),
+      ).toEqual(['Subtitle', 'Publisher', 'Language'])
+      expect(rowOf(details, 'Subtitle')).toHaveClass('is-unchanged')
+      expect(rowOf(details, 'Publisher')).toHaveClass('is-waiting')
+    })
   })
 
   it('presents a date and year as one publication field', async () => {
@@ -9546,7 +9783,7 @@ describe('Library route', () => {
           settle?.({
             ...library,
             works: [],
-            counts: { attention: 0, all: 0, clear: 0, notMatched: 0 },
+            counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
           })
         else reject?.(new Error('Collection unavailable'))
       })
@@ -9788,7 +10025,7 @@ describe('Library route', () => {
     const emptyLibrary: LibraryView = {
       lens: 'all',
       page: 1,
-      counts: { attention: 0, all: 0, clear: 0, notMatched: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
       works: [],
     }
     const http: ReviewHttp = {
@@ -10156,9 +10393,7 @@ describe('Provider evidence rail', () => {
       getLibrary: vi.fn(async () => ({ ...library, works: [failed] })),
     })
     renderRoute('/library?lens=all', http)
-    expect(
-      await screen.findByRole('heading', { name: 'Preparation needs attention' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(screen.getByRole('article', { name: 'Terminal preparation failure' })).toHaveTextContent(
       'open Background activity and choose Retry',
@@ -10554,14 +10789,11 @@ it('retries an advised selection through the ordinary controller with the same a
   option.focus()
   await user.keyboard('{Enter}')
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
-  expect(screen.getByLabelText('External update status')).not.toHaveTextContent('Choice recorded')
-  expect(screen.getByLabelText('External update status')).not.toHaveTextContent(
-    'Applied and verified',
-  )
+  expect(screen.queryByLabelText('External update status')).toBeNull()
   if (!release) throw new Error('pending decision fixture requires release')
   release()
   const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
-  expect(screen.getByLabelText('External update status')).not.toHaveTextContent('Choice recorded')
+  expect(screen.queryByLabelText('External update status')).toBeNull()
   await user.click(retry)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
   const calls = vi.mocked(http.recordDecision).mock.calls
@@ -10702,8 +10934,7 @@ it.each(['human', 'automatic_policy'] as const)(
         outcome: null,
         capability: 'allowed',
         heading: 'Choice recorded',
-        detail:
-          "Activity shows this change's progress; safety checks run before any update is sent.",
+        detail: "Activity shows this change's progress.",
       },
       {
         current: true,
@@ -10830,13 +11061,15 @@ it.each([true, false])(
       })),
     })
     const choices = await screen.findAllByRole('radio', { name: /^Choose advised value:/ })
-    const panel = screen.getByLabelText('External update status')
+    // A held choice has no change under way, so there is no library card (#1519).
+    const panel = screen.queryByLabelText('External update status')
     const [choice] = choices
     expect(choices).toHaveLength(1)
     expect(choice).toHaveAttribute('aria-checked', String(!held))
     expect(choice?.closest('article')?.classList.contains('is-selected')).toBe(!held)
     expect(Boolean(screen.queryByText(/^Selected\. Activity shows/))).toBe(!held)
-    expect(panel.textContent.includes('Choice recorded')).toBe(!held)
+    expect(Boolean(panel?.textContent.includes('Choice recorded'))).toBe(!held)
+    if (held) expect(panel).toBeNull()
     expect(Boolean(screen.queryByRole('button', { name: 'Resume automatic handling' }))).toBe(held)
     if (held)
       expect(
@@ -10875,14 +11108,12 @@ it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
         fields: [field],
       })),
     })
-    const panel = await screen.findByLabelText('External update status')
-    expect(panel).toHaveTextContent('Eligible for a library update')
-    expect(panel).toHaveTextContent(
-      'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
-    )
-    expect(panel).not.toHaveTextContent('queues nothing')
-    expect(panel).not.toHaveTextContent('Choice recorded')
-    expect(panel).not.toHaveTextContent('Applied and verified')
+    // An eligible field with no recorded change has no library card (#1519).
+    await screen.findByRole('heading', { name: /description/iu })
+    expect(screen.queryByLabelText('External update status')).toBeNull()
+    expect(
+      screen.queryByText(/Eligible for a library update|Being eligible sends nothing/u),
+    ).toBeNull()
   },
 )
 
@@ -11773,7 +12004,7 @@ describe('library provider throttling notice (#1282)', () => {
 describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const counted = (attention: number, all: number): LibraryView => ({
     ...library,
-    counts: { attention, all, clear: all - attention, notMatched: 0 },
+    counts: { attention, all, clear: all - attention, notMatched: 0, failed: 0 },
   })
   const badge = () => document.querySelector('.attention-toggle strong')
   const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')
@@ -11875,8 +12106,8 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         ...library,
         lens: search.lens,
         counts: search.q
-          ? { attention: 1, all: 4, clear: 2, notMatched: 1 }
-          : { attention: 3, all: 10, clear: 5, notMatched: 2 },
+          ? { attention: 1, all: 4, clear: 2, notMatched: 1, failed: 0 }
+          : { attention: 3, all: 10, clear: 5, notMatched: 2, failed: 0 },
       }))
       renderRoute(`/library?lens=${lens}&q=needle`, http)
       await waitFor(() =>
@@ -12585,25 +12816,221 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await waitFor(() => expect(document.activeElement).not.toBe(document.body))
     expect(screen.getByRole('button', { name: 'Back to works' })).toBeVisible()
   })
+})
 
-  it.each([
-    [2, 'fields match this search'],
-    [1, 'field matches this search'],
-  ] as const)('V8: /attention under a search reads %i %s', async (total, copy) => {
-    const http = createHttp()
-    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({
-      total,
-      items: [railItem('case-1', 'title', 'A Book', total)],
-    }))
-    renderRoute('/attention?q=needle', http)
-    const count = await screen.findByText(copy)
-    expect(count.previousElementSibling).toHaveTextContent(String(total))
-    cleanup()
-    renderRoute('/attention', http)
+// A field decision shows the question, the values and what is specific to
+// that question, nothing else (#1519).
+describe('a focused field decision (#1519)', () => {
+  const base = detail.fields[0]
+  if (!base) throw new Error('workspace fixture requires a title field')
+  const local = {
+    source: 'Local library record',
+    observation: 'Title: Old title',
+    role: 'local_presence',
+  } as const
+  const focused = (overrides: Partial<typeof base> = {}): typeof base => ({
+    ...base,
+    proposedValues: [
+      { kind: 'text', value: 'New title' },
+      { kind: 'text', value: 'Newer title' },
+    ],
+    choiceContexts: [
+      {
+        alternativeId: null,
+        selection: 'current',
+        rationale: '',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+        limitations: [],
+        evidence: [local],
+      },
+      {
+        alternativeId: 'alternative-new',
+        selection: 'proposed',
+        rationale: 'Hardcover, Open Library',
+        recommendation: 'recommended',
+        recommendationReason: 'Your settings choose this value.',
+        limitations: [],
+        evidence: [
+          { source: 'Hardcover', observation: 'Title: New title', role: 'external_corroboration' },
+          {
+            source: 'Open Library',
+            observation: 'Title: New title',
+            role: 'external_corroboration',
+          },
+        ],
+      },
+      {
+        alternativeId: 'alternative-newer',
+        selection: 'proposed',
+        rationale: '',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+        limitations: [],
+        evidence: [],
+      },
+    ],
+    ...overrides,
+  })
+  const open = (field: typeof base, http: Partial<ReviewHttp> = {}) => {
+    const routeHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [field],
+      })),
+      ...http,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', routeHttp)
+    return routeHttp
+  }
+
+  it('shows each value with its known sources and nothing generic', async () => {
+    open(focused())
+    const current = await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    const sourced = screen.getByRole('radio', { name: 'Choose proposed value: New title' })
+    const unsourced = screen.getByRole('radio', { name: 'Choose proposed value: Newer title' })
+    expect(current).toHaveTextContent(/^Current valueOld title$/u)
+    expect(sourced).toHaveTextContent(
+      /^RecommendedNew titleHardcover, Open LibraryYour settings choose this value\.$/u,
+    )
+    expect(unsourced).toHaveTextContent(/^Newer title$/u)
+    expect(screen.queryByText(/^Alternative \d/u)).toBeNull()
+    expect(screen.queryByText(/This alternative|retained evidence|No recommendation/iu)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Evidence for proposed value: New title' })).toBe(
+      sourced.parentElement?.querySelector('.choice-evidence-toggle'),
+    )
+  })
+
+  it('states only the specific reason under the question', async () => {
+    open(
+      focused({
+        classification: 'manual_fallback',
+        classificationReason: 'This field needs your review.',
+        automaticWithheldReason: 'The sources disagree about the series.',
+      }),
+    )
+    const heading = await screen.findByRole('heading', {
+      name: 'Which title should this work use?',
+    })
+    const header = heading.closest('header')
+    if (!header) throw new Error('the decision header is missing')
+    expect(header.querySelectorAll('p')).toHaveLength(1)
+    expect(within(header).getByText('The sources disagree about the series.')).toBeVisible()
+    expect(within(header).queryByText('This field needs your review.')).toBeNull()
+    expect(screen.queryByText(/Automatic handling abstained|^Selecting an outcome/u)).toBeNull()
+  })
+
+  it('states a condition, not the generic review line, when nothing was withheld', async () => {
+    open(
+      focused({
+        notices: ['no_safe_bibliographic_combination', 'insufficient_independent_corroboration'],
+      }),
+    )
+    const heading = await screen.findByRole('heading', {
+      name: 'Which title should this work use?',
+    })
+    const header = heading.closest('header')
+    if (!header) throw new Error('the decision header is missing')
+    expect(header.querySelectorAll('p')).toHaveLength(1)
     expect(
-      await screen.findByText(
-        total === 1 ? 'field across current works' : 'fields across current works',
-      ),
+      within(header).getByText('No combination of these details is safe to apply automatically.'),
     ).toBeVisible()
+    expect(screen.queryByText('This field needs your review.')).toBeNull()
+    // The box keeps only the conditions the line does not already state.
+    const box = screen.getByRole('complementary', { name: 'Comparison condition' })
+    expect(box).not.toHaveTextContent('No combination of these details')
+    expect(box).toHaveTextContent('Not enough independent sources agree on this value')
+  })
+
+  it('keeps the language respelling notice beside another withheld reason', async () => {
+    // An audiobook's regional tag stays the owner's for its own reason, so the
+    // respelling notice is what says the choice only changes the spelling (#1496).
+    const reason = 'Automatic is not qualified for this change.'
+    open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
+    expect(await screen.findByText(reason)).toBeVisible()
+    expect(screen.getByLabelText('Comparison condition')).toHaveTextContent(
+      /accepting only changes how it is written/u,
+    )
+  })
+
+  it('leaves out Recorded observations when the field has none', async () => {
+    const http = open(focused())
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
+    await act(() => Promise.resolve())
+    expect(screen.queryByRole('region', { name: 'Recorded observations' })).toBeNull()
+    expect(screen.queryByText(/No additional facts|These retained facts/u)).toBeNull()
+  })
+
+  it('shows Recorded observations when the field has some', async () => {
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
+        items: [
+          {
+            destinations: ['title'],
+            observation: 'Title: Another title',
+            role: 'external_observation',
+            source: 'Open Library',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    expect(within(region).getByText('Title: Another title')).toBeVisible()
+    expect(within(region).queryByText(/These retained facts/u)).toBeNull()
+  })
+
+  it('shows Recorded observations when they could not be read', async () => {
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+        throw new Error('observations unavailable')
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    expect(within(region).getByRole('button', { name: 'Retry observations' })).toBeVisible()
+  })
+
+  it('shows the external-library card only for a recorded change', async () => {
+    open(focused({ effectCapability: 'allowed' }))
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    expect(screen.queryByLabelText('External update status')).toBeNull()
+    cleanup()
+    const decided = focused({
+      classification: 'human_recorded',
+      classificationReason: 'You decided this field. You can change it here.',
+      effectCapability: 'allowed',
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner',
+        application: 'apply',
+        decision_id: 'decision-title',
+        destination: 'title',
+        occurred_at: 1,
+        outcome: 'accept',
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: { kind: 'text', value: 'New title' },
+        target_fingerprint: base.targetFingerprint,
+      },
+    })
+    open(decided)
+    const card = await screen.findByLabelText('External update status')
+    expect(card).toHaveTextContent(
+      "External libraryChange recordedActivity shows this change's progress.",
+    )
+    cleanup()
+    open({
+      ...decided,
+      humanDecision: decided.humanDecision && {
+        ...decided.humanDecision,
+        outcome: 'keep_current',
+        selected_value: null,
+      },
+    })
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    expect(screen.queryByLabelText('External update status')).toBeNull()
   })
 })

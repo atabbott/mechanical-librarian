@@ -169,8 +169,14 @@ export const settingsAudibleMarketplaceOrder: readonly string[] =
 
 export const settingsValidationCopy = settingsVocabulary.errors
 
-// The lens a work belongs to; All lists every one of them (#1407).
-export const attentionStates = ['needs_attention', 'no_attention_needed', 'not_matched'] as const
+// The lens a work belongs to; All lists every one of them (#1407). A work with
+// nothing open whose latest preparation failed has its own (#1413).
+export const attentionStates = [
+  'needs_attention',
+  'no_attention_needed',
+  'not_matched',
+  'preparation_failed',
+] as const
 export type AttentionState = (typeof attentionStates)[number]
 export type LibraryLens = 'all' | AttentionState
 // Why a work with no case reads as it does: nothing to decide, a preparation
@@ -613,7 +619,7 @@ export interface LibraryView {
   nextCursor?: string
   previousCursor?: string
   page: number
-  counts: { attention: number; all: number; clear: number; notMatched: number }
+  counts: { attention: number; all: number; clear: number; notMatched: number; failed: number }
   works: readonly LibraryWorkView[]
 }
 export interface AttentionItemView {
@@ -1031,6 +1037,7 @@ export interface ActivityDisplayView {
   last_failure: string | null
   ledger: ActivityLedgerView
   current_waiting: ActivityWaitingView | null
+  owner_action_required: number
   paused: boolean
   prepared: ActivityPreparedView
   provider_recovery?: readonly ProviderRecoveryActivityView[]
@@ -3210,6 +3217,10 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
               ),
             }
           })(),
+    owner_action_required: integerValue(
+      value.owner_action_required,
+      'activity_owner_action_required',
+    ),
     paused:
       typeof value.paused === 'boolean'
         ? value.paused
@@ -3343,7 +3354,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
   // the sibling mappers already refuse; the library is held to the same rule.
   if (
     !record(value) ||
-    value.schema_version !== 'review-library-v3' ||
+    value.schema_version !== 'review-library-v4' ||
     !record(value.counts) ||
     !Array.isArray(value.items)
   )
@@ -3366,6 +3377,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
       all: integerValue(dto.counts.all, 'all_count'),
       clear: integerValue(dto.counts.no_attention_needed, 'clear_count'),
       notMatched: integerValue(dto.counts.not_matched, 'not_matched_count'),
+      failed: integerValue(dto.counts.preparation_failed, 'preparation_failed_count'),
     },
     works: dto.items.map((item) => {
       const reviewCaseId = optionalString(item.review_case_id, 'review_case_id')
