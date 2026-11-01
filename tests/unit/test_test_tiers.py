@@ -2192,5 +2192,5 @@ def test_the_gate_divides_the_fast_tier_into_four_sharded_jobs() -> None:
     assert workflow.count("run_test_tier.py fast") == 4
     assert (
         "run: uv run python scripts/run_test_tier.py browser"
-        " --test-timeout-seconds 300\n"
+        " --test-timeout-seconds 180\n"
     ) in workflow

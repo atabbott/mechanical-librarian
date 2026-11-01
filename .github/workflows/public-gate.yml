@@ -273,7 +273,7 @@ jobs:
 
   protected-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -380,7 +380,7 @@ jobs:
         # Serial: four Chromium workers on one hosted runner broke
         # timing-bound tests and saved little time. The per-test deadline is a
         # backstop, so a hang fails named instead of at the job limit.
-        run: bash scripts/diag_rail_hang.sh
+        run: uv run python scripts/run_test_tier.py browser --test-timeout-seconds 180
 
   container-image:
     runs-on: ubuntu-24.04

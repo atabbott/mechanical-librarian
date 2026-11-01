@@ -25,8 +25,8 @@ brackets are GitHub issues.
   Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
   `eng` or, on an ebook, `en-GB` is respelled to its name, such as "English",
   automatically (#1496).
-- Closing the Attention rail right after opening it no longer moves focus to
-  the closing rail or scrolls the page to it first (#1563).
+- Closing the Attention queue right after opening it no longer moves focus to
+  the closing queue or scrolls the page to it first (#1563).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

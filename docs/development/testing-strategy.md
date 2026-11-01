@@ -176,7 +176,7 @@ head cancels only pull-request runs.
   jobs run 2 to 4, each with `--workers 2 --shard K/4`. `fast-source` has 25
   minutes including setup.
 - **Browser tier.** `protected-browser` runs serially, giving each test a
-  300-second deadline; timing-bound browser tests assume one Chromium per
+  180-second deadline; timing-bound browser tests assume one Chromium per
   runner. It caches the Chromium payload per Playwright version, saving it
   only after `scripts/verify_playwright_browser.py` accepts its layout and
   tree digest. It does not detect corruption of a payload within one Playwright version.
