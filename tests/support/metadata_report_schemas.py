@@ -346,7 +346,7 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
 # Every producer before #1407 derived no provider match state for a report.
 PRIOR_REPORT_BROWSE_FACTS_SQL = persistence_schema._REPORT_BROWSE_FACTS_SQL.replace(
     ", provider_match_state TEXT NOT NULL CHECK(provider_match_state IN "
-    "('matched','refused','unavailable','no_match'))",
+    "('matched','refused','unavailable','adapter_fault','no_match'))",
     "",
 )
 
@@ -358,12 +358,15 @@ def _without_match_state(sql: str, document: str) -> str:
     return sql.replace(" THEN 1 ELSE 0 END," + value, " THEN 1 ELSE 0 END")
 
 
+# Nor did they exclude #1498's adapter-faulted lanes from the limited flag.
+_FAULT_EXCLUSION_SQL = " AND NOT " + persistence_schema._LANE_ADAPTER_FAULT_SQL
+
 PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = _without_match_state(
     persistence_schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
         ",provider_limited,provider_match_state)", ",provider_limited)"
     ),
     "NEW.document",
-)
+).replace(_FAULT_EXCLUSION_SQL, "")
 
 
 _CURRENT_REPORT_BROWSE_FACT_PAIRS = persistence_schema._report_browse_fact_pairs
@@ -374,7 +377,9 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
     (derived, stored), authors = _CURRENT_REPORT_BROWSE_FACT_PAIRS(key)
     return (
         (
-            _without_match_state(derived, "mr.document"),
+            _without_match_state(derived, "mr.document").replace(
+                _FAULT_EXCLUSION_SQL, ""
+            ),
             stored.replace(",provider_match_state FROM", " FROM"),
         ),
         authors,

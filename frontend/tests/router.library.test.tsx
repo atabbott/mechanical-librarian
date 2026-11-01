@@ -2192,6 +2192,7 @@ describe('Library route', () => {
         | 'not_matched_refused'
         | 'not_matched_unavailable_scheduled'
         | 'not_matched_unavailable'
+        | 'not_matched_adapter_fault'
         | 'not_matched_no_match',
     ) => ({
       ...baseWork,
@@ -2210,19 +2211,20 @@ describe('Library route', () => {
       unmatched('refused', 'not_matched_refused'),
       unmatched('scheduled', 'not_matched_unavailable_scheduled'),
       unmatched('unavailable', 'not_matched_unavailable'),
+      unmatched('fault', 'not_matched_adapter_fault'),
       unmatched('nothing', 'not_matched_no_match'),
     ]
     const getLibrary = vi.fn(async (search: LibrarySearch) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 4, clear: 0, notMatched: 4, failed: 0 },
+      counts: { attention: 0, all: 5, clear: 0, notMatched: 5, failed: 0 },
       works,
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
 
     const lens = await screen.findByRole('link', { name: 'Not matched' })
     // The count sits beside the Works count, in the same words.
-    expect(await screen.findByText('4 works · 4 not matched')).toBeVisible()
+    expect(await screen.findByText('5 works · 5 not matched')).toBeVisible()
     expect(
       within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
     ).toHaveLength(5)
@@ -2231,6 +2233,7 @@ describe('Library route', () => {
       ['refused', 'Found, but not this work'],
       ['scheduled', 'Providers unavailable; will be checked again'],
       ['unavailable', 'Providers unavailable'],
+      ['fault', 'Failed in Mechanical Librarian'],
       ['nothing', 'No provider matched'],
     ] as const) {
       const row = screen.getByRole('button', { name: new RegExp(`^Unmatched ${key}\\.`, 'u') })

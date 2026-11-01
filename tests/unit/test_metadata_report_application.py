@@ -3468,11 +3468,21 @@ def test_an_adapter_fault_is_named_and_never_enrolled_for_recovery(
             cases.evidence("review_case_" + "c" * 64)["source_ledger"],
         )
     assert {
-        str(row["reason"]) for row in ledger if row["provider"] == "Inventaire"
+        (str(row["status"]), str(row["reason"]))
+        for row in ledger
+        if row["provider"] == "Inventaire"
     } == {
-        "Failed inside Mechanical Librarian while reading this source's answer, "
-        "so nothing was retained and it is not retried."
+        (
+            "adapter_fault",
+            "Failed inside Mechanical Librarian, so nothing was retained and it "
+            "is not retried.",
+        )
     }
+    assert all(
+        row["status"] != "adapter_fault"
+        for row in ledger
+        if row["provider"] != "Inventaire"
+    )
 
 
 def test_an_all_insufficient_plan_claims_no_inputs_on_its_aggregate() -> None:

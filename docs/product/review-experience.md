@@ -192,7 +192,9 @@ A work with no case, nothing to decide and no admitted provider evidence is
 **Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
 gives one reason, in order: **Found, but not this work** (admission refused
 what was found), **Providers unavailable** (adding **; will be checked again**
-only while a recovery job is scheduled), or **No provider matched**. If the
+only while a recovery job is scheduled), **Failed in Mechanical Librarian** (a
+source failed inside Mechanical Librarian itself, which is never retried), or
+**No provider matched**. If the
 recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
 
