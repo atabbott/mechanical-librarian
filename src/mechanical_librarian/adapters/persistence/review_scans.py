@@ -903,6 +903,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 # its connection leaves the claim exactly as it was (#1547), so
                 # the lane may retry this guard. Every other failure, or an
                 # unprovable release, keeps the ordinary item settlement.
+                # This holds while the after_commit callback runs no SQL: a
+                # callback error after a committed requeue would also clear
+                # ``started``.
                 try:
                     released = (
                         not transaction.started and not self._connection.in_transaction
