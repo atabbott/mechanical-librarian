@@ -60,12 +60,12 @@ brackets are GitHub issues.
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
-  Audible nor Audnexus has already matched its recording by runtime; otherwise
-  Sources shows AudioSilo as **Not needed: already matched**. Open Library gets
-  one search per audiobook instead of a ladder and a narrowing retry. Together
-  these drop about 400 lookups per 237 audiobooks without losing a match, and
-  an Audnexus "not in this region" answer is reported as such rather than as
-  an unknown failure (#1309).
+  Audible nor Audnexus has already matched its recording by running time;
+  otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
+  search per audiobook instead of several. On a 237-audiobook test library this
+  sends about 400 fewer lookups without losing a match. An Audnexus answer that
+  a recording isn't sold in one region is recorded in the report's diagnostics
+  as a region miss rather than an unknown failure (#1309).
 - **Clean rebuild required.** Hardcover's audio editions are read for every
   matched audiobook work and compared with the file. The report records when
   an edition with a different narrator matches the file and the Audible match

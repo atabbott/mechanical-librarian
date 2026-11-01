@@ -3075,7 +3075,10 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "oversized": "Returned more than the accepted bound, so nothing was retained.",
     "candidate_limit_exceeded": "Returned too many candidates to compare safely.",
     "query_limit_exceeded": "Reached the bounded query allowance for this work.",
-    "not_needed": "Not asked, because another source had already matched this recording.",
+    "not_needed": (
+        "Not needed, so this source was never asked: another source had already "
+        "matched this recording by its running time."
+    ),
 }
 # A lane whose candidates work-identity admission refused persists as no match,
 # so its dispatch says what happened, in the row's own words (#1407).
