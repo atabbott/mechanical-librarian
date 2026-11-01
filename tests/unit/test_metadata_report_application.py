@@ -144,6 +144,11 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_browse import (
+    browse_report,
+    library_report_facts,
+    provider_lane_facts,
+)
 from mechanical_librarian.domain.rich_metadata_preview import (
     compile_rich_metadata_preview,
 )
@@ -3405,6 +3410,15 @@ def test_an_adapter_fault_is_named_and_never_enrolled_for_recovery(
         package=(None, report.report_id, None, None, "report_only"),
         configuration=_mixed_configuration(),
         scope="mixed",
+    )
+    # Library's stored-row reader and the report detail read the same fault.
+    library = library_report_facts(browse_report(report.to_json())).providers
+    assert provider_lane_facts(report) == library
+    assert {(fault_class is not None)} == {
+        lane.adapter_fault for lane in library if lane.authority == "inventaire"
+    }
+    assert not any(
+        lane.adapter_fault for lane in library if lane.authority != "inventaire"
     )
     if fault_class is None:
         assert {FailureCategory.UNKNOWN} == categories
