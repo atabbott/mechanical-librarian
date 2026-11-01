@@ -19,6 +19,7 @@ import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -55,6 +56,7 @@ from tests.support.field_effects import CAPABILITY, Clock, _EffectEnvironment
 from tests.support.field_effects import effects as effects
 from tests.unit.test_connection_replan import _automatic_tags_lane, _sent
 from tests.unit.test_cover_activation import _selected_cover
+from tests.unit.test_field_effects import audiobook_pair as audiobook_pair
 
 _SITES = ("library_revoke", "matrix_drop", "matrix_envelope", "grant_envelope")
 
@@ -189,14 +191,18 @@ def test_retiring_a_consent_closes_the_field_plan_waiting_on_it(
     # nothing is left reporting a recovery in progress.
     assert effects.repository.pending_field_effect_decision_counts() == pending
     assert all(kind != "automatic_recovery" for kind, _ in _signals(effects.repository))
-    # With no current consent for tags, nothing plans it again.
-    effects.capabilities.category = "allowed"
-    lane.wake()
-    lane._run_until_idle()
-    assert _decision_plans(effects.repository, decision_id) == [
-        (waiting_id, "superseded", "consent_revoked")
-    ]
-    assert sent == []
+    if site in {"library_revoke", "matrix_drop"}:
+        # With no consent for tags at all, nothing plans it again. The envelope
+        # sites are left out: their new consent carries the test's patched
+        # envelope, so it is never current once the patch ends, and the same
+        # check would prove only the patch.
+        effects.capabilities.category = "allowed"
+        lane.wake()
+        lane._run_until_idle()
+        assert _decision_plans(effects.repository, decision_id) == [
+            (waiting_id, "superseded", "consent_revoked")
+        ]
+        assert sent == []
     _reopen(effects)
 
 
@@ -438,12 +444,21 @@ def test_a_library_regrant_never_leaves_a_waiting_cover_or_its_bytes_behind(
 def test_a_ready_cover_under_a_withdrawn_consent_never_starts_waiting(
     cover: _CoverLane,
 ) -> None:
+    """The restore point is captured, then writes stop and the connection is
+    lost before the last guard: the capture is discharged, not kept waiting."""
     plan_id = cover.plan().plan.plan_id
-    cover.repository.revoke_library_field_effect_consents(
-        cover.connection, cover.library, 200
-    )
-    cover.capabilities.category = "connection_unavailable"
+    captured: list[bool] = []
+
+    def withdraw_then_lose(_: FieldEffectPlan) -> None:
+        captured.append(cover.recovery.exists(plan_id))
+        cover.repository.revoke_library_field_effect_consents(
+            cover.connection, cover.library, 200
+        )
+        cover.capabilities.category = "connection_unavailable"
+
+    cover.preclaim.callback = withdraw_then_lose
     stale = cover.application.apply(plan_id)
+    assert captured == [True]
     assert (stale.state, stale.failure) == ("stale", "consent")
     assert _cleanup(cover.repository, plan_id) == [("completed",)]
     assert not cover.recovery.exists(plan_id)
@@ -475,3 +490,36 @@ def test_a_failed_library_revoke_keeps_its_consent_and_the_waiting_cover(
     assert _cleanup(cover.repository, waiting_id) == []
     assert cover.recovery.exists(waiting_id)
     cover.reopen()
+
+
+def test_a_waiting_title_and_subtitle_pair_closes_when_subtitle_is_dropped(
+    audiobook_pair: SimpleNamespace, effects: _EffectEnvironment
+) -> None:
+    """The helper finds a pair through its subtitle companion's consent."""
+    plan_id = audiobook_pair.plan().plan.plan_id
+    effects.capabilities.category = "connection_unavailable"
+    stale = audiobook_pair.service.apply(plan_id)
+    assert (stale.state, stale.failure) == ("stale", "connection")
+    audiobook_pair.repo.grant_field_effect_consent_matrix(
+        "primary", (("audio", ("title",)),), effects.clock()
+    )
+    left = audiobook_pair.repo.get_field_effect(plan_id)
+    assert (left.state, left.failure) == ("superseded", "consent_revoked")
+    assert audiobook_pair.patches() == []
+    audiobook_pair.reopen()
+
+
+def test_a_ready_pair_whose_subtitle_consent_is_dropped_never_starts_waiting(
+    audiobook_pair: SimpleNamespace, effects: _EffectEnvironment
+) -> None:
+    """The title's consent stays current; the companion's withdrawn consent
+    still outranks the lost connection."""
+    plan_id = audiobook_pair.plan().plan.plan_id
+    audiobook_pair.repo.grant_field_effect_consent_matrix(
+        "primary", (("audio", ("title",)),), effects.clock()
+    )
+    effects.capabilities.category = "connection_unavailable"
+    stale = audiobook_pair.service.apply(plan_id)
+    assert (stale.state, stale.failure) == ("stale", "consent")
+    assert audiobook_pair.patches() == []
+    audiobook_pair.reopen()
