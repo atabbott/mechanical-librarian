@@ -9,6 +9,8 @@ import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import * as builders from './wireFixtures'
 import type { D } from '../src/generated/review-decoders'
 import {
+  d__ActivityEvent,
+  d__AttentionItem,
   d__ChoiceContext,
   d__CoverAutomaticDecisionProjection,
   d__CoverCandidate,
@@ -19,6 +21,8 @@ import {
   d__HistoryCoverItem,
   d__HistoryDecisionItem,
   d__HistoryShadowItem,
+  d__LibraryWork,
+  d__PreparationPresentation,
   d__ReviewField,
   d__TargetField,
   d__TargetIdentity,
@@ -102,6 +106,14 @@ const roots: readonly (readonly [Builder, string, string, number])[] = [
   ['caseDetail', 'GET', '/api/v1/review-cases/case-1', 200],
   ['coverConsideration', 'POST', '/api/v1/review-cases/case-1/cover-considerations/retry', 200],
   ['caseHistory', 'GET', '/api/v1/review-cases/case-1/history', 200],
+  ['decisionAcknowledgement', 'POST', '/api/v1/review-cases/case-1/decisions', 200],
+  ['scanProgress', 'POST', '/api/v1/review-preparation/primary/Books/scan', 202],
+  ['preparation', 'GET', '/api/v1/review-preparation', 200],
+  ['library', 'GET', '/api/v1/library?lens=all', 200],
+  ['activityResponse', 'GET', '/api/v1/activity', 200],
+  ['attention', 'GET', '/api/v1/attention', 200],
+  ['policyProfile', 'POST', '/api/v1/metadata-policy/validate', 200],
+  ['policyPreview', 'POST', '/api/v1/metadata-policy/preview', 200],
 ]
 const components: readonly (readonly [Builder, D<unknown>])[] = [
   ['choiceContext', d__ChoiceContext],
@@ -116,6 +128,10 @@ const components: readonly (readonly [Builder, D<unknown>])[] = [
   ['historyDecisionItem', d__HistoryDecisionItem],
   ['historyCoverItem', d__HistoryCoverItem],
   ['historyShadowItem', d__HistoryShadowItem],
+  ['preparationPresentation', d__PreparationPresentation],
+  ['libraryWork', d__LibraryWork],
+  ['activityEvent', d__ActivityEvent],
+  ['attentionItem', d__AttentionItem],
 ]
 
 describe('shared base builders', () => {
