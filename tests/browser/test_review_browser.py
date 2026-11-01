@@ -4303,6 +4303,106 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
             browser.close()
 
 
+def test_reviewer_access_failure_sits_under_its_focused_button() -> None:
+    """#1584: a pending Continue without a reviewer keeps real focus, ignores a
+    second press, and its unconfirmed failure renders directly under it inside
+    the row's inset at 1440 and 390 px and at 200% text."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1440, "height": 900}
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    cover=True,
+                    configured_cover_reviewer=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                held: list[Route] = []
+                page.route(
+                    "**/api/v1/reviewer-access/selection",
+                    lambda route: held.append(route),
+                )
+                page.goto(f"{origin}/settings?group=reviewer")
+                button = page.get_by_role("button", name="Continue without a reviewer")
+                button.focus()
+                page.keyboard.press("Enter")
+                expect(button).to_have_attribute("aria-disabled", "true")
+                # Chromium blurs a natively disabled button; this one keeps focus.
+                expect(button).to_be_focused()
+                page.keyboard.press("Enter")
+                button.click(force=True)
+                assert len(held) == 1
+                held[0].fulfill(
+                    status=503,
+                    json={
+                        "schema_version": "review-error-v1",
+                        "error": {"code": "reviewer_access_unavailable"},
+                    },
+                )
+                alert = page.get_by_text(
+                    "The change could not be fully confirmed. It may have been saved; "
+                    "reviewer access was reloaded. Check it before trying again."
+                )
+                expect(alert).to_be_visible()
+                expect(alert).to_have_attribute("role", "alert")
+                expect(button).to_be_focused()
+                assert len(held) == 1
+                for width, size in (
+                    (1440, ""),
+                    (390, ""),
+                    (1440, "200%"),
+                    (390, "200%"),
+                ):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    set_root_text(page, size)
+                    placement = button.evaluate("""button => {
+                      const alert = button.nextElementSibling;
+                      const row = button.closest('.settings-field-row');
+                      const control = button.closest('.settings-field-control');
+                      const own = button.getBoundingClientRect();
+                      const shown = alert.getBoundingClientRect();
+                      const box = row.getBoundingClientRect();
+                      const style = getComputedStyle(row);
+                      return {
+                        sibling: alert.getAttribute('role') === 'alert',
+                        inside: control.contains(alert),
+                        gap: shown.top - own.bottom,
+                        rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+                        left: shown.left - (box.left + parseFloat(style.paddingLeft)),
+                        right: box.right - parseFloat(style.paddingRight) - shown.right,
+                        scroll: document.documentElement.scrollWidth,
+                      };
+                    }""")
+                    assert placement["sibling"] and placement["inside"], placement
+                    assert 0 <= placement["gap"] <= placement["rem"], (
+                        width,
+                        size,
+                        placement,
+                    )
+                    assert placement["left"] >= -0.5, (width, size, placement)
+                    assert placement["right"] >= -0.5, (width, size, placement)
+                    assert placement["scroll"] <= width, (width, size, placement)
+                    expect(button).to_be_focused()
+                set_root_text(page, "")
+            browser.close()
+
+
 def test_protected_cover_comparison_contains_every_image_without_cropping() -> None:
     """#644: every cover is shown whole, in a quiet 5:8 frame, at every width.
 
@@ -9477,6 +9577,23 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 retry = page.get_by_role("button", name="Try the same decision again")
                 expect(retry).to_be_visible()
                 expect(retry).to_be_focused()
+                # #1584: the failure sits directly under the retry it describes.
+                for width in (1440, 390):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    placement = retry.evaluate("""retry => {
+                      const message = retry.nextElementSibling;
+                      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+                      return {
+                        alert: message?.getAttribute('role') === 'alert',
+                        gap: message.getBoundingClientRect().top - retry.getBoundingClientRect().bottom,
+                        rem,
+                        scroll: document.documentElement.scrollWidth,
+                      };
+                    }""")
+                    assert placement["alert"], (width, placement)
+                    assert 0 <= placement["gap"] <= placement["rem"], (width, placement)
+                    assert placement["scroll"] <= width, (width, placement)
+                page.set_viewport_size({"width": 1280, "height": 720})
                 retry.click()
                 page.get_by_role(
                     "heading", name="Which series should this work use?"
