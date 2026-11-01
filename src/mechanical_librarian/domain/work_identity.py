@@ -1032,6 +1032,7 @@ def replay_provider_work_identity_admission(
     variant_excluded: bool = False,
     provider_series: tuple[tuple[str, str], ...] = (),
     provider_series_memberships: tuple[tuple[str, str | None], ...] = (),
+    provider_series_names: tuple[str, ...] = (),
     audiobook: bool = False,
     runtime_tight: bool = False,
     leading_number: bool = False,
@@ -1046,7 +1047,10 @@ def replay_provider_work_identity_admission(
     caller passes it only for a tight candidate on an audiobook plan's asserted
     lane from an audiobook authority. A band title production also needs one
     of `provider_series_memberships`, the product's own stated series names and
-    positions, to state the series the rung stripped.
+    positions, to state the series the rung stripped. An ebook's series-name
+    production also reads `provider_series_names`, every series name the
+    product states without a position, so a stated series always has to be
+    this one (#1499).
     """
     admission = admit_provider_work_identity(
         local_title=local_title,
@@ -1146,6 +1150,60 @@ def replay_provider_work_identity_admission(
                     (
                         WorkTitleTransformationApplication(
                             dispatch_lineage.transformations[0],
+                            WorkTitleTransformationSide.LOCAL,
+                            WorkTitleTransformationField.TITLE,
+                            None,
+                        ),
+                    )
+                ),
+            )
+    if (
+        not admission.admitted
+        and not audiobook
+        and dispatch_lineage is not None
+        and dispatch_lineage.rung is WorkDispatchRung.NORMALIZED
+        and dispatch_lineage.transformations
+        == (WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,)
+        and not work_title_has_variant_marker(local_title)
+        and _RECORDING_FORMAT.search(local_title) is None
+        and _ebook_series_decoration(
+            local_title, provider_series_memberships, provider_series_names
+        )
+    ):
+        # An ebook titled "Title (Series Name)" is the work its provider
+        # calls "Title" by the same authors: the rung that stripped the
+        # series name alone is compared exactly, and nothing else may differ
+        # (#1499).
+        rung = next(
+            (
+                query
+                for query in work_query_ladder(local_title, local_authors)
+                if query.rung is dispatch_lineage.rung
+                and query.transformations == dispatch_lineage.transformations
+            ),
+            None,
+        )
+        if (
+            rung is not None
+            and (
+                exact := admit_provider_work_identity(
+                    local_title=rung.title,
+                    local_authors=local_authors,
+                    provider_title=provider_title,
+                    provider_authors=provider_authors,
+                    provider_work_identity=provider_work_identity,
+                    variant_excluded=variant_excluded,
+                    allow_reordered_authors=True,
+                )
+            ).admitted
+            and exact.transformation is None
+        ):
+            admission = WorkIdentityAdmission(
+                True,
+                WorkTitleTransformationLineage(
+                    (
+                        WorkTitleTransformationApplication(
+                            WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
                             WorkTitleTransformationSide.LOCAL,
                             WorkTitleTransformationField.TITLE,
                             None,
@@ -2014,6 +2072,70 @@ def _latin_admission_lineage(
         if applications
         else None
     )
+
+
+# Words that make a bracketed decoration a volume, part or collection of a
+# work rather than its series name (#1499).
+_EBOOK_PART_WORDS = frozenset(
+    {
+        "book",
+        "box",
+        "collected",
+        "collection",
+        "companion",
+        "complete",
+        "guide",
+        "omnibus",
+        "part",
+        "set",
+        "summary",
+        "trilogy",
+        "vol",
+        "volume",
+        "workbook",
+    }
+)
+
+
+def _ebook_series_decoration(
+    local_title: str,
+    memberships: tuple[tuple[str, str | None], ...],
+    names: tuple[str, ...] = (),
+) -> bool:
+    """Whether an ebook's bracketed decoration reads as its series name (#1499).
+
+    A product that states its series must state this one, as the band path
+    requires. A product that states none admits only a decoration that names
+    no volume, part or collection and does not end in a number: "(Volume 2)",
+    "(Part Two)" and "(Box Set)" are another work than the bare title.
+    """
+    paren = _PAREN.search(_normalized_query_text(local_title))
+    inside = "" if paren is None else _clean(paren.group(1))
+    position = _PAREN_SERIES_POSITION.fullmatch(inside)
+    name = inside if position is None else _clean(position.group("series"))
+    if memberships or names:
+        # Any one stated series may be this one: a positioned membership
+        # must state its position too, an unpositioned name only the name.
+        return (
+            bool(memberships)
+            and _band_decoration_corroborated(
+                WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+                local_title,
+                memberships,
+            )
+        ) or (bool(name) and any(_closed_equal(stated, name) for stated in names))
+    tokens = _PUNCTUATION.sub(" ", name).casefold().split()
+    return bool(tokens) and not (
+        any(token in _EBOOK_PART_WORDS for token in tokens)
+        or (position is None and tokens[-1].isdigit())
+        or (position is None and _ROMAN_NUMERAL.fullmatch(tokens[-1]) is not None)
+        or (position is None and tokens[-1] in _NUMBER_WORDS)
+    )
+
+
+_NUMBER_WORDS = frozenset(
+    {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+)
 
 
 def _band_decoration_corroborated(
