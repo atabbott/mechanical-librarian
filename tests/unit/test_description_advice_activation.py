@@ -785,6 +785,86 @@ def test_interrupted_explicit_attempt_does_not_fall_back_to_older_success_or_ret
     reopened.close()
 
 
+def test_an_automatic_description_writes_only_in_the_automatic_posture(
+    tmp_path: Path,
+) -> None:
+    """Leaving Automatic admits the same case again; its description waits (#1568)."""
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+
+    repository, store, binding, candidate, deterministic = _prepared(tmp_path)
+    decision = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+
+    def pending() -> bool:
+        return decision.to_json() in repository.pending_field_effect_decision_documents(
+            100
+        )
+
+    def automatic_counted() -> bool:
+        return any(
+            row["origin"] == "automatic"
+            for row in repository.pending_field_effect_decision_counts()
+        )
+
+    assert pending() and automatic_counted()
+    assert repository.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    proposal = ProposalSet.from_json(
+        repository.get_proposal(deterministic.proposal_set_id)
+    )
+    assert json.loads(repository.admit_review_case(proposal)) == {
+        "review_case_id": decision.review_case_id,
+        "schema_version": "review-admission-v1",
+        "status": "admitted",
+    }
+    repository.persist_shadow_outcome(decision.review_case_id, 30)
+    assert repository._connection.execute(
+        "SELECT decision_id FROM current_description_decisions WHERE review_case_id=?",
+        (decision.review_case_id,),
+    ).fetchone() == (decision.decision_id,)
+    assert not pending() and not automatic_counted()
+    repository.close()
+
+
+def test_an_automatic_description_plan_from_before_leaving_automatic_is_stale(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from tests.support.field_effects import CAPABILITY
+
+    repository, store, binding, candidate, deterministic = _prepared(tmp_path)
+    decision = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    application, _ = _guarded_application(repository, tmp_path, authority)
+    operation = application.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    assert authority.current(operation.plan.authority)
+    assert repository.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    repository.admit_review_case(
+        ProposalSet.from_json(repository.get_proposal(deterministic.proposal_set_id))
+    )
+    repository.persist_shadow_outcome(decision.review_case_id, 30)
+    # The same case is current again, but a plan formed for its automatic
+    # description in Automatic is not current in Preview (#1568).
+    assert not authority.current(operation.plan.authority)
+    repository.close()
+
+
 def test_advice_automatic_off_retains_qualified_deterministic_description_fill(
     tmp_path,
 ):

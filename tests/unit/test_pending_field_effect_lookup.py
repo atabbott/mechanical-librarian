@@ -23,6 +23,7 @@ import pytest
 
 from mechanical_librarian.adapters.persistence import field_effects
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_HOLDS_DECISION_SQL,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -94,6 +95,10 @@ def _digest(label: str) -> str:
 def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
     """A store with human and automatic decisions pending in both statements."""
     connection = _representative_database(tmp_path / "application.sqlite3", works=40)
+    # Automatic decisions are pending only in the Automatic posture (#1568).
+    connection.execute(
+        "UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1"
+    )
     cases = connection.execute(
         "SELECT review_case_id,occurred_at,document FROM automatic_decisions "
         "ORDER BY decision_id"
@@ -1283,6 +1288,18 @@ def _before_1205(name: str, statement: str) -> str:
     return statement
 
 
+def _before_1568(statement: str) -> str:
+    """Remove the Automatic-posture test #1568 added to each automatic arm."""
+    held = "hold.active=1) AND " + _AUTOMATIC_POSTURE_SQL + "))"
+    assert statement.count(held) == 1
+    statement = statement.replace(held, "hold.active=1))").replace(
+        "OR (NOT EXISTS (", "OR NOT EXISTS (", 1
+    )
+    arms = " AND " + _AUTOMATIC_POSTURE_SQL + " UNION ALL"
+    assert statement.count(arms) == 2
+    return statement.replace(arms, " UNION ALL")
+
+
 def _answer(connection: sqlite3.Connection, statement: str) -> object:
     try:
         return connection.execute(statement).fetchall()
@@ -1333,10 +1350,11 @@ def test_lineage_membership_restores_the_1204_text(
     connection, _ = store
     # #1285 later let an owner-entered value plan as an accept does, and held
     # an automatic description under the owner's hold as it holds the rest;
-    # #1358 then left an earlier episode's decision unplanned.
+    # #1358 then left an earlier episode's decision unplanned, and #1568 left
+    # an automatic one unplanned outside the Automatic posture.
     restored = {
         name: hashlib.sha256(
-            _before_1205(name, statement)
+            _before_1568(_before_1205(name, statement))
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)

@@ -148,6 +148,11 @@ brackets are GitHub issues.
 - A preparation step that briefly loses the database write lock while
   checking its library connection now waits and carries on, instead of
   marking the work as could not finish (#1547).
+- Switching from Automatic to Preview without changing the policy keeps every
+  work in Attention and Library. Decisions you had not yet written are asked
+  again, on every work, as after a policy change. An automatic decision
+  recorded before the switch, including a cover or description, writes
+  nothing in Preview. No clean rebuild is needed (#1568).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

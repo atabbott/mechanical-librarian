@@ -286,6 +286,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             )
             prior_case_id = None if prior is None else prior[2]
             checkpoint = 1 if prior is None else prior[3] + 1
+            # The same proposal set replays its recorded admission answer,
+            # unless the pointer's last actor retired the case without
+            # answering: preparation tombstoning it or finding it ineligible,
+            # or a policy activation retiring it for its successor. Leaving
+            # Automatic reactivates the unchanged policy, so that successor is
+            # this same proposal set, admitted again as its same case (#1568).
             if (
                 prior is not None
                 and prior[0] == proposal_set.proposal_set_id
@@ -295,7 +301,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     # reaching here proves the pointer was found.
                     (cast(_ReviewPointer, validated)[3],),
                 ).fetchone()
-                != ("review-preparation-v1",)
+                not in {("review-preparation-v1",), ("policy-activation-v1",)}
             ):
                 if self._binding is not None:
                     self._binding.require_current()

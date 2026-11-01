@@ -502,6 +502,144 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             reopened.close()
 
 
+def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> None:
+    """Leaving Automatic leaves the selection unwritten until Automatic (#1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        database = root / "reports.sqlite"
+        repository = open_repository(database)
+        report, _ = _qualified_cover_report(
+            root,
+            incumbent_size=(300, 450),
+            candidate_size=(3000, 4500),
+            candidate_designation=CoverDesignation.EXACT_EDITION,
+            typed_timeout=True,
+        )
+        options = dict(DEFAULT_OPTIONS)
+        options["cover_order"] = "fixed_source_order"
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["cover_order"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Covers only automatic", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.enter_shadow_preview(1, ())
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+            expected_active_generation=1,
+        )
+        repository.activate_qualified_automatic(3)
+        supervisor = composition.create_review_pipeline(
+            _pipeline_configuration(),
+            database,
+            root / "catalogue.sqlite",
+            root / "artifacts",
+            _test_reviewer_access(repository),
+            database_authority=repository.authority,
+            provider_recovery=composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            ),
+        )
+        try:
+            with patch.object(composition, "run_cover_packet_reviewer"):
+                pipeline = _run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                for _ in range(64):
+                    if not pipeline.run_next(1):
+                        break
+                else:
+                    pytest.fail("cover pipeline did not reach a terminal state")
+            ((document,),) = repository._connection.execute(
+                "SELECT json_extract(selection.document,'$.decision_document') "
+                "FROM current_cover_selection_authorities current "
+                "JOIN cover_selection_authorities selection "
+                "ON selection.selection_id=current.selection_id "
+                "WHERE selection.kind='automatic'"
+            ).fetchall()
+            automatic = CoverAutomaticDecision.from_json(document)
+
+            def pending() -> tuple[str, ...]:
+                return repository.pending_field_effect_decision_documents(100)
+
+            def counted() -> list[str]:
+                return [
+                    str(row["origin"])
+                    for row in repository.pending_field_effect_decision_counts()
+                ]
+
+            assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
+            # A store whose only automatic records are covers keeps its case
+            # current in Preview; posture alone keeps the selection unwritten.
+            assert repository.enter_shadow_preview(4, ("ebooks",)) == "preview"
+            assert repository.current_cover_consideration_document(
+                automatic.review_case_id
+            )
+            assert (pending(), counted()) == ((), [])
+            repository.activate_qualified_automatic(5)
+            assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
+
+            authority = PersistedFieldEffectAuthority(repository)
+            snapshot = authority.resolve(automatic)
+            repository.grant_field_effect_consents(
+                snapshot.connection, (snapshot.library,), (snapshot.destination,), 6
+            )
+            target = FakeTargetService()
+            application = GuardedFieldApplication(
+                repository,
+                target,
+                FakeBackupReadiness(),
+                FakeCapabilityObserver(CAPABILITY),
+                authority,
+                FakeDependencyCurrentness(),
+                PersistedEffectConsent(repository),
+                PrivateCoverRecoveryStore(
+                    root / "recovery", lambda _plan: b"incumbent-original"
+                ),
+                FakeForwardReevaluation(),
+                Clock(),
+                FakePreclaimHook(),
+                FakePreclaimHook(),
+                FakePreclaimHook(),
+            )
+            operation = application.plan(
+                automatic,
+                connection=snapshot.connection,
+                library=snapshot.library,
+                work_id=snapshot.work_id,
+                destination=snapshot.destination,
+                pre_value=snapshot.pre_value,
+                desired_value=snapshot.decision_value,
+                target_fingerprint=snapshot.target_fingerprint,
+                target_version=snapshot.target_version,
+                dependency_digests=snapshot.dependency_digests,
+                capability_digest=CAPABILITY,
+            )
+            assert operation is not None
+            assert authority.current(operation.plan.authority)
+            assert repository.enter_shadow_preview(7, ("ebooks",)) == "preview"
+            assert not authority.current(operation.plan.authority)
+            repository.activate_qualified_automatic(8)
+            assert authority.current(operation.plan.authority)
+            target.seed(operation.plan)
+            assert application.apply(operation.plan.plan_id).state == "verified"
+            assert target.read(operation.plan).value == automatic.artifact_id
+        finally:
+            supervisor.stop()
+            repository.close()
+
+
 class _SelectedCover(NamedTuple):
     """A real current consideration, its selected candidate and the owner
     decision choosing it, over a fresh store; nothing is recorded yet."""

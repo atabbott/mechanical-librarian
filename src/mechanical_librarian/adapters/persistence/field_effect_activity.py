@@ -198,6 +198,17 @@ _RECORDED_ONLY_EXCLUDED_SQL = (
     "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
 )
 
+# Automatic authority decides and writes only in the Automatic posture. An
+# automatic decision recorded there stays on its case when the owner leaves
+# Automatic, and leaving Automatic with the policy unchanged admits that same
+# case again (#1568), so its field, cover or description decision waits until
+# the owner confirms Automatic again. Owner decisions are never gated on
+# posture.
+_AUTOMATIC_POSTURE_SQL = (
+    "EXISTS (SELECT 1 FROM metadata_policy_state "
+    "WHERE singleton=1 AND posture='automatic')"
+)
+
 # An effect holds its decision unless it was superseded, abandoned, or staled
 # only by a lost connection, which the scheduler plans again within its bound
 # once the connection is observed healthy (#1402).
@@ -971,6 +982,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 (authority.decision_id,),
             ).fetchone()
             is None
+            # An automatic decision authorizes nothing outside the Automatic
+            # posture; an owner decision is not gated on posture (#1568).
+            and self._connection.execute(
+                "SELECT 1 WHERE NOT "
+                + _AUTOMATIC_POSTURE_SQL
+                + " AND (EXISTS (SELECT 1 FROM automatic_decisions "
+                "WHERE decision_id=?) OR EXISTS (SELECT 1 FROM "
+                "cover_selection_authorities WHERE decision_id=? AND "
+                "kind='automatic') OR EXISTS (SELECT 1 FROM description_decisions "
+                "WHERE decision_id=? AND CASE WHEN json_valid(document) THEN "
+                "json_extract(document,'$.origin') END IS NOT 'human'))",
+                (authority.decision_id,) * 3,
+            ).fetchone()
+            is None
         )
         description = self._connection.execute(
             "SELECT document FROM description_decisions WHERE decision_id=?",
@@ -1305,8 +1330,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
-                "hold.destination=automatic.destination AND hold.active=1)"
-                " UNION ALL SELECT selection.decision_id,selection.occurred_at,"
+                "hold.destination=automatic.destination AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL SELECT selection.decision_id,selection.occurred_at,"
                 "json_extract(selection.document,'$.decision_document') "
                 "FROM current_cover_selection_authorities current "
                 "JOIN cover_selection_authorities selection "
@@ -1317,14 +1343,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic'"
-                " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                "WHERE selection.kind='automatic' AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
                 # An owner's description is the decision its own hold keeps; an
-                # automatic one under a hold waits for Resume (ADR-0085).
-                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                # automatic one under a hold waits for Resume (ADR-0085), and
+                # outside the Automatic posture waits for Automatic again.
+                " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=d.review_case_id AND "
-                "hold.destination='description' AND hold.active=1))"
+                "hold.destination='description' AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + "))"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
                 "AND "
                 + _FIELD_EFFECT_HOLDS_DECISION_SQL
@@ -1402,7 +1432,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
-                "hold.destination=automatic.destination AND hold.active=1) UNION ALL "
+                "hold.destination=automatic.destination AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL "
                 "SELECT selection.decision_id,consideration.review_case_id,'cover','automatic' "
                 "FROM current_cover_selection_authorities current "
                 "JOIN cover_selection_authorities selection "
@@ -1413,11 +1445,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
-                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                "WHERE selection.kind='automatic' AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
+                " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=d.review_case_id AND "
-                "hold.destination='description' AND hold.active=1))) "
+                "hold.destination='description' AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + "))) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
