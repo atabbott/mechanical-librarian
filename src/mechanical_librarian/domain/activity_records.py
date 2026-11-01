@@ -78,7 +78,8 @@ class ActivityResult(StrEnum):
     CHECKING = "Checking"
     WAITING_SAFELY = "Waiting safely"
     VERIFIED = "Verified"
-    STALE = "Stale"
+    CLOSED_SAFELY = "Closed safely"
+    ITEM_CHANGED = "Item changed; closed safely"
     SUPERSEDED = "Superseded"
     STOPPED_SAFELY = "Stopped safely"
     RECORDED = "Recorded"
@@ -119,7 +120,7 @@ _RESULT_LABELS = {
     "reconciling": ActivityResult.CHECKING,
     "retryable": ActivityResult.WAITING_SAFELY,
     "verified": ActivityResult.VERIFIED,
-    "stale": ActivityResult.STALE,
+    "stale": ActivityResult.CLOSED_SAFELY,
     "superseded": ActivityResult.SUPERSEDED,
     "abandoned": ActivityResult.STOPPED_SAFELY,
 }
@@ -191,10 +192,14 @@ def activity_result_label(state: str, failure: object = None) -> ActivityResult:
     """Return the closed owner-visible result word for one durable state.
 
     A change stopped only by a lost connection is still waiting to be prepared
-    again, so it reads as waiting rather than as a stopped stale (#1402).
+    again, so it reads as waiting rather than as a stopped stale (#1402). One
+    that closed because the item changed says so, without claiming nothing was
+    written: an earlier attempt may have landed (#1542).
     """
     if (state, failure) == ("stale", "connection"):
         return ActivityResult.WAITING_SAFELY
+    if (state, failure) == ("stale", "target_changed"):
+        return ActivityResult.ITEM_CHANGED
     return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
 
 

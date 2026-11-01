@@ -1354,6 +1354,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               recoveryCount={recoveryCount}
               dormantRecovery={dormantRecovery}
               ownerAction={ownerAction}
+              filtered={Boolean(search.q) || search.eventType !== 'all'}
               throttled={throttled}
               throttleRemedy={throttleRemedy}
               paused={data.paused}

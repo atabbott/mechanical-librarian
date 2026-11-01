@@ -31,6 +31,7 @@ export function ActivityStatusCopy({
   recoveryCount,
   dormantRecovery,
   ownerAction,
+  filtered,
   throttled,
   throttleRemedy,
   paused,
@@ -43,6 +44,8 @@ export function ActivityStatusCopy({
   dormantRecovery: number
   /** Changes stopped until the owner acts on their ledger entry (#1430). */
   ownerAction: number
+  /** A search or event-type filter can hide that entry as the range can (#1542). */
+  filtered: boolean
   throttled: boolean
   throttleRemedy: boolean
   paused: boolean
@@ -86,8 +89,8 @@ export function ActivityStatusCopy({
                 ? 'Affected work remains held until its current state can be reconciled safely.'
                 : ownerAction
                   ? ownerAction === 1
-                    ? 'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.'
-                    : 'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.'
+                    ? `Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, ${filtered ? 'widen the range or clear filters' : 'widen the range'}.`
+                    : `Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, ${filtered ? 'widen the range or clear filters' : 'widen the range'}.`
                   : throttled
                     ? `${throttleRemedy ? 'A source needs an API key added or checked; until then its lookups wait.' : 'Some lookups wait until the source allows them again; nothing is lost.'} Settings shows each source.`
                     : paused
