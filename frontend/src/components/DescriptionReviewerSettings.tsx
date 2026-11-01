@@ -30,10 +30,14 @@ export const DescriptionReviewerSettings = ({
     if (uncertainWriteOutcome(error))
       await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
   }
+  // Only the latest action's failure is shown, so an earlier uncertain change
+  // cannot mask a later, unrelated failure.
+  const [latest, setLatest] = useState<'test' | 'selection' | 'refresh' | 'contained' | null>(null)
   const test = useMutation({
     mutationFn: () =>
       http.testDescriptionModel({ expected_revision: view.revision, api_key: key, model }),
     retry: false,
+    onMutate: () => setLatest('test'),
     onSuccess: setMetadata,
   })
   const selection = useMutation({
@@ -47,6 +51,7 @@ export const DescriptionReviewerSettings = ({
           })
         : http.selectReviewer(engine, view.revision, undefined, 'description_rewrite'),
     retry: false,
+    onMutate: () => setLatest('selection'),
     onSuccess: (saved) => {
       setKey('')
       setMetadata(null)
@@ -57,13 +62,16 @@ export const DescriptionReviewerSettings = ({
   const refresh = useMutation({
     mutationFn: () => http.refreshOpenRouter(undefined, 'description_rewrite'),
     retry: false,
+    onMutate: () => setLatest('refresh'),
     onSuccess: (saved) => cache.setQueryData(['reviewer-access'], saved),
     onError: reloadIfUncertain,
   })
   const contained = useMutation({
     mutationFn: () => http.describeContainedDescription(),
     retry: false,
+    onMutate: () => setLatest('contained'),
   })
+  const failure = latest === null ? null : { test, selection, refresh, contained }[latest].error
   const busy = contained.isPending || test.isPending || selection.isPending || refresh.isPending
   const selected = view.description_mapping
   const disclosure =
@@ -236,12 +244,12 @@ export const DescriptionReviewerSettings = ({
               Refresh description model status and prices
             </button>
           ) : null}
-          {contained.isError || test.isError || selection.isError || refresh.isError ? (
+          {failure !== null ? (
             <p role="alert">
-              {uncertainWriteOutcome(selection.error ?? refresh.error)
+              {(latest === 'selection' || latest === 'refresh') && uncertainWriteOutcome(failure)
                 ? 'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
                 : refusalCopy(
-                    contained.error ?? test.error ?? selection.error ?? refresh.error,
+                    failure,
                     'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
                   )}
             </p>

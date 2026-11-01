@@ -936,10 +936,16 @@ describe('Library review ownership', () => {
     const returnToAutomatic = vi.fn(async () =>
       Promise.reject(new ApiError(500, 'invalid_error_response')),
     )
-    const getCaseDetail = vi.fn(async () => ({
-      ...detail,
-      fields: [{ ...field, manualHold: true }],
-    }))
+    const held = { ...detail, fields: [{ ...field, manualHold: true }] }
+    let holdReload = false
+    let finishReload: (() => void) | undefined
+    const getCaseDetail = vi.fn(async () => {
+      if (holdReload)
+        await new Promise<void>((resolve) => {
+          finishReload = resolve
+        })
+      return held
+    })
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
       getCaseDetail,
@@ -948,6 +954,7 @@ describe('Library review ownership', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
     const readsBefore = getCaseDetail.mock.calls.length
+    holdReload = true
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Fresh checks could not be confirmed. They may have been requested; the current case was reloaded. Check it before trying again.',
@@ -956,6 +963,14 @@ describe('Library review ownership', () => {
       screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
     ).toBeNull()
     await waitFor(() => expect(getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
+    // Focus returns to the panel while the case is still reloading, so
+    // Escape keeps closing it.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus(),
+    )
+    finishReload?.()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toHaveFocus()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
   })
 

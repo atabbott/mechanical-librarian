@@ -6,6 +6,7 @@ import {
   AmbiguousMutationError,
   CsrfRenewedError,
   ApiError,
+  BuildMismatchError,
   settingsAudibleMarketplaceOrder,
   settingsEndpointValid,
   settingsIntegerValid,
@@ -1963,6 +1964,80 @@ it('reloads reviewer access and says a description adviser change could not be c
   await waitFor(() =>
     expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBeGreaterThan(readsBefore),
   )
+})
+
+it('offers a reload, not another try, when settings meet a newer build', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => {
+    throw new BuildMismatchError()
+  })
+  renderRoute('/settings', http)
+
+  expect(await screen.findByRole('heading', { name: 'Settings were not loaded.' })).toBeVisible()
+  expect(
+    screen.getByText(
+      'This tab is running an earlier build. Reload to open it in the current application.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(screen.queryByText('Settings are unavailable.')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+it('offers a reload, not another try, when reviewer access meets a newer build', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => {
+    throw new BuildMismatchError()
+  })
+  renderRoute('/settings?group=reviewer', http)
+
+  expect(
+    await screen.findByText(
+      'Reviewer access was not loaded. This tab is running an earlier build. Reload to open it in the current application.',
+      { exact: false },
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+it('replaces an unconfirmed description adviser change with a later inspection failure', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable' as const },
+  }))
+  http.describeContainedDescription = vi
+    .fn()
+    .mockResolvedValueOnce({ model: 'contained-model', profile_sha256: 'a'.repeat(64) })
+    .mockRejectedValue(new ApiError(503, 'unreachable'))
+  http.selectReviewer = vi.fn(async () => {
+    throw new ApiError(503, 'reviewer_access_unavailable')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+  const inspect = screen.getByRole('button', { name: 'Inspect contained description model' })
+  await user.click(inspect)
+  await waitFor(() => expect(use).toBeEnabled())
+  await user.click(use)
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  expect(await within(description).findByRole('alert')).toHaveTextContent(
+    'The description adviser change could not be confirmed.',
+  )
+
+  await waitFor(() => expect(inspect).toBeEnabled())
+  await user.click(inspect)
+  await waitFor(() =>
+    expect(within(description).getByRole('alert')).toHaveTextContent(
+      'Description adviser setup could not complete.',
+    ),
+  )
+  expect(within(description).getByRole('alert')).not.toHaveTextContent('could not be confirmed')
+  expect(http.describeContainedDescription).toHaveBeenCalledTimes(2)
 })
 
 it('keeps the setup copy when a description model test is unreachable', async () => {

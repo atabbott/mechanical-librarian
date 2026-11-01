@@ -89,6 +89,7 @@ def test_an_old_tab_reloads_on_its_next_read_and_an_expired_one_signs_in() -> No
                 assert notice.get_by_text(
                     "This page is from a different application build."
                 ).is_visible()
+                page.get_by_role("heading", name="Activity was not loaded.").wait_for()
                 page.get_by_role(
                     "button", name="Reload the current application"
                 ).wait_for()

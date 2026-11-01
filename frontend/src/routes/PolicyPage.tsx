@@ -234,7 +234,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'warning',
           message:
-            'The snapshot could not be confirmed. It may have been saved; the current policy state is refreshing. Check it before saving again.',
+            'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
         })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })

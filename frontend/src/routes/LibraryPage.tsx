@@ -10,6 +10,7 @@ import {
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
+import { StaleBuildRead } from '../components/StaleBuildRead'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -18,6 +19,7 @@ import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import {
   ApiError,
+  BuildMismatchError,
   CsrfRenewedError,
   displayValue,
   sessionRefreshedCopy,
@@ -1193,7 +1195,7 @@ export default function LibraryPage({
     onSuccess: (_value, request) => {
       setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
     },
-    onError: async (error, request) => {
+    onError: (error, request) => {
       const uncertain = uncertainWriteOutcome(error)
       setAutomaticResults((current) => ({
         ...current,
@@ -1204,8 +1206,10 @@ export default function LibraryPage({
             : 'error',
       }))
       // The checks may have been requested: show the case as it now stands.
+      // Not awaited, so the panel's controls are enabled again (and Keep
+      // manual handling can take focus) while the case reloads.
       if (uncertain)
-        await invalidateForegroundQueries(queryClient, {
+        void invalidateForegroundQueries(queryClient, {
           queryKey: ['review-case', selectedReviewCaseId],
           exact: true,
         })
@@ -2307,6 +2311,10 @@ export default function LibraryPage({
           ) : !displayedIdentity ? (
             identityPending || leaving || successorPending === search.preview ? (
               <p role="status">Loading selected work…</p>
+            ) : identityError &&
+              (attention.error instanceof BuildMismatchError ||
+                detail.error instanceof BuildMismatchError) ? (
+              <StaleBuildRead lead="Selected work was not loaded." />
             ) : identityError ? (
               <p role="alert">
                 Selected work could not be loaded.{' '}
@@ -2344,6 +2352,8 @@ export default function LibraryPage({
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
+          ) : detail.error instanceof BuildMismatchError ? (
+            <StaleBuildRead lead="Selected work was not loaded." />
           ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??

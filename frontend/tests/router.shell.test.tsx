@@ -1466,13 +1466,24 @@ describe('Application shell', () => {
     })
     renderRoute('/activity', http)
 
+    expect(await screen.findByRole('heading', { name: 'Activity was not loaded.' })).toBeVisible()
     expect(
-      await screen.findByRole('heading', {
-        name: 'This page is from a different application build.',
-      }),
-    ).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+      screen.getByText(
+        'This tab is running an earlier build. Reload to open it in the current application.',
+      ),
+    ).not.toHaveAttribute('role')
+    // The shell notice states the build mismatch; the route does not repeat it.
+    expect(
+      screen.queryByRole('heading', { name: 'This page is from a different application build.' }),
+    ).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    const reload = vi.fn()
+    const { href, origin, pathname, search } = window.location
+    vi.stubGlobal('location', { assign: vi.fn(), href, origin, pathname, search, reload })
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Reload the current application' }))
+    await waitFor(() => expect(reload).toHaveBeenCalled())
   })
 
   it('says a sign-out that may have taken effect could not be confirmed', async () => {
@@ -1489,9 +1500,11 @@ describe('Application shell', () => {
     renderRoute('/library?lens=all', http)
     await user.click(await screen.findByRole('button', { name: 'Sign out' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    const notice = await screen.findByRole('alert')
+    expect(notice).toHaveTextContent(
       'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.',
     )
+    expect(notice).toHaveClass('is-uncertain')
     expect(screen.queryByText('Sign out failed. Try again.')).toBeNull()
     expect(assign).not.toHaveBeenCalled()
   })

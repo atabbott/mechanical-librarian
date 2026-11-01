@@ -1109,6 +1109,8 @@ const Shell = () => {
   const [mismatch, setMismatch] = useState(false)
   const [retaining, setRetaining] = useState(false)
   const [shellError, setShellError] = useState('')
+  // An unconfirmed sign-out is a warning, not a failure: it may have worked.
+  const [shellUncertain, setShellUncertain] = useState(false)
   useEffect(() => {
     const listener = () => setMismatch(true)
     addEventListener('ml:build-mismatch', listener)
@@ -1173,16 +1175,20 @@ const Shell = () => {
   }, [navigation.status, path, title])
   const signOut = async () => {
     setShellError('')
+    setShellUncertain(false)
     try {
       await http.logout()
       window.location.assign('/login')
     } catch (error) {
-      if (!(error instanceof BuildMismatchError))
+      if (!(error instanceof BuildMismatchError)) {
+        const uncertain = uncertainWriteOutcome(error)
+        setShellUncertain(uncertain)
         setShellError(
-          uncertainWriteOutcome(error)
+          uncertain
             ? 'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.'
             : refusalCopy(error, 'Sign out failed. Try again.'),
         )
+      }
     }
   }
   return (
@@ -1250,7 +1256,7 @@ const Shell = () => {
         {navigation.status === 'idle' && !retaining ? `${title} loaded` : `Loading ${title}`}
       </p>
       {shellError ? (
-        <p className="shell-error" role="alert">
+        <p className={shellUncertain ? 'shell-error is-uncertain' : 'shell-error'} role="alert">
           {shellError}
         </p>
       ) : null}
@@ -1293,8 +1299,9 @@ const RouteFailure = ({
   return error instanceof BuildMismatchError ? (
     <section className="route-state">
       <p className="eyebrow">Application updated</p>
-      <h1>This page is from a different application build.</h1>
-      <p role="alert">Reload once to continue with the current application.</p>
+      <h1>{title} was not loaded.</h1>
+      {/* The shell's build notice is the alert; this only names the route. */}
+      <p>This tab is running an earlier build. Reload to open it in the current application.</p>
       <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
     </section>
   ) : error instanceof ChunkRecoveryError && error.exhausted ? (

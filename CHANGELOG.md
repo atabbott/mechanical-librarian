@@ -180,7 +180,8 @@ brackets are GitHub issues.
   notice on its next read, not only on a write, and offers to reload instead
   of "Try again". Saving a policy snapshot, changing the description adviser,
   resuming automatic handling and signing out now say a result that cannot be
-  confirmed may have taken effect, and reload the current state (#1577).
+  confirmed may have taken effect, and show the current state or ask you to
+  reload it (#1577).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
