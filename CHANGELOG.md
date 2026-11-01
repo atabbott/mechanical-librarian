@@ -176,6 +176,11 @@ brackets are GitHub issues.
 - A cover advisory retry or comparison whose result cannot be confirmed now
   reloads the case and says it may have been requested, instead of saying it
   failed safely (#1572).
+- Reviewer access, description preference and description advice buttons
+  keep focus while their request runs, look disabled and ignore a second
+  press, instead of dropping focus to the page. A reviewer access or Library
+  decision failure now shows directly under the button it describes, and a
+  failed connection check is announced once (#1584).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
