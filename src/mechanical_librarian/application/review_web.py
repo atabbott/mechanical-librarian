@@ -113,8 +113,9 @@ _CURRENT_VALUE_REFUSAL_TEXT = {
 # An audiobook's regional language tag is never respelled for you (#1496), so
 # the field says why instead of "no more specific reason is known" (#1593).
 _AUDIOBOOK_LANGUAGE_REGION_TEXT = (
-    "This spelling names a region, and dropping a region is never done for you "
-    "on audiobooks. Choose the plain language yourself if you want it."
+    "The current value names the same language with a region. Dropping the "
+    "region is never done for you on audiobooks; choose the plain language "
+    "yourself if you want it."
 )
 _AUTOMATIC_REFUSAL_TEXT = {
     "isbn_title_material_conflict": "The sources disagree about the work or title; choose the title yourself.",

@@ -173,6 +173,9 @@ brackets are GitHub issues.
 - The Audiobookshelf field-effect canary composes the installed application
   around one shared operation admission, as the product does, so its
   preparation lanes queue instead of meeting at the database (#1561).
+- An audiobook whose language is a regional tag such as en-GB, left to you
+  under Automatic, says that dropping the region is never done for you on
+  audiobooks, instead of "no more specific reason is known" (#1593).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

@@ -1021,8 +1021,9 @@ def test_respelling_a_current_language_is_decided_automatically(tmp_path, audio)
 
 
 _AUDIOBOOK_REGION_TEXT = (
-    "This spelling names a region, and dropping a region is never done for you "
-    "on audiobooks. Choose the plain language yourself if you want it."
+    "The current value names the same language with a region. Dropping the "
+    "region is never done for you on audiobooks; choose the plain language "
+    "yourself if you want it."
 )
 
 
@@ -1069,3 +1070,32 @@ def test_regional_language_tag_withheld_reason_is_specific(tmp_path, audio):
             "value": "English",
         }
         assert field["automatic_withheld_reason"] is None
+
+
+def test_different_language_audiobook_replace_keeps_its_own_reason(tmp_path):
+    """A different language shares the option but not the region text (#1593)."""
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.language_reports import publish_language_case
+
+    report = language_report(("French",), "en-GB", audio=True)
+    with closing(open_repository(tmp_path / "other.sqlite")) as repository:
+        case_id, _ = publish_language_case(repository, report)
+        outcome = next(
+            value
+            for value in ShadowOutcomeSet.from_json(
+                repository.read_current_review_case(
+                    case_id, None
+                ).final_outcome_document
+            ).outcomes
+            if value.destination == "language"
+        )
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+    # Only the respelling notice tells this apart from a region drop.
+    assert outcome.policy_option == "display_name:audiobook_language_replace"
+    assert field["notices"] == ["field_policy_conflict"]
+    assert field["automatic_withheld_reason"] is not None
+    assert field["automatic_withheld_reason"] != _AUDIOBOOK_REGION_TEXT

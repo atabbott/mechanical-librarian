@@ -13431,7 +13431,7 @@ describe('a focused field decision (#1519)', () => {
     // respelling notice is what says the choice only changes the spelling (#1496).
     // The reason is the server's text for that state (#1593).
     const reason =
-      'This spelling names a region, and dropping a region is never done for you on audiobooks. Choose the plain language yourself if you want it.'
+      'The current value names the same language with a region. Dropping the region is never done for you on audiobooks; choose the plain language yourself if you want it.'
     open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
     expect(await screen.findByText(reason)).toBeVisible()
     expect(screen.getByLabelText('Comparison condition')).toHaveTextContent(
