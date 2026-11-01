@@ -1,6 +1,23 @@
 import activityV2Predecessor from './activityV2Predecessor.json'
 import currentActivity from './descriptionAdviceActivityFixture.json'
-import { reportDetail } from './wireFixtures'
+import {
+  caseDetail,
+  caseHistory,
+  choiceContext,
+  coverAutomaticDecision,
+  coverCandidate,
+  coverConsideration,
+  coverIdentity,
+  coverPolicyReport,
+  decisionProjection,
+  historyCoverItem,
+  historyDecisionItem,
+  historyShadowItem,
+  reportDetail,
+  reviewField,
+  targetField,
+  targetIdentity,
+} from './wireFixtures'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -312,16 +329,15 @@ describe('ReviewApiClient', () => {
       alternative_id: string | null,
       selection: 'current' | 'proposed',
       recommendation: 'recommended' | 'no_recommendation' = 'no_recommendation',
-    ) => ({
-      alternative_id,
-      selection,
-      recommendation,
-      recommendation_reason:
-        recommendation === 'recommended' ? 'Authoritative policy recommendation.' : '',
-      rationale: 'Retained cover choice.',
-      limitations: [],
-      evidence: [],
-    })
+    ) =>
+      choiceContext({
+        alternative_id,
+        selection,
+        recommendation,
+        recommendation_reason:
+          recommendation === 'recommended' ? 'Authoritative policy recommendation.' : '',
+        rationale: 'Retained cover choice.',
+      })
     const observation = (overrides: Record<string, unknown> = {}) => ({
       candidate_reference: 'candidate-1',
       composition: 'minimal',
@@ -340,62 +356,21 @@ describe('ReviewApiClient', () => {
       tie_in_branding: 'absent',
       ...overrides,
     })
-    const candidate = (overrides: Record<string, unknown> = {}) => ({
-      artifact_id: 'artifact-1',
-      deterministic_citations: ['citation-1'],
-      deterministic_rank: 1,
-      deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-1'],
-      height: 100,
-      identity: { outcome: 'verified_work_match', reasons: [] },
-      incumbent: false,
-      match_state: 'same_book',
-      observation: null,
-      original_sha256: 'a'.repeat(64),
-      ordinal: 0,
-      preview_sha256: 'b'.repeat(64),
-      reference: 'candidate-1',
-      selectable: true,
-      manual_eligible: true,
-      source_kinds: [],
-      state: 'acceptable',
-      width: 100,
-      ...overrides,
-    })
-    const policy = (overrides: Record<string, unknown> = {}) => ({
-      schema_version: 'cover-policy-report-v2',
-      status: 'abstained',
-      actual_target_state: 'unknown',
-      owner_ready: true,
-      recommended_candidate_reference: null,
-      acceptable_candidate_references: ['candidate-1'],
-      ...overrides,
-    })
-    const payload = (overrides: Record<string, unknown> = {}) => ({
-      schema_version: 'cover-consideration-v4',
-      consideration_id: 'consideration',
-      current: true,
-      candidates: [candidate()],
-      choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')],
-      incumbent: { state: 'absent', reference: null },
-      omissions: [],
-      policy: policy(),
-      policy_preferences: {
-        avoid_promotional_text: false,
-        avoid_tie_in_branding: false,
-        prefer_minimal_composition: false,
-      },
-      policy_reference: 'policy',
-      provider_fetching: false,
-      ready: true,
-      reviewer_access_revision: 7,
-      reviewer_engine: 'openrouter',
-      reviewer_model: 'provider/model',
-      reviewer_status: 'completed',
-      reviewer_unavailable_reason: null,
-      supersedes_id: null,
-      target_fingerprint: 'fingerprint',
-      ...overrides,
-    })
+    // An acceptable, ranked candidate under an abstaining policy.
+    const candidate = coverCandidate
+    const policy = coverPolicyReport
+    const payload = (overrides: Record<string, unknown> = {}) =>
+      coverConsideration({
+        candidates: [candidate()],
+        choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')],
+        policy: policy(),
+        ready: true,
+        reviewer_access_revision: 7,
+        reviewer_engine: 'openrouter',
+        reviewer_model: 'provider/model',
+        reviewer_status: 'completed',
+        ...overrides,
+      })
 
     expect(mapCoverConsideration(payload())?.choiceContexts).toHaveLength(2)
     const retainedOnly = payload({
@@ -573,14 +548,28 @@ describe('ReviewApiClient', () => {
         'unconfirmed-selectable',
         {
           candidates: [
-            candidate({ identity: { outcome: 'unknown' }, match_state: 'match_not_confirmed' }),
+            candidate({
+              identity: coverIdentity({ outcome: 'unknown' }),
+              match_state: 'match_not_confirmed',
+            }),
           ],
         },
       ],
-      ['conflict-same-book', { candidates: [candidate({ identity: { outcome: 'conflict' } })] }],
+      [
+        'conflict-same-book',
+        {
+          candidates: [
+            candidate({ identity: coverIdentity({ outcome: 'conflict' }), manual_eligible: false }),
+          ],
+        },
+      ],
       [
         'manifestation-wrong-label',
-        { candidates: [candidate({ identity: { outcome: 'verified_manifestation_match' } })] },
+        {
+          candidates: [
+            candidate({ identity: coverIdentity({ outcome: 'verified_manifestation_match' }) }),
+          ],
+        },
       ],
       [
         'incumbent-ranked',
@@ -715,41 +704,8 @@ describe('ReviewApiClient', () => {
     ).toThrow(new ApiError(502, 'invalid_cover_source_kind'))
   })
   it('maps only the fixed unavailable reviewer-contract reasons', () => {
-    const payload = (reviewer_unavailable_reason: unknown) => ({
-      schema_version: 'cover-consideration-v4',
-      consideration_id: 'consideration',
-      current: true,
-      candidates: [],
-      choice_contexts: [
-        {
-          alternative_id: null,
-          selection: 'current',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
-          rationale: 'Retained cover choice.',
-          limitations: [],
-          evidence: [],
-        },
-      ],
-      incumbent: { state: 'absent', reference: null },
-      omissions: [],
-      policy: null,
-      policy_preferences: {
-        avoid_promotional_text: false,
-        avoid_tie_in_branding: false,
-        prefer_minimal_composition: false,
-      },
-      policy_reference: 'policy',
-      provider_fetching: false,
-      ready: false,
-      reviewer_access_revision: null,
-      reviewer_engine: null,
-      reviewer_model: null,
-      reviewer_status: 'unavailable',
-      reviewer_unavailable_reason,
-      supersedes_id: null,
-      target_fingerprint: 'fingerprint',
-    })
+    const payload = (reviewer_unavailable_reason: unknown) =>
+      coverConsideration({ reviewer_status: 'unavailable', reviewer_unavailable_reason })
 
     expect(mapCoverConsideration(payload(null))?.reviewerUnavailableReason).toBeNull()
     expect(
@@ -763,42 +719,18 @@ describe('ReviewApiClient', () => {
     expect(() => mapCoverConsideration(payload('/private/profile token=secret'))).toThrow(ApiError)
   })
   it('maps only a closed reviewer failure code on a failed review', () => {
-    const payload = (reviewer_status: string, reviewer_failure_code?: unknown) => ({
-      schema_version: 'cover-consideration-v4',
-      consideration_id: 'consideration',
-      current: true,
-      candidates: [],
-      choice_contexts: [
-        {
-          alternative_id: null,
-          selection: 'current',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
-          rationale: 'Retained cover choice.',
-          limitations: [],
-          evidence: [],
-        },
-      ],
-      incumbent: { state: 'absent', reference: null },
-      omissions: [],
-      policy: null,
-      policy_preferences: {
-        avoid_promotional_text: false,
-        avoid_tie_in_branding: false,
-        prefer_minimal_composition: false,
-      },
-      policy_reference: 'policy',
-      provider_fetching: false,
-      ready: false,
-      reviewer_access_revision: 3,
-      reviewer_engine: 'openrouter',
-      reviewer_model: 'provider/model',
-      reviewer_status,
-      ...(reviewer_failure_code === undefined ? {} : { reviewer_failure_code }),
-      reviewer_unavailable_reason: null,
-      supersedes_id: null,
-      target_fingerprint: 'fingerprint',
-    })
+    const payload = (reviewer_status: string, reviewer_failure_code?: unknown) => {
+      const body: Record<string, unknown> = coverConsideration({
+        reviewer_access_revision: 3,
+        reviewer_engine: 'openrouter',
+        reviewer_model: 'provider/model',
+        reviewer_status,
+        reviewer_failure_code,
+      })
+      // The mapper reads an absent code as no code; the absent case removes it.
+      if (reviewer_failure_code === undefined) delete body.reviewer_failure_code
+      return body
+    }
 
     for (const code of [
       'timed_out',
@@ -819,64 +751,19 @@ describe('ReviewApiClient', () => {
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (
       series: readonly Record<string, unknown>[],
-      choiceContexts: unknown = [
-        {
-          alternative_id: null,
-          evidence: [],
-          limitations: [],
-          rationale: '',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
-          selection: 'current',
-        },
-      ],
+      choiceContexts: unknown = [choiceContext()],
     ) =>
-      mapCaseDetail({
-        schema_version: 'review-case-detail-v6',
-        audiobook_review_scope: null,
-        recording_identity_basis: null,
-        review_case_id: 'case-1',
-        current: true,
-        comparison_notices: [],
-        media_health: [],
-        writes_consented: false,
-        target: {
-          item: 'internal-item-1',
-          title: 'A Book',
-          library: 'Books',
-          connection: 'primary',
-          media_kind: 'epub',
-          authors: ['Ada Example'],
-        },
-        fields: [
-          {
-            classification: 'needs_attention',
-            classification_reason: 'This field needs your review.',
-            editable: true,
-            inventory_role: 'primary',
-            navigation_role: 'attention',
-            preservation_only: false,
-            decision_actions: [],
-            destination: 'series',
-            deterministic_disposition: 'propose_change',
-            effect_capability: 'unavailable',
-            needs_attention: true,
-            manual_hold: false,
-            owner_control: null,
-            current: { state: 'value', value: series },
-            proposed_values: [],
-            choice_contexts: choiceContexts,
-            proposal_id: 'proposal-1',
-            target_fingerprint: 'fingerprint-1',
-            human_decision: null,
-            automatic_decision: null,
-            automatic_selection_sources: [],
-            notices: [],
-            provenance: [],
-            corroboration_sources: [],
-          },
-        ],
-      })
+      mapCaseDetail(
+        caseDetail({
+          fields: [
+            reviewField({
+              destination: 'series',
+              current: targetField({ destination: 'series', value: series }),
+              choice_contexts: choiceContexts,
+            }),
+          ],
+        }),
+      )
 
     expect(detail([{ name: 'Archive', sequence: '2.5' }]).fields[0]?.currentValue).toBe(
       'Archive · 2.5',
@@ -886,62 +773,16 @@ describe('ReviewApiClient', () => {
   })
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
-    const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v6',
-      audiobook_review_scope: null,
-      recording_identity_basis: null,
-      review_case_id: 'case-1',
-      current: true,
-      comparison_notices: [],
-      media_health: [],
-      writes_consented: false,
-      target: {
-        item: 'internal-item-1',
-        title: 'A Book',
-        library: 'Books',
-        connection: 'primary',
-        media_kind: 'epub',
-        authors: ['Ada Example'],
-      },
-      fields: [
-        {
-          classification: 'needs_attention',
-          classification_reason: 'This field needs your review.',
-          editable: true,
-          inventory_role: 'primary',
-          navigation_role: 'attention',
-          preservation_only: false,
-          decision_actions: [],
-          destination: 'authors',
-          deterministic_disposition: 'propose_change',
-          effect_capability: 'unavailable',
-          needs_attention: true,
-          manual_hold: false,
-          owner_control: null,
-          current: { state: 'value', value: ['Ada Example'] },
-          proposed_values: [],
-          choice_contexts: [
-            {
-              alternative_id: null,
-              evidence: [],
-              limitations: [],
-              rationale: '',
-              recommendation: 'no_recommendation',
-              recommendation_reason: '',
-              selection: 'current',
-            },
-          ],
-          proposal_id: 'proposal-1',
-          target_fingerprint: 'fingerprint-1',
-          human_decision: null,
-          automatic_decision: null,
-          automatic_selection_sources: [],
-          notices: [],
-          provenance: [],
-          corroboration_sources,
-        },
-      ],
-    })
+    const response = (corroboration_sources: unknown) =>
+      caseDetail({
+        fields: [
+          reviewField({
+            destination: 'authors',
+            current: targetField({ destination: 'authors', value: ['Ada Example'] }),
+            corroboration_sources,
+          }),
+        ],
+      })
 
     expect(() => mapCaseDetail(response(undefined))).toThrow(ApiError)
     expect(() => mapCaseDetail(response('Hardcover'))).toThrow(ApiError)
@@ -955,70 +796,18 @@ describe('ReviewApiClient', () => {
   const closedDetail = (
     field: Record<string, unknown> = {},
     target: Record<string, unknown> = {},
-  ) => ({
-    schema_version: 'review-case-detail-v6',
-    audiobook_review_scope: null,
-    recording_identity_basis: null,
-    review_case_id: 'case-1',
-    current: true,
-    comparison_notices: [],
-    media_health: [],
-    writes_consented: false,
-    target: {
-      item: 'internal-item-1',
-      title: 'A Book',
-      library: 'Books',
-      connection: 'primary',
-      media_kind: 'epub',
-      authors: ['Ada Example'],
-      ...target,
-    },
-    fields: [
-      {
-        classification: 'needs_attention',
-        classification_reason: 'This field needs your review.',
-        editable: true,
-        inventory_role: 'primary',
-        navigation_role: 'attention',
-        preservation_only: false,
-        decision_actions: [],
-        destination: 'title',
-        deterministic_disposition: 'propose_change',
-        effect_capability: 'unavailable',
-        needs_attention: true,
-        manual_hold: false,
-        owner_control: null,
-        current: { state: 'value', value: 'A Book' },
-        proposed_values: [],
-        choice_contexts: [
-          {
-            alternative_id: null,
-            evidence: [],
-            limitations: [],
-            rationale: '',
-            recommendation: 'no_recommendation',
-            recommendation_reason: '',
-            selection: 'current',
-          },
-        ],
-        proposal_id: 'proposal-1',
-        target_fingerprint: 'fingerprint-1',
-        human_decision: null,
-        automatic_decision: null,
-        automatic_selection_sources: [],
-        notices: [],
-        provenance: [],
-        corroboration_sources: [],
-        ...field,
-      },
-    ],
-  })
+  ) => caseDetail({ fields: [reviewField(field)], target: targetIdentity(target) })
 
   it.each([
     ['destination', { destination: 'publication_date' }, {}, 'invalid_destination'],
     ['disposition', { deterministic_disposition: 'review' }, {}, 'invalid_disposition'],
     ['write capability', { effect_capability: 'manual' }, {}, 'invalid_effect_capability'],
-    ['current state', { current: { state: 'absent', value: null } }, {}, 'invalid_current_state'],
+    [
+      'current state',
+      { current: targetField({ state: 'absent', value: null }) },
+      {},
+      'invalid_current_state',
+    ],
     ['media kind', {}, { media_kind: 'ebook' }, 'invalid_target_media_kind'],
   ])('refuses an unknown %s code in a case detail', (_name, field, target, code) => {
     expect(mapCaseDetail(closedDetail()).fields[0]?.destination).toBe('title')
@@ -1034,33 +823,16 @@ describe('ReviewApiClient', () => {
     ['malformed', null, 'Couldn’t be read from Audiobookshelf'],
     ['oversized', null, 'Couldn’t be read from Audiobookshelf'],
   ])('reads a %s current value in Audiobookshelf’s terms', (state, value, shown) => {
-    expect(mapCaseDetail(closedDetail({ current: { state, value } })).fields[0]?.currentValue).toBe(
-      shown,
-    )
+    expect(
+      mapCaseDetail(closedDetail({ current: targetField({ state, value }) })).fields[0]
+        ?.currentValue,
+    ).toBe(shown)
   })
 
   it('uses Unicode code point bounds for readable case identity', () => {
     const astral = '📚'
-    const response = (target: Record<string, unknown>) => ({
-      schema_version: 'review-case-detail-v6',
-      audiobook_review_scope: null,
-      recording_identity_basis: null,
-      review_case_id: 'case-1',
-      current: true,
-      comparison_notices: [],
-      media_health: [],
-      writes_consented: false,
-      target: {
-        item: 'internal-item-1',
-        title: 'A Book',
-        library: 'Books',
-        connection: 'primary',
-        media_kind: 'epub',
-        authors: ['Ada Example'],
-        ...target,
-      },
-      fields: [],
-    })
+    const response = (target: Record<string, unknown>) =>
+      caseDetail({ fields: [], target: targetIdentity(target) })
 
     const exact = astral.repeat(512)
     expect(mapCaseDetail(response({ title: exact, authors: [exact] }))).toMatchObject({
@@ -1072,62 +844,8 @@ describe('ReviewApiClient', () => {
   })
 
   it('rejects case-detail fields that omit the objects the view dereferences', () => {
-    const field = (overrides: Record<string, unknown> = {}) => ({
-      classification: 'needs_attention',
-      classification_reason: 'This field needs your review.',
-      editable: true,
-      inventory_role: 'primary',
-      navigation_role: 'attention',
-      preservation_only: false,
-      decision_actions: [],
-      destination: 'title',
-      deterministic_disposition: 'propose_change',
-      effect_capability: 'unavailable',
-      needs_attention: true,
-      manual_hold: false,
-      owner_control: null,
-      current: { state: 'value', value: 'A Book' },
-      proposed_values: [],
-      choice_contexts: [
-        {
-          alternative_id: null,
-          evidence: [],
-          limitations: [],
-          rationale: '',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
-          selection: 'current',
-        },
-      ],
-      proposal_id: 'proposal-1',
-      target_fingerprint: 'fingerprint-1',
-      human_decision: null,
-      automatic_decision: null,
-      automatic_selection_sources: [],
-      notices: [],
-      provenance: [],
-      corroboration_sources: [],
-      ...overrides,
-    })
-    const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v6',
-      audiobook_review_scope: null,
-      recording_identity_basis: null,
-      review_case_id: 'case-1',
-      current: true,
-      comparison_notices: [],
-      media_health: [],
-      writes_consented: false,
-      target: {
-        item: 'internal-item-1',
-        title: 'A Book',
-        library: 'Books',
-        connection: 'primary',
-        media_kind: 'epub',
-        authors: ['Ada Example'],
-      },
-      fields,
-    })
+    const field = reviewField
+    const response = (fields: readonly unknown[]) => caseDetail({ fields })
 
     expect(mapCaseDetail(response([field()])).fields[0]?.currentValue).toBe('A Book')
     expect(mapCaseDetail(response([field()])).fields[0]?.automaticWithheldReason).toBeNull()
@@ -1187,33 +905,17 @@ describe('ReviewApiClient', () => {
       decision_actions: ['keep_current', 'accept'],
       proposed_values: [{ kind: 'text', value: 'Alternative' }],
       choice_contexts: [
-        {
-          alternative_id: null,
-          evidence: [],
-          limitations: [],
-          rationale: 'Current evidence.',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
-          selection: 'current',
-        },
-        {
+        choiceContext({ rationale: 'Current evidence.' }),
+        choiceContext({
           alternative_id: 'eligible',
-          evidence: [],
-          limitations: [],
           rationale: 'Eligible evidence.',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
           selection: 'proposed',
-        },
-        {
+        }),
+        choiceContext({
           alternative_id: 'preserves-target',
-          evidence: [],
-          limitations: [],
           rationale: 'Retained non-selectable evidence.',
-          recommendation: 'no_recommendation',
-          recommendation_reason: '',
           selection: 'proposed',
-        },
+        }),
       ],
     })
     const retainedContexts = mapCaseDetail(response([retainedEvidence])).fields[0]?.choiceContexts
@@ -1317,51 +1019,43 @@ describe('ReviewApiClient', () => {
   })
 
   it('maps history without exposing retained identities and rejects malformed values', () => {
-    const payload = {
-      schema_version: 'review-case-history-v3',
-      review_case_id: 'case-1',
-      next_cursor: null,
-      items: [
-        {
-          actor: 'owner',
-          application: 'apply' as const,
-          decision_id: 'decision-secret',
-          destination: 'title',
-          event_id: 'event-secret',
-          kind: 'human_decision_recorded',
-          occurred_at: 2,
-          outcome: 'accept',
-          previous_value: { kind: 'text', value: 'Old' },
-          review_case_id: 'case-1',
-          schema_version: 'human-decision-event-v1',
-          selected_value: { kind: 'text', value: 'New' },
-        },
-        {
-          decision_id: 'automatic-secret',
-          destination: 'authors',
-          kind: 'automatic_decision_recorded',
-          occurred_at: 1,
-          origin: 'automatic_policy',
-          outcome: 'ignore',
-          previous_value: null,
-          review_case_id: 'case-1',
-          schema_version: 'automatic-decision-history-event-v1',
-          selected_value: null,
-        },
-        {
-          checkpoint: 1,
-          kind: 'admitted',
-          reason: '<script>actionable</script>',
-          transition_id: 'transition-secret',
-        },
-        {
-          checkpoint: 2,
-          kind: 'superseded',
-          reason: 'A newer review replaced this one.',
-          transition_id: 'transition-next',
-        },
-      ],
-    }
+    const items = [
+      historyDecisionItem({
+        application_reason: null,
+        decision_id: 'decision-secret',
+        destination: 'title',
+        event_id: 'event-secret',
+        occurred_at: 2,
+        outcome: 'accept',
+        previous_value: { kind: 'text', value: 'Old' },
+        selected_value: { kind: 'text', value: 'New' },
+      }),
+      {
+        decision_id: 'automatic-secret',
+        destination: 'authors',
+        kind: 'automatic_decision_recorded',
+        occurred_at: 1,
+        origin: 'automatic_policy',
+        outcome: 'ignore',
+        previous_value: null,
+        review_case_id: 'case-1',
+        schema_version: 'automatic-decision-history-event-v1',
+        selected_value: null,
+      },
+      {
+        checkpoint: 1,
+        kind: 'admitted',
+        reason: '<script>actionable</script>',
+        transition_id: 'transition-secret',
+      },
+      {
+        checkpoint: 2,
+        kind: 'superseded',
+        reason: 'A newer review replaced this one.',
+        transition_id: 'transition-next',
+      },
+    ]
+    const payload = caseHistory({ items })
     expect(mapHistory(payload)).toEqual({
       items: [
         {
@@ -1395,20 +1089,18 @@ describe('ReviewApiClient', () => {
         },
       ],
     })
-    const cover = {
+    const cover = historyCoverItem({
       consideration_id: 'cover-secret',
-      consideration: {
-        candidates: [{ reference: 'candidate-secret' }],
-        policy: { reasons: ['policy_satisfied'], status: 'recommended' },
+      consideration: coverConsideration({
+        candidates: [coverCandidate({ reference: 'candidate-secret' })],
+        policy: coverPolicyReport({ reasons: ['policy_satisfied'], status: 'recommended' }),
         reviewer_status: 'completed',
-      },
-      decision: { outcome: 'accept' },
+      }),
+      decision: decisionProjection({ outcome: 'accept' }),
       decision_id: 'decision-secret',
       kind: 'selected',
       occurred_at: 3,
-      review_case_id: 'case-1',
-      schema_version: 'cover-consideration-event-v1',
-    }
+    })
     expect(
       mapHistory({
         ...payload,
@@ -1444,14 +1136,17 @@ describe('ReviewApiClient', () => {
         items: [
           {
             ...cover,
-            decision: {
+            decision: decisionProjection({
               outcome: 'accept',
               selected_value: { kind: 'cover', value: 'retained-artifact' },
-            },
+            }),
             consideration: {
               ...cover.consideration,
               candidates: [
-                { artifact_id: 'retained-artifact', match_state: 'match_not_confirmed' },
+                coverCandidate({
+                  artifact_id: 'retained-artifact',
+                  match_state: 'match_not_confirmed',
+                }),
               ],
             },
           },
@@ -1465,10 +1160,10 @@ describe('ReviewApiClient', () => {
           {
             ...cover,
             kind: outcome === 'keep_current' ? 'kept_incumbent' : 'no_action',
-            decision: { outcome, selected_value: null },
+            decision: decisionProjection({ outcome, selected_value: null }),
             consideration: {
               ...cover.consideration,
-              candidates: [{ incumbent: true, match_state: 'match_not_confirmed' }],
+              candidates: [coverCandidate({ incumbent: true, match_state: 'match_not_confirmed' })],
             },
           },
         ],
@@ -1498,7 +1193,10 @@ describe('ReviewApiClient', () => {
         items: [
           {
             ...cover,
-            decision: { outcome: 'candidate', supersedes_decision_id: 'automatic-prior' },
+            decision: coverAutomaticDecision({
+              outcome: 'candidate',
+              supersedes_decision_id: 'automatic-prior',
+            }),
           },
         ],
       }),
@@ -1519,13 +1217,11 @@ describe('ReviewApiClient', () => {
     })
     for (const invalid of [
       { ...payload, schema_version: 'review-case-history-v1' },
-      { ...payload, items: [{ ...payload.items[0], outcome: 'unknown' }] },
-      { ...payload, items: [{ ...payload.items[0], selected_value: { kind: 'text', value: {} } }] },
+      { ...payload, items: [{ ...items[0], outcome: 'unknown' }] },
+      { ...payload, items: [{ ...items[0], selected_value: { kind: 'text', value: {} } }] },
       {
         ...payload,
-        items: [
-          { ...payload.items[0], selected_value: { kind: 'text', value: 'x'.repeat(16_385) } },
-        ],
+        items: [{ ...items[0], selected_value: { kind: 'text', value: 'x'.repeat(16_385) } }],
       },
       {
         ...payload,
@@ -1545,7 +1241,7 @@ describe('ReviewApiClient', () => {
             ...cover,
             consideration: {
               ...cover.consideration,
-              candidates: Array.from({ length: 13 }, () => ({})),
+              candidates: Array.from({ length: 13 }, () => coverCandidate()),
             },
           },
         ],
@@ -1559,12 +1255,8 @@ describe('ReviewApiClient', () => {
     ])
       expect(() => mapHistory(invalid)).toThrow(ApiError)
     // Every closed history code is refused by name outside its set (#1286 C6).
-    const [human, automatic, transition] = payload.items
-    const preview = {
-      kind: 'shadow_preview_recorded',
-      occurred_at: 4,
-      dispositions: { abstention: 1 },
-    }
+    const [human, automatic, transition] = items
+    const preview = historyShadowItem({ occurred_at: 4, dispositions: { abstention: 1 } })
     expect(mapHistory({ ...payload, items: [preview] }).items[0]).toMatchObject({
       category: 'preview',
       dispositions: [{ count: 1, outcome: 'abstention' }],
@@ -1580,26 +1272,16 @@ describe('ReviewApiClient', () => {
 
   it('accepts domain-bounded history values by Unicode code points', () => {
     const astral = '📚'
-    const decision = (selected_value: unknown) => ({
-      actor: 'owner',
-      application: 'apply' as const,
-      decision_id: 'decision-secret',
-      destination: 'description',
-      event_id: 'event-secret',
-      kind: 'human_decision_recorded',
-      occurred_at: 2,
-      outcome: 'accept',
-      previous_value: null,
-      review_case_id: 'case-1',
-      schema_version: 'human-decision-event-v1',
-      selected_value,
-    })
-    const history = (selected_value: unknown) => ({
-      schema_version: 'review-case-history-v3',
-      review_case_id: 'case-1',
-      next_cursor: null,
-      items: [decision(selected_value)],
-    })
+    const history = (selected_value: unknown) =>
+      caseHistory({
+        items: [
+          historyDecisionItem({
+            application_reason: null,
+            destination: 'description',
+            selected_value,
+          }),
+        ],
+      })
 
     const description = astral.repeat(16_384)
     expect(mapHistory(history({ kind: 'text', value: description })).items[0]).toMatchObject({
@@ -1639,17 +1321,13 @@ describe('ReviewApiClient', () => {
       ),
     ).toThrow(ApiError)
 
-    const cover = (reason: string) => ({
-      consideration: {
-        candidates: [],
-        policy: { reasons: [reason], status: 'abstained' },
-        reviewer_status: 'completed',
-      },
-      decision: null,
-      kind: 'no_action',
-      occurred_at: 3,
-      schema_version: 'cover-consideration-event-v1',
-    })
+    const cover = (reason: string) =>
+      historyCoverItem({
+        consideration: coverConsideration({
+          policy: coverPolicyReport({ reasons: [reason], status: 'abstained' }),
+          reviewer_status: 'completed',
+        }),
+      })
     expect(mapHistory({ ...history(null), items: [cover(astral.repeat(128))] }).items).toHaveLength(
       1,
     )
