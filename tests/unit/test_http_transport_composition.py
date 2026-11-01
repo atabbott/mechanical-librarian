@@ -77,8 +77,8 @@ def test_report_currentness_effect_and_capability_callbacks_use_http(
             connection, library, mount
         )
         assert target is not None
-        assert isinstance(inspector, composition._IsolatedEpubInspector)
-        assert isinstance(audio_inspector, composition._IsolatedAudioInspector)
+        assert isinstance(inspector, composition.IsolatedEpubInspector)
+        assert isinstance(audio_inspector, composition.IsolatedAudioInspector)
         activation = Mock()
         activation.drain_outbox.return_value = ()
         return activation

@@ -25,7 +25,7 @@ Production code under `src/mechanical_librarian/` has six layers.
 | `domain` | Closed, immutable value types and pure rules: reports, ProposalSets, review cases, decisions, policy, field-effect plans. No I/O. | `domain` |
 | `application` | Operations, orchestration, admission gates and the narrow contracts (protocols) each operation needs | `application`, `domain` |
 | `adapters` | Audiobookshelf, metadata providers, isolated media inspection, AI reviewers, SQLite persistence, the artifact store | `adapters`, `application`, `domain` |
-| `infrastructure` | Configuration, settings authority, first boot, local media, TLS and credentials | `infrastructure`, `application`, `domain` |
+| `infrastructure` | Configuration, settings authority, first boot, TLS and credentials | `infrastructure`, `application`, `domain` |
 | `interfaces` | The FastAPI web app, React asset serving, the CLI | `interfaces`, `application`, `domain` |
 | `bootstrap` | The composition root, the container entry point and child-process entry points | everything |
 

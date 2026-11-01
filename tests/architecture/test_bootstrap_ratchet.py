@@ -62,18 +62,18 @@ ENTRY_POINTS = {
 }
 CEILING = {
     "__init__.py": 8,
-    "composition.py": 4572,
+    "composition.py": 3617,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
 DEF_COUNT = {
     "__init__.py": 1,
-    "composition.py": 167,
+    "composition.py": 146,
     "contained_reviewer.py": 5,
 }
 # Set to the measured size only by an owner review; lowered by a refactor
 # stage's own net change; raised only on the owner's instruction.
-REVIEWED_NCNC = 4572
+REVIEWED_NCNC = 3617
 REVIEW_BAND = 300
 REVIEWED_MODULE = "composition.py"
 _C = "composition.py::"
@@ -82,17 +82,6 @@ _C = "composition.py::"
 RESIDUAL: dict[str, int | None] = {
     _C + "_StoreRuntimeActivation": 118,
     _C + "compose_continuous_guarded_application": 84,
-    _C + "_IsolatedEpubInspector": 163,
-    _C + "_IsolatedEpubInspector.inspect": None,
-    _C + "_IsolatedAudioInspector": 327,
-    _C + "_IsolatedAudioInspector.inspect": None,
-    _C + "_IsolatedAudioInspector._inspect_tracks": None,
-    _C + "_IsolatedAudioInspector.unchanged": None,
-    _C + "_open_audio_sidecars": 64,
-    _C + "_CoverEvidenceObserver": 343,
-    _C + "_CoverEvidenceObserver.observe_current": None,
-    _C + "_CoverEvidenceObserver._admit_provider_descriptors": None,
-    _C + "_CoverEvidenceObserver._remote": None,
     _C + "_NonClosingRepository": 13,
     _C + "run_metadata_report_loaded": 263,
     _C + "run_metadata_report_loaded.factory": None,

@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 import httpx
 from PIL import Image
 
+from mechanical_librarian.adapters.cover_evidence_observer import CoverEvidenceObserver
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.inventaire_metadata import (
     InventaireMetadataProvider,
@@ -24,7 +25,6 @@ from mechanical_librarian.application.metadata_report import (
     ProviderCoverDescriptor,
     qualify_provider_observation,
 )
-from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -82,13 +82,13 @@ class InventairePreparationFixture:
             with (
                 self._cover_fetch_lock,
                 patch(
-                    "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+                    "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
                     return_value=RemoteCover(
                         descriptor.url or "", "image/jpeg", image.getvalue()
                     ),
                 ),
             ):
-                source = _CoverEvidenceObserver(
+                source = CoverEvidenceObserver(
                     Mock(), CoverArtifactStore(self.artifacts)
                 )._remote(
                     descriptor,
