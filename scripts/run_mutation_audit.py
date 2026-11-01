@@ -122,6 +122,52 @@ def stale_test_files(root: Path) -> list[Path]:
     )
 
 
+def build_work(
+    root: Path,
+    only: str,
+    functions: str,
+    wanted: set[str] | None,
+    tests_by_function: dict[str, list[str]],
+) -> list[tuple[str, str, list[str]]] | None:
+    """The (mutant, mangled function, reaching tests) work list, or None.
+
+    None means `--functions` named something no scanned mutant matches; the
+    refusal is already printed.
+    """
+
+    scanned: list[tuple[str, str]] = []
+    for path in sorted((root / "mutants" / "src").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        module = module_dotted(path, root)
+        if only and only not in module:
+            continue
+        scanned.extend((module, name) for name in MUTANT.findall(source))
+
+    if functions:
+        names = {n.strip() for n in functions.split(",") if n.strip()}
+        # Names are checked against every scanned mutant, before
+        # `--survivors-from` narrows the list: a sample holding no survivor of
+        # a named function is not a misspelt name.
+        chosen, unmatched = select_functions([name for _, name in scanned], names)
+        if unmatched or not chosen:
+            print(
+                f"--functions names no scanned mutant: {sorted(unmatched) or names}",
+                file=sys.stderr,
+            )
+            return None
+        keep = set(chosen)
+        scanned = [(module, name) for module, name in scanned if name in keep]
+
+    work: list[tuple[str, str, list[str]]] = []
+    for module, name in scanned:
+        full = f"{module}.{name}"
+        if wanted is not None and full not in wanted:
+            continue
+        key = mangled(module, name)
+        work.append((full, key, sorted(tests_by_function.get(key, ()))))
+    return work
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=str(ROOT))
@@ -194,36 +240,11 @@ def main() -> int:
             if record["status"] in ("survived", "timeout")
         }
 
-    scanned: list[tuple[str, str]] = []
-    for path in sorted((mutants_root / "src").rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        module = module_dotted(path, root)
-        if arguments.only and arguments.only not in module:
-            continue
-        scanned.extend((module, name) for name in MUTANT.findall(source))
-
-    if arguments.functions:
-        names = {n.strip() for n in arguments.functions.split(",") if n.strip()}
-        # Names are checked against every scanned mutant, before
-        # `--survivors-from` narrows the list: a sample holding no survivor of
-        # a named function is not a misspelt name.
-        chosen, unmatched = select_functions([name for _, name in scanned], names)
-        if unmatched or not chosen:
-            print(
-                f"--functions names no scanned mutant: {sorted(unmatched) or names}",
-                file=sys.stderr,
-            )
-            return 2
-        keep = set(chosen)
-        scanned = [(module, name) for module, name in scanned if name in keep]
-
-    work: list[tuple[str, str, list[str]]] = []
-    for module, name in scanned:
-        full = f"{module}.{name}"
-        if wanted is not None and full not in wanted:
-            continue
-        key = mangled(module, name)
-        work.append((full, key, sorted(tests_by_function.get(key, ()))))
+    work = build_work(
+        root, arguments.only, arguments.functions, wanted, tests_by_function
+    )
+    if work is None:
+        return 2
 
     if arguments.dry_run:
         functions: dict[str, int] = {}
