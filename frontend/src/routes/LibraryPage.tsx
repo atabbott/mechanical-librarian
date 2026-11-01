@@ -717,8 +717,10 @@ const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
     : notice === 'competing_evidence' && selectedAutomaticSynopsis(field, mediaKind)
       ? 'Different source descriptions'
       : notice === 'competing_evidence' && loneCandidateForEmpty(field)
-        ? 'Another source gave a value that isn’t offered here; choose whether to use this one'
+        ? UNOFFERED_DISSENT_TEXT
         : materialReasonLabel(notice)
+const UNOFFERED_DISSENT_TEXT =
+  'Another source gave a value that isn’t offered here; choose whether to use this one'
 // One candidate for an empty field shows no disagreement: the value it
 // disagrees with is not offered, such as one in another language (#1497).
 const loneCandidateForEmpty = (field: ReviewField) =>
@@ -729,7 +731,9 @@ const restatesReason = (field: ReviewField, notice: string) =>
   notice === questionNotice(field) ||
   (field.automaticWithheldReason !== null &&
     (`${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason ||
-      (notice === 'competing_evidence' && loneCandidateForEmpty(field))))
+      (notice === 'competing_evidence' &&
+        loneCandidateForEmpty(field) &&
+        field.automaticWithheldReason === `${UNOFFERED_DISSENT_TEXT}.`)))
 // Under an actionable field's question, one line gives its own reason: why it
 // was withheld, else its first comparison condition, else its disposition. The
 // classification sentence, the same on every field, is only the last fallback
