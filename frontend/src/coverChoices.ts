@@ -20,6 +20,9 @@ export function useCoverChoiceData(reviewCaseId: string) {
       onSuccess: async () => {
         await invalidateForegroundQueries(queryClient, { queryKey: ['review-case', reviewCaseId] })
       },
+      onError: () => {
+        void invalidateForegroundQueries(queryClient, { queryKey: ['review-case', reviewCaseId] })
+      },
     }),
     imageSource: (considerationId: string, reference: string) =>
       `/api/v1/review-cases/${encodeURIComponent(reviewCaseId)}/cover-considerations/${encodeURIComponent(considerationId)}/images/${encodeURIComponent(reference)}`,
