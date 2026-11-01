@@ -402,6 +402,34 @@ covering the post-walk retry, the leading-number rung, the dispatch bound,
 forged-narrator replay refusal, retained refused products and carried-lane
 verification.
 
+### Ebook parenthesized series name (#1499)
+
+An ebook titled `Title (Series Name)` is the work its providers call `Title`
+by the same authors, and before #1499 it matched none of them: the normalized
+rung sent the stripped title, the provider answered with the work, and exact
+admission refused it. On an ebook plan, `band_parenthesized_series_name` now
+also admits without the band or the runtime. The lane's dispatch lineage is the
+normalized rung with exactly that one family. The provider title and authors
+must admit exactly, with no transformation, against that rung's title and the
+local authors; reordered authors admit. The local title carries no variant or
+recording-format term. A product that states its series must state the
+stripped name, as on the audiobook path. A product that states none admits
+only a decoration that names no volume, part or collection (book, part,
+volume, box set, omnibus, trilogy, collected, guide, workbook and similar) and does not end in a bare number, roman
+numeral or number word, so `(Volume 2)` or `(Part Two)` never collapses into
+the bare title; a series position such as `(Saga, #2)` is still a series name.
+The explicit-contradiction guard still refuses. A bracketed subtitle that
+reads like a series name and that no source states, such as a volume's own
+title, is the residual risk. No other family, rung or production changes for
+ebooks.
+
+Over the #744 full-library snapshot, 179 of 2,026 ebooks carry a bracketed
+series name the normalized rung strips, and 49 of the 228 that matched no
+provider are among them; 46 of those 49 were also rate limited, so only 3
+clearly share this cause. Both counts predate the volume and part refusal, so
+some of the 179 are now refused. A lane that narrows and then finds nothing,
+or that ends rate limited, records no rungs.
+
 ### Bracketed identifier suffix (#1496)
 
 A title-and-author work whose title ended in `[ISBN 978…]` stayed the owner's

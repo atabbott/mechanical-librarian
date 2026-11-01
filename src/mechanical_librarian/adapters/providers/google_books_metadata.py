@@ -36,7 +36,9 @@ from mechanical_librarian.application.metadata_report import (
     ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
+    QualifiedLaneObservation,
     identifier_suppresses_discovery,
+    observe_work_ladder,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
@@ -275,23 +277,25 @@ class GoogleBooksMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                physical, _replayed = ledger.resolve(
+                lane_result, _ = ledger.resolve(
                     kind=lookup.kind.value,
                     matched_family=lookup.matched_family,
                     title=lookup.title,
                     authors=lookup.authors,
                     projection=_FIELDS,
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
+                    execute=lambda: self._observe_lane(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
-                observation = qualify_provider_observation(physical, lookup)
+                observation = lane_result.observation
                 results.append(
                     ProviderLaneResult(
                         lane,
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        diagnostics=lane_result.diagnostics,
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
+                        exhausted_dispatch=lane_result.exhausted_dispatch,
                     )
                 )
         return provider_observation(
@@ -300,6 +304,43 @@ class GoogleBooksMetadataProvider:
             authority="google_books",
             diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
+        )
+
+    def _observe_lane(
+        self,
+        lookup: MetadataLookup,
+        *,
+        deadline: float | None,
+    ) -> QualifiedLaneObservation:
+        """Qualify one plan lane's answer.
+
+        An ebook WORK lane walks its query ladder through `observe_work_ladder`,
+        so a lane that admits nothing records the rungs it sent (#1499).
+        """
+        if (
+            lookup.kind is ProviderQueryKind.WORK
+            and lookup.audio is None
+            and lookup.title is not None
+            and lookup.authors
+            and work_query_ladder(lookup.title, lookup.authors)
+        ):
+            return observe_work_ladder(
+                lookup,
+                lambda query: self._observe_work_query(
+                    lookup, query, lookup.local_claims, deadline=deadline
+                ),
+                narrow=lambda query: self._observe_work_query(
+                    lookup,
+                    narrowing_work_query(query),
+                    lookup.local_claims,
+                    deadline=deadline,
+                    query_retry=True,
+                ),
+            )
+        return QualifiedLaneObservation(
+            qualify_provider_observation(
+                self._observe_lookup(lookup, deadline=deadline), lookup
+            )
         )
 
     def _observe_lookup(

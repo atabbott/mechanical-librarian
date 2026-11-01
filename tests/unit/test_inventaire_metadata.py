@@ -30,13 +30,22 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderQueryKind,
     ProviderStatus,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
+    work_query_ladder,
 )
 from mechanical_librarian.infrastructure.security.credentials import inventaire_client
 from tests.support.audiobook_providers import alternative_work_plan
+from tests.support.ebook_ladder import (
+    SERIES_TITLED_AUTHOR,
+    SERIES_TITLED_EBOOK,
+    reloaded,
+    series_titled_ebook_plan,
+)
 from tests.support.metadata_report_schemas import synthetic_report
 
 
@@ -1701,3 +1710,30 @@ def test_a_provider_503_is_still_unavailable_and_recovered() -> None:
         value.category.value for value in observation.diagnostics
     }
     assert ("transient", None) == provider_recovery_decision(observation, now=0)
+
+
+def test_an_inventaire_ebook_lane_records_every_search_it_sent() -> None:
+    """#1499: an ebook WORK lane that admits nothing keeps its ladder."""
+    plan = series_titled_ebook_plan()
+    sent: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/search"
+        sent.append(request.url.params["search"])
+        return httpx.Response(200, json={"results": []})
+
+    observation = _provider(httpx.MockTransport(respond)).observe(plan).observation
+
+    ladder = work_query_ladder(SERIES_TITLED_EBOOK, (SERIES_TITLED_AUTHOR,))
+    assert 2 == len(ladder) == len(sent)
+    assert all(query.title in value for query, value in zip(ladder, sent, strict=True))
+    (lane,) = (
+        lane for lane in observation.lanes if lane.kind is ProviderQueryKind.WORK
+    )
+    assert ProviderStatus.NO_MATCH is lane.status
+    assert (
+        tuple(WorkDispatchLineage.from_query(query) for query in ladder)
+        == lane.exhausted_dispatch
+    )
+    assert work_ladder_diagnostics(2, 0) == lane.diagnostics
+    assert observation == reloaded(plan, observation)
