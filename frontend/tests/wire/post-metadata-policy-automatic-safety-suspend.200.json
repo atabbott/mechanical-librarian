@@ -1,0 +1,10 @@
+{
+  "body": {
+    "category_suspensions": {},
+    "global_suspension": "synthetic",
+    "paused": false
+  },
+  "method": "POST",
+  "path": "/api/v1/metadata-policy/automatic-safety/suspend",
+  "status": 200
+}

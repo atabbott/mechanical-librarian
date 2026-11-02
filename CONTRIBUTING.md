@@ -155,7 +155,8 @@ from it for a manual one, so the table can be checked against the workflow.
 | Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
 | Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `npm audit --audit-level=low` |
 | The exact Node and npm toolchain, in every job that builds the frontend | gate | `test "$(node --version)"` and `test "$(npm --version)"` |
-| DTO generation is deterministic | gate | `cmp "$RUNNER_TEMP/review-api-a.d.ts"` in `fast-source` |
+| DTO generation is deterministic | gate | `cmp "$RUNNER_TEMP/a/review-api.d.ts"` in `fast-source` |
+| Decoder generation is deterministic | gate | `cmp "$RUNNER_TEMP/a/review-api-response.d.ts"` and `cmp "$RUNNER_TEMP/a/review-decoders.ts"` in `fast-source` |
 | The asset build is reproducible | gate | `diff -r "$RUNNER_TEMP/frontend-build-a"` in `fast-source` |
 | Generating everything leaves the tree clean | gate | `git diff --exit-code` in `fast-source` |
 | Unit, integration and architecture tests | gate | `scripts/run_test_tier.py fast` in `fast-source` and its three shard jobs |

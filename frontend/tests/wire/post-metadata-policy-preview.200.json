@@ -1,0 +1,305 @@
+{
+  "body": {
+    "active_generation": 1,
+    "active_policy_id": "policy_c1280edcaffc78aa739aad98249e425e850797ba513f223af594a97e10f555a9",
+    "libraries": [
+      {
+        "affected_categories": [],
+        "cases": [],
+        "cases_total": 0,
+        "cases_truncated": false,
+        "comparisons": [],
+        "current_unapplied_count": 0,
+        "library": "ebooks",
+        "resolved_policy_id": "resolved_policy_42bd7f8e892b7b1d7382c348be7529326250b3111696aae0b47a1d46a8627ce4"
+      }
+    ],
+    "policy_id": "policy_da8453b5de7a86fc671ca7f64159cd87cbf35f42e1651e921821032b2b4c4dd9",
+    "rich_qualification": [
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "title_layout",
+        "operation_scope": "fill_or_replace",
+        "option": "preserve"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "title_layout",
+        "operation_scope": "fill_or_replace",
+        "option": "title_and_subtitle"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "date_precision",
+        "operation_scope": "fill_or_replace",
+        "option": "year"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "date_precision",
+        "operation_scope": "fill_or_replace",
+        "option": "full_date"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "language_rendering",
+        "operation_scope": "fill_or_respell",
+        "option": "display_name"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "contributor_names",
+        "operation_scope": "fill_or_replace",
+        "option": "preserve"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "contributor_names",
+        "operation_scope": "fill_or_replace",
+        "option": "canonical"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "pass",
+        "field": "publisher_preference",
+        "operation_scope": "fill_or_replace",
+        "option": "publisher"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "publisher_preference",
+        "operation_scope": "none",
+        "option": "imprint"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "subtitle",
+        "operation_scope": "fill",
+        "option": "fill_empty"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "not_qualified",
+        "field": "subtitle",
+        "operation_scope": "none",
+        "option": "corroborated_split"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "subtitle",
+        "operation_scope": "none",
+        "option": "replace_descriptive"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "series",
+        "operation_scope": "fill",
+        "option": "primary_narrative"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "series",
+        "operation_scope": "fill",
+        "option": "source_order"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "series",
+        "operation_scope": "fill",
+        "option": "all_qualified"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "series",
+        "operation_scope": "none",
+        "option": "add_qualified"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "series",
+        "operation_scope": "none",
+        "option": "replace_qualified"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "genres",
+        "operation_scope": "fill",
+        "option": "fill_empty"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "genres",
+        "operation_scope": "add",
+        "option": "add"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "genres",
+        "operation_scope": "replace",
+        "option": "replace"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "policy_only",
+        "field": "tags",
+        "operation_scope": "none",
+        "option": "off"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "tags",
+        "operation_scope": "fill",
+        "option": "fill_empty"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "tags",
+        "operation_scope": "add",
+        "option": "add"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "tags",
+        "operation_scope": "replace",
+        "option": "replace"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "description_fill",
+        "operation_scope": "fill",
+        "option": "safe_plain_text"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "not_qualified",
+        "field": "description_fill",
+        "operation_scope": "none",
+        "option": "google_visible_text"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "description_fill",
+        "operation_scope": "none",
+        "option": "replace_safe_plain_text"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "isbn_form",
+        "operation_scope": "fill",
+        "option": "preserve_exact"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_automatic",
+        "field": "isbn_form",
+        "operation_scope": "fill",
+        "option": "prefer_isbn13"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457",
+        "disposition": "pass",
+        "field": "cover_order",
+        "operation_scope": "fill_or_replace",
+        "option": "fixed_source_order"
+      },
+      {
+        "automatic_available": true,
+        "candidate_sha256": "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457",
+        "disposition": "pass",
+        "field": "cover_order",
+        "operation_scope": "fill",
+        "option": "replace_if_strictly_better"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "insufficient_coverage",
+        "field": "asin",
+        "operation_scope": "none",
+        "option": "preserve_exact"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "insufficient_coverage",
+        "field": "asin",
+        "operation_scope": "none",
+        "option": "ebook_manifestation"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "99a158c00b299aa80e0ea2fd641d12ba38fc893bdd486b7fd4b9bd19503aa8ab",
+        "disposition": "passing_human_only",
+        "field": "explicit",
+        "operation_scope": "none",
+        "option": "unsupported"
+      },
+      {
+        "automatic_available": false,
+        "candidate_sha256": "d10cd9c66a1f7cf617b6a6a63b7df71c32455f5e172bb88a22895bd69143743e",
+        "disposition": "not_qualified",
+        "field": "explicit",
+        "operation_scope": "none",
+        "option": "adult_product"
+      }
+    ],
+    "schema_version": "metadata-policy-preview-v1"
+  },
+  "method": "POST",
+  "path": "/api/v1/metadata-policy/preview",
+  "status": 200
+}

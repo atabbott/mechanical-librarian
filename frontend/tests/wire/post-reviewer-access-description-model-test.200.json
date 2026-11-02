@@ -1,0 +1,15 @@
+{
+  "body": {
+    "completion_price": "0.000002",
+    "model": "example/vision",
+    "observed_at": 1,
+    "prompt_price": "0.000001",
+    "request_price": "0",
+    "structured_outputs": true,
+    "text_input": true,
+    "text_output": true
+  },
+  "method": "POST",
+  "path": "/api/v1/reviewer-access/description-model/test",
+  "status": 200
+}

@@ -1,4 +1,5 @@
 {
+  "audiobook_review_scope": null,
   "comparison_notices": [],
   "current": true,
   "fields": [
@@ -20,7 +21,7 @@
           "alternative_id": "alternative_1eefb174ae59e4445606ec7d8ab8cc8b3d1d66f84b61a78c9d8722d90605a9f7",
           "evidence": [
             {
-              "observation": "Metadata: 3",
+              "observation": "Series position: 3",
               "role": "external_corroboration",
               "source": "Hardcover"
             },
@@ -40,12 +41,16 @@
       "classification": "needs_attention",
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "series",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": ["keep_current", "accept"],
+      "description_advice": null,
       "destination": "series",
       "deterministic_disposition": "propose_change",
       "editable": true,
@@ -57,8 +62,9 @@
       "navigation_role": "attention",
       "needs_attention": true,
       "notices": ["unique_typed_candidate"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_1fa247a95f7a183bef3da5784e2c83217cb5f2a09d9f049573ee2e6f72bece4f",
+      "proposal_id": "review_proposal_e7e36a190f2ad755c24271d5bf106a4cf3ef14a8b7909fb8888243623d16274d",
       "proposed_values": [
         {
           "kind": "series",
@@ -74,9 +80,89 @@
         "provider_e2dae467c54051b9202c0203e936cb26f016c7f6742db7bd73a51434fd94137c",
         "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
       ],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_e60dad4dce063390296b837737177625a2fd7143ffc557307666e08cd3b774af",
+          "evidence": [
+            {
+              "observation": "Genre: Mystery",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "Hardcover",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "needs_attention",
+      "classification_reason": "This field needs your review.",
+      "corroboration_sources": [],
+      "cover_consideration": null,
+      "current": {
+        "destination": "genres",
+        "state": "missing",
+        "value": null
+      },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
+      "decision_actions": ["keep_current", "accept"],
+      "description_advice": null,
+      "destination": "genres",
+      "deterministic_disposition": "propose_change",
+      "editable": true,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "attention",
+      "needs_attention": true,
+      "notices": ["unique_typed_candidate"],
+      "owner_control": {
+        "entry": null,
+        "subset": {
+          "max_items": 32,
+          "options": [
+            {
+              "current": false,
+              "previous": false,
+              "proposed": true,
+              "value": "Mystery"
+            }
+          ]
+        },
+        "withdraw": null
+      },
+      "preservation_only": false,
+      "proposal_id": "review_proposal_b185097a34270bc670033d47b6b0d0ac5f1a279b990215504e7a6c7f6f2f1093",
+      "proposed_values": [
+        {
+          "kind": "list",
+          "value": ["Mystery"]
+        }
+      ],
+      "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -96,17 +182,17 @@
           "alternative_id": "alternative_2eb8a4c331fe3a2c14d7d9b7833f40f59a0abeb32210f325f2f9d2d54d5383ae",
           "evidence": [
             {
-              "observation": "Metadata observation retained.",
+              "observation": "ISBN: 9780306406157",
               "role": "local_presence",
               "source": "Local library record"
             },
             {
-              "observation": "Metadata observation retained.",
+              "observation": "ISBN: 0306406152",
               "role": "local_presence",
               "source": "Local library record"
             },
             {
-              "observation": "Metadata observation retained.",
+              "observation": "ISBN: 9780306406157",
               "role": "external_corroboration",
               "source": "Hardcover"
             }
@@ -121,12 +207,16 @@
       "classification": "needs_attention",
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "isbn",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": ["keep_current", "accept"],
+      "description_advice": null,
       "destination": "isbn",
       "deterministic_disposition": "unresolved_choice",
       "editable": true,
@@ -138,8 +228,9 @@
       "navigation_role": "attention",
       "needs_attention": true,
       "notices": ["manifestation_verification_required"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_60ec4027b321ac3ec1d18a411f611a5a573d0e6519e08eb9b0c92a6ef12f6512",
+      "proposal_id": "review_proposal_0ea392085908b246cbdfbd7111f7d6ee155aa40a131aecf03596780cad7d5a06",
       "proposed_values": [
         {
           "kind": "text",
@@ -151,9 +242,8 @@
         "local_8a043456a2b2863fbbc99c0da87486b328687c1da4522147eda80d0210de19a6",
         "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
       ],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": ["manifestation_verification_required"],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": ["manifestation_verification_required"]
     },
     {
       "automatic_decision": null,
@@ -199,12 +289,16 @@
       "classification": "needs_attention",
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "title",
         "state": "value",
         "value": "Real Tigers"
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "title",
       "deterministic_disposition": "keep",
       "editable": false,
@@ -216,13 +310,20 @@
       "navigation_role": "attention",
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
+      "owner_control": {
+        "entry": {
+          "max_characters": 512,
+          "suggestions": []
+        },
+        "subset": null,
+        "withdraw": null
+      },
       "preservation_only": true,
-      "proposal_id": "review_proposal_4078e3a76a882691b455ed3f079e16eeafd45eec7c578e333dd122ee2ad2ddc1",
+      "proposal_id": "review_proposal_8b8b3f486c3025c7b61b7d20a4d9968ed0b0901a7e634645d6db2720c6d81470",
       "proposed_values": [],
       "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -242,12 +343,16 @@
       "classification": "needs_attention",
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "subtitle",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "subtitle",
       "deterministic_disposition": "ineligible",
       "editable": false,
@@ -259,13 +364,13 @@
       "navigation_role": "attention",
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_4fab2c85b0d5e14a7aec7482744a38c2188a41ba13dcb215f601cfadc263c68c",
+      "proposal_id": "review_proposal_4594d08cbb53cad3dcfc6062d5d5243f249291b734a7f3f1b0d08630c668e540",
       "proposed_values": [],
       "provenance": [],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -281,7 +386,7 @@
               "source": "Local library record"
             },
             {
-              "observation": "Metadata: Mick Herron",
+              "observation": "Author: Mick Herron",
               "role": "external_corroboration",
               "source": "Hardcover"
             }
@@ -296,7 +401,7 @@
           "alternative_id": "alternative_e4f80543aa92d81848e85b7df46baf25e3aa25f4c26463161be08e11540e75f9",
           "evidence": [
             {
-              "observation": "Metadata: Mick Herron",
+              "observation": "Author: Mick Herron",
               "role": "external_corroboration",
               "source": "Hardcover"
             }
@@ -308,15 +413,19 @@
           "selection": "proposed"
         }
       ],
-      "classification": "unsupported",
-      "classification_reason": "There is nothing to decide for this field.",
+      "classification": "needs_attention",
+      "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "authors",
         "state": "value",
         "value": ["Mick Herron"]
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "authors",
       "deterministic_disposition": "keep",
       "editable": false,
@@ -325,79 +434,16 @@
       "inventory_role": "primary",
       "manual_hold": false,
       "manual_required": false,
-      "navigation_role": "inspect",
+      "navigation_role": "attention",
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
+      "owner_control": null,
       "preservation_only": true,
-      "proposal_id": "review_proposal_71cef82f3e964c86e944a9a26ed5b550694057218437fe6adcbb99dc72d53b6d",
+      "proposal_id": "review_proposal_ba23a66b66294f2fba9de520ff900f1be0192cb5c719307bf66bf6f10789f97f",
       "proposed_values": [],
       "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
-    },
-    {
-      "automatic_decision": null,
-      "automatic_selection_sources": [],
-      "automatic_withheld_reason": null,
-      "choice_contexts": [
-        {
-          "alternative_id": null,
-          "evidence": [],
-          "limitations": [],
-          "rationale": "",
-          "recommendation": "no_recommendation",
-          "recommendation_reason": "",
-          "selection": "current"
-        },
-        {
-          "alternative_id": "alternative_e60dad4dce063390296b837737177625a2fd7143ffc557307666e08cd3b774af",
-          "evidence": [
-            {
-              "observation": "Metadata: Mystery",
-              "role": "external_corroboration",
-              "source": "Hardcover"
-            }
-          ],
-          "limitations": [],
-          "rationale": "Hardcover",
-          "recommendation": "no_recommendation",
-          "recommendation_reason": "",
-          "selection": "proposed"
-        }
-      ],
-      "classification": "unsupported",
-      "classification_reason": "There is nothing to decide for this field.",
-      "corroboration_sources": [],
-      "current": {
-        "destination": "genres",
-        "state": "missing",
-        "value": null
-      },
-      "decision_actions": ["keep_current", "accept"],
-      "destination": "genres",
-      "deterministic_disposition": "propose_change",
-      "editable": false,
-      "effect_capability": "unavailable",
-      "human_decision": null,
-      "inventory_role": "primary",
-      "manual_hold": false,
-      "manual_required": false,
-      "navigation_role": "inspect",
-      "needs_attention": false,
-      "notices": ["unique_typed_candidate"],
-      "preservation_only": false,
-      "proposal_id": "review_proposal_17f5c092cb6cd3da3999367becd01349e1ff29333bf2ed68a3063a65a758d9ed",
-      "proposed_values": [
-        {
-          "kind": "list",
-          "value": ["Mystery"]
-        }
-      ],
-      "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -417,12 +463,16 @@
       "classification": "unsupported",
       "classification_reason": "There is nothing to decide for this field.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "publishedDate",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "publishedDate",
       "deterministic_disposition": "ineligible",
       "editable": false,
@@ -434,13 +484,13 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_94bae07773ddffe48bb4d55633ff24ea7b9cb1a7e4e35fe5711153aa0d9dd8eb",
+      "proposal_id": "review_proposal_1813332cb1c4efd46948bf3ce19ad39c21db1e06b6f0cff26a6cf5627ffc5eca",
       "proposed_values": [],
       "provenance": [],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -460,12 +510,16 @@
       "classification": "unsupported",
       "classification_reason": "There is nothing to decide for this field.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "publisher",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "publisher",
       "deterministic_disposition": "ineligible",
       "editable": false,
@@ -477,13 +531,13 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_60ae24f4a030a88cb449449670718e795f6fabe6319d2d7e87218595546de75d",
+      "proposal_id": "review_proposal_525666d19458a84633f0e0131dfcac83cde9b9ad84cb03e71b7fa8c001361fdf",
       "proposed_values": [],
       "provenance": [],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -529,48 +583,51 @@
       "classification": "automatic_recorded",
       "classification_reason": "This field was decided for you; you can inspect or change it.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "description",
         "state": "value",
         "value": "A qualified description."
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
       "description_advice": {
         "application_outcome": null,
-        "attempt_id": "description_attempt_c614ee50a05a425a9a5334df1d5bd9d7",
+        "attempt_id": "description_attempt_00000000000000000000000000000002",
         "binding": {
           "access_revision": 2,
           "policy_generation": 2,
           "preferences_digest": "ccdf2f65a66a45be28064fef054651b5a80f806f055f4e025c5daa5a39a6a67e",
-          "proposal_set_id": "proposal_set_6db717d93cf09468411009a150ab95770d044c53ee21ba7f88f917df93b73052",
-          "report_id": "report_494b220c5447b7b86886fd2bec89839ca2cc6656e2195063407ae886d63d96ce",
-          "review_case_id": "review_case_fa9bdca526fa562ada61359d10bd7cdff38ded02a0112f439ca0ad2e614f9695",
-          "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869"
+          "proposal_set_id": "proposal_set_a8f03920d90a03539611da19dc8c089af7586508a0f3678ed0b10d802e996ad9",
+          "report_id": "report_ee310dc6490f3c27b8b5ba2cf5121a903152f7833928f7c0dfb0495a4f2279ae",
+          "review_case_id": "review_case_ffe2c52fcfb782e5079c91121530b5bed06f682813d285e3ac0ddb81d8899b01",
+          "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e"
         },
         "candidate": null,
         "current": true,
         "engine": "codex",
         "failure": null,
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "selected_advice": {
           "binding": {
             "access_revision": 2,
             "policy_generation": 2,
             "preferences_digest": "ccdf2f65a66a45be28064fef054651b5a80f806f055f4e025c5daa5a39a6a67e",
-            "proposal_set_id": "proposal_set_6db717d93cf09468411009a150ab95770d044c53ee21ba7f88f917df93b73052",
-            "report_id": "report_494b220c5447b7b86886fd2bec89839ca2cc6656e2195063407ae886d63d96ce",
-            "review_case_id": "review_case_fa9bdca526fa562ada61359d10bd7cdff38ded02a0112f439ca0ad2e614f9695",
-            "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869"
+            "proposal_set_id": "proposal_set_a8f03920d90a03539611da19dc8c089af7586508a0f3678ed0b10d802e996ad9",
+            "report_id": "report_ee310dc6490f3c27b8b5ba2cf5121a903152f7833928f7c0dfb0495a4f2279ae",
+            "review_case_id": "review_case_ffe2c52fcfb782e5079c91121530b5bed06f682813d285e3ac0ddb81d8899b01",
+            "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e"
           },
           "candidate": {
             "access_revision": 2,
             "advised": true,
-            "attempt_id": "description_attempt_10be4a2845b040e9a727e79386bfa623",
-            "candidate_id": "description_candidate_301b449bf5af69dc590eb7f8256ae604f490d438386952f82fc7079785fd1dd7",
+            "attempt_id": "description_attempt_00000000000000000000000000000001",
+            "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
             "created_at": 10,
             "engine": "codex",
             "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-            "model": "synthetic-model",
+            "model": "gpt-5.6-sol",
             "output": {
               "description": "Authored synthetic description.",
               "disposition": "ready"
@@ -579,7 +636,7 @@
             "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
             "provenance": "authored_content",
             "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-            "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+            "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
             "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
             "schema_version": "description-advice-candidate-v1"
           },
@@ -591,20 +648,20 @@
             "access_revision": 2,
             "policy_generation": 2,
             "preferences_digest": "ccdf2f65a66a45be28064fef054651b5a80f806f055f4e025c5daa5a39a6a67e",
-            "proposal_set_id": "proposal_set_6db717d93cf09468411009a150ab95770d044c53ee21ba7f88f917df93b73052",
-            "report_id": "report_494b220c5447b7b86886fd2bec89839ca2cc6656e2195063407ae886d63d96ce",
-            "review_case_id": "review_case_fa9bdca526fa562ada61359d10bd7cdff38ded02a0112f439ca0ad2e614f9695",
-            "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869"
+            "proposal_set_id": "proposal_set_a8f03920d90a03539611da19dc8c089af7586508a0f3678ed0b10d802e996ad9",
+            "report_id": "report_ee310dc6490f3c27b8b5ba2cf5121a903152f7833928f7c0dfb0495a4f2279ae",
+            "review_case_id": "review_case_ffe2c52fcfb782e5079c91121530b5bed06f682813d285e3ac0ddb81d8899b01",
+            "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e"
           },
-          "candidate_id": "description_candidate_301b449bf5af69dc590eb7f8256ae604f490d438386952f82fc7079785fd1dd7",
-          "decision_id": "automatic_decision_708e25cddd05b855b756df2409ebf347d5fcafa8c8ff4df5bbcc69537afcc735",
+          "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+          "decision_id": "automatic_decision_0000000000000000000000000000000000000000000000000000000000000001",
           "destination": "description",
           "idempotency_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "occurred_at": 20,
           "origin": "automatic_policy",
           "outcome": "accept",
           "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-          "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+          "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
           "schema_version": "authored-description-decision-v1"
         },
         "state": "requested"
@@ -620,13 +677,13 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
+      "owner_control": null,
       "preservation_only": true,
-      "proposal_id": "review_proposal_340379bef1951c3244b101032bdae5861920a5c188b01b35b0990f66f50440f7",
+      "proposal_id": "review_proposal_128e35cb23d774e4fd5f9bca343984aa30d2ac05e7e8626c843eb10c64a17e34",
       "proposed_values": [],
       "provenance": ["provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -646,12 +703,16 @@
       "classification": "unsupported",
       "classification_reason": "There is nothing to decide for this field.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "asin",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "asin",
       "deterministic_disposition": "ineligible",
       "editable": false,
@@ -663,13 +724,13 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_4cb076cb13744a51915a641b1f8be544bc37f3d182652272f4ca6731b908f422",
+      "proposal_id": "review_proposal_1fe2113612ab123c7dee49c4d26198343d4ff5e702396223033c22e1a8a55e4b",
       "proposed_values": [],
       "provenance": [],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -689,12 +750,16 @@
       "classification": "unsupported",
       "classification_reason": "There is nothing to decide for this field.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "language",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "language",
       "deterministic_disposition": "ineligible",
       "editable": false,
@@ -706,13 +771,13 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_1d401f1051a1a423e5b5c3c840da215970f86f3f5845f58cbdeabf6033807268",
+      "proposal_id": "review_proposal_ccbb38de9b04b0bbf377d3c975ce275a9eceefc848e241c0916466426d86268c",
       "proposed_values": [],
       "provenance": [],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -732,7 +797,7 @@
           "alternative_id": "alternative_ac56de9cfdac126ab8f6347f1e34942d28fcb775cf5d2fd93938cc414246dbe8",
           "evidence": [
             {
-              "observation": "Metadata: Espionage",
+              "observation": "Tag: Espionage",
               "role": "external_corroboration",
               "source": "Hardcover"
             }
@@ -747,12 +812,16 @@
       "classification": "unsupported",
       "classification_reason": "There is nothing to decide for this field.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "tags",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": ["keep_current", "accept"],
+      "description_advice": null,
       "destination": "tags",
       "deterministic_disposition": "propose_change",
       "editable": false,
@@ -764,8 +833,9 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["unique_typed_candidate"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_11cde2c102c6cc1abe64b71990b480331561a956b28d6da769a8ebc20654ade4",
+      "proposal_id": "review_proposal_a3119fb7e8108bf3f316910881f46581578d1fbc32ad23b7e0ae9e458138933e",
       "proposed_values": [
         {
           "kind": "list",
@@ -773,9 +843,8 @@
         }
       ],
       "provenance": ["provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     },
     {
       "automatic_decision": null,
@@ -795,12 +864,16 @@
       "classification": "unsupported",
       "classification_reason": "There is nothing to decide for this field.",
       "corroboration_sources": [],
+      "cover_consideration": null,
       "current": {
         "destination": "cover",
         "state": "missing",
         "value": null
       },
+      "current_cover_selection_artifact_id": null,
+      "current_cover_selection_id": null,
       "decision_actions": [],
+      "description_advice": null,
       "destination": "cover",
       "deterministic_disposition": "ineligible",
       "editable": false,
@@ -812,27 +885,27 @@
       "navigation_role": "inspect",
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
+      "owner_control": null,
       "preservation_only": false,
-      "proposal_id": "review_proposal_17f88bf70b68fd9863385f97f4492c7f3aef756b614550fc83926096e1f54814",
+      "proposal_id": "review_proposal_126218e6922541f15e446e0a42a47092b200f74061168791fe3e2b2f44a44227",
       "proposed_values": [],
       "provenance": [],
-      "target_fingerprint": "c74c612807d5b402366c8918602f52c82a262ece877bff8af1ad3591627f9869",
-      "uncertainty": [],
-      "owner_control": null
+      "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
+      "uncertainty": []
     }
   ],
   "media_health": [],
-  "review_case_id": "review_case_fa9bdca526fa562ada61359d10bd7cdff38ded02a0112f439ca0ad2e614f9695",
+  "recording_identity_basis": null,
+  "review_case_id": "review_case_ffe2c52fcfb782e5079c91121530b5bed06f682813d285e3ac0ddb81d8899b01",
   "schema_version": "review-case-detail-v6",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",
     "item": "item-1",
     "library": "ebooks",
+    "library_display_name": "ebooks",
     "media_kind": "epub",
     "title": "Real Tigers"
   },
-  "writes_consented": false,
-  "audiobook_review_scope": null,
-  "recording_identity_basis": null
+  "writes_consented": false
 }

@@ -1,0 +1,49 @@
+{
+  "body": {
+    "attempt": 1,
+    "claim_token": "c1e8f0ebbed30532796c9dff4b4e02ef84e68f46eb57ec9900d7c7af317c6907",
+    "failure": null,
+    "plan": {
+      "authority": {
+        "decision_id": "human_decision_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "origin": "human",
+        "outcome": "candidate",
+        "policy_identity": null,
+        "qualification_identity": null,
+        "review_case_id": "review_case_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "source": "fake_service",
+        "target_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "capability_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "connection": "primary",
+      "consent": {
+        "action": "apply_field",
+        "connection": "primary",
+        "consent_id": "effect_consent_cfb1a8488ec90c0a339c69d476ef1353b2e917c32225836f1b20fefc55edfcfa",
+        "destination": "title",
+        "envelope_identity": "316f805d22d86e49ee5c6aad625655565e06c6eceee319cc1d0756057fc67a8d",
+        "granted_at": 1,
+        "library": "books",
+        "schema_version": "field-effect-consent-v2"
+      },
+      "created_at": 11,
+      "dependency_digests": ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+      "desired_value": "new",
+      "destination": "title",
+      "idempotency_key": "effect_97cb5e111bf5506876842d9cb6efc67ea7373c8eed9053dd9f79b77bda48a391",
+      "library": "books",
+      "plan_id": "effect_plan_97cb5e111bf5506876842d9cb6efc67ea7373c8eed9053dd9f79b77bda48a391",
+      "pre_value": "old",
+      "schema_version": "field-effect-plan-v1",
+      "target_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "target_version": "version-1",
+      "work_id": "book-1"
+    },
+    "schema_version": "field-effect-operation-v1",
+    "state": "verified",
+    "updated_at": 15
+  },
+  "method": "POST",
+  "path": "/api/v1/field-effects/effect_plan_97cb5e111bf5506876842d9cb6efc67ea7373c8eed9053dd9f79b77bda48a391/reconcile",
+  "status": 200
+}

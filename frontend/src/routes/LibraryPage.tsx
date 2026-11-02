@@ -69,6 +69,7 @@ import {
 import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import { useCoverPrepareFailure } from '../coverChoices'
 import {
   AsinAutomaticStatement,
   ContextValue,
@@ -1006,6 +1007,7 @@ export default function LibraryPage({
         ) ?? null)
       : null
   const nextWorkError = attention.isError
+  const coverPrepareFailure = useCoverPrepareFailure(selectedReviewCaseId)
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
     fields: detail.data?.fields ?? [],
@@ -1906,7 +1908,7 @@ export default function LibraryPage({
           className="attention-toggle"
           type="button"
           aria-expanded={search.attention === 'open'}
-          onClick={() => changeAttention(search.attention !== 'open')}
+          onClick={() => (search.attention === 'open' ? closeAttention() : changeAttention(true))}
         >
           Attention
           {summaryAttention !== undefined || !summary.isError ? (
@@ -2633,6 +2635,7 @@ export default function LibraryPage({
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                         revealEvidence={toggleChoiceEvidence}
+                        prepareFailure={coverPrepareFailure}
                       />
                     ) : (
                       <section
@@ -2865,16 +2868,6 @@ export default function LibraryPage({
                       Try the same decision again
                     </button>
                   ) : null}
-                  {selectedChoiceMode && effect ? (
-                    <aside className="field-apply-context" aria-label="External update status">
-                      <span className="activity-state-mark" aria-hidden="true"></span>
-                      <span>
-                        <small>External library</small>
-                        <strong>{effect.state}</strong>
-                        <em>{effect.detail}</em>
-                      </span>
-                    </aside>
-                  ) : null}
                   {selectedChoiceMode &&
                   !ownerStatusShown &&
                   (controller.statusFor(selected.destination) ||
@@ -2898,6 +2891,16 @@ export default function LibraryPage({
                     >
                       {detail.isFetching ? 'Reloading current case…' : 'Reload current case'}
                     </button>
+                  ) : null}
+                  {selectedChoiceMode && effect ? (
+                    <aside className="field-apply-context" aria-label="External update status">
+                      <span className="activity-state-mark" aria-hidden="true"></span>
+                      <span>
+                        <small>External library</small>
+                        <strong>{effect.state}</strong>
+                        <em>{effect.detail}</em>
+                      </span>
+                    </aside>
                   ) : null}
                 </article>
               ) : (

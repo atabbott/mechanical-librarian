@@ -54,6 +54,8 @@ brackets are GitHub issues.
   and asks you to check it before pressing again. A decision offers Try the
   same decision again, which cannot record it twice. A saved reviewer-access
   change now answers with its saved view (#1571).
+- Closing the Attention queue with its toolbar toggle keeps focus on the
+  toggle, as Close and Escape do (#1566).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
@@ -61,6 +63,11 @@ brackets are GitHub issues.
   matched audiobook work and compared with the file. The report records when
   an edition with a different narrator matches the file and the Audible match
   does not. A Hardcover edition never counts as a second source (#962).
+- When Hardcover's audio editions say the Audible match is the wrong recording,
+  or Audible found no recording, the editions' ASINs are looked up on Audnexus
+  and AudioSilo. A product that matches the work and the file's running time
+  is offered in review like any Audible match: its ASIN, narrators and the
+  other details it states. Hardcover itself fills nothing (#962).
 
 - **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
   filled under the default option (a cut-off one only by its own full text),
@@ -171,6 +178,21 @@ brackets are GitHub issues.
 - The Audiobookshelf field-effect canary composes the installed application
   around one shared operation admission, as the product does, so its
   preparation lanes queue instead of meeting at the database (#1561).
+- A cover advisory retry or comparison whose result cannot be confirmed now
+  reloads the case and says it may have been requested, instead of saying it
+  failed safely (#1572). The warning for a failed retry or comparison stays
+  shown when the reload brings a new comparison, or fails and then recovers,
+  until the next press, a success, or a move to another work (#1595).
+- Reviewer access, description preference and description advice buttons
+  keep focus while their request runs, look disabled and ignore a second
+  press, instead of dropping focus to the page. A reviewer access or Library
+  decision failure now shows directly under the button it describes, and a
+  failed connection check is announced once (#1584).
+- An audiobook whose language is a regional tag such as en-GB, left to you
+  under Automatic, says that dropping the region is never done for you on
+  audiobooks, instead of "no more specific reason is known" (#1593).
+- Sign out always lands on the sign-in page, instead of sometimes on a
+  sign-in page that offers to return to where you were (#1588).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

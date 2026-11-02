@@ -4476,6 +4476,12 @@ _SHIFTS_OUTSIDE_STATUS = """
 })();
 """
 
+# Inter has loaded and swapped in, and nothing else is loading.
+_FONT_SETTLED = """async () => {
+  await document.fonts.load('1em Inter');
+  await document.fonts.ready;
+}"""
+
 _MASTHEAD_GEOMETRY = """() => {
   const box = (selector) => {
     const bounds = document.querySelector(selector).getBoundingClientRect();
@@ -4541,7 +4547,8 @@ def test_masthead_holds_still_while_status_changes() -> None:
     masthead is clipped, at every width of the ladder. Enlarged text is root font-size 200% (rem and container
     queries respond to it; px media queries do not): there the destinations
     keep their place, and the masthead may change size only while it is
-    static, in the page's flow (#1291)."""
+    static, in the page's flow (#1291). Recording starts only once the web
+    font has swapped in, which moves every label and is not status (#1555)."""
     styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
     text = "100%"
     state = {"preparation": "absent"}
@@ -4574,6 +4581,7 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 state["preparation"] = "loading"
                 page.goto("https://react-platform.invalid/settings?group=connection")
                 page.get_by_role("heading", name="Settings", exact=True).wait_for()
+                page.evaluate(_FONT_SETTLED)
                 page.evaluate(_TWO_FRAMES)
                 expect(trigger).to_have_count(0)
                 states = {"loading": page.evaluate(_MASTHEAD_GEOMETRY)}

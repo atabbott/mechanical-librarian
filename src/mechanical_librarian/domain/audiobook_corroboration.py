@@ -1001,6 +1001,7 @@ __all__ = [
     "admitted_recording_asin",
     "HardcoverEditionWitness",
     "counted_audio_editions",
+    "hardcover_edition_leads",
     "hardcover_edition_witness",
     "recording_admitted",
     "recording_unmatched",
@@ -1877,20 +1878,21 @@ def recording_unmatched(report: MetadataReport) -> bool:
 
 
 class HardcoverEditionWitness(StrEnum):
-    """What Hardcover's audio editions say about this recording (#962, ADR-0089).
+    """What Hardcover's audio editions say about this recording (#962, ADR-0090).
 
     - `no_edition`: no counted edition; nothing is witnessed.
     - `editions_disagree`: counted editions credit disjoint narrator casts, so
       none is used (open choice A: fill nothing, record the disagreement).
     - `unmatched`: counted editions agree and no audiobook authority put a
-      recording forward; the edition can later fill a gap or lead a lookup.
+      recording forward; the editions' ASINs lead a lookup.
     - `agrees`: an accepted recording is inside the tight band, or shares a
       narrator with the counted editions. Same narrator and a close runtime
       is the same recording with an offset in the stated time. A recording
       that states no runtime or no narrator is never challenged.
     - `challenged`: every accepted recording states a runtime outside the
       tight band, after whole-minute floors, and credits only narrators the
-      counted editions do not. The match is the wrong recording and goes to the owner.
+      counted editions do not. The match is the wrong recording, and the
+      editions' ASINs lead a lookup of the right one.
     """
 
     NO_EDITION = "no_edition"
@@ -1909,12 +1911,20 @@ def counted_audio_editions(report: MetadataReport) -> tuple[ProviderCandidate, .
     """
     if type(report) is not MetadataReport:
         raise CorroborationValueError("provider observation is invalid")
-    local = local_runtime_seconds(report)
-    if report.audio is None or local is None:
+    return _counted_editions(report.local_claims, report.audio, report.providers)
+
+
+def _counted_editions(
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None,
+    observations: tuple[ProviderObservation, ...],
+) -> tuple[ProviderCandidate, ...]:
+    local = local_claim_runtime_seconds(local_claims)
+    if audio is None or local is None:
         return ()
     return tuple(
         edition
-        for observation in report.providers
+        for observation in observations
         if observation.authority == "hardcover"
         and observation.status is ProviderStatus.CANDIDATES
         for edition in observation.audio_editions
@@ -1924,11 +1934,13 @@ def counted_audio_editions(report: MetadataReport) -> tuple[ProviderCandidate, .
     )
 
 
-def _accepted_recordings(report: MetadataReport) -> tuple[ProviderCandidate, ...]:
+def _accepted_recordings(
+    observations: tuple[ProviderObservation, ...],
+) -> tuple[ProviderCandidate, ...]:
     """Every product an audiobook authority put forward for this item."""
     return tuple(
         candidate
-        for observation in report.providers
+        for observation in observations
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
@@ -1940,24 +1952,35 @@ def hardcover_edition_witness(report: MetadataReport) -> HardcoverEditionWitness
     """Judge the accepted recording against Hardcover's counted editions.
 
     A Hardcover edition is never a second independent source for a field
-    (ADR-0089): an Audible exclusive's facts can only have come from Audible.
+    (ADR-0090): an Audible exclusive's facts can only have come from Audible.
     It is only compared with the file, so it can say which recording the file
     is without echoing the match it judges.
     """
-    editions = counted_audio_editions(report)
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    return _edition_witness(report.local_claims, report.audio, report.providers)[0]
+
+
+def _edition_witness(
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None,
+    observations: tuple[ProviderObservation, ...],
+) -> tuple[HardcoverEditionWitness, tuple[ProviderCandidate, ...]]:
+    """The witness outcome and the counted editions it was judged from."""
+    editions = _counted_editions(local_claims, audio, observations)
     if not editions:
-        return HardcoverEditionWitness.NO_EDITION
+        return HardcoverEditionWitness.NO_EDITION, editions
     casts = tuple(_candidate_narrators(edition) for edition in editions)
     if any(
         narrator_cast_disjoint(left, right)
         for index, left in enumerate(casts)
         for right in casts[index + 1 :]
     ):
-        return HardcoverEditionWitness.EDITIONS_DISAGREE
-    accepted = _accepted_recordings(report)
+        return HardcoverEditionWitness.EDITIONS_DISAGREE, editions
+    accepted = _accepted_recordings(observations)
     if not accepted:
-        return HardcoverEditionWitness.UNMATCHED
-    local = local_runtime_seconds(report)
+        return HardcoverEditionWitness.UNMATCHED, editions
+    local = local_claim_runtime_seconds(local_claims)
     if any(
         runtime_agreement(
             local, candidate_runtime_seconds(candidate), provider_minutes=True
@@ -1970,8 +1993,58 @@ def hardcover_edition_witness(report: MetadataReport) -> HardcoverEditionWitness
         )
         for candidate in accepted
     ):
-        return HardcoverEditionWitness.AGREES
-    return HardcoverEditionWitness.CHALLENGED
+        return HardcoverEditionWitness.AGREES, editions
+    return HardcoverEditionWitness.CHALLENGED, editions
+
+
+def hardcover_edition_leads(
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None,
+    observations: tuple[ProviderObservation, ...],
+) -> tuple[str, ...]:
+    """The ASINs Hardcover's counted editions give the phase-two feed (#962).
+
+    Only a challenged match or a recording no audiobook authority put forward
+    gets leads: an agreeing match needs no second look, and editions that
+    disagree on the cast name no recording. A lead is only a question to ask
+    Audible; the identifier-lane gate still decides whether the product it
+    names is this recording, and the owner reviews what it proposes. The
+    edition itself never becomes evidence (ADR-0090, decision B).
+
+    Leads are judged on phase-one evidence only. An observation that holds
+    nothing but ASIN lanes is a feed's answer, so a retry that rebuilds the
+    feed from a saved report asks the same leads its first feed did, even
+    after one of them was confirmed.
+    """
+    if (
+        type(local_claims) is not tuple
+        or (audio is not None and type(audio) is not AudioFacts)
+        or type(observations) is not tuple
+        or any(type(value) is not ProviderObservation for value in observations)
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    phase_one = tuple(
+        observation
+        for observation in observations
+        if not observation.lanes
+        or any(lane.kind is not ProviderQueryKind.ASIN for lane in observation.lanes)
+    )
+    witness, editions = _edition_witness(local_claims, audio, phase_one)
+    if witness not in {
+        HardcoverEditionWitness.CHALLENGED,
+        HardcoverEditionWitness.UNMATCHED,
+    }:
+        return ()
+    leads: dict[str, None] = {}
+    for edition in sorted(editions, key=lambda value: value.identity):
+        for claim in edition.claims:
+            if (
+                claim.kind is ClaimKind.ASIN
+                and claim.state is FieldState.VALID
+                and (asin := canonical_asin(claim.value)) is not None
+            ):
+                leads[asin] = None
+    return tuple(leads)
 
 
 def admitted_recording_asin(report: MetadataReport) -> str | None:

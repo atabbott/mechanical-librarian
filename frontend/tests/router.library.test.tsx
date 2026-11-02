@@ -5527,6 +5527,455 @@ describe('Library route', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
   })
 
+  const retryableCover = (
+    reviewerStatus: 'completed' | 'failed',
+  ): NonNullable<CaseDetailView['fields'][number]['coverConsideration']> => ({
+    id: `cover_consideration_${'r'.repeat(64)}`,
+    current: true,
+    choiceContexts: [
+      {
+        alternativeId: null,
+        selection: 'current',
+        evidence: [],
+        limitations: [],
+        rationale: 'Keep the local cover.',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+      },
+      {
+        alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
+        selection: 'proposed',
+        evidence: [],
+        limitations: [],
+        rationale: 'Selectable retained cover.',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+      },
+    ],
+    candidates: [
+      {
+        artifactId: `cover_${'a'.repeat(64)}`,
+        deterministicCitations: ['citation-a'],
+        deterministicRank: 1,
+        deterministicRankKey: [
+          1,
+          0,
+          -960000,
+          -800,
+          -1200,
+          1,
+          `cover_transport_ref_${'a'.repeat(64)}`,
+        ],
+        height: 1200,
+        identity: { outcome: 'verified_work_match' },
+        incumbent: false,
+        matchState: 'same_book',
+        observation: null,
+        originalSha256: 'a'.repeat(64),
+        ordinal: 1,
+        previewSha256: 'a'.repeat(64),
+        reference: `cover_transport_ref_${'a'.repeat(64)}`,
+        selectable: true,
+        manualEligible: true,
+        sourceKinds: ['open_library'],
+        state: 'acceptable',
+        width: 800,
+      },
+    ],
+    incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' },
+    omissions: [],
+    policy: null,
+    policyPreferences: {
+      avoidPromotionalText: false,
+      avoidTieInBranding: false,
+      preferMinimalComposition: false,
+    },
+    policyReference: `cover_policy_${'r'.repeat(64)}`,
+    providerFetching: false,
+    ready: true,
+    reviewerAccessRevision: null,
+    reviewerEngine: null,
+    reviewerModel: null,
+    reviewerStatus,
+    reviewerUnavailableReason: null,
+    targetFingerprint: 'fingerprint-cover',
+  })
+
+  it.each([
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      new ApiError(503, 'persistence'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      new ApiError(409, 'stale_cover'),
+      'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+    ],
+  ])('reports a cover advisory retry failing with %s', async (failure, copy) => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const access: ReviewerAccessView = {
+      schema_version: 'reviewer-access-view-v2',
+      cover_metadata: null,
+      cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+      revision: 9,
+      mapping: { engine: 'codex' },
+      description_mapping: null,
+      description_metadata: null,
+      description: null,
+      openrouter_key_configured: false,
+      codex: {
+        engine: 'codex',
+        state: 'failed',
+        reason: null,
+        model: null,
+        tier: null,
+        host_headroom_bytes: null,
+      },
+      openrouter: {
+        engine: 'openrouter',
+        state: 'unconfigured',
+        reason: null,
+        model: null,
+        tier: null,
+        host_headroom_bytes: null,
+      },
+      recommendations: [],
+      candidates: [],
+      free_tier_caveat: '',
+      data_use_caveat: '',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+            coverConsideration: retryableCover('failed'),
+          },
+        ],
+      })),
+      getReviewerAccess: vi.fn(async () => access),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        throw failure
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+    // A reload that keeps the consideration keeps the alert on screen.
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      new ApiError(500, 'invalid_error_response'),
+      'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
+    ],
+    [
+      new ApiError(409, 'stale'),
+      'The comparison could not be prepared. The existing cover remains unchanged.',
+    ],
+  ])('reports preparing a cover comparison failing with %s', async (failure, copy) => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+            coverConsideration: null,
+          },
+        ],
+      })),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        throw failure
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Prepare cover comparison' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+  })
+
+  // A retry-capable reviewer for the #1595 cover alert tests below.
+  const retryAccess: ReviewerAccessView = {
+    schema_version: 'reviewer-access-view-v2',
+    cover_metadata: null,
+    cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+    revision: 9,
+    mapping: { engine: 'codex' },
+    description_mapping: null,
+    description_metadata: null,
+    description: null,
+    openrouter_key_configured: false,
+    codex: {
+      engine: 'codex',
+      state: 'failed',
+      reason: null,
+      model: null,
+      tier: null,
+      host_headroom_bytes: null,
+    },
+    openrouter: {
+      engine: 'openrouter',
+      state: 'unconfigured',
+      reason: null,
+      model: null,
+      tier: null,
+      host_headroom_bytes: null,
+    },
+    recommendations: [],
+    candidates: [],
+    free_tier_caveat: '',
+    data_use_caveat: '',
+  }
+  const reloadedCover = (
+    letter: string,
+    rationale: string,
+    reviewerStatus: 'completed' | 'failed' = 'failed',
+  ): NonNullable<CaseDetailView['fields'][number]['coverConsideration']> => {
+    const cover = retryableCover(reviewerStatus)
+    const [current, proposed] = cover.choiceContexts
+    if (!current || !proposed) throw new Error('cover fixture requires two contexts')
+    return {
+      ...cover,
+      id: `cover_consideration_${letter.repeat(64)}`,
+      choiceContexts: [current, { ...proposed, rationale }],
+    }
+  }
+  const coverField = (
+    coverConsideration: ReturnType<typeof retryableCover> | null,
+  ): CaseDetailView['fields'][number] => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    return {
+      ...base,
+      destination: 'cover' as const,
+      proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+      coverConsideration,
+    }
+  }
+
+  it.each([
+    [
+      'retry',
+      new ApiError(500, 'invalid_error_response'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      'retry',
+      new ApiError(503, 'persistence'),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
+    [
+      'retry',
+      new ApiError(409, 'stale_cover'),
+      'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+    ],
+    [
+      'prepare',
+      new ApiError(500, 'invalid_error_response'),
+      'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
+    ],
+  ] as const)(
+    'keeps a failed cover %s alert when the reload brings a new consideration (%s)',
+    async (action, failure, copy) => {
+      let reloaded = false
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [
+            coverField(
+              reloaded
+                ? reloadedCover('s', 'Reloaded retained cover.', 'completed')
+                : action === 'retry'
+                  ? reloadedCover('r', 'Selectable retained cover.')
+                  : null,
+            ),
+          ],
+        })),
+        getReviewerAccess: vi.fn(async () => retryAccess),
+        retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+          reloaded = true
+          throw failure
+        }),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      await userEvent.setup().click(
+        await screen.findByRole('button', {
+          name: action === 'retry' ? 'Retry advisory review' : 'Prepare cover comparison',
+        }),
+      )
+
+      // The reload remounts the comparison with the new consideration.
+      expect(await screen.findByText('Reloaded retained cover.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Choose a cover')).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(screen.getByRole('alert')).toHaveTextContent(copy)
+      expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+      expect(http.recordDecision).not.toHaveBeenCalled()
+    },
+  )
+
+  it('restores a failed cover retry alert after a failed reload recovers', async () => {
+    const user = userEvent.setup()
+    let detailFails = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+        if (detailFails) throw new Error('case detail unavailable')
+        return { ...detail, fields: [coverField(retryableCover('failed'))] }
+      }),
+      getReviewerAccess: vi.fn(async () => retryAccess),
+      retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+        detailFails = true
+        throw new ApiError(500, 'invalid_error_response')
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+
+    expect(await screen.findByText(/Selected work could not be loaded\./u)).toBeVisible()
+    expect(screen.queryByText(/The advisory retry could not be confirmed/u)).toBeNull()
+    detailFails = false
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    )
+    expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('clears a failed cover retry alert while the next retry is pending', async () => {
+    const user = userEvent.setup()
+    let settle: (() => void) | undefined
+    const retryCoverConsideration = vi
+      .fn<ReviewHttp['retryCoverConsideration']>()
+      .mockRejectedValueOnce(new ApiError(500, 'invalid_error_response'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            settle = () => resolve(retryableCover('failed'))
+          }),
+      )
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [coverField(retryableCover('failed'))],
+      })),
+      getReviewerAccess: vi.fn(async () => retryAccess),
+      retryCoverConsideration,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const retry = await screen.findByRole('button', { name: 'Retry advisory review' })
+    await user.click(retry)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /The advisory retry could not be confirmed/u,
+    )
+    await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+
+    await user.click(screen.getByRole('button', { name: 'Retry advisory review' }))
+    await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).toBeNull()
+    await act(async () => {
+      settle?.()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it.each(['before', 'after', 'returned'] as const)(
+    'clears a cover retry alert that settles %s the owner moves to another work and back',
+    async (settles) => {
+      const user = userEvent.setup()
+      const baseWork = library.works[0]
+      if (!baseWork) throw new Error('cover reset fixture requires a work')
+      const twoWorks: LibraryView = {
+        ...library,
+        works: [
+          { ...baseWork, title: 'Work A' },
+          { ...baseWork, id: 'case-2', reviewCaseId: 'case-2', title: 'Work B' },
+        ],
+      }
+      let reject: (() => void) | undefined
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getLibrary: vi.fn(async () => twoWorks),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) => ({
+          ...detail,
+          id,
+          fields: [coverField(reloadedCover(id === 'case-1' ? 'r' : 's', `Cover for ${id}.`))],
+        })),
+        getReviewerAccess: vi.fn(async () => retryAccess),
+        retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(
+          () =>
+            new Promise((_, refuse) => {
+              reject = () => refuse(new ApiError(500, 'invalid_error_response'))
+            }),
+        ),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+      await waitFor(() => expect(http.retryCoverConsideration).toHaveBeenCalledOnce())
+      if (settles === 'before') {
+        await act(async () => {
+          reject?.()
+          await Promise.resolve()
+        })
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          /The advisory retry could not be confirmed/u,
+        )
+      }
+
+      await user.click(screen.getByRole('button', { name: /^Work B\./u }))
+      expect(await screen.findByText('Cover for case-2.')).toBeInTheDocument()
+      if (settles === 'after')
+        await act(async () => {
+          reject?.()
+          await Promise.resolve()
+        })
+      expect(screen.queryByRole('alert')).toBeNull()
+      await user.click(screen.getByRole('button', { name: /^Work A\./u }))
+      expect(await screen.findByText('Cover for case-1.')).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+      if (settles === 'returned')
+        await act(async () => {
+          reject?.()
+          await Promise.resolve()
+        })
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
+      expect(http.recordDecision).not.toHaveBeenCalled()
+    },
+  )
+
   it('offers only preparation for an authenticated historical cover comparison', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -8017,14 +8466,73 @@ describe('Library route', () => {
       expect(focused).not.toHaveBeenCalled()
       expect(scrollsOf(heading)).toBe(0)
       await railGone()
-      // Close and Escape hand focus back to the toggle. The toggle closes
-      // without that hand-back, so route-ready focus moves to the Library
-      // controls that hold it, as when it closes after the reveal.
-      await waitFor(() =>
-        expect(closer === 'toggle' ? toggle.closest('[data-route-focus]') : toggle).toHaveFocus(),
-      )
+      // Every closer hands focus back to the toggle, the toggle included,
+      // rather than leaving it on the Library controls that route-ready focus
+      // moves to first (#1566).
+      await waitFor(() => expect(toggle).toHaveFocus())
       expect(focused).not.toHaveBeenCalled()
       expect(scrollsOf(heading)).toBe(0)
+    },
+  )
+
+  it.each([
+    ['wide, with no selection', '/library?lens=all', false],
+    ['wide, with a selected work', '/library?lens=all&preview=case-1', false],
+    ['760px and below, with a selected work', '/library?lens=all&preview=case-1', true],
+  ] as const)(
+    'returns focus as Close does when the toggle closes the rail, %s (#1566)',
+    async (_layout, path, narrow) => {
+      if (narrow) {
+        const previousMatchMedia = window.matchMedia
+        vi.stubGlobal('matchMedia', (query: string) => ({
+          matches: query === '(max-width: 760px)' || query === '(max-width: 1024px)',
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(() => true),
+        }))
+        onTestFinished(() => {
+          vi.stubGlobal('matchMedia', previousMatchMedia)
+        })
+      }
+      const user = userEvent.setup()
+      renderRoute(path, createHttp())
+      const toggle = await screen.findByRole('button', { name: /Attention/ })
+      await routeSettled()
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      }
+
+      await user.click(toggle)
+      const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      const heading = within(rail).getByRole('heading', { name: 'Attention' })
+      act(runFrames)
+      expect(heading).toHaveFocus()
+      await user.click(toggle)
+      await waitFor(() =>
+        expect(screen.queryByRole('complementary', { name: 'Attention queue' })).toBeNull(),
+      )
+      act(runFrames)
+      // Like Close and Escape, the toggle keeps focus, except at 760px and
+      // below, where closing reveals the selected work and focus goes to it.
+      const work = document.querySelector('.selected-work-header')
+      if (path.includes('preview')) expect(work).toBeInstanceOf(HTMLElement)
+      await waitFor(() => expect(narrow ? work : toggle).toHaveFocus())
+      expect(document.querySelector('header.library-header')).not.toHaveFocus()
+      if (!narrow && work) expect(work).not.toHaveFocus()
     },
   )
 
@@ -11027,17 +11535,71 @@ it.each([
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
-  http.retryDescriptionAdvice = vi.fn(async () => {
-    throw failure
-  })
+  let fail!: (error: unknown) => void
+  http.retryDescriptionAdvice = vi.fn<ReviewHttp['retryDescriptionAdvice']>(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject
+      }),
+  )
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
-  await userEvent
-    .setup()
-    .click(await screen.findByRole('button', { name: 'Retry description advice' }))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Retry description advice' }))
+  // Pending keeps the pressed button focused; it looks disabled and ignores a second press.
+  const pending = await screen.findByRole('button', { name: 'Requesting retry…' })
+  expect(pending).not.toBeDisabled()
+  expect(pending).toHaveAttribute('aria-disabled', 'true')
+  expect(pending).toHaveFocus()
+  await user.click(pending)
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
 
+  await act(async () => fail(failure))
   expect(await screen.findByText(copy)).toBeVisible()
   await waitFor(() => expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1))
+  const settled = screen.getByRole('button', { name: 'Retry description advice' })
+  expect(settled).not.toHaveAttribute('aria-disabled')
+  expect(settled).toHaveFocus()
   expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
+it('keeps a requested description advice retry focused and ignores another press', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.retryDescriptionAdvice = vi.fn(async () => undefined)
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  const retry = await screen.findByRole('button', { name: 'Retry description advice' })
+  await user.click(retry)
+  expect(
+    await screen.findByText('Description preparation requested. Paused preparation stays paused.'),
+  ).toBeVisible()
+  expect(retry).not.toBeDisabled()
+  expect(retry).toHaveAttribute('aria-disabled', 'true')
+  expect(retry).toHaveFocus()
+  await user.click(retry)
+  expect(http.retryDescriptionAdvice).toHaveBeenCalledOnce()
+})
+
+it('keeps description advice retry natively disabled while a decision records', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+  const retry = screen.getByRole('button', { name: 'Retry description advice' })
+  // The press did not cause this, so the button stays natively disabled.
+  expect(retry).toBeDisabled()
+  expect(retry).not.toHaveAttribute('aria-disabled')
+  await user.click(retry)
+  expect(http.retryDescriptionAdvice).not.toHaveBeenCalled()
 })
 
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
@@ -11106,7 +11668,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     name: 'Choose advised value: Authored synthetic description.',
   })
   expect(option).toHaveTextContent('Advised · Authored content')
-  expect(option).toHaveTextContent('codex · synthetic-model')
+  expect(option).toHaveTextContent('codex · gpt-5.6-sol')
   const chooser = option.closest('section.direct-choice')
   if (!(chooser instanceof HTMLElement)) throw new Error('description choice area is missing')
   expect(
@@ -11225,6 +11787,98 @@ it('retries an advised selection through the ordinary controller with the same a
   if (!first || !retried) throw new Error('description retry was not recorded')
   expect(retried[1]).toEqual(first[1])
   expect(first[1].authoredDescription?.binding).toEqual(advice.binding)
+})
+
+it('places the decision failure directly under its retry, before the external update status (#1584)', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // An earlier recorded change gives the field an external update status.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  http.recordDecision = vi.fn(async () => {
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
+  const message = await screen.findByRole('alert')
+  expect(message).toHaveTextContent('The decision could not be confirmed.')
+  const status = screen.getByLabelText('External update status')
+  expect(retry.nextElementSibling).toBe(message)
+  expect(message.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it('places the reload-required alert directly above Reload current case, before the external update status (#1584)', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // An earlier recorded change gives the field an external update status.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  let decided = false
+  // The refresh after the decision fails, so the case must be reloaded.
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new Error('current case refresh unavailable')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  // The decision records, but neither its response nor the refresh carries the case.
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+    decided = true
+    return {
+      schema_version: 'description-selection-ack-v1',
+      decision_id: `human_decision_${'a'.repeat(64)}`,
+      advised: true,
+      invalidation_sequences: [],
+      confirmation: { status: 'unavailable' },
+    }
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const reload = await screen.findByRole('button', { name: 'Reload current case' })
+  const message = screen.getByText(
+    'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+  )
+  expect(message).toHaveAttribute('role', 'alert')
+  expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+  const status = screen.getByLabelText('External update status')
+  expect(message.nextElementSibling).toBe(reload)
+  expect(reload.nextElementSibling).toBe(status)
 })
 
 it.each(['verified', 'no_change_required'] as const)(
@@ -13370,7 +14024,9 @@ describe('a focused field decision (#1519)', () => {
   it('keeps the language respelling notice beside another withheld reason', async () => {
     // An audiobook's regional tag stays the owner's for its own reason, so the
     // respelling notice is what says the choice only changes the spelling (#1496).
-    const reason = 'Automatic is not qualified for this change.'
+    // The reason is the server's text for that state (#1593).
+    const reason =
+      'The current value names the same language with a region. Dropping the region is never done for you on audiobooks; choose the plain language yourself if you want it.'
     open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
     expect(await screen.findByText(reason)).toBeVisible()
     expect(screen.getByLabelText('Comparison condition')).toHaveTextContent(

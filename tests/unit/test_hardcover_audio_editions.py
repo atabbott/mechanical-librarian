@@ -2,7 +2,7 @@
 
 An audiobook WORK lane that admits a Hardcover book asks for that book's
 audio-format editions and keeps those that credit a narrator and state a
-runtime inside the tight band of the file's own (ADR-0089).
+runtime inside the tight band of the file's own (ADR-0090).
 """
 
 from __future__ import annotations
@@ -239,4 +239,20 @@ def test_one_book_overflowing_its_pages_drops_the_other_books_editions() -> None
         (body["variables"]["book"], body["variables"]["offset"])
         for body in sent
         if body["operationName"] == "AudioEditions"
+    ]
+
+
+def test_an_isbn_shaped_edition_asin_is_kept() -> None:
+    # Audible gives some of its own productions an ISBN-10 as their ASIN; the
+    # work-level rule refuses those, but an edition's lead needs it (#962).
+    observation, _sent = _observe(
+        lambda _book, _offset: _page(
+            _edition(3, _LOCAL_SECONDS, asin="1400193346"),
+            _edition(4, _LOCAL_SECONDS, asin="not-an-asin"),
+        )
+    )
+
+    assert [("1400193346",), ()] == [
+        tuple(claim.value for claim in edition.claims if claim.kind is ClaimKind.ASIN)
+        for edition in observation.audio_editions
     ]

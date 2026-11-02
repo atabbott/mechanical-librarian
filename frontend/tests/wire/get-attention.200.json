@@ -1,0 +1,65 @@
+{
+  "body": {
+    "items": [
+      {
+        "authors": ["Mick Herron"],
+        "classification_reason": "This field needs your review.",
+        "destination": "genres",
+        "detail_url": "/review/review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b?field=genres",
+        "item": "item-1",
+        "library": "ebooks",
+        "library_display_name": "ebooks",
+        "media_kind": "epub",
+        "notices": ["unique_typed_candidate"],
+        "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "title": "Real Tigers",
+        "work_attention_count": 3
+      },
+      {
+        "authors": ["Mick Herron"],
+        "classification_reason": "This field needs your review.",
+        "destination": "isbn",
+        "detail_url": "/review/review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b?field=isbn",
+        "item": "item-1",
+        "library": "ebooks",
+        "library_display_name": "ebooks",
+        "media_kind": "epub",
+        "notices": ["manifestation_verification_required"],
+        "provenance": [
+          "local_3d1c7058db31193c8f2190306d5eb55a803d4e252bdc0f02f65131fd7821e6d1",
+          "local_8a043456a2b2863fbbc99c0da87486b328687c1da4522147eda80d0210de19a6",
+          "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
+        ],
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "title": "Real Tigers",
+        "work_attention_count": 3
+      },
+      {
+        "authors": ["Mick Herron"],
+        "classification_reason": "This field needs your review.",
+        "destination": "series",
+        "detail_url": "/review/review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b?field=series",
+        "item": "item-1",
+        "library": "ebooks",
+        "library_display_name": "ebooks",
+        "media_kind": "epub",
+        "notices": ["unique_typed_candidate"],
+        "provenance": [
+          "provider_e2dae467c54051b9202c0203e936cb26f016c7f6742db7bd73a51434fd94137c",
+          "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
+        ],
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "title": "Real Tigers",
+        "work_attention_count": 3
+      }
+    ],
+    "next_cursor": null,
+    "query": null,
+    "schema_version": "review-attention-v1",
+    "total": 3
+  },
+  "method": "GET",
+  "path": "/api/v1/attention",
+  "status": 200
+}

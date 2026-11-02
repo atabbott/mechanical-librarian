@@ -8,6 +8,13 @@ import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
 import type { CaseDetailView, ReviewHttp } from '../src/api/http'
 import { createHttp, detail, renderRoute } from './fixtures'
+import {
+  caseHistory,
+  coverCandidate,
+  coverConsideration,
+  decisionProjection,
+  historyCoverItem,
+} from './wireFixtures'
 
 describe('Library review ownership', () => {
   it('opens readable direct Evidence and restores the exact Library selection', async () => {
@@ -1272,29 +1279,28 @@ it.each(['evidence', 'history'])(
 it('retains unconfirmed incumbent evidence in actual mapped owner history', async () => {
   const http = createHttp()
   http.getHistory = vi.fn(async () =>
-    mapHistory({
-      schema_version: 'review-case-history-v3',
-      review_case_id: 'case-1',
-      next_cursor: null,
-      items: [
-        {
-          kind: 'kept_incumbent',
-          occurred_at: 3,
-          consideration: {
-            candidates: [
-              {
-                incumbent: true,
-                artifact_id: 'retained-incumbent',
-                match_state: 'match_not_confirmed',
-              },
-            ],
-            policy: null,
-            reviewer_status: 'unavailable',
-          },
-          decision: { outcome: 'keep_current', selected_value: null },
-        },
-      ],
-    }),
+    mapHistory(
+      caseHistory({
+        items: [
+          historyCoverItem({
+            kind: 'kept_incumbent',
+            occurred_at: 3,
+            consideration: coverConsideration({
+              candidates: [
+                coverCandidate({
+                  incumbent: true,
+                  artifact_id: 'retained-incumbent',
+                  match_state: 'match_not_confirmed',
+                }),
+              ],
+              policy: null,
+              reviewer_status: 'unavailable',
+            }),
+            decision: decisionProjection({ outcome: 'keep_current', selected_value: null }),
+          }),
+        ],
+      }),
+    ),
   )
   renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
   expect(await screen.findByText(/Owner-confirmed choice: the current cover\./u)).toHaveTextContent(

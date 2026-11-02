@@ -94,6 +94,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    canonical_asin,
     canonical_json,
     comma_inverted_name,
     comparison_links,
@@ -879,20 +880,23 @@ def _audio_edition(
         return None
     identity = f"hardcover-edition-{row['id']:010d}"
     claims: list[ProviderClaim] = []
-    state, asin = _field(ClaimKind.ASIN, row["asin"])
-    if state is FieldState.VALID:
+    # An audio edition's ASIN may be ISBN-shaped: Audible gives some of its own
+    # productions an ISBN-10 as their ASIN, which the work-level rule refuses.
+    asin = canonical_asin(row["asin"])
+    if asin is not None:
+        fields: dict[str, Any] = {
+            "provider": provider,
+            "candidate": identity,
+            "kind": ClaimKind.ASIN,
+            "value": asin,
+            "state": FieldState.VALID,
+            "scope": ClaimScope.EDITION,
+            "applicability": "not_applicable",
+            "raw_order": len(claims),
+        }
+        bare = ProviderClaim.create(**fields)
         claims.append(
-            _claim(
-                provider,
-                identity,
-                ClaimKind.ASIN,
-                asin,
-                ClaimScope.EDITION,
-                "not_applicable",
-                None,
-                local,
-                len(claims),
-            )
+            ProviderClaim.create(**fields, links=comparison_links(bare, local))
         )
     claims.append(
         _claim(

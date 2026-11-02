@@ -1,40 +1,40 @@
 {
   "failed": {
     "application_outcome": null,
-    "attempt_id": "description_attempt_968dfa8accf84c18839ebae47190593f",
+    "attempt_id": "description_attempt_00000000000000000000000000000002",
     "binding": {
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-      "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-      "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+      "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+      "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+      "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
     "current": true,
     "engine": "codex",
     "failure": "unavailable",
-    "model": "synthetic-model",
+    "model": "gpt-5.6-sol",
     "selected_advice": {
       "binding": {
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
         "access_revision": 2,
         "advised": true,
-        "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-        "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+        "attempt_id": "description_attempt_00000000000000000000000000000001",
+        "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
         "created_at": 10,
         "engine": "codex",
         "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "output": {
           "description": "Authored synthetic description.",
           "disposition": "ready"
@@ -43,7 +43,7 @@
         "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-        "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+        "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
         "schema_version": "description-advice-candidate-v1"
       },
@@ -55,60 +55,60 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
-      "decision_id": "human_decision_a7cc6d07731918c8e3fdf25194abde76e7798c2b5de6f1d9f65873d3908d4eed",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_id": "human_decision_0000000000000000000000000000000000000000000000000000000000000001",
       "destination": "description",
-      "idempotency_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "occurred_at": 11,
+      "idempotency_digest": "86ca27f626fb3de0efc698107841c242a328f3dc88d4a35293f8ce20524abf9b",
+      "occurred_at": 1000,
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
       "schema_version": "authored-description-decision-v1"
     },
     "state": "failed"
   },
   "interrupted": {
     "application_outcome": null,
-    "attempt_id": "description_attempt_7a40d59e4b34411991f05c22736477e2",
+    "attempt_id": "description_attempt_00000000000000000000000000000003",
     "binding": {
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-      "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-      "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+      "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+      "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+      "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
     "current": true,
     "engine": "codex",
     "failure": "interrupted",
-    "model": "synthetic-model",
+    "model": "gpt-5.6-sol",
     "selected_advice": {
       "binding": {
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
         "access_revision": 2,
         "advised": true,
-        "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-        "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+        "attempt_id": "description_attempt_00000000000000000000000000000001",
+        "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
         "created_at": 10,
         "engine": "codex",
         "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "output": {
           "description": "Authored synthetic description.",
           "disposition": "ready"
@@ -117,7 +117,7 @@
         "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-        "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+        "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
         "schema_version": "description-advice-candidate-v1"
       },
@@ -129,60 +129,60 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
-      "decision_id": "human_decision_a7cc6d07731918c8e3fdf25194abde76e7798c2b5de6f1d9f65873d3908d4eed",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_id": "human_decision_0000000000000000000000000000000000000000000000000000000000000001",
       "destination": "description",
-      "idempotency_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "occurred_at": 11,
+      "idempotency_digest": "86ca27f626fb3de0efc698107841c242a328f3dc88d4a35293f8ce20524abf9b",
+      "occurred_at": 1000,
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
       "schema_version": "authored-description-decision-v1"
     },
     "state": "interrupted"
   },
   "requested": {
     "application_outcome": null,
-    "attempt_id": "description_attempt_968dfa8accf84c18839ebae47190593f",
+    "attempt_id": "description_attempt_00000000000000000000000000000002",
     "binding": {
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-      "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-      "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+      "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+      "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+      "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
     "current": true,
     "engine": "codex",
     "failure": null,
-    "model": "synthetic-model",
+    "model": "gpt-5.6-sol",
     "selected_advice": {
       "binding": {
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
         "access_revision": 2,
         "advised": true,
-        "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-        "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+        "attempt_id": "description_attempt_00000000000000000000000000000001",
+        "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
         "created_at": 10,
         "engine": "codex",
         "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "output": {
           "description": "Authored synthetic description.",
           "disposition": "ready"
@@ -191,7 +191,7 @@
         "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-        "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+        "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
         "schema_version": "description-advice-candidate-v1"
       },
@@ -203,60 +203,60 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
-      "decision_id": "human_decision_a7cc6d07731918c8e3fdf25194abde76e7798c2b5de6f1d9f65873d3908d4eed",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_id": "human_decision_0000000000000000000000000000000000000000000000000000000000000001",
       "destination": "description",
-      "idempotency_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "occurred_at": 11,
+      "idempotency_digest": "86ca27f626fb3de0efc698107841c242a328f3dc88d4a35293f8ce20524abf9b",
+      "occurred_at": 1000,
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
       "schema_version": "authored-description-decision-v1"
     },
     "state": "requested"
   },
   "running": {
     "application_outcome": null,
-    "attempt_id": "description_attempt_968dfa8accf84c18839ebae47190593f",
+    "attempt_id": "description_attempt_00000000000000000000000000000002",
     "binding": {
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-      "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-      "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+      "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+      "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+      "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
     "current": true,
     "engine": "codex",
     "failure": null,
-    "model": "synthetic-model",
+    "model": "gpt-5.6-sol",
     "selected_advice": {
       "binding": {
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
         "access_revision": 2,
         "advised": true,
-        "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-        "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+        "attempt_id": "description_attempt_00000000000000000000000000000001",
+        "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
         "created_at": 10,
         "engine": "codex",
         "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "output": {
           "description": "Authored synthetic description.",
           "disposition": "ready"
@@ -265,7 +265,7 @@
         "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-        "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+        "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
         "schema_version": "description-advice-candidate-v1"
       },
@@ -277,45 +277,45 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
-      "decision_id": "human_decision_a7cc6d07731918c8e3fdf25194abde76e7798c2b5de6f1d9f65873d3908d4eed",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_id": "human_decision_0000000000000000000000000000000000000000000000000000000000000001",
       "destination": "description",
-      "idempotency_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "occurred_at": 11,
+      "idempotency_digest": "86ca27f626fb3de0efc698107841c242a328f3dc88d4a35293f8ce20524abf9b",
+      "occurred_at": 1000,
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
       "schema_version": "authored-description-decision-v1"
     },
     "state": "running"
   },
   "selected": {
     "application_outcome": null,
-    "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
+    "attempt_id": "description_attempt_00000000000000000000000000000001",
     "binding": {
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-      "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-      "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+      "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+      "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+      "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": {
       "access_revision": 2,
       "advised": true,
-      "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+      "attempt_id": "description_attempt_00000000000000000000000000000001",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
       "created_at": 10,
       "engine": "codex",
       "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-      "model": "synthetic-model",
+      "model": "gpt-5.6-sol",
       "output": {
         "description": "Authored synthetic description.",
         "disposition": "ready"
@@ -324,33 +324,33 @@
       "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
       "provenance": "authored_content",
       "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-      "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+      "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
       "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
       "schema_version": "description-advice-candidate-v1"
     },
     "current": true,
     "engine": "codex",
     "failure": null,
-    "model": "synthetic-model",
+    "model": "gpt-5.6-sol",
     "selected_advice": {
       "binding": {
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
         "access_revision": 2,
         "advised": true,
-        "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-        "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+        "attempt_id": "description_attempt_00000000000000000000000000000001",
+        "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
         "created_at": 10,
         "engine": "codex",
         "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "output": {
           "description": "Authored synthetic description.",
           "disposition": "ready"
@@ -359,7 +359,7 @@
         "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-        "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+        "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
         "schema_version": "description-advice-candidate-v1"
       },
@@ -371,45 +371,45 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
-      "decision_id": "human_decision_a7cc6d07731918c8e3fdf25194abde76e7798c2b5de6f1d9f65873d3908d4eed",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_id": "human_decision_0000000000000000000000000000000000000000000000000000000000000001",
       "destination": "description",
-      "idempotency_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "occurred_at": 11,
+      "idempotency_digest": "86ca27f626fb3de0efc698107841c242a328f3dc88d4a35293f8ce20524abf9b",
+      "occurred_at": 1000,
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
       "schema_version": "authored-description-decision-v1"
     },
     "state": "succeeded"
   },
   "succeeded": {
     "application_outcome": null,
-    "attempt_id": "description_attempt_3805499ad906413590a6d2cc11530d3b",
+    "attempt_id": "description_attempt_00000000000000000000000000000004",
     "binding": {
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-      "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-      "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+      "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+      "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+      "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": {
       "access_revision": 2,
       "advised": true,
-      "attempt_id": "description_attempt_3805499ad906413590a6d2cc11530d3b",
-      "candidate_id": "description_candidate_b480771adcd5b81de2ccd064da680e8520e31942aa1dc97145ea2c6c5e3bcc3a",
-      "created_at": 18,
+      "attempt_id": "description_attempt_00000000000000000000000000000004",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000002",
+      "created_at": 1005,
       "engine": "codex",
       "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-      "model": "synthetic-model",
+      "model": "gpt-5.6-sol",
       "output": {
         "description": "Authored synthetic description.",
         "disposition": "ready"
@@ -418,33 +418,33 @@
       "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
       "provenance": "authored_content",
       "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-      "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+      "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
       "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
       "schema_version": "description-advice-candidate-v1"
     },
     "current": true,
     "engine": "codex",
     "failure": null,
-    "model": "synthetic-model",
+    "model": "gpt-5.6-sol",
     "selected_advice": {
       "binding": {
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
         "access_revision": 2,
         "advised": true,
-        "attempt_id": "description_attempt_5d4118fdec4342f6be2d7437062c0da8",
-        "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
+        "attempt_id": "description_attempt_00000000000000000000000000000001",
+        "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
         "created_at": 10,
         "engine": "codex",
         "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
-        "model": "synthetic-model",
+        "model": "gpt-5.6-sol",
         "output": {
           "description": "Authored synthetic description.",
           "disposition": "ready"
@@ -453,7 +453,7 @@
         "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
-        "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+        "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
         "schema_version": "description-advice-candidate-v1"
       },
@@ -465,20 +465,20 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
-        "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
-        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        "proposal_set_id": "proposal_set_863b71dc5ee24e5f15107012348954b306e7baaa3ff6a96d221e19d0ed779317",
+        "report_id": "report_1121ed78e36f5f9269671aedf06e0bd5a5bdf5ce30923c46da4e6b974ccd1666",
+        "review_case_id": "review_case_daf9f23786b5b05bc4d467cdb5c7c260fe4d28d393c7931635fc60d6b6b78e0b",
+        "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
-      "candidate_id": "description_candidate_aa93552588928779799dbea950d753dc4d760b90c4bd08266935e0e669a6e8ac",
-      "decision_id": "human_decision_a7cc6d07731918c8e3fdf25194abde76e7798c2b5de6f1d9f65873d3908d4eed",
+      "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_id": "human_decision_0000000000000000000000000000000000000000000000000000000000000001",
       "destination": "description",
-      "idempotency_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "occurred_at": 11,
+      "idempotency_digest": "86ca27f626fb3de0efc698107841c242a328f3dc88d4a35293f8ce20524abf9b",
+      "occurred_at": 1000,
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_4cc021245122278e29b48bec6041a4a78fa27a0c9fd7539dc584cdbf7789d1ae",
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
       "schema_version": "authored-description-decision-v1"
     },
     "state": "succeeded"

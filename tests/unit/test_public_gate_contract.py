@@ -35,10 +35,10 @@ SETUP_COMMANDS = frozenset(
         '"npm@$(node -p \'require("./frontend/package.json").engines.npm\')"',
         # Installs the frontend closure, in both jobs that build the frontend.
         "npm ci --ignore-scripts --no-audit --no-fund",
-        # The two documents `cmp` then compares, and the regeneration in place
+        # The two output sets `cmp` then compares, and the regeneration in place
         # that the typecheck, lint, test and clean-tree checks run against.
-        'npm run generate -- --output "$RUNNER_TEMP/review-api-a.d.ts"',
-        'npm run generate -- --output "$RUNNER_TEMP/review-api-b.d.ts"',
+        'npm run generate -- --output "$RUNNER_TEMP/a/review-api.d.ts" --response-output "$RUNNER_TEMP/a/review-api-response.d.ts" --decoders "$RUNNER_TEMP/a/review-decoders.ts"',
+        'npm run generate -- --output "$RUNNER_TEMP/b/review-api.d.ts" --response-output "$RUNNER_TEMP/b/review-api-response.d.ts" --decoders "$RUNNER_TEMP/b/review-decoders.ts"',
         "npm run generate",
         # The two output trees `diff -r` then compares.
         'ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/frontend-build-a" npm run build',
