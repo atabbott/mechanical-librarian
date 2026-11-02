@@ -415,6 +415,70 @@ def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> Non
             adapter.load_contained_reviewer_profile(profile)
 
 
+def _profile_document(root: Path) -> dict[str, Any]:
+    return {
+        "auth_store_path": str(root / "auth"),
+        "codex": {"path": str(root / "codex"), "sha256": "a" * 64, "version": "1"},
+        "job_root_path": str(root / "jobs"),
+        "limits": {
+            "file_bytes": 131_072,
+            "memory_bytes": 1_073_741_824,
+            "output_bytes": 65_536,
+            "processes": 32,
+            "timeout_seconds": 30,
+        },
+        "model": "gpt-5.6-sol",
+        "reasoning": "medium",
+        "sandbox": {"path": str(root / "bwrap"), "sha256": "b" * 64, "version": "1"},
+        "schema_version": "contained-reviewer-profile-v1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "keys"),
+    [
+        ("codex_path", ("codex", "path")),
+        ("sandbox_path", ("sandbox", "path")),
+        ("auth_store_path", ("auth_store_path",)),
+        ("job_root_path", ("job_root_path",)),
+    ],
+)
+def test_profile_refuses_a_nul_in_every_path_field_without_echoing_it(
+    field: str, keys: tuple[str, ...]
+) -> None:
+    root = Path("/srv/contained")
+    valid = adapter.load_contained_reviewer_profile_bytes(
+        canonical_json(_profile_document(root)).encode()
+    )
+    assert getattr(valid, field).is_absolute()
+    document = _profile_document(root)
+    holder = document
+    for key in keys[:-1]:
+        holder = holder[key]
+    secret = "/srv/contained/nul-secret\x00tail"
+    holder[keys[-1]] = secret
+    payload = canonical_json(document).encode()
+    assert b"\\u0000" in payload
+    with pytest.raises(adapter.ContainedReviewerProcessError) as refused:
+        adapter.load_contained_reviewer_profile_bytes(payload)
+    assert str(refused.value) == "profile"
+    assert refused.value.__cause__ is None
+    assert "nul-secret" not in str(refused.value)
+    assert "nul-secret" not in repr(refused.value)
+    with pytest.raises(adapter.ContainedReviewerProcessError, match="^profile$"):
+        replace(valid, **{field: Path(secret)})
+
+
+def test_profile_surrogate_path_cannot_reach_the_profile() -> None:
+    document = _profile_document(Path("/srv/contained"))
+    document["auth_store_path"] = "/srv/contained/\ud800"
+    escaped = json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
+    assert b"\\ud800" in escaped
+    for payload in (escaped, escaped.replace(b"\\ud800", b"\xed\xa0\x80")):
+        with pytest.raises(adapter.ContainedReviewerProcessError, match="^profile$"):
+            adapter.load_contained_reviewer_profile_bytes(payload)
+
+
 def test_profile_contract_mismatch_names_only_the_expected_limit() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)

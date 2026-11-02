@@ -30,6 +30,9 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     _stop_process,
     _validated_output_line,
 )
+from mechanical_librarian.adapters.reviewers.contained_reviewer import (
+    ContainedReviewerProcessError,
+)
 from mechanical_librarian.bootstrap.composition import (
     _CodexAuthLeaseCoordinator,
     _LazyCodexAuth,
@@ -1351,6 +1354,31 @@ def test_lazy_passive_status_does_not_construct_codex_authority() -> None:
 
     assert lazy.passive_status() == CodexDeviceAuthState("ready")
     assert lazy.cancel() == CodexDeviceAuthState("ready")
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("embedded null byte"),
+        OSError("private auth store detail"),
+        CodexDeviceAuthError("lease"),
+        ContainedReviewerProcessError("profile"),
+    ],
+)
+def test_lazy_passive_status_contains_an_existing_manager_failure_like_status(
+    failure: Exception,
+) -> None:
+    factory = Mock()
+    manager = Mock(spec=CodexDeviceAuthManager)
+    manager.status.side_effect = failure
+    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+    lazy._manager = manager
+    failed = CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+    assert lazy.passive_status() == failed
+    assert lazy.status() == failed
+    assert manager.status.call_count == 2
     factory.assert_not_called()
 
 

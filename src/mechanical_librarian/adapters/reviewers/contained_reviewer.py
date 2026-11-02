@@ -420,7 +420,9 @@ class ContainedReviewerProfile:
         if (
             self.schema_version != PROFILE_SCHEMA
             or any(
-                not isinstance(value, Path) or not value.is_absolute()
+                not isinstance(value, Path)
+                or not value.is_absolute()
+                or "\x00" in str(value)
                 for value in (
                     self.codex_path,
                     self.sandbox_path,
