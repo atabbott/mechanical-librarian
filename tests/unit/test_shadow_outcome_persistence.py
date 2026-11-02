@@ -43,6 +43,11 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _ATTENTION_FACT_SOURCE_SQL,
+    _COVER_UNRESOLVED_OUTCOME_SQL,
+    _CURRENT_COVER_ATTENTION_AUTHORITY_SQL,
+)
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     cover_reviewer_profile_contract_mismatch,
 )
@@ -1129,6 +1134,17 @@ def _assert_manual_cover_surface(
         "FROM review_case_field_facts WHERE review_case_id=? AND destination='cover'",
         (case_id,),
     ).fetchone()
+    # A comparison awaiting refresh admits either cover by its raw outcome, so
+    # a reason that still queues a kept cover (an abstention, a safety pause)
+    # keeps Library and Attention agreeing with this detail (#1310).
+    assert (1,) == repository._connection.execute(
+        "SELECT " + _COVER_UNRESOLVED_OUTCOME_SQL + " FROM review_cases rc "
+        "WHERE rc.review_case_id=?",
+        (case_id,),
+    ).fetchone()
+    for refresh in (_CURRENT_COVER_ATTENTION_AUTHORITY_SQL, _ATTENTION_FACT_SOURCE_SQL):
+        assert "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL in refresh
+        assert "THEN result.unresolved_choice" not in refresh
     assert cover["human_decision"] is None
 
 

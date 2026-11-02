@@ -350,14 +350,16 @@ PRIOR_HUMAN_DECIDED_SQL = (
 # Every producer before #1358 kept no case episodes.
 # Nor, before #1310, did their cover branch keep a verified current cover.
 _KEPT_COVER_SQL = " AND NOT " + review_sql._VERIFIED_CURRENT_COVER_SQL
+# Nor did they admit a refreshing cover by its raw outcome.
+_RAW_REFRESH_SQL = "THEN " + review_sql._COVER_UNRESOLVED_OUTCOME_SQL + " END"
 
 PRIOR_ATTENTION_FACT_OBJECTS = tuple(
     (
         kind,
         name,
-        sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL).replace(
-            _KEPT_COVER_SQL, ""
-        ),
+        sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL)
+        .replace(_KEPT_COVER_SQL, "")
+        .replace(_RAW_REFRESH_SQL, "THEN result.unresolved_choice END"),
     )
     for kind, name, sql in persistence_schema._ATTENTION_FACT_OBJECTS
     if not name.startswith("review_case_episodes_")

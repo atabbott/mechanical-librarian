@@ -31,6 +31,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
+    _COVER_UNRESOLVED_OUTCOME_SQL,
     _VERIFIED_CURRENT_COVER_SQL,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -80,8 +81,11 @@ _AUTHORS_ASK = (
     "'$.destinations.contributor_names')='ask') OR "
 )
 _NARRATORS_ASK = _AUTHORS_ASK.replace("'authors'", "'narrators'")
-# #1310 later keeps a verified current cover out of the cover branch.
+# #1310 later keeps a readable current cover out of the cover branch, and
+# admits a refreshing cover by its raw outcome rather than its fact.
 _KEPT_COVER_SQL = " AND NOT " + _VERIFIED_CURRENT_COVER_SQL
+_RAW_REFRESH_SQL = "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL + " END"
+_FACT_REFRESH_SQL = "THEN result.unresolved_choice END"
 _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
     _ATTENTION_FACT_SOURCE_SQL.replace(_NARRATORS_ASK, "", 1)
     .replace(
@@ -91,11 +95,12 @@ _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
     )
     .replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL, 1)
     .replace(_KEPT_COVER_SQL, "", 1)
+    .replace(_RAW_REFRESH_SQL, _FACT_REFRESH_SQL, 1)
 )
 # The #1249 comparison holds every later rule fixed, so it keeps #1310's.
 _PRE_1249_WITH_KEPT_COVER_SQL = _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
     "'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1
-)
+).replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
 
 
 def _facts(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -1043,6 +1048,7 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         .replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
         .replace(PRIOR_HUMAN_DECIDED_SQL, HUMAN_DECIDED_SQL, 1)
         .replace("'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1)
+        .replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
         == _ATTENTION_FACT_SOURCE_SQL
     )
 

@@ -874,8 +874,6 @@ class InspectCurrentReviewCase:
                     cover_refresh_required
                     and result["outcome"] == "unresolved_choice"
                     and cover_undecided
-                    # As the persisted field fact reads it (#1310).
-                    and not _kept_cover(proposal)
                 )
             )
             cover_preparation_available = (
@@ -988,7 +986,10 @@ class InspectCurrentReviewCase:
                         _kept_cover(proposal)
                         and (
                             (cover_admits and bool(actions))
-                            or cover_preparation_available
+                            or (
+                                cover_preparation_available
+                                and result["outcome"] == "unresolved_choice"
+                            )
                         )
                     )
                 ),
