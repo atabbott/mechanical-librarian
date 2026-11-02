@@ -72,7 +72,9 @@ from tests.support.audiobook_providers import (
     asin_plan,
     fed_asin_plan,
     with_asin_lane,
+    work_plan,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
 class _InterruptedStream(httpx.SyncByteStream):
@@ -4710,3 +4712,50 @@ def test_another_series_position_does_not_hide_this_series_name() -> None:
 
     (lane,) = observation.lanes
     assert ProviderStatus.CANDIDATES is lane.status
+
+
+@pytest.mark.parametrize(
+    ("search", "status"),
+    (
+        ({"docs": []}, ProviderStatus.NO_MATCH),
+        (
+            _search("/books/OL1M", "/books/OL2M", "/books/OL3M"),
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+        ),
+    ),
+)
+def test_an_audiobook_work_lane_asks_one_rung_and_no_narrowing_retry(
+    search: dict[str, object], status: ProviderStatus
+) -> None:
+    """Every #1294 Open Library audiobook admission sat on the first rung (#1309).
+
+    The title below has a second, subtitle-free rung, and an overflow would
+    otherwise send a narrowing retry; an audiobook sends neither.
+    """
+    title = "Ember Tide Protocol: A Novel"
+    assert len(work_query_ladder(title, ("Corin Halloway",), audiobook=True)) == 2
+    plan = replace(work_plan(title=title), audio=single_track_audio_facts())
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(str(request.url.params))
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=search
+        )
+
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(plan)
+        .observation
+    )
+
+    assert 1 == len(queries)
+    assert "A+Novel" in queries[0] or "A%20Novel" in queries[0]
+    (lane,) = observation.lanes
+    assert status is lane.status
+    assert 1 == observation.request_accounting.logical_requests

@@ -466,6 +466,12 @@ class OpenLibraryMetadataProvider:
             work_queries = work_query_ladder(
                 lookup.title, lookup.authors, audiobook=lookup.audio is not None
             )
+            if lookup.audio is not None:
+                # Every Open Library audiobook admission measured on #1294 sat
+                # on the first rung, and no later rung or narrowing retry
+                # admitted anything, so an audiobook asks one rung and no
+                # retry (#1309).
+                work_queries = work_queries[:1]
             if not work_queries:
                 return ProviderObservation(
                     self._name,
@@ -485,7 +491,10 @@ class OpenLibraryMetadataProvider:
                 )
                 if last.status is ProviderStatus.CANDIDATES:
                     return last
-                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                if (
+                    last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                    and lookup.audio is None
+                ):
                     narrowed = narrowing_work_query(work_query)
                     return self._observe_lookup(
                         replace(
