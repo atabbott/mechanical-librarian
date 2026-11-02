@@ -3,6 +3,10 @@
 // every value it asserts as an override, and builds a nested response object
 // from its own base rather than a partial literal.
 
+import attentionCapture from './wire/get-attention.200.json'
+import policyStateCapture from './wire/get-metadata-policy-state.200.json'
+import policyPreviewCapture from './wire/post-metadata-policy-preview.200.json'
+
 type Overrides = Record<string, unknown>
 
 // `GET /api/v1/library/report` 200.
@@ -285,5 +289,199 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   next_cursor: null,
   review_case_id: 'case-1',
   schema_version: 'review-case-history-v3',
+  ...overrides,
+})
+
+// `POST /api/v1/review-cases/{review_case_id}/decisions` 200: the owner's
+// decision, confirmed with the case it leaves.
+export const decisionAcknowledgement = (overrides: Overrides = {}) => ({
+  ...decisionProjection({ destination: 'title' }),
+  confirmation: { case: caseDetail(), status: 'confirmed' },
+  invalidation_sequences: [],
+  schema_version: 'review-decision-v1',
+  ...overrides,
+})
+
+// `_PreparationProgress`, which `POST /api/v1/review-preparation/{connection}/{library_name}/scan`
+// acknowledges with 202: a queued scan of one library.
+export const scanProgress = (overrides: Overrides = {}) => ({
+  blocked: 0,
+  checked: 0,
+  connection: 'primary',
+  library: 'Books',
+  library_id: 'books',
+  not_matched: 0,
+  ready: 0,
+  recorded: 0,
+  rescan_requested: false,
+  scan_id: 'scan-1',
+  stages: [],
+  state: 'queued',
+  total: 0,
+  ...overrides,
+})
+
+// `_PreparationPresentation`: a running pass over four works, none in flight.
+export const preparationPresentation = (overrides: Overrides = {}) => ({
+  active_books: [],
+  active_overflow: 0,
+  completed_at: null,
+  dismissible: false,
+  now: null,
+  passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
+  recent_completions: [],
+  run_id: `preparation_run_${'a'.repeat(64)}`,
+  started_at: 100,
+  state: 'running',
+  throughput_per_minute: 0,
+  total: 4,
+  triggers: [
+    { trigger: 'manual_scan', accepted_count: 1, first_accepted_at: 100, last_accepted_at: 100 },
+  ],
+  updated_at: 101,
+  ...overrides,
+})
+
+// `GET /api/v1/review-preparation` 200, which the preparation controls also
+// return: idle, with nothing configured.
+export const preparation = (overrides: Overrides = {}) => ({
+  actionable: false,
+  active: false,
+  connections: [],
+  first_boot: false,
+  first_boot_complete: false,
+  first_boot_works: null,
+  libraries: [],
+  paused: false,
+  presentation: null,
+  provider_throttling: null,
+  recovery_required: false,
+  schema_version: 'review-preparation-v2',
+  ...overrides,
+})
+
+// `_LibraryWork`: a catalogue work with no review case, cover or summary.
+export const libraryWork = (overrides: Overrides = {}) => ({
+  attention_count: 0,
+  attention_state: 'no_attention_needed',
+  authors: [],
+  cover: null,
+  detail_kind: 'report',
+  detail_url: '/api/v1/library/report?item=item-1',
+  dispositions: [],
+  item: 'item-1',
+  library: 'Books',
+  library_display_name: null,
+  media_kind: 'epub',
+  preparation: null,
+  preparation_outcomes: [],
+  review_case_id: null,
+  summary: null,
+  title: 'A Book',
+  work_id: 'library_work_1',
+  ...overrides,
+})
+
+// `GET /api/v1/library` 200: the first and only page of the All lens.
+export const library = (overrides: Overrides = {}) => ({
+  counts: {
+    all: 0,
+    needs_attention: 0,
+    no_attention_needed: 0,
+    not_matched: 0,
+    preparation_failed: 0,
+  },
+  items: [],
+  lens: 'all',
+  next_cursor: null,
+  page: 1,
+  previous_cursor: null,
+  query: null,
+  schema_version: 'review-library-v4',
+  ...overrides,
+})
+
+// `_ActivityEvent`: an owner's recorded review of one field.
+export const activityEvent = (overrides: Overrides = {}) => ({
+  author_label: 'Author details are not recorded',
+  category: 'owner',
+  change: 'Recorded',
+  change_detail: 'Recorded',
+  change_id: 'change-1',
+  check_group: null,
+  destination: 'title',
+  diagnostic: null,
+  event_id: 'event-1',
+  event_type: 'review',
+  evidence: [],
+  failure: null,
+  field_label: 'Title',
+  library: 'Fiction',
+  occurred_at: 1,
+  origin: 'human',
+  policy_changes: [],
+  state: 'verified',
+  transition_id: null,
+  work_id: 'work-1',
+  work_label: 'Recorded work',
+  ...overrides,
+})
+
+// `GET /api/v1/activity` 200: nothing configured, waiting or recorded.
+export const activityResponse = (overrides: Overrides = {}) => ({
+  backup_ready: null,
+  capabilities: [],
+  configured_libraries: [],
+  consented_libraries: [],
+  counts: {},
+  current_waiting: null,
+  enabled_libraries: [],
+  events: [],
+  example: null,
+  lapsed_consents: [],
+  last_failure: null,
+  ledger: {
+    event_type: 'all',
+    page: 1,
+    page_count: 1,
+    page_size: 25,
+    query: null,
+    range_days: 30,
+    total: 0,
+  },
+  owner_action_required: 0,
+  paused: false,
+  prepared: { automatic: 0, human: 0, total: 0 },
+  provider_recovery: [],
+  schema_version: 'continuous-field-activity-v3',
+  suspensions: [],
+  waiting: { applying: 0, awaiting_permission: 0, held_for_recovery: 0, retrying: 0, scheduled: 0 },
+  ...overrides,
+})
+
+// The capture-backed bases copy their capture, so an override never edits it.
+
+// `GET /api/v1/attention` 200.
+export const attention = (overrides: Overrides = {}) => ({
+  ...structuredClone(attentionCapture.body),
+  ...overrides,
+})
+
+// `_AttentionItem`: the attention capture's first item.
+export const attentionItem = (overrides: Overrides = {}) => ({
+  ...structuredClone(attentionCapture.body.items[0]),
+  ...overrides,
+})
+
+// `POST /api/v1/metadata-policy/validate` 200, which returns the same profile
+// document as the captured policy state.
+export const policyProfile = (overrides: Overrides = {}) => ({
+  ...structuredClone(policyStateCapture.body),
+  ...overrides,
+})
+
+// `POST /api/v1/metadata-policy/preview` 200.
+export const policyPreview = (overrides: Overrides = {}) => ({
+  ...structuredClone(policyPreviewCapture.body),
   ...overrides,
 })
