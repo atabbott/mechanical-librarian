@@ -228,13 +228,13 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
 
 @pytest.mark.parametrize("failure", ("settings_dormant", "setup_commit"))
 def test_candidate_failure_preserves_active_codex_lease_owner(failure: str) -> None:
-    coordinator = composition._CodexAuthLeaseCoordinator()
+    coordinator = composition.CodexAuthLeaseCoordinator()
     predecessor_manager = Mock(spec=CodexDeviceAuthManager)
     predecessor_manager.status.return_value = CodexDeviceAuthState("usable")
-    predecessor = composition._LazyCodexAuth(
+    predecessor = composition.LazyCodexAuth(
         lambda _current, _guard: predecessor_manager, coordinator
     )
-    successor = composition._LazyCodexAuth(
+    successor = composition.LazyCodexAuth(
         lambda _current, _guard: Mock(spec=CodexDeviceAuthManager), coordinator
     )
     predecessor.activate_lease()
@@ -1336,7 +1336,7 @@ def test_composed_clear_uses_only_previously_admitted_cleanup_authority(
         ),
         expected_revision=document.revision,
     )
-    coordinator = composition._CodexAuthLeaseCoordinator()
+    coordinator = composition.CodexAuthLeaseCoordinator()
     review = ReviewWebConfiguration(
         canonical_origin="http://127.0.0.1:8443",
         owner_password_hash_file="/unused/owner",
@@ -1346,7 +1346,7 @@ def test_composed_clear_uses_only_previously_admitted_cleanup_authority(
     successor = None
     try:
         lazy = operations._codex_auth
-        assert isinstance(lazy, composition._LazyCodexAuth)
+        assert isinstance(lazy, composition.LazyCodexAuth)
         assert lazy._manager is None
         monkeypatch.setattr(
             composition,

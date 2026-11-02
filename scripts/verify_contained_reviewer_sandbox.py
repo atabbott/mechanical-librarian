@@ -34,12 +34,12 @@ from mechanical_librarian.adapters.reviewers import contained_reviewer as review
 from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand, CodexDeviceAuthManager
 from mechanical_librarian.adapters.reviewers.contained_reviewer import ContainedReviewerAdapter, ContainedReviewerProfile, _bound_artifact, _resource_command, _run_owned_command, _sealed_model_catalog_descriptor, no_process_seccomp_descriptor, prepare_contained_device_auth_command
 from mechanical_librarian.application.contained_reviewer_contract import ContainedReviewerIdentity
-from mechanical_librarian.bootstrap.composition import _CodexAuthLeaseCoordinator
+from mechanical_librarian.adapters.reviewers.codex_auth_lease import CodexAuthLeaseCoordinator
 
 payload = sys.argv[1]; codex = Path('/opt/mechanical-librarian/reviewer/bin/codex'); bwrap = Path('/opt/mechanical-librarian/reviewer/bin/bwrap')
 digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
 bwrap_version = Path('/opt/mechanical-librarian/reviewer/metadata/bubblewrap-version.txt').read_text().strip()
-coordinator = _CodexAuthLeaseCoordinator(); lock = threading.Lock(); inside = maximum = 0; runs = []; errors = []
+coordinator = CodexAuthLeaseCoordinator(); lock = threading.Lock(); inside = maximum = 0; runs = []; errors = []
 operation_identities = []
 original_popen = reviewer_module.subprocess.Popen
 def recording_popen(*arguments, **keywords):
@@ -163,7 +163,7 @@ def exercise():
                     successor.clear(); successor.close()
                     manager_handoff_reaped = set(descendants(os.getpid())) == before
                     if not manager_handoff_reaped: raise RuntimeError('device manager handoff tree survived')
-                    stage = 'manager-quarantine'; quarantine_coordinator = _CodexAuthLeaseCoordinator(); saved_deadline = auth_module._DEVICE_DEADLINE_SECONDS; auth_module._DEVICE_DEADLINE_SECONDS = 1
+                    stage = 'manager-quarantine'; quarantine_coordinator = CodexAuthLeaseCoordinator(); saved_deadline = auth_module._DEVICE_DEADLINE_SECONDS; auth_module._DEVICE_DEADLINE_SECONDS = 1
                     try:
                         quarantine_manager = CodexDeviceAuthManager(root/'manager-quarantine'/'profile', lambda home, action: sleeping_auth_command(profile, home, action), popen=recording_popen, activity_guard=quarantine_coordinator.activity, quarantine_activity=quarantine_coordinator.quarantine)
                         quarantine_manager.start(); wait_for_device(quarantine_manager, {'issued', 'waiting'}); saved_terminate = quarantine_manager._terminate_process_group
@@ -179,7 +179,7 @@ def exercise():
                     finally: auth_module._DEVICE_DEADLINE_SECONDS = saved_deadline
                     manager_quarantine_reaped = set(descendants(os.getpid())) == before
                     if not manager_quarantine_reaped: raise RuntimeError('device manager quarantine tree survived explicit proof cleanup')
-                    stage = 'manager-foreground-quarantine'; foreground_coordinator = _CodexAuthLeaseCoordinator(); foreground_root = root/'manager-foreground-quarantine'; foreground_root.mkdir(mode=0o700); foreground_home = foreground_root/'profile'; foreground_home.mkdir(mode=0o700)
+                    stage = 'manager-foreground-quarantine'; foreground_coordinator = CodexAuthLeaseCoordinator(); foreground_root = root/'manager-foreground-quarantine'; foreground_root.mkdir(mode=0o700); foreground_home = foreground_root/'profile'; foreground_home.mkdir(mode=0o700)
                     foreground_credential = foreground_home/'auth.json'; foreground_credential.write_text(json.dumps({'auth_mode': 'chatgpt', 'OPENAI_API_KEY': None, 'tokens': {'id_token': 'id', 'access_token': 'access', 'refresh_token': 'refresh', 'account_id': 'account'}, 'last_refresh': '2026-08-28T00:00:00Z'})); foreground_credential.chmod(0o600)
                     foreground_manager = CodexDeviceAuthManager(foreground_home, lambda home, action: successful_status_command(profile, home, action), popen=recording_popen, activity_guard=foreground_coordinator.activity, quarantine_activity=foreground_coordinator.quarantine)
                     saved_finish = foreground_manager._finish_process_group; saved_terminate = foreground_manager._terminate_process_group
