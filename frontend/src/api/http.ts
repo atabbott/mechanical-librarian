@@ -27,7 +27,7 @@ export const lits =
 type LibraryDto = ResponseSchema<'_LibraryResponse'>
 type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
 type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
-type AttentionDto = Schema<'_AttentionResponse'>
+type AttentionDto = ResponseSchema<'_AttentionResponse'>
 type CaseDetailDto = Schema<'_CaseDetailResponse'>
 export type SettingsView = Schema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
@@ -1394,6 +1394,7 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'POST /api/v1/review-preparation/{connection}/{library_name}/scan',
   'GET /api/v1/library',
   'GET /api/v1/library/report',
+  'GET /api/v1/attention',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1626,7 +1627,11 @@ export class ReviewApiClient implements ReviewHttp {
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
     return mapAttention(
-      await this.read(`/api/v1/attention${p.size ? `?${p}` : ''}`, signal, workClass),
+      (await this.read(
+        `/api/v1/attention${p.size ? `?${p}` : ''}`,
+        signal,
+        workClass,
+      )) as AttentionDto,
     )
   }
   async getCaseDetail(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
@@ -3388,39 +3393,24 @@ const mapLibraryCover = (value: LibraryCoverDto): LibraryCoverView => {
   }
 }
 
-export const mapAttention = (value: unknown): AttentionView => {
-  if (!record(value) || !Array.isArray(value.items))
-    throw new ApiError(502, 'invalid_attention_response')
-  // Validated at each read: this cast names the DTO's fields, and every one the
-  // view model consumes passes through the validators below before it is used.
-  const dto = value as unknown as AttentionDto
-  stringValue(dto.schema_version, 'schema_version')
-  const query = optionalString(dto.query, 'attention_query')
-  const nextCursor = optionalString(dto.next_cursor, 'attention_cursor')
-  return {
-    ...(query ? { query } : {}),
-    ...(nextCursor ? { nextCursor } : {}),
-    total: integerValue(dto.total, 'attention_total'),
-    items: dto.items.map((item) => ({
-      id: stringValue(item.review_case_id, 'review_case_id'),
-      destination: coverObservationValue(item.destination, 'destination', TARGET_DESTINATIONS),
-      title: stringValue(item.title, 'title'),
-      authors: stringArray(item.authors, 'authors'),
-      library: stringValue(item.library, 'library'),
-      libraryDisplayName:
-        optionalString(item.library_display_name, 'library_display_name') ??
-        stringValue(item.library, 'library'),
-      mediaKind: coverObservationValue(item.media_kind, 'media_kind', MEDIA_KINDS),
-      classificationReason: stringValue(
-        item.classification_reason,
-        'attention_classification_reason',
-      ),
-      notices: stringArray(item.notices, 'notices'),
-      provenance: stringArray(item.provenance, 'provenance'),
-      workAttentionCount: integerValue(item.work_attention_count, 'work_attention_count'),
-    })),
-  }
-}
+export const mapAttention = (value: AttentionDto): AttentionView => ({
+  ...(value.query ? { query: value.query } : {}),
+  ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
+  total: value.total,
+  items: value.items.map((item) => ({
+    id: item.review_case_id,
+    destination: item.destination,
+    title: item.title,
+    authors: item.authors,
+    library: item.library,
+    libraryDisplayName: item.library_display_name ?? item.library,
+    mediaKind: item.media_kind,
+    classificationReason: item.classification_reason,
+    notices: item.notices,
+    provenance: item.provenance,
+    workAttentionCount: item.work_attention_count,
+  })),
+})
 
 const mapDescriptionCandidate = (value: unknown): Schema<'DescriptionAdviceCandidate'> | null => {
   if (value === null) return null

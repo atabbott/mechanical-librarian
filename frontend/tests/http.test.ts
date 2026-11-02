@@ -45,7 +45,6 @@ import {
   mapActivity,
   mapActivityConsent,
   mapActivityPermissionReadiness,
-  mapAttention,
   derivePolicyDraftDisplay,
   policyAutomaticQualification,
   SessionExpiredError,
@@ -89,6 +88,12 @@ const readReport = (document: unknown) =>
     csrf,
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getReportDetail('/api/v1/library/report?item=item-9')
+// The attention family is decoded centrally too (#1687).
+const readAttention = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getAttention({})
 // The decoder's `reason@at` for a refused read, with the route-safe message.
 const refused = (failure: string) => {
   const [reason, at] = failure.split('@')
@@ -1515,8 +1520,8 @@ describe('ReviewApiClient', () => {
     )
   })
 
-  it('maps field-level attention context without promoting internal target keys', () => {
-    const view = mapAttention(
+  it('maps field-level attention context without promoting internal target keys', async () => {
+    const view = await readAttention(
       attention({
         total: 1,
         items: [
@@ -1553,6 +1558,29 @@ describe('ReviewApiClient', () => {
       workAttentionCount: 2,
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-1')
+  })
+
+  // The checks `mapAttention` held before the decoder (S30-S34, and the type
+  // and presence checks) now refuse the read with the decoder's pointer (#1687).
+  it.each([
+    [attention({ schema_version: 'review-attention-v2' }), 'const@/schema_version'],
+    [attention({ total: -1 }), 'min@/total'],
+    [attention({ query: 7 }), 'type@/query'],
+    [attention({ next_cursor: undefined }), 'required@/next_cursor'],
+    [attention({ items: {} }), 'type@/items'],
+    [attention({ items: [attentionItem({ destination: 'blurb' })] }), 'enum@/items/0/destination'],
+    [attention({ items: [attentionItem({ media_kind: 'pdf' })] }), 'enum@/items/0/media_kind'],
+    [
+      attention({ items: [attentionItem({ work_attention_count: -1 })] }),
+      'min@/items/0/work_attention_count',
+    ],
+    [attention({ items: [attentionItem({ authors: [1] })] }), 'type@/items/0/authors/0'],
+    [
+      attention({ items: [attentionItem({ library_display_name: undefined })] }),
+      'required@/items/0/library_display_name',
+    ],
+  ])('refuses an attention answer the schema does not allow (%#) (#1687)', async (doc, failure) => {
+    await expect(readAttention(doc)).rejects.toMatchObject(refused(failure))
   })
 
   it('rejects a malformed activity display projection before it reaches the workspace', () => {
@@ -3756,8 +3784,14 @@ describe('central response decoding (#1685)', () => {
       reportDetail({ chapters_truncated: undefined }),
       '/chapters_truncated',
     ],
+    [
+      'GET /api/v1/attention',
+      (client: ReviewApiClient) => client.getAttention({ q: 'dates', cursor: 'next' }),
+      attention({ items: [attentionItem({ classification_reason: undefined })] }),
+      '/items/0/classification_reason',
+    ],
   ] as const)(
-    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686)',
+    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686, #1687)',
     async (operation, read, document, at) => {
       const failure = await read(answering(document)).catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(ResponseDecodeError)

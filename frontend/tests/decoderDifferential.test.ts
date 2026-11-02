@@ -15,7 +15,6 @@ import {
   mapActivity,
   mapActivityConsent,
   mapActivityPermissionReadiness,
-  mapAttention,
   mapCaseDetail,
   mapCoverConsideration,
   mapEvidence,
@@ -1140,7 +1139,7 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'POST /api/v1/reviewer-access/codex/device': (c) => client(c).startCodexDevice(1),
   'POST /api/v1/reviewer-access/description-model/test': (c) =>
     client(c).testDescriptionModel({ expected_revision: 1, api_key: '', model: 'example/text' }),
-  'GET /api/v1/attention': (c) => mapAttention(c.doc()),
+  'GET /api/v1/attention': (c) => client(c).getAttention({}),
   'GET /api/v1/review-cases/{review_case_id}': (c) => mapCaseDetail(c.doc()),
   'GET /api/v1/review-cases/{review_case_id}/evidence': (c) => mapEvidence(c.doc()),
   'GET /api/v1/review-cases/{review_case_id}/history': (c) => mapHistory(c.doc()),
