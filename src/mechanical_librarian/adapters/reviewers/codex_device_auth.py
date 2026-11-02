@@ -21,7 +21,10 @@ from pathlib import Path
 from threading import Lock, Thread
 
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
-from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
+from mechanical_librarian.application.reviewer_contracts import (
+    CodexDeviceAuthState,
+    DeviceAuthStatus,
+)
 
 _DEVICE_URL = "https://auth.openai.com/codex/device"
 # The service issues the code, not the pinned CLI: observed codes are four and
@@ -48,6 +51,11 @@ _MAX_STAGING_ROOTS = 64
 _MAX_STAGING_PARENT_ENTRIES = 4096
 _CLEANUP_RETRY_DELAYS = (0.05, 0.1, 0.2)
 _RESOURCE_EXEC_MODULE = "mechanical_librarian.adapters.reviewers.resource_exec"
+# A recheck records only what it proved about the installed credential; flow
+# states it returns are passthroughs of the state already recorded.
+_RECHECK_RECORDED: frozenset[DeviceAuthStatus] = frozenset(
+    {"usable", "failed", "ready"}
+)
 
 
 class CodexDeviceAuthError(RuntimeError):
@@ -116,6 +124,7 @@ class CodexDeviceAuthManager:
         self._recovered = False
         self._trust_failed = False
         self._quarantined = False
+        self._recheck_recorded: CodexDeviceAuthState | None = None
 
     def _require_lease(self) -> None:
         if not self._lease_current():
@@ -251,6 +260,44 @@ class CodexDeviceAuthManager:
                 return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def recheck_credential_status(self) -> CodexDeviceAuthState:
+        """Recheck the installed credential and record what it proved."""
+        self._prepare_store()
+        # The first preparation replaces the state, so snapshot only after it.
+        with self._lock:
+            observed = self._state
+        try:
+            outcome = self._recheck_credential_status()
+        except Exception:
+            self._record_recheck(
+                observed,
+                CodexDeviceAuthState("failed", failure="permission_or_profile"),
+            )
+            raise
+        self._record_recheck(observed, outcome)
+        return outcome
+
+    def _record_recheck(
+        self, observed: CodexDeviceAuthState, outcome: CodexDeviceAuthState
+    ) -> None:
+        """Record a recheck unless a flow or another command moved the state.
+
+        States are compared by identity: equal values from an intervening
+        transition (usable, clear, ready, then usable again) must still win.
+        """
+        if outcome.state not in _RECHECK_RECORDED:
+            return
+        with self._lock:
+            if self._quarantined or self._trust_failed or self._installing:
+                return
+            if self._thread is not None and self._thread.is_alive():
+                return
+            current = self._state
+            if current is not observed and current is not self._recheck_recorded:
+                return
+            self._state = outcome
+            self._recheck_recorded = outcome
+
+    def _recheck_credential_status(self) -> CodexDeviceAuthState:
         self._prepare_store()
         with self._lease_guard():
             with self._lock:

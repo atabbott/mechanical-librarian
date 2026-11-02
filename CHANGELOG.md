@@ -215,6 +215,11 @@ brackets are GitHub issues.
   cannot be read, while Codex is not selected. They show that outcome and
   offer to restart sign-in, and a completed sign-in can be used without
   signing in again (#1598).
+- Settings and setup no longer go on showing Codex as ready to use after
+  selecting it, a Codex review or Check finds its sign-in no longer works:
+  the next time reviewer access is read they show the sign-in failed and offer
+  to check or restart it. A check that succeeds shows Codex as ready to use
+  again, including after a restart (#1614).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
