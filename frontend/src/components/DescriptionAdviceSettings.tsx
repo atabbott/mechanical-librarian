@@ -1,6 +1,6 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { ReviewHttp, SettingsView } from '../api/http'
@@ -59,6 +59,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   // A save that may have committed: the saved preferences are reloaded, so the
   // draft and its "Unsaved" note describe what was actually saved.
   const [unconfirmed, setUnconfirmed] = useState(false)
+  const reloadButton = useRef<HTMLButtonElement>(null)
   const mutation = useMutation({
     mutationFn: () =>
       http.writeSettings({
@@ -92,8 +93,15 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
       setDraft(fresh.document.description_advice)
       if (source === 'owner') setUnconfirmed(false)
       mutation.reset()
+      // The owner's Reload closes the message that holds it; focus moves to the
+      // section heading instead of falling to the page.
+      if (source === 'owner' && document.activeElement === reloadButton.current) {
+        document.getElementById('description-advice-heading')?.focus()
+      }
     },
   })
+  // A pending or settled save keeps Save focusable; it ignores the press.
+  const saveHeld = mutation.isPending || reload.isPending || !changed
   return (
     <div>
       <p>
@@ -125,8 +133,12 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         ))}
       </div>
       <button
-        disabled={locked || mutation.isPending || reload.isPending || stale || !changed}
-        onClick={() => mutation.mutate()}
+        disabled={locked || stale}
+        aria-disabled={saveHeld || undefined}
+        aria-busy={mutation.isPending || undefined}
+        onClick={() => {
+          if (!saveHeld) mutation.mutate()
+        }}
       >
         {mutation.isPending ? 'Saving description preferences…' : 'Save description preferences'}
       </button>
@@ -147,7 +159,14 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
                   'Description preferences could not be saved against the current settings. Reload the saved preferences before trying again.',
                 )}
           </p>
-          <button disabled={reload.isPending} onClick={() => reload.mutate('owner')}>
+          <button
+            ref={reloadButton}
+            aria-disabled={reload.isPending || undefined}
+            aria-busy={reload.isPending || undefined}
+            onClick={() => {
+              if (!reload.isPending) reload.mutate('owner')
+            }}
+          >
             {reload.isPending ? 'Reloading preferences…' : 'Reload description preferences'}
           </button>
           {reload.isError ? (

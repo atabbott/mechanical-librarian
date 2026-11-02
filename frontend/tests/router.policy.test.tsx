@@ -212,6 +212,59 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()
   })
 
+  describe('a failed snapshot save', () => {
+    const run = async (failing: string, failure: Error) => {
+      const user = userEvent.setup()
+      const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(
+        async (path) => {
+          if (path === failing) throw failure
+          return {}
+        },
+      )
+      const http: ReviewHttp = { ...createHttp(), policyCommand: policyCommand as never }
+      renderRoute('/policy?section=curation', http)
+      const tags = await screen.findByRole('region', { name: 'Tags' })
+      await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
+      const readsBefore = vi.mocked(http.getPolicyState).mock.calls.length
+      await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+      return { http, policyCommand, readsBefore }
+    }
+
+    it('says a snapshot that may have been saved could not be confirmed', async () => {
+      const { http, readsBefore } = await run('drafts', new ApiError(503, 'persistence'))
+
+      expect(
+        await screen.findByText(
+          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+        ),
+      ).toBeVisible()
+      expect(screen.queryByText(/snapshot was not saved/u)).toBeNull()
+      // The authoritative state is read again rather than assumed.
+      await waitFor(() =>
+        expect(vi.mocked(http.getPolicyState).mock.calls.length).toBeGreaterThan(readsBefore),
+      )
+    })
+
+    it('keeps the invalid-draft copy for a refused snapshot', async () => {
+      await run('drafts', new ApiError(422, 'policy_validation'))
+
+      expect(
+        await screen.findByText('The draft is not valid. Review its field choices and try again.'),
+      ).toBeVisible()
+    })
+
+    it('keeps the nothing-saved copy when validation itself is unavailable', async () => {
+      const { policyCommand } = await run('validate', new ApiError(503, 'persistence'))
+
+      expect(
+        await screen.findByText(
+          'The complete draft could not be validated. Nothing was saved or activated; try again.',
+        ),
+      ).toBeVisible()
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
+    })
+  })
+
   it('opens Automatic for the ASIN only once an audiobook record qualifies it', async () => {
     // The inert summary the API states today leaves every audiobook tranche
     // unqualified, so the page reads exactly the ebook records and the ASIN
@@ -1650,12 +1703,15 @@ it('saves description preferences independently next to Cover guidance and keeps
   expect(within(region).getByRole('status')).toHaveTextContent(
     'Unsaved. These save with their own button, not with the policy.',
   )
-  await userEvent
-    .setup()
-    .click(within(region).getByRole('button', { name: 'Save description preferences' }))
+  const save = within(region).getByRole('button', { name: 'Save description preferences' })
+  await userEvent.setup().click(save)
   await waitFor(() =>
     expect(within(region).getByRole('status')).toHaveTextContent('Description preferences saved.'),
   )
+  // The settled save keeps its button focused; nothing is left to save.
+  expect(save).toHaveFocus()
+  expect(save).not.toBeDisabled()
+  expect(save).toHaveAttribute('aria-disabled', 'true')
   expect(http.writeSettings).toHaveBeenCalledWith({
     expected_revision: 3,
     secrets: [],
@@ -1731,15 +1787,53 @@ it('holds description edits while unconfirmed preferences reload', async () => {
   await waitFor(() => expect(releaseReload).not.toBeNull())
   const praise = within(region).getByRole('group', { name: 'Remove pull quotes and author praise' })
   for (const button of within(praise).getAllByRole('button')) expect(button).toBeDisabled()
-  expect(
-    within(region).getByRole('button', { name: 'Save description preferences' }),
-  ).toBeDisabled()
+  const save = within(region).getByRole('button', { name: 'Save description preferences' })
+  expect(save).not.toBeDisabled()
+  expect(save).toHaveAttribute('aria-disabled', 'true')
+  expect(save).toHaveFocus()
+  await user.click(save)
+  expect(http.writeSettings).toHaveBeenCalledOnce()
   held = false
   await act(async () => releaseReload?.())
   await waitFor(() => expect(within(praise).getByRole('button', { name: 'Off' })).toBeEnabled())
   expect(within(region).getByRole('alert')).toHaveTextContent(
     'Description preferences could not be confirmed.',
   )
+  // The reloaded preferences match the draft, so Save stays held and focused.
+  expect(save).toHaveAttribute('aria-disabled', 'true')
+  expect(save).toHaveFocus()
+})
+
+it('keeps a pending description preferences save focused and sends it once', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let release!: () => void
+  http.getSettings = vi.fn(async () => initial)
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(
+    (write) =>
+      new Promise((resolve) => {
+        release = () => resolve({ ...initial, document: write.document })
+      }),
+  )
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Description advice' })
+  const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
+  await user.click(within(marketing).getByRole('button', { name: 'Off' }))
+  await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
+
+  const pending = within(region).getByRole('button', { name: 'Saving description preferences…' })
+  expect(pending).not.toBeDisabled()
+  expect(pending).toHaveAttribute('aria-disabled', 'true')
+  expect(pending).toHaveAttribute('aria-busy', 'true')
+  expect(pending).toHaveFocus()
+  await user.click(pending)
+  expect(http.writeSettings).toHaveBeenCalledOnce()
+  await act(async () => release())
+  await waitFor(() =>
+    expect(within(region).getByRole('status')).toHaveTextContent('Description preferences saved.'),
+  )
+  expect(pending).toHaveFocus()
 })
 
 it('clears the unconfirmed description message once the owner reloads', async () => {
@@ -1760,7 +1854,8 @@ it('clears the unconfirmed description message once the owner reloads', async ()
   const reload = await within(region).findByRole('button', {
     name: 'Reload description preferences',
   })
-  await waitFor(() => expect(reload).toBeEnabled())
+  // The automatic reload holds the button; a press then would be ignored.
+  await waitFor(() => expect(reload).not.toHaveAttribute('aria-disabled'))
 
   await user.click(reload)
 
@@ -1768,6 +1863,48 @@ it('clears the unconfirmed description message once the owner reloads', async ()
   expect(within(region).getByRole('status')).toHaveTextContent(
     'Saved with their own button, not with the policy.',
   )
+  // Reload closed the message that held it, so focus moves to the section heading.
+  expect(within(region).getByRole('heading', { name: 'Description advice' })).toHaveFocus()
+})
+
+it('keeps a pending description preferences reload focused and reads once', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let current = initial
+  let releaseReload: (() => void) | null = null
+  let held = false
+  http.getSettings = vi.fn(async () => {
+    if (held) await new Promise<void>((resolve) => (releaseReload = resolve))
+    return current
+  })
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+    current = { ...initial, document: write.document }
+    throw new ApiError(503, 'settings_unavailable')
+  })
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Description advice' })
+  const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
+  await user.click(within(marketing).getByRole('button', { name: 'Off' }))
+  await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
+  const reload = await within(region).findByRole('button', {
+    name: 'Reload description preferences',
+  })
+  await waitFor(() => expect(reload).not.toHaveAttribute('aria-disabled'))
+  held = true
+  const reads = vi.mocked(http.getSettings).mock.calls.length
+  await user.click(reload)
+
+  const pending = within(region).getByRole('button', { name: 'Reloading preferences…' })
+  expect(pending).not.toBeDisabled()
+  expect(pending).toHaveAttribute('aria-disabled', 'true')
+  expect(pending).toHaveFocus()
+  await user.click(pending)
+  expect(vi.mocked(http.getSettings).mock.calls.length).toBe(reads + 1)
+  held = false
+  await act(async () => releaseReload?.())
+  await waitFor(() => expect(within(region).queryByRole('alert')).toBeNull())
+  expect(within(region).getByRole('heading', { name: 'Description advice' })).toHaveFocus()
 })
 
 it('shows locked description cleanup preferences without enabling edits', async () => {

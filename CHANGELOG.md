@@ -10,6 +10,14 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.36.1 — Persistence health (in progress)
+
+- Stopping writes for a library, or granting them again for a changed set of
+  fields, now closes a change that was waiting for Audiobookshelf to come back,
+  instead of leaving it waiting beside a new one, and a cover's restore point
+  is removed. A change whose write permission was already withdrawn stops when
+  Audiobookshelf cannot be reached, instead of starting to wait (#1543).
+
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
 - **Clean rebuild required.** A source lookup that failed inside Mechanical
@@ -63,6 +71,11 @@ brackets are GitHub issues.
   matched audiobook work and compared with the file. The report records when
   an edition with a different narrator matches the file and the Audible match
   does not. A Hardcover edition never counts as a second source (#962).
+- When Hardcover's audio editions say the Audible match is the wrong recording,
+  or Audible found no recording, the editions' ASINs are looked up on Audnexus
+  and AudioSilo. A product that matches the work and the file's running time
+  is offered in review like any Audible match: its ASIN, narrators and the
+  other details it states. Hardcover itself fills nothing (#962).
 
 - **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
   filled under the default option (a cut-off one only by its own full text),
@@ -175,7 +188,42 @@ brackets are GitHub issues.
   preparation lanes queue instead of meeting at the database (#1561).
 - A cover advisory retry or comparison whose result cannot be confirmed now
   reloads the case and says it may have been requested, instead of saying it
-  failed safely (#1572).
+  failed safely (#1572). The warning for a failed retry or comparison stays
+  shown when the reload brings a new comparison, or fails and then recovers,
+  until the next press, a success, or a move to another work (#1595).
+- Reviewer access, description preference and description advice buttons
+  keep focus while their request runs, look disabled and ignore a second
+  press, instead of dropping focus to the page. A reviewer access or Library
+  decision failure now shows directly under the button it describes, and a
+  failed connection check is announced once (#1584).
+- An audiobook whose language is a regional tag such as en-GB, left to you
+  under Automatic, says that dropping the region is never done for you on
+  audiobooks, instead of "no more specific reason is known" (#1593).
+- Sign out always lands on the sign-in page, instead of sometimes on a
+  sign-in page that offers to return to where you were (#1588).
+- Settings' reviewer access no longer fails to load after a Codex sign-in when
+  the Codex auth store cannot be read; a contained profile whose paths contain
+  a NUL character is reported as unreadable (#1597).
+- A tab left open on the previous build after an upgrade now shows the reload
+  notice on its next read, not only on a write, and offers to reload instead
+  of "Try again". Saving a policy snapshot, changing the description adviser,
+  resuming automatic handling and signing out now say a result that cannot be
+  confirmed may have taken effect, and show the current state or ask you to
+  reload it (#1577).
+- Settings and setup no longer show Codex as ready to sign in after its
+  sign-in failed, expired, was cancelled or interrupted, or when its sign-in
+  cannot be read, while Codex is not selected. They show that outcome and
+  offer to restart sign-in, and a completed sign-in can be used without
+  signing in again (#1598).
+- Settings and setup no longer go on showing Codex as ready to use after
+  selecting it, a Codex review or Check finds its sign-in no longer works:
+  the next time reviewer access is read they show the sign-in failed and offer
+  to check it again or sign in again. A check that succeeds shows Codex as
+  ready to use again, including after Mechanical Librarian restarts (#1614).
+- Cancelling a Codex sign-in no longer stops a working sign-in that was
+  already installed from being used: Check, Use Codex and Codex reviews accept
+  it again once the cancelled sign-in has stopped, without signing in again,
+  clearing the sign-in or restarting Mechanical Librarian (#1622).
 - Switching from Automatic to Preview without changing the policy keeps every
   work in Attention and Library, and keeps your answers: a decision you had
   not yet written stays decided and is still written. An automatic decision

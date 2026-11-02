@@ -6,10 +6,22 @@ import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import descriptionAdvicePreservationFixture from './descriptionAdvicePreservationFixture.json'
 import descriptionAdviceRetryFixture from './descriptionAdviceRetryFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
-import { reportDetail } from './wireFixtures'
+import * as builders from './wireFixtures'
 import type { D } from '../src/generated/review-decoders'
 import {
+  d__ChoiceContext,
+  d__CoverAutomaticDecisionProjection,
+  d__CoverCandidate,
+  d__CoverIdentity,
+  d__CoverPolicyReport,
+  d__DecisionProjection,
   d__DescriptionAdviceResponse,
+  d__HistoryCoverItem,
+  d__HistoryDecisionItem,
+  d__HistoryShadowItem,
+  d__ReviewField,
+  d__TargetField,
+  d__TargetIdentity,
   matchOperation,
   responseDecoders,
 } from '../src/generated/review-decoders'
@@ -80,9 +92,45 @@ describe('captured wire fixtures', () => {
     roundTrip(decoderFor('GET', path, 200), detail)
     roundTrip(decoderFor('GET', `${path}/evidence?limit=1`, 200), evidence)
   })
+})
 
-  it('decodes the shared report detail builder', () => {
-    roundTrip(decoderFor('GET', '/api/v1/library/report?item=item-9', 200), reportDetail())
+// Every base builder decodes with its defaults: a root by operation and status,
+// a nested component by its own decoder.
+type Builder = keyof typeof builders
+const roots: readonly (readonly [Builder, string, string, number])[] = [
+  ['reportDetail', 'GET', '/api/v1/library/report?item=item-9', 200],
+  ['caseDetail', 'GET', '/api/v1/review-cases/case-1', 200],
+  ['coverConsideration', 'POST', '/api/v1/review-cases/case-1/cover-considerations/retry', 200],
+  ['caseHistory', 'GET', '/api/v1/review-cases/case-1/history', 200],
+]
+const components: readonly (readonly [Builder, D<unknown>])[] = [
+  ['choiceContext', d__ChoiceContext],
+  ['targetIdentity', d__TargetIdentity],
+  ['targetField', d__TargetField],
+  ['reviewField', d__ReviewField],
+  ['coverIdentity', d__CoverIdentity],
+  ['coverCandidate', d__CoverCandidate],
+  ['coverPolicyReport', d__CoverPolicyReport],
+  ['decisionProjection', d__DecisionProjection],
+  ['coverAutomaticDecision', d__CoverAutomaticDecisionProjection],
+  ['historyDecisionItem', d__HistoryDecisionItem],
+  ['historyCoverItem', d__HistoryCoverItem],
+  ['historyShadowItem', d__HistoryShadowItem],
+]
+
+describe('shared base builders', () => {
+  it.each(roots)('%s decodes as %s %s %i', (name, method, path, status) => {
+    roundTrip(decoderFor(method, path, status), builders[name]())
+  })
+
+  it.each(components)('%s decodes as its component', (name, decode) => {
+    roundTrip(decode, builders[name]())
+  })
+
+  it('has a decode row for every exported builder', () => {
+    expect([...roots, ...components].map(([name]) => name).sort()).toEqual(
+      Object.keys(builders).sort(),
+    )
   })
 })
 

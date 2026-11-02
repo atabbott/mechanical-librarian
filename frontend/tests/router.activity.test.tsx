@@ -1378,6 +1378,35 @@ describe('Activity route', () => {
     expect(screen.queryByText('Previous value')).toBeNull()
   })
 
+  it('offers a reload, not another try, when recorded transitions meet a newer build', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [{ event_id: 'lifecycle', transition_id: 'effect_plan_' + 'a'.repeat(64) }],
+        }),
+      ),
+      getActivityTransitions: vi.fn(async () => {
+        throw new BuildMismatchError()
+      }),
+    }
+    renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: /^Details for /u }))
+    expect(
+      await screen.findByText(
+        'Recorded transitions were not loaded. This tab is running an earlier build.',
+        { exact: false },
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(
+      screen.queryByText('Recorded transitions could not be loaded.', { exact: false }),
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
   it('reaches every bounded lifecycle transition and recovers a disclosure read', async () => {
     const user = userEvent.setup()
     const transitions = Array.from({ length: 25 }, (_, index) => ({

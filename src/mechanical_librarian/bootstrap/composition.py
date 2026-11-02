@@ -4314,9 +4314,12 @@ class _LazyCodexAuth:
                 )
             return self._manager
 
-    def _state(self, operation: str) -> CodexDeviceAuthState:
+    def _state(
+        self, operation: str, manager: CodexDeviceAuthManager | None = None
+    ) -> CodexDeviceAuthState:
         try:
-            return cast("CodexDeviceAuthState", getattr(self._get(), operation)())
+            current = self._get() if manager is None else manager
+            return cast("CodexDeviceAuthState", getattr(current, operation)())
         except (
             OSError,
             ValueError,
@@ -4336,7 +4339,11 @@ class _LazyCodexAuth:
         """Return an existing flow without constructing Codex authority."""
         with self._lock:
             manager = self._manager
-        return CodexDeviceAuthState("ready") if manager is None else manager.status()
+        return (
+            CodexDeviceAuthState("ready")
+            if manager is None
+            else self._state("status", manager)
+        )
 
     def cancel(self) -> CodexDeviceAuthState:
         # Cleanup never constructs authority or activates another generation.

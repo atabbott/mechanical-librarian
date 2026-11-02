@@ -213,18 +213,24 @@ Discovery has two phases:
    ([ADR-0088](../architecture/decisions/0088-carried-recording-admission.md)).
 2. **The ASIN feed.** Only for an item with no ASIN of its own: providers
    that answered no lane are fed unnamed ASINs in order — carried, promoted
-   from search by the runtime band, asserted by Audiobookshelf, then
-   recording-lookup hints. The fed observation replaces the first one, so each
-   provider still states one observation.
+   from search by the runtime band, asserted by Audiobookshelf, Hardcover
+   edition leads, the ASINs of products the search returned, then
+   recording-lookup hints. A Hardcover edition lead is the ASIN of a counted
+   audio edition, fed only when the editions challenge the match or no
+   recording was put forward
+   ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
+   The fed observation replaces the first one, so each provider still states
+   one observation.
 
 At most four ASIN lanes run per item. Hardcover and Open Library have no ASIN
 lookup and record `insufficient_input` for an ASIN-only plan.
 
 An ASIN from the item's own tags, sidecar or path is this recording's
 identifier, so its answers keep edition scope as returned. Every fed ASIN
-(carried, promoted, asserted or hint) obtains evidence but never settles
-identity by itself: it admits only through the runtime gate below, and an
-answer naming another work keeps only its ASIN and leaves no proposal.
+(carried, promoted, asserted, Hardcover lead or hint) obtains evidence but
+never settles identity by itself: it admits only through the runtime gate
+below, and an answer naming another work keeps only its ASIN and leaves no
+proposal.
 
 A carried edition stays while any authority verifies it or any lookup failed,
 and is dropped only once a lookup answered, none verified it and none failed. A

@@ -482,7 +482,8 @@ otherwise; future times are never relative.
   fold into cards. A word breaks inside itself only when wider than its line;
   data tokens may break anywhere.
 - Focus never falls to the page. A running command keeps focus, marked
-  `aria-disabled`, then moves to its outcome. A failed retry or an unreadable
+  `aria-disabled`, then moves to its outcome. A failure message sits directly
+  under the control it describes. A failed retry or an unreadable
   detail focuses Try again. Opening Attention focuses its heading; closing
   returns focus to the toggle. Tab closes a dropdown onto its trigger.
 - Native controls, one heading outline per page, visible focus and polite

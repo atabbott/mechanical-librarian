@@ -6,6 +6,7 @@ import {
   AmbiguousMutationError,
   CsrfRenewedError,
   ApiError,
+  BuildMismatchError,
   settingsAudibleMarketplaceOrder,
   settingsEndpointValid,
   settingsIntegerValid,
@@ -1934,6 +1935,138 @@ it('inspects the exact contained description model before selection without star
   expect(http.selectReviewer).not.toHaveBeenCalled()
 })
 
+it('reloads reviewer access and says a description adviser change could not be confirmed', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable' as const },
+  }))
+  http.describeContainedDescription = vi.fn(async () => ({
+    model: 'contained-model',
+    profile_sha256: 'a'.repeat(64),
+  }))
+  http.selectReviewer = vi.fn(async () => {
+    throw new ApiError(503, 'reviewer_access_unavailable')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+  await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+  await waitFor(() => expect(use).toBeEnabled())
+  const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
+  await user.click(use)
+
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  expect(await within(description).findByRole('alert')).toHaveTextContent(
+    'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+  )
+  await waitFor(() =>
+    expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBeGreaterThan(readsBefore),
+  )
+})
+
+it('offers a reload, not another try, when settings meet a newer build', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => {
+    throw new BuildMismatchError()
+  })
+  renderRoute('/settings', http)
+
+  expect(await screen.findByRole('heading', { name: 'Settings were not loaded.' })).toBeVisible()
+  expect(
+    screen.getByText(
+      'This tab is running an earlier build. Reload to open it in the current application.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(screen.queryByText('Settings are unavailable.')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+it('offers a reload, not another try, when reviewer access meets a newer build', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => {
+    throw new BuildMismatchError()
+  })
+  renderRoute('/settings?group=reviewer', http)
+
+  expect(
+    await screen.findByText(
+      'Reviewer access was not loaded. This tab is running an earlier build. Reload to open it in the current application.',
+      { exact: false },
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+it('replaces an unconfirmed description adviser change with a later inspection failure', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable' as const },
+  }))
+  http.describeContainedDescription = vi
+    .fn()
+    .mockResolvedValueOnce({ model: 'contained-model', profile_sha256: 'a'.repeat(64) })
+    .mockRejectedValue(new ApiError(503, 'unreachable'))
+  http.selectReviewer = vi.fn(async () => {
+    throw new ApiError(503, 'reviewer_access_unavailable')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+  const inspect = screen.getByRole('button', { name: 'Inspect contained description model' })
+  await user.click(inspect)
+  await waitFor(() => expect(use).toBeEnabled())
+  await user.click(use)
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  expect(await within(description).findByRole('alert')).toHaveTextContent(
+    'The description adviser change could not be confirmed.',
+  )
+
+  await waitFor(() => expect(inspect).toBeEnabled())
+  await user.click(inspect)
+  await waitFor(() =>
+    expect(within(description).getByRole('alert')).toHaveTextContent(
+      'Description adviser setup could not complete.',
+    ),
+  )
+  expect(within(description).getByRole('alert')).not.toHaveTextContent('could not be confirmed')
+  expect(http.describeContainedDescription).toHaveBeenCalledTimes(2)
+})
+
+it('keeps the setup copy when a description model test is unreachable', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    mapping: { engine: 'openrouter' as const, model: 'example/cover-a' },
+    openrouter_key_configured: true,
+  }))
+  http.testDescriptionModel = vi.fn(async () => {
+    throw new ApiError(503, 'unreachable')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  await screen.findByRole('button', { name: 'Use this OpenRouter model for descriptions' })
+  await user.click(screen.getByRole('combobox', { name: 'Description model' }))
+  await user.click(screen.getByRole('option', { name: 'Custom model ID' }))
+  await user.type(screen.getByRole('textbox', { name: 'Description model ID' }), 'example/text-b')
+  const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
+  await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  expect(await within(description).findByRole('alert')).toHaveTextContent(
+    'Description adviser setup could not complete.',
+  )
+  expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBe(readsBefore)
+})
+
 it.each([false, true])(
   'shares refreshed Codex availability with descriptions while host blocked=%s',
   async (hostBlocked) => {
@@ -2186,6 +2319,210 @@ it('separates measured cover cost from observed rates and never lends prices to 
   expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
   expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
+})
+
+// #1584: a pending reviewer command keeps its button focused. The button is
+// aria-disabled, not natively disabled, and a second press sends nothing.
+const pendingDevice = {
+  state: 'waiting' as const,
+  failure: null,
+  verification_url: null,
+  user_code: null,
+  expires_in_seconds: null,
+}
+const managedCodex: ReviewerAccessView = {
+  ...reviewerView,
+  mapping: { engine: 'codex' },
+  codex: { ...reviewerView.codex, state: 'configured', reason: null },
+}
+const configuredOpenRouter: ReviewerAccessView = {
+  ...reviewerView,
+  mapping: { engine: 'openrouter', model: 'openai/gpt-6-luna' },
+  openrouter_key_configured: true,
+  openrouter: { ...reviewerView.openrouter, state: 'configured', model: 'openai/gpt-6-luna' },
+}
+type HeldCommand =
+  | 'cancelCodexDevice'
+  | 'recheckCodex'
+  | 'clearCodex'
+  | 'startCodexDevice'
+  | 'configureOpenRouter'
+  | 'refreshOpenRouter'
+  | 'clearOpenRouter'
+  | 'selectReviewer'
+it.each<[string, ReviewerAccessView, HeldCommand, readonly string[], boolean]>([
+  [
+    'Cancel sign-in',
+    { ...reviewerView, codex: { ...reviewerView.codex, state: 'waiting', reason: null } },
+    'cancelCodexDevice',
+    [],
+    false,
+  ],
+  ['Check existing Codex sign-in', reviewerView, 'recheckCodex', [], false],
+  ['Check existing Codex sign-in', managedCodex, 'recheckCodex', [], false],
+  ['Confirm clear Codex sign-in', managedCodex, 'clearCodex', ['Clear Codex sign-in'], false],
+  [
+    'Confirm replace Codex sign-in',
+    managedCodex,
+    'startCodexDevice',
+    ['Replace Codex sign-in'],
+    false,
+  ],
+  ['Restart device sign-in', reviewerView, 'startCodexDevice', [], false],
+  [
+    'Replace or create Codex sign-in',
+    { ...reviewerView, codex: { ...reviewerView.codex, state: 'ready', reason: null } },
+    'startCodexDevice',
+    [],
+    false,
+  ],
+  [
+    'Cancel any active sign-in',
+    { ...reviewerView, codex: { ...reviewerView.codex, state: 'host_unsupported', reason: null } },
+    'cancelCodexDevice',
+    [],
+    false,
+  ],
+  ['Validate and use OpenRouter', reviewerView, 'configureOpenRouter', [], true],
+  [
+    'Confirm replace OpenRouter key',
+    configuredOpenRouter,
+    'configureOpenRouter',
+    ['Replace OpenRouter key'],
+    true,
+  ],
+  ['Refresh current status', configuredOpenRouter, 'refreshOpenRouter', [], false],
+  [
+    'Confirm clear OpenRouter key',
+    configuredOpenRouter,
+    'clearOpenRouter',
+    ['Clear OpenRouter key'],
+    false,
+  ],
+  ['Continue without a reviewer', configuredOpenRouter, 'selectReviewer', [], false],
+  [
+    'Use Codex for cover observations',
+    { ...reviewerView, codex: { ...reviewerView.codex, state: 'usable', reason: null } },
+    'selectReviewer',
+    [],
+    false,
+  ],
+])(
+  'keeps %s focused while its reviewer command is pending (#1584)',
+  async (name, access, command, steps, typesKey) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => access)
+    http.getCodexDevice = vi.fn(async () => pendingDevice)
+    const held = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(http, { [command]: held })
+    renderRoute('/settings?group=reviewer', http)
+    await screen.findByRole('combobox', { name: 'Cover model' })
+    if (typesKey) {
+      if (access.mapping === null) {
+        await pickModel(user, 'Cover model', 'GPT-6 Luna (openai/gpt-6-luna)')
+      }
+      await user.type(screen.getByLabelText('OpenRouter API key'), 'synthetic-key')
+    }
+    for (const step of steps) await user.click(screen.getByRole('button', { name: step }))
+
+    const button = await screen.findByRole('button', { name })
+    await user.click(button)
+    await waitFor(() => expect(held).toHaveBeenCalledOnce())
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button).toHaveFocus()
+    await user.click(button)
+    fireEvent.click(button)
+    expect(held).toHaveBeenCalledOnce()
+  },
+)
+
+it('keeps host-blocked reviewer commands natively disabled (#1584)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'host_unsupported' as const, reason: null },
+  }))
+  http.recheckCodex = vi.fn(async () => pendingDevice)
+  renderRoute('/settings?group=reviewer', http)
+  // The press did not cause these conditions, so they keep native disabled.
+  for (const name of ['Check existing Codex sign-in', 'Replace or create Codex sign-in']) {
+    const button = await screen.findByRole('button', { name })
+    expect(button).toBeDisabled()
+    expect(button).not.toHaveAttribute('aria-disabled')
+    await user.click(button)
+  }
+  expect(http.recheckCodex).not.toHaveBeenCalled()
+  expect(http.startCodexDevice).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['success', async () => ({ ...reviewerView, revision: 4 }), null],
+  [
+    'an unconfirmed failure',
+    async () => {
+      throw new ApiError(503, 'reviewer_access_unavailable')
+    },
+    'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+  ],
+] as const)(
+  'keeps Continue without a reviewer focused after %s, with its failure under it (#1584)',
+  async (_outcome, select, copy) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(configuredOpenRouter)
+      .mockResolvedValue({ ...reviewerView, revision: 4 })
+    http.selectReviewer = vi.fn(select)
+    renderRoute('/settings?group=reviewer', http)
+    const button = await screen.findByRole('button', { name: 'Continue without a reviewer' })
+    await user.click(button)
+    await waitFor(() =>
+      expect(screen.getByText(/Current selection:/u)).toHaveTextContent('No reviewer'),
+    )
+    // The settled state its own press created keeps the button focusable.
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button).toHaveFocus()
+    await user.click(button)
+    expect(http.selectReviewer).toHaveBeenCalledOnce()
+    if (copy === null) {
+      expect(screen.queryByText(/The change could not be fully confirmed/u)).toBeNull()
+      return
+    }
+    const alert = await screen.findByText(copy)
+    expect(alert).toHaveAttribute('role', 'alert')
+    expect(button.nextElementSibling).toBe(alert)
+    expect(alert.closest('.settings-field-control')).toBe(button.parentElement)
+  },
+)
+
+it('shows a Use Codex failure under its button, not in the sign-in row (#1584)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+  }))
+  http.selectReviewer = vi.fn(async () => {
+    throw new ApiError(409, 'credential_unavailable')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const button = await screen.findByRole('button', { name: 'Use Codex for cover observations' })
+  await user.click(button)
+  const alert = await screen.findByText(
+    'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
+  )
+  expect(button.nextElementSibling).toBe(alert)
+  expect(screen.getAllByRole('alert')).toEqual([alert])
+  expect(button).toHaveFocus()
 })
 
 describe('library languages in Settings (#1466)', () => {
