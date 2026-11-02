@@ -505,8 +505,16 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             reopened.close()
 
 
-def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> None:
-    """Leaving Automatic leaves the selection unwritten until Automatic (#1568)."""
+@pytest.mark.parametrize("waiting", [False, True])
+def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
+    waiting: bool,
+) -> None:
+    """Leaving Automatic leaves the selection unwritten until Automatic (#1568).
+
+    A selection waiting for its connection is not closed by a reactivation of
+    the unchanged policy: its case is due back, and only a field automatic
+    decision belongs to the earlier generation for good (#1599).
+    """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
@@ -599,20 +607,23 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> 
                 snapshot.connection, (snapshot.library,), (snapshot.destination,), 6
             )
             target = FakeTargetService()
+            capabilities = FakeCapabilityObserver(CAPABILITY)
+            preclaim = FakePreclaimHook()
+            recovery = PrivateCoverRecoveryStore(
+                root / "recovery", lambda _plan: b"incumbent-original"
+            )
             application = GuardedFieldApplication(
                 repository,
                 target,
                 FakeBackupReadiness(),
-                FakeCapabilityObserver(CAPABILITY),
+                capabilities,
                 authority,
                 FakeDependencyCurrentness(),
                 PersistedEffectConsent(repository),
-                PrivateCoverRecoveryStore(
-                    root / "recovery", lambda _plan: b"incumbent-original"
-                ),
+                recovery,
                 FakeForwardReevaluation(),
                 Clock(),
-                FakePreclaimHook(),
+                preclaim,
                 FakePreclaimHook(),
                 FakePreclaimHook(),
             )
@@ -631,6 +642,45 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture() -> 
             )
             assert operation is not None
             assert authority.current(operation.plan.authority)
+            if waiting:
+                plan_id = operation.plan.plan_id
+                target.seed(operation.plan)
+                preclaim.callback = lambda _plan: setattr(
+                    capabilities, "category", "connection_unavailable"
+                )
+                stale = application.apply(plan_id)
+                assert (stale.state, stale.failure) == ("stale", "connection")
+                state = repository._connection.execute(
+                    "SELECT active_policy_id,generation FROM metadata_policy_state"
+                ).fetchone()
+                repository.activate_metadata_policy(
+                    state[0],
+                    state[0],
+                    (
+                        (
+                            report.target.library,
+                            resolved.resolved_id,
+                            resolved.canonical_json,
+                        ),
+                    ),
+                    # After the scan the pipeline requested on its own clock.
+                    repository._connection.execute(
+                        "SELECT max(requested_at)+1 FROM review_preparation_scans"
+                    ).fetchone()[0],
+                    expected_active_generation=state[1],
+                    reconcile_current=True,
+                )
+                assert repository._connection.execute(
+                    "SELECT count(*) FROM current_review_case_lineages "
+                    "WHERE review_case_id IS NOT NULL"
+                ).fetchone() == (0,)
+                left = repository.get_field_effect(plan_id)
+                assert (left.state, left.failure) == ("stale", "connection")
+                assert recovery.exists(plan_id)
+                assert repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_cleanups"
+                ).fetchone() == (0,)
+                return
             assert repository.enter_shadow_preview(7, ("ebooks",)) == "preview"
             assert not authority.current(operation.plan.authority)
             # Outside Automatic the planned cover waits: it is not selected,
