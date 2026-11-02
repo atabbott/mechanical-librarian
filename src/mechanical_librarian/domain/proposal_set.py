@@ -108,6 +108,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
     direct_work_title_election_matches,
+    series_label_name,
     series_label_segment,
     work_title_election_matches,
 )
@@ -5423,7 +5424,7 @@ def strip_series_names(
     ("Saga" from "Saga, Book 4"), so a case whose only series evidence is
     that label still names it (#1616). Only subtitle alternatives name one."""
     labelled = (
-        _TRAILING_SERIES_POSITION.sub("", alternative.value.value).strip(" ,:;-")
+        series_label_name(alternative.value.value)
         for result in proposal.results
         if result.destination is TargetDestination.SUBTITLE
         for alternative in result.alternatives
@@ -5617,17 +5618,24 @@ def subtitle_restates_series(value: object, series_names: tuple[str, ...]) -> bo
     }
     if not keys:
         return False
+    # Identity is asked before each removal, so a series whose own name ends
+    # in a frame word ("Saltmarsh Story") is never cut short.
     core = text
     while True:
+        if _part_key(core, series_name_equivalence_key) in keys:
+            return True
         before = core
         core = _RESTATEMENT_LEADING_POSITION.sub("", core)
         if _RESTATEMENT_TRAILING_NOUN.search(core):
             core = _RESTATEMENT_LEADING_ARTICLE.sub("", core)
+            if _part_key(core, series_name_equivalence_key) in keys:
+                return True
             core = _RESTATEMENT_TRAILING_NOUN.sub("", core)
+            if _part_key(core, series_name_equivalence_key) in keys:
+                return True
         core = _RESTATEMENT_TRAILING_POSITION.sub("", core).strip(" ,:;-")
         if core == before:
-            break
-    return _part_key(core, series_name_equivalence_key) in keys
+            return False
 
 
 def _eligible_identifier(

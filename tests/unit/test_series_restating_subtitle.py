@@ -66,6 +66,12 @@ _SERIES = ("Saltmarsh Chronicles",)
         # the trailing noun first, then the article and the noun.
         ("A Saltmarsh Chronicles Novel, 4", _SERIES),
         ("Book 2 of the Saltmarsh Chronicles, Part 1", _SERIES),
+        # A series whose own name ends in a frame word is matched before
+        # that word could be removed as framing.
+        ("Saltmarsh Story", ("Saltmarsh Story",)),
+        ("A Saltmarsh Story Novel", ("Saltmarsh Story",)),
+        ("A Saltmarsh Story", ("Saltmarsh Story",)),
+        ("Saltmarsh Book 4", ("Saltmarsh Book",)),
     ),
 )
 def test_a_series_restating_subtitle_is_read(value, series_names):
@@ -253,6 +259,26 @@ def test_only_a_subtitle_label_names_a_series_for_the_strip():
         title="Saltmarsh",
         source_title="Saltmarsh",
         source_subtitle="Saltmarsh Chronicles, Book 1",
+    )
+    _preview_value, proposal = _preview(subtitled)
+    assert strip_series_names(subtitled, proposal) == ("Saltmarsh Chronicles",)
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "Saltmarsh Chronicles, Book 1",
+        "Saltmarsh Chronicles, Book IV",
+        "Saltmarsh Chronicles Vol. 2",
+        "Saltmarsh Chronicles #3",
+    ),
+)
+def test_a_subtitle_label_names_its_series_by_the_label_grammar(label):
+    """A roman position names the series as a decimal one does (#1616)."""
+    subtitled = synthetic_audiobook_bibliographic_report(
+        title="Saltmarsh",
+        source_title="Saltmarsh",
+        source_subtitle=label,
     )
     _preview_value, proposal = _preview(subtitled)
     assert strip_series_names(subtitled, proposal) == ("Saltmarsh Chronicles",)

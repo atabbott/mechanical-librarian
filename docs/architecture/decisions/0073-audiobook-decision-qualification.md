@@ -145,13 +145,16 @@ sources' series and its series alternatives state; another subtitle
 alternative never names one, so one subtitle cannot withhold another. The
 frame is a leading position ("Book 3 of"), a leading article and ordinal
 only with a trailing "Novel", "Novella", "Novelette", "Story" or "Book", and a
-trailing position. No other wording is inferred. The guard only withholds:
+trailing position. The value is compared with the case's series before each
+removal, so a series whose own name ends in a frame word ("Saltmarsh Story")
+is never cut short. No other wording is inferred. The guard only withholds:
 the value stays a choice, no decision identity changes and the F46 digest does
 not rotate. A corroborated split is untouched, because it moves text already in
 the title. The title strip guard (#1252), and the announcement check that
 shares its parts, split text at an underscore and a space too; the strip guard
 alone also counts as a case series the name a subtitle alternative's label
-states ("Saga" from "Saga, Book 4").
+states, read by the same label grammar ("Saga" from "Saga, Book 4" or
+"Saga, Book IV").
 
 ## Compact current records
 
