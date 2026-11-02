@@ -67,9 +67,10 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
-- **Clean rebuild required.** A readable current cover is kept without asking.
-  Other sources' covers stay choosable on the work's page, and the cover joins
-  Attention only when its destination is set to Ask me (#1310).
+- **Clean rebuild required.** A readable current cover is kept without asking,
+  even when a better cover is recommended or an earlier cover choice went
+  stale. Other sources' covers stay choosable on the work's page, which offers
+  to prepare a comparison when none is current (#1310).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one

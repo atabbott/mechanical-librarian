@@ -874,6 +874,8 @@ class InspectCurrentReviewCase:
                     cover_refresh_required
                     and result["outcome"] == "unresolved_choice"
                     and cover_undecided
+                    # As the persisted field fact reads it (#1310).
+                    and not _kept_cover(proposal)
                 )
             )
             cover_preparation_available = (
@@ -979,16 +981,14 @@ class InspectCurrentReviewCase:
                 # stay the owner's to choose in their case without joining
                 # the queue (#1249, #1310). A kept cover with no current
                 # comparison is still choosable: the owner can prepare one.
-                owner_choosable=cover_admits
-                and automatic_decision is None
+                owner_choosable=automatic_decision is None
                 and (
-                    (case.media_kind == "audiobook" and bool(actions))
+                    (cover_admits and case.media_kind == "audiobook" and bool(actions))
                     or (
                         _kept_cover(proposal)
                         and (
-                            bool(actions)
-                            or current_cover_consideration is None
-                            or current_cover_consideration["current"] is not True
+                            (cover_admits and bool(actions))
+                            or cover_preparation_available
                         )
                     )
                 ),

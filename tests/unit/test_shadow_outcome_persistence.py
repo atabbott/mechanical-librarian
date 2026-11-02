@@ -1103,7 +1103,11 @@ def _assert_no_cover_effect_authority(repository) -> None:
 
 
 def _assert_manual_cover_surface(
-    repository, case_id: str, considerations, reviewer_status: str
+    repository,
+    case_id: str,
+    considerations,
+    reviewer_status: str,
+    readable_current: bool = True,
 ) -> None:
     detail = InspectCurrentReviewCase(repository, considerations).run(case_id)
     cover = next(field for field in detail["fields"] if field["destination"] == "cover")
@@ -1113,9 +1117,18 @@ def _assert_manual_cover_surface(
     assert reviewer_status == consideration["reviewer_status"]
     assert any(candidate["selectable"] for candidate in consideration["candidates"])
     assert cover["editable"]
-    # The fixture's readable current cover is kept without asking; its choice
-    # stays editable on the work's page (#1310).
-    assert cover["needs_attention"] is False
+    # A readable current cover is kept without asking: its field fact is no
+    # unresolved choice, and its choice stays editable on the work's page.
+    # Without one, the cover asks as before (#1310).
+    assert cover["needs_attention"] is not readable_current
+    assert cover["classification"] == (
+        "owner_choosable" if readable_current else "needs_attention"
+    )
+    assert (int(not readable_current), 1) == repository._connection.execute(
+        "SELECT unresolved_choice,has_owner_decision_actions "
+        "FROM review_case_field_facts WHERE review_case_id=? AND destination='cover'",
+        (case_id,),
+    ).fetchone()
     assert cover["human_decision"] is None
 
 
@@ -4018,12 +4031,17 @@ def test_composed_projection_prepares_one_qualified_cover_advice_before_f22() ->
         repository.close()
 
 
-def test_composed_projection_without_reviewer_persists_unavailable_before_f22() -> None:
+@pytest.mark.parametrize("readable_current", [True, False])
+def test_composed_projection_without_reviewer_persists_unavailable_before_f22(
+    readable_current: bool,
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
         repository = open_repository(database)
-        report, proposal = _qualified_cover_report(root)
+        report, proposal = _qualified_cover_report(
+            root, readable_current=readable_current
+        )
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
         )
@@ -4067,7 +4085,9 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
             _pipeline_configuration().review,
             _test_reviewer_access(repository),
         )
-        _assert_manual_cover_surface(repository, case_id, considerations, "unavailable")
+        _assert_manual_cover_surface(
+            repository, case_id, considerations, "unavailable", readable_current
+        )
         assert (1,) == repository._connection.execute(
             "SELECT count(*) FROM provider_recovery_outbox"
         ).fetchone()

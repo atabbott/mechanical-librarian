@@ -217,8 +217,8 @@ names the failed kind. A series may share its name with a preserved title
 An existing verified Audiobookshelf cover is kept (`current_cover_verified`).
 When other sources offer covers it stays an owner choice but sets no
 `unresolved_choice` fact, and its consideration's readiness does not queue it,
-so it is not queued unless its policy explicitly asks; its alternatives stay
-choosable on the work's page (#1310). An empty target gets a
+so no cover setting queues it; its alternatives stay choosable on the work's
+page (#1310). An empty target gets a
 selected cover only when the complete bounded gallery has exactly one distinct
 safe artifact. Competing complete galleries are `unresolved_choice`.
 

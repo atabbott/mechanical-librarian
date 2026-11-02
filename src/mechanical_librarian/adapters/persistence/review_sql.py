@@ -120,7 +120,8 @@ _STORED_COVER_ATTENTION_AUTHORITY_SQL = (
 # recording joins the queue under exactly an ebook's conditions (#1249).
 # A verified current cover is kept without asking (#1310): its alternatives
 # stay choosable on the work's page, but neither its field fact nor its
-# consideration puts it in the queue.
+# consideration puts it in the queue. A case has one cover result, so the probe
+# reads the case's document rather than the field's own row.
 _VERIFIED_CURRENT_COVER_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') cover_result,"
     "json_each(cover_result.value,'$.reasons') cover_reason "
