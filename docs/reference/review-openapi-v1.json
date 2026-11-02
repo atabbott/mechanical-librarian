@@ -4759,6 +4759,7 @@
           },
           "invalidation_sequences": {
             "items": {
+              "minimum": 1.0,
               "type": "integer"
             },
             "maxItems": 8,
@@ -5239,8 +5240,10 @@
           },
           "invalidation_sequences": {
             "items": {
+              "minimum": 1.0,
               "type": "integer"
             },
+            "maxItems": 8,
             "title": "Invalidation Sequences",
             "type": "array"
           },

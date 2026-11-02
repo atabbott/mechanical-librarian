@@ -213,8 +213,11 @@ class LiveUpdateChannel:
         with self.lock:
             return len(self._subscriptions)
 
-    def publish(self, topic: str, subject: str | None = None) -> int:
+    def publish(self, topic: str, subject: str | None = None) -> int | None:
         """Record one invalidation and fan it out; returns its sequence number.
+
+        Returns None when the channel has closed and nothing was published:
+        there is no position to name, and the counter does not advance.
 
         Publishing never fails a producer: the preparation pipeline and the
         guarded write lane call this from inside their own durable work, and a
@@ -226,7 +229,7 @@ class LiveUpdateChannel:
             raise ValueError(f"unknown live update topic: {topic}")
         with self.lock:
             if self._closed:
-                return self._sequence
+                return None
             self._sequence += 1
             update = LiveUpdate(self._sequence, topic, subject)
             self._retained.append(update)

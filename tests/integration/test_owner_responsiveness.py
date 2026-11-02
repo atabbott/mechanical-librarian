@@ -1313,6 +1313,65 @@ def test_authored_description_acknowledgement_retries_only_postcommit_confirmati
         repository.close()
 
 
+def test_authored_description_chosen_after_the_channel_closes_names_no_position(
+    tmp_path: Path,
+) -> None:
+    """A choice committed during drain is acknowledged with nothing to recognise.
+
+    The channel published once before it closed, so a stale counter would hand
+    back that earlier position three times as if this choice had caused it.
+    """
+    from mechanical_librarian.adapters.persistence.review_sessions import (
+        SQLiteReviewSessionRepository,
+    )
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+    from mechanical_librarian.application.review_application import (
+        compose_review_application,
+    )
+    from tests.support.description_advice import _prepared
+
+    repository, _store, binding, candidate, _ = _prepared(tmp_path, automatic=False)
+    assert candidate is not None
+    admission = OperationAdmission()
+    repository.bind_operation_admission(admission)
+    sessions = SQLiteReviewSessionRepository.open(tmp_path / "sessions.sqlite")
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=sessions,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: 11,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        admission=admission,
+        operation_lock=repository.operation_lock,
+    )
+    try:
+        application.updates.publish("preparation")
+        application.updates.close()
+        chosen = application.select_description_advice(
+            binding.review_case_id,
+            candidate.candidate_id,
+            binding,
+            "authored-confirmation-replay",
+        )
+        assert chosen["invalidation_sequences"] == []
+        confirmation = chosen["confirmation"]
+        assert type(confirmation) is dict and confirmation["status"] == "confirmed"
+        assert repository._connection.execute(
+            "SELECT count(*) FROM description_decisions"
+        ).fetchone() == (1,)
+    finally:
+        application.stop()
+        sessions.close()
+        repository.close()
+
+
 @pytest.mark.parametrize(
     "coordinated", [True, False], ids=["http", "direct-unscheduled"]
 )
