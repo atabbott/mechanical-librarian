@@ -3789,8 +3789,125 @@ describe('central response decoding (#1685)', () => {
     })
   })
 
-  it('does not decode a 204 answer', async () => {
-    await expect(answering(undefined, 204).preparationAction('pause')).resolves.toBeUndefined()
+  it('does not decode a 204 answer to an operation outside the gate', async () => {
+    await expect(
+      answering(undefined, 204).returnToAutomatic('case-1', 'title'),
+    ).resolves.toBeUndefined()
+  })
+
+  it('fails closed on a 204 answer to a gated operation', async () => {
+    await expect(answering(undefined, 204).getPreparation()).rejects.toMatchObject({
+      name: 'ResponseDecodeError',
+      status: 502,
+      operation: 'GET /api/v1/review-preparation',
+      responseStatus: 204,
+      reason: 'no_decoder',
+      at: '',
+    })
+    for (const send of [
+      (client: ReviewApiClient) => client.preparationAction('pause'),
+      (client: ReviewApiClient) => client.preparationAction('primary/check-connection'),
+      (client: ReviewApiClient) => client.dismissPreparation(`preparation_run_${'a'.repeat(64)}`),
+    ]) {
+      const failure = await send(answering(undefined, 204)).catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(UncertainMutationError)
+      expect(failure).toMatchObject({ responseStatus: 204, reason: 'no_decoder', at: '' })
+      expect(uncertainWriteOutcome(failure)).toBe(true)
+    }
+  })
+
+  // The private command seam, so the proofs need no ungated operation's mapper.
+  type Mutate = (
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+    extraHeaders?: HeadersInit,
+    method?: string,
+    sideEffectFree?: boolean,
+    writesNothing?: boolean,
+    map?: (value: unknown) => unknown,
+  ) => Promise<unknown>
+  const mutateOf = (client: ReviewApiClient) =>
+    (client as unknown as { mutate: Mutate }).mutate.bind(client)
+
+  it('lets a TypeError thrown by a command mapper propagate unchanged', async () => {
+    const defect = new TypeError('mapper defect')
+    const failure = await mutateOf(answering(preparation()))(
+      '/api/v1/review-preparation/pause',
+      undefined,
+      undefined,
+      undefined,
+      'POST',
+      false,
+      false,
+      () => {
+        throw defect
+      },
+    ).catch((error: unknown) => error)
+    expect(failure).toBe(defect)
+    expect(failure).not.toBeInstanceOf(AmbiguousMutationError)
+  })
+
+  it('keeps a command the network lost ambiguous', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('network'))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    const failure = await client.preparationAction('pause').catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(AmbiguousMutationError)
+    expect(failure).not.toBeInstanceOf(UncertainMutationError)
+  })
+
+  it('reports a failure as a 502 only for a command that writes nothing', async () => {
+    const send = (sideEffectFree: boolean, writesNothing: boolean, map?: () => never) =>
+      mutateOf(answering(undecodable))(
+        '/api/v1/review-preparation/pause',
+        undefined,
+        undefined,
+        undefined,
+        'POST',
+        sideEffectFree,
+        writesNothing,
+        map,
+      ).catch((error: unknown) => error)
+    // Safe to resend is not the same as writing nothing: still uncertain.
+    expect(await send(true, false)).toBeInstanceOf(UncertainMutationError)
+    expect(await send(false, false)).toBeInstanceOf(UncertainMutationError)
+    const refused = await send(true, true)
+    expect(refused).toBeInstanceOf(ResponseDecodeError)
+    expect(refused).toMatchObject({ reason: 'required', at: '/libraries/0/blocked' })
+    const named = await mutateOf(answering(preparation()))(
+      '/api/v1/review-preparation/pause',
+      undefined,
+      undefined,
+      undefined,
+      'POST',
+      true,
+      false,
+      () => {
+        throw new ApiError(502, 'invalid_named_check')
+      },
+    ).catch((error: unknown) => error)
+    expect(named).toMatchObject({
+      name: 'UncertainMutationError',
+      reason: 'invariant',
+      at: 'invalid_named_check',
+    })
+  })
+
+  it('marks only policy validate and preview as writing nothing', async () => {
+    const client = answering({ ok: true })
+    const spy = vi.spyOn(client as unknown as { mutate: Mutate }, 'mutate')
+    await client.policyCommand('validate', {})
+    await client.policyCommand('preview', {})
+    await client.policyCommand('drafts', {})
+    expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([
+      [true, true],
+      [true, true],
+      [false, false],
+    ])
+    spy.mockClear()
+    spy.mockResolvedValueOnce({})
+    await client.retryProviderRecovery(7).catch(() => undefined)
+    expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([[true, false]])
   })
 
   it('passes an operation outside the decode gate through unchanged', async () => {

@@ -1687,12 +1687,13 @@ export class ReviewApiClient implements ReviewHttp {
       undefined,
       'POST',
       false,
+      false,
       (value) =>
         progress ? (value as PreparationProgress) : mapPreparation(value as PreparationDto),
     )
   }
   // The expected generation makes a resend a refusal, never a second raise, so
-  // a CSRF-renewed press is sent once more (#1018).
+  // a CSRF-renewed press is sent once more (#1018). The command still writes.
   async retryProviderRecovery(expectedGeneration: number, signal?: AbortSignal) {
     return mapSettings(
       await this.mutate(
@@ -1702,6 +1703,7 @@ export class ReviewApiClient implements ReviewHttp {
         undefined,
         'POST',
         true,
+        false,
       ),
     )
   }
@@ -1712,6 +1714,7 @@ export class ReviewApiClient implements ReviewHttp {
       signal,
       undefined,
       'POST',
+      false,
       false,
       (value) => mapPreparation(value as PreparationDto),
     )
@@ -1807,13 +1810,15 @@ export class ReviewApiClient implements ReviewHttp {
       : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
   }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
+    const writesNothing = path === 'validate' || path === 'preview'
     const value = await this.mutate(
       `/api/v1/metadata-policy/${path}`,
       body,
       signal,
       undefined,
       'POST',
-      path === 'validate' || path === 'preview',
+      writesNothing,
+      writesNothing,
     )
     if (!record(value)) throw new ApiError(502, 'invalid_policy_response')
     return value as T
@@ -1925,6 +1930,7 @@ export class ReviewApiClient implements ReviewHttp {
     extraHeaders?: HeadersInit,
     method = 'POST',
     sideEffectFree = false,
+    writesNothing = false,
     map?: (value: unknown) => T,
   ): Promise<T> {
     if (!this.buildIdentity) {
@@ -1934,26 +1940,24 @@ export class ReviewApiClient implements ReviewHttp {
     const headers = new Headers(extraHeaders)
     headers.set('x-ml-build-identity', this.buildIdentity)
     if (body !== undefined) headers.set('content-type', 'application/json')
-    try {
-      return (await this.request(
-        path,
-        {
-          method,
-          headers,
-          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-          ...(signal ? { signal } : {}),
-        },
-        {
-          unsafe: true,
-          resend: sideEffectFree || headers.has('idempotency-key'),
-          uncertain: !sideEffectFree,
-          ...(map ? { map } : {}),
-        },
-      )) as T
-    } catch (error) {
-      if (error instanceof TypeError) throw new AmbiguousMutationError()
-      throw error
-    }
+    // `sideEffectFree` only lets a CSRF-renewed request be sent again;
+    // `writesNothing` says the command changes nothing, so an answer that fails
+    // decoding or a named check is a 502 rather than an uncertain write (#1685).
+    return (await this.request(
+      path,
+      {
+        method,
+        headers,
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(signal ? { signal } : {}),
+      },
+      {
+        unsafe: true,
+        resend: sideEffectFree || headers.has('idempotency-key'),
+        uncertain: !writesNothing,
+        ...(map ? { map } : {}),
+      },
+    )) as T
   }
   // A 403 `csrf` challenge renews the page token once. Only a request that is
   // safe to repeat -- idempotency-keyed or side-effect free -- is then sent
@@ -1974,16 +1978,29 @@ export class ReviewApiClient implements ReviewHttp {
       map?: (value: unknown) => unknown
     },
   ): Promise<unknown> {
-    const send = async (token?: string) => {
+    // A write the network lost may have landed. Only the network calls make
+    // that ambiguous: a TypeError from decoding or `map` is a defect and
+    // propagates unchanged (#1685).
+    const network = async <R>(call: () => Promise<R>) => {
+      try {
+        return await call()
+      } catch (error) {
+        if (unsafe && error instanceof TypeError) throw new AmbiguousMutationError()
+        throw error
+      }
+    }
+    const send = (token?: string) => {
       const headers = new Headers(init.headers)
       if (token) headers.set('x-csrf-token', token)
-      return this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' })
+      return network(() =>
+        this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' }),
+      )
     }
     let response = await send(unsafe ? this.options.csrf.current() : undefined)
     if (unsafe && response.status === 403 && (await challengeCode(response)) === 'csrf') {
       let token: string
       try {
-        token = await this.options.csrf.renew(init.signal ?? undefined)
+        token = await network(() => this.options.csrf.renew(init.signal ?? undefined))
       } catch (error) {
         if (error instanceof SessionExpiredError) this.reportSessionExpiry()
         throw error
@@ -2014,16 +2031,9 @@ export class ReviewApiClient implements ReviewHttp {
       }
       throw error
     }
-    if (response.status === 204) return undefined
-    let value: unknown
-    try {
-      value = (await response.json()) as unknown
-    } catch {
-      if (unsafe) throw new AmbiguousMutationError()
-      throw new ApiError(502, 'invalid_json_response')
-    }
     const method = init.method ?? 'GET'
     const operation = matchOperation(method, path)
+    const gated = operation !== undefined && DECODED.has(operation)
     const failed = (at: string, reason: string) => {
       const failure = {
         operation: operation ?? `${method} ${path}`,
@@ -2033,9 +2043,19 @@ export class ReviewApiClient implements ReviewHttp {
       }
       return uncertain ? new UncertainMutationError(failure) : new ResponseDecodeError(failure)
     }
-    if (operation !== undefined && DECODED.has(operation)) {
-      const decoder = decoders[operation][String(response.status)]
-      if (decoder === undefined) throw failed('', 'no_decoder')
+    // A 204 carries no body, so only an operation outside the gate may answer
+    // one; a gated operation documents no 204 and fails closed below.
+    if (response.status === 204 && !gated) return undefined
+    const decoder = gated ? decoders[operation][String(response.status)] : undefined
+    if (gated && decoder === undefined) throw failed('', 'no_decoder')
+    let value: unknown
+    try {
+      value = (await response.json()) as unknown
+    } catch {
+      if (unsafe) throw new AmbiguousMutationError()
+      throw new ApiError(502, 'invalid_json_response')
+    }
+    if (decoder !== undefined) {
       try {
         value = decoder(value, '')
       } catch (error) {
