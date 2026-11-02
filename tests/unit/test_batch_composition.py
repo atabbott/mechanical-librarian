@@ -971,7 +971,7 @@ def test_retry_factory_refusal_type_and_text(branch):
             _report_config((_provider_for("hardcover"),)),
             None,
             ("us",),
-            composition._ProviderPacers.for_providers(()),
+            composition._provider_pacers(()),
         )
     assert type(raised.value) is ProviderRetrySuccessorError
     assert str(raised.value) == "provider retry configuration changed"
@@ -1005,7 +1005,7 @@ def test_hardcover_with_an_injected_credential_is_constructed_on_both_paths():
             config,
             credentials,
             ("us",),
-            composition._ProviderPacers.for_providers((provider,)),
+            composition._provider_pacers((provider,)),
         )
     file_client.assert_not_called()
     assert [
@@ -1054,3 +1054,30 @@ def test_each_path_passes_its_own_pacer_for_the_adapter(adapter):
             composition._ProviderPacers(*(retry[name] for name in _ADAPTERS)),
         )
     assert [foreground[adapter], retry[adapter]] == received
+
+
+_PACER_CLASSES = {
+    "google_books": "GoogleBooksPacer",
+    "open_library": "OpenLibraryPacer",
+    "inventaire": "InventairePacer",
+    "hardcover": "HardcoverPacer",
+    "audible_catalog": "AudibleCatalogPacer",
+    "audnexus": "AudnexusPacer",
+    "audiosilo": "AudioSiloPacer",
+    "itunes_search": "ITunesSearchPacer",
+}
+
+
+@pytest.mark.parametrize("adapter", _ADAPTERS)
+def test_a_pipeline_paces_each_enabled_adapter_alone(adapter):
+    enabled = _provider_for(adapter)
+    disabled = ProviderConnectionConfiguration("disabled", False, False, None, adapter)
+    pacers = composition._provider_pacers((enabled,))
+    for name in _ADAPTERS:
+        pacer = getattr(pacers, name)
+        if name == adapter:
+            assert type(pacer) is getattr(composition, _PACER_CLASSES[name])
+        else:
+            assert pacer is None
+    unpaced = composition._provider_pacers((disabled,))
+    assert all(getattr(unpaced, name) is None for name in _ADAPTERS)

@@ -15,8 +15,12 @@ from functools import partial
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ConfigurationError,
     MediaMountConfiguration,
+    ProviderConnectionConfiguration,
     ReportLimits,
+    audiobook_marketplaces,
     dispatch_adapters,
 )
 from mechanical_librarian.application.failure_diagnostics import (
@@ -934,6 +938,64 @@ def _retry_plan(
     )
 
 
+def resolve_configured_retry(
+    configuration: ApplicationConfiguration,
+    connection_name: str,
+    library_name: str,
+    name: str,
+    adapter: str,
+    generation: int,
+    *,
+    retry_provider: Callable[
+        [ProviderConnectionConfiguration, tuple[str, ...]], MetadataProvider
+    ],
+    google_burst_remaining: Callable[[], int | None] | None,
+) -> ConfiguredProviderRetry | None:
+    """Resolve one recorded retry against the current configuration.
+
+    None when its generation, connection, library or provider is no longer
+    configured; a disabled provider refuses. `retry_provider` constructs the
+    adapter from a provider connection and its audiobook marketplace order.
+    """
+    if generation != configuration.provider_recovery_generation:
+        return None
+    try:
+        _, selected, _, configured = configuration.select(connection_name, library_name)
+    except ConfigurationError:
+        return None
+    provider = next(
+        (
+            value
+            for value in configured
+            if value.name == name and value.adapter == adapter
+        ),
+        None,
+    )
+    if provider is None:
+        return None
+    if not provider.enabled:
+        raise ProviderRetryDisabled("provider retry is disabled")
+
+    def factory(
+        value: ProviderConnectionConfiguration = provider,
+    ) -> MetadataProvider:
+        # The marketplace order is read from `configured` -- the provider
+        # set this retry was resolved against -- so a retry never walks an
+        # order the report it is succeeding did not.
+        return retry_provider(
+            value, audiobook_marketplaces(configured, selected.languages)
+        )
+
+    return ConfiguredProviderRetry(
+        ProviderBinding(name, True, factory, adapter),
+        adapter,
+        generation,
+        google_burst_remaining=(
+            google_burst_remaining if adapter == "google_books" else None
+        ),
+    )
+
+
 __all__ = [
     "ConfiguredProviderRetry",
     "GenerateProviderRetrySuccessor",
@@ -941,4 +1003,5 @@ __all__ = [
     "ProviderRetryResolver",
     "ProviderRetrySharedFailure",
     "ProviderRetrySuccessorError",
+    "resolve_configured_retry",
 ]

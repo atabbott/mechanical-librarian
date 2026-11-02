@@ -183,3 +183,79 @@ def test_report_currentness_effect_and_capability_callbacks_use_http(
         request.headers["authorization"] == "Bearer synthetic-token"
         for request in requests
     )
+
+
+def test_pipeline_target_clients_read_the_secret_file_only_without_credentials(
+    tmp_path: Path,
+) -> None:
+    """The catalogue reader and every recovery item reader the pipeline builds
+    take the injected credential when the runtime supplies one, and the
+    operator's secret file only when it does not."""
+    connection = TargetConnectionConfiguration(
+        "primary", "http://audiobookshelf:13378", "/target"
+    )
+    library = LibraryConfiguration("books", "primary", "books", "book", "media", ())
+    mount = MediaMountConfiguration("media", "/media", "/books", True)
+    configuration = ApplicationConfiguration(
+        (connection,),
+        (library,),
+        (mount,),
+        (),
+        review=ReviewWebConfiguration("http://review.test", "/synthetic/owner.hash"),
+    )
+    built: dict[str, list[object]] = {"catalogue": [], "item": []}
+
+    def recovery(**kwargs):
+        kwargs["observers"](connection, library, mount)
+        activation = Mock()
+        activation.drain_outbox.return_value = ()
+        return activation
+
+    with (
+        patch.object(composition, "target_client", return_value="from-file") as file,
+        patch.object(
+            composition, "target_client_token", return_value="from-token"
+        ) as token,
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(
+            composition,
+            "AudiobookshelfCatalogueReader",
+            side_effect=lambda **kwargs: (
+                built["catalogue"].append(kwargs["client_factory"]("primary")) or Mock()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+            ),
+        ),
+        patch.object(
+            composition,
+            "AudiobookshelfItemReader",
+            side_effect=lambda **kwargs: (
+                built["item"].append(kwargs["client_factory"]()) or Mock()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+            ),
+        ),
+        patch.object(composition, "ProviderRecoveryActivation", side_effect=recovery),
+        patch.object(composition, "ReviewPipelineStages"),
+    ):
+        for credentials in (None, {"target:primary": "synthetic-token"}):
+            composition.create_review_pipeline(
+                configuration,
+                tmp_path / "db",
+                tmp_path / "catalogue",
+                tmp_path / "artifacts",
+                Mock(),
+                provider_recovery=Mock(),
+                credentials=credentials,
+            ).stop()
+
+    assert {
+        "catalogue": ["from-file", "from-token"],
+        "item": ["from-file", "from-token"],
+    } == built
+    assert 2 == file.call_count
+    assert all(
+        call.args == ("http://audiobookshelf:13378", "/target", 30)
+        for call in file.call_args_list
+    )
+    assert 2 == token.call_count
+    assert all(
+        call.args == ("http://audiobookshelf:13378", "synthetic-token", 30)
+        for call in token.call_args_list
+    )

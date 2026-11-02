@@ -4,7 +4,7 @@ Owns the policy drafts, the singleton policy state, the per-library
 resolutions, and the transition and transition-item tables that record one
 activation working its way through the affected libraries.
 
-Three seams cross this aggregate's boundary, and each is resolved differently:
+These seams cross this aggregate's boundary, and each is resolved differently:
 
 - `_restart_metadata_policy_work` writes only `review_preparation_work`, so it
   belongs to review preparation and is injected as one narrow typed callable
@@ -18,6 +18,9 @@ Three seams cross this aggregate's boundary, and each is resolved differently:
   field-effect aggregate owns, so activation hands it each library's incoming
   resolved policy inside this transaction rather than writing consent SQL here
   (#1370).
+- `_supersede_retired_waiting_effects` writes `field_effects`, so activation
+  hands the field-effect aggregate every case it retires, and whether the
+  policy is unchanged, inside this transaction (#1599).
 - `enter_shadow_preview` writes `metadata_policy_state` and now lives here. It
   calls `activate_metadata_policy` to reconcile the automatic cohort, and a
   unit test replaces that call on the composing repository to prove the posture
@@ -93,6 +96,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         carry_field_effect_consents: Callable[
             [tuple[tuple[str, str], ...], str, int], None
         ],
+        supersede_retired_waiting_effects: Callable[
+            [tuple[tuple[str, str, str, str], ...], bool, int], int
+        ],
     ) -> None:
         super().__init__(connection, binding)
         # Review preparation owns `review_preparation_work`, so the restart it
@@ -106,6 +112,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         # and make the composing repository's delegating stub recurse.
         self._activate_metadata_policy = activate_metadata_policy
         self._carry_field_effect_consents = carry_field_effect_consents
+        self._supersede_retired_waiting_effects = supersede_retired_waiting_effects
 
     @local_operation
     def shadow_posture(self) -> str:
@@ -772,6 +779,15 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 refresh_policy_settled_field_facts(self._connection, resolved_id)
             for row in cohort:
                 self._retire_for_policy_transition(transition_id, row, activated_at)
+            # A plan waiting for its connection on a retired case would wait for
+            # good when the case cannot authorize it again: a changed policy's
+            # case never returns, and the unchanged policy's returns without
+            # its earlier generation's automatic decisions (#1599).
+            self._supersede_retired_waiting_effects(
+                tuple((row[0], row[1], row[2], row[5]) for row in cohort),
+                policy_id == state[0],
+                activated_at,
+            )
             # Before the state moves, so each library's outgoing resolution is
             # still the active one: the owner's write permission follows the
             # policy they activate, and nothing else carries it (#1370).
