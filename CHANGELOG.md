@@ -282,6 +282,12 @@ brackets are GitHub issues.
 - A decision or chosen description recorded while Mechanical Librarian is
   shutting down or applying changed settings now shows as recorded, instead
   of failing in the browser although it was saved (#1674).
+- In setup, when Verify and continue, the providers Continue or Skip
+  providers, the libraries Continue, Check or Retest mounts, or Continue
+  with or without a reviewer fails for a reason that is not about one field,
+  its message now appears directly under that button instead of at the top
+  of the form; a refusal about a field still sits beside that field. A failed
+  Continue no longer enables Codex controls a blocked host disables (#1664).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
