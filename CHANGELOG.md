@@ -67,6 +67,13 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** When your setting for descriptions or genres
+  only fills empty fields (including Visible Google text), a book that already
+  has a usable description or genre list keeps it without asking you; you can
+  still choose a proposed value on the book's page. A placeholder, cut-off or
+  marked-up description, or a genre list that only names the format, such as
+  "Audiobook", still asks, and so does a field set to Ask me. With tags turned
+  off, no tags choice asks you (#1310).
 - **Clean rebuild required.** A readable current cover is kept without asking,
   even when a better cover is recommended or an earlier cover choice went
   stale. Other sources' covers stay choosable on the work's page, which offers

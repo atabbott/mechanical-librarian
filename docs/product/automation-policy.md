@@ -393,7 +393,8 @@ empty, so fill-empty may fill it, and adding beside it is a fill. A format-only
 candidate is no candidate.
 
 Compatible complete tag lists may be unioned per source for fill or Add,
-keeping owner members and every reference. Tags are off by default. Tag
+keeping owner members and every reference. Tags are off by default, and while
+off no tags choice asks for review, whatever the review mode. Tag
 replacement is a separate choice and never uses genres as tags.
 
 ### Identifiers

@@ -106,7 +106,16 @@ AI.
   contributor evidence never becomes a partial narrator list.
 - **Description, genres and tags** are never merged, replaced or cleaned when
   populated; candidates may only fill an empty field. Grouped description
-  evidence uses an eligible provider's exact text when one exists.
+  evidence uses an eligible provider's exact text when one exists. A populated
+  description that is a plain synopsis with no markup, cut-off or placeholder
+  (on an ebook too), or a genre list that is not format-only, passes the floor
+  and carries
+  `populated_value_meets_floor` beside `populated_subjective_field`. While the
+  library's option for that field only fills empty fields (genres `fill_empty`;
+  description `safe_plain_text` or `google_visible_text`), the choice stays the
+  owner's but is not queued, and reads as kept by the setting; an explicit Ask
+  for that field still asks. While the tags option is `off`, a tags choice is
+  never queued.
 - **Language** values in one base-and-script class (`English`, `en`, `eng`,
   regional variants) form one alternative that keeps every reference and
   states the class's display name, such as `English`. `bh` resolves to `bih`,

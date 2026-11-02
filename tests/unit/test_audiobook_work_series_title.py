@@ -373,7 +373,12 @@ def test_the_immaterial_bound_belongs_to_the_work_route_only():
     report = recording_synopsis_report(_INCUMBENT, ("A voyage reveals a hidden city.",))
     assert admitted_audiobook_identity(report)
     result = _results(evaluate_report(report))["description"]
-    assert result.reasons == ("populated_subjective_field",)
+    # The current value passes the floor, so it is kept under a fill-only
+    # option (#1310), but no work-route immaterial mark applies.
+    assert result.reasons == (
+        "populated_subjective_field",
+        "populated_value_meets_floor",
+    )
 
 
 def test_an_incumbent_below_the_floor_makes_the_alternative_material():
