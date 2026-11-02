@@ -32,7 +32,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v26"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v27"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -197,6 +197,30 @@ _RULE_TABLE = {
             "number_one",
         ],
     },
+    "subtitle_series_restatement": {
+        "execution": "rich_metadata_preview",
+        "media": ["audiobook", "ebook"],
+        "automatic_actions": ["fill_empty", "replace_descriptive"],
+        "series_restatement_refused": True,
+        "series_names": [
+            "populated_target_series",
+            "source_series_observations",
+            "series_alternatives",
+        ],
+        "subtitle_alternative_names_read": False,
+        "restatement": [
+            "whole_value_closed_series_grammar",
+            "case_series_name_after_closed_frame",
+        ],
+        "closed_frame": [
+            "leading_position_of_or_in",
+            "leading_article_and_ordinal_with_trailing_noun",
+            "trailing_novel_novella_novelette_story_or_book",
+            "trailing_series_position",
+        ],
+        "refusal": "subtitle_restates_series",
+        "withheld_value_stays_choosable": True,
+    },
     "audiobook_recording": {
         "report_derived_candidate_binding": True,
         "minimum_independent_authorities": 1,
@@ -214,10 +238,18 @@ _RULE_TABLE = {
         "identity": "audiobook_title_replace",
         "label_carried_by": "elected_automatic_subtitle_split",
         "removed_segment": "either_side_of_one_contiguous_kept_run",
+        "part_boundary": [
+            "parenthesis_or_bracket",
+            "colon",
+            "underscore_space",
+            "spaced_dash",
+            "comma_or_semicolon",
+        ],
         "series_label": [
             "closed_series_grammar_in_any_part",
             "case_series_name_in_any_part",
             "case_series_name_word_run",
+            "case_subtitle_series_label_name",
         ],
         "series_preserved_by": ["populated_target", "elected_automatic_fill"],
         "otherwise": "ask",
@@ -262,6 +294,7 @@ _RULE_TABLE = {
         "title_parts_split_at": [
             "enclosure",
             "colon",
+            "underscore_space",
             "spaced_dash",
             "comma",
             "semicolon",

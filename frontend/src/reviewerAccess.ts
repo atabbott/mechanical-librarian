@@ -48,6 +48,31 @@ export const failureCopy: Readonly<Record<string, string>> = {
   reviewer_access_stale: 'Reviewer access changed in another session. Reload before trying again.',
 }
 
+// A refused Codex selection: the server records the failed sign-in into
+// reviewer access, so the refusing page reads access again (#1617).
+export const credentialRefused = (error: unknown) =>
+  error instanceof ApiError && error.code === 'credential_unavailable'
+
+// The words for a failed reviewer command, in precedence order: a renewed
+// session, an uncertain credential command, OpenRouter's pre-save probe, an
+// uncertain write, then the server's refusal code. Split out of the hook under
+// the function-size rule (#1617).
+const reviewerMutationFailure = (error: Error | null, action: Action | undefined) =>
+  error instanceof CsrfRenewedError
+    ? sessionRefreshedCopy
+    : action?.kind === 'codex-clear' || action?.kind === 'codex-start'
+      ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
+      : // OpenRouter's probe raises these before anything is saved.
+        error instanceof ApiError &&
+          action?.kind === 'openrouter' &&
+          (error.code === 'unreachable' || error.code === 'timed_out')
+        ? (failureCopy[error.code] ?? 'The reviewer change was refused. Reload and try again.')
+        : uncertainWriteOutcome(error)
+          ? 'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
+          : error instanceof ApiError
+            ? (failureCopy[error.code] ?? 'The reviewer change was refused. Reload and try again.')
+            : 'The reviewer change was not applied. Reload and try again.'
+
 export const useReviewerAccess = (http: ReviewHttp) => {
   const queryClient = useQueryClient()
   const query = useQuery({
@@ -67,13 +92,23 @@ export const useReviewerAccess = (http: ReviewHttp) => {
   const openrouterReplaceTrigger = useRef<HTMLButtonElement>(null)
   const codexStartTrigger = useRef<HTMLButtonElement>(null)
   const codexCancelTrigger = useRef<HTMLButtonElement>(null)
-  // A pressed sign-in button unmounts on success; move focus to the next
-  // control unless the owner already moved it (#1607).
+  const codexCheckTrigger = useRef<HTMLButtonElement>(null)
+  const accessRetryTrigger = useRef<HTMLButtonElement>(null)
+  // A pressed sign-in button unmounts, or becomes natively disabled, on success;
+  // move focus to the next control unless the owner already moved it (#1607).
+  // Every caller ends with Try again, the only control when a read fails (#1617).
   const focusIfLost = (...targets: RefObject<HTMLButtonElement | null>[]) => {
     window.setTimeout(() => {
-      if (document.activeElement !== null && document.activeElement !== document.body) return
+      const active = document.activeElement
+      if (active !== null && active !== document.body && !active.matches(':disabled')) return
       targets.find((target) => target.current !== null)?.current?.focus()
     }, 0)
+  }
+  // Read the recorded refusal, with no cached device result masking it.
+  const refreshAfterCodexRefusal = async () => {
+    queryClient.removeQueries({ queryKey: ['reviewer-access', 'codex-device'], exact: true })
+    await query.refetch({ cancelRefetch: false })
+    focusIfLost(codexCancelTrigger, codexStartTrigger, codexReplaceTrigger, accessRetryTrigger)
   }
   const cancelClear = (engine: 'codex' | 'openrouter') => {
     setConfirmClear(null)
@@ -101,6 +136,9 @@ export const useReviewerAccess = (http: ReviewHttp) => {
       }
       if (action.kind === 'codex-recheck') {
         queryClient.setQueryData(['reviewer-access', 'codex-device'], await http.recheckCodex())
+        // The check records its outcome into access, or meets a flow another
+        // tab started; read it before the button settles (#1617).
+        await query.refetch({ cancelRefetch: false })
         return null
       }
       if (action.kind === 'codex-cancel') {
@@ -123,6 +161,7 @@ export const useReviewerAccess = (http: ReviewHttp) => {
       })
     },
     onError: async (error, action) => {
+      if (action.kind === 'codex' && credentialRefused(error)) return refreshAfterCodexRefusal()
       if (action.kind !== 'codex-clear' && action.kind !== 'codex-start') {
         // The change may have been saved; reload the authoritative access.
         if (uncertainWriteOutcome(error)) await query.refetch()
@@ -144,10 +183,13 @@ export const useReviewerAccess = (http: ReviewHttp) => {
       setConfirmReplace(null)
       if (action.kind === 'codex-start') {
         setDeviceActive(true)
-        focusIfLost(codexCancelTrigger)
+        focusIfLost(codexCancelTrigger, accessRetryTrigger)
       }
       if (action.kind === 'codex-cancel' || action.kind === 'codex-clear') setDeviceActive(false)
-      if (action.kind === 'codex-cancel') focusIfLost(codexStartTrigger, codexReplaceTrigger)
+      if (action.kind === 'codex-cancel')
+        focusIfLost(codexStartTrigger, codexReplaceTrigger, accessRetryTrigger)
+      if (action.kind === 'codex-recheck')
+        focusIfLost(codexCancelTrigger, codexCheckTrigger, accessRetryTrigger)
       if (action.kind === 'codex-clear') {
         queryClient.removeQueries({ queryKey: ['reviewer-access', 'codex-device'] })
       }
@@ -190,7 +232,7 @@ export const useReviewerAccess = (http: ReviewHttp) => {
       // finished flow leaves focus where it is.
       const closing = codexCancelTrigger.current !== null
       const settle = () => {
-        if (closing) focusIfLost(codexStartTrigger, codexReplaceTrigger)
+        if (closing) focusIfLost(codexStartTrigger, codexReplaceTrigger, accessRetryTrigger)
       }
       setDeviceActive(false)
       // A finished flow leaves access in progress until it is read again; its
@@ -204,28 +246,11 @@ export const useReviewerAccess = (http: ReviewHttp) => {
     }, 0)
     return () => window.clearTimeout(task)
   }, [device, accessInProgress])
-  const mutationFailure =
-    mutation.error instanceof CsrfRenewedError
-      ? sessionRefreshedCopy
-      : mutation.variables?.kind === 'codex-clear' || mutation.variables?.kind === 'codex-start'
-        ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
-        : // OpenRouter's probe raises these before anything is saved.
-          mutation.error instanceof ApiError &&
-            mutation.variables?.kind === 'openrouter' &&
-            (mutation.error.code === 'unreachable' || mutation.error.code === 'timed_out')
-          ? (failureCopy[mutation.error.code] ??
-            'The reviewer change was refused. Reload and try again.')
-          : uncertainWriteOutcome(mutation.error)
-            ? 'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
-            : mutation.error instanceof ApiError
-              ? (failureCopy[mutation.error.code] ??
-                'The reviewer change was refused. Reload and try again.')
-              : 'The reviewer change was not applied. Reload and try again.'
   return {
     query,
     deviceQuery,
     mutation,
-    mutationFailure,
+    mutationFailure: reviewerMutationFailure(mutation.error, mutation.variables),
     waiting,
     model,
     setModel,
@@ -243,6 +268,9 @@ export const useReviewerAccess = (http: ReviewHttp) => {
     openrouterReplaceTrigger,
     codexStartTrigger,
     codexCancelTrigger,
+    codexCheckTrigger,
+    accessRetryTrigger,
+    refreshAfterCodexRefusal,
   }
 }
 export type ReviewerAccessController = ReturnType<typeof useReviewerAccess>

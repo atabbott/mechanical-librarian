@@ -67,6 +67,20 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** When your setting for descriptions or genres
+  only fills empty fields (including Visible Google text), a book that already
+  has a usable description or genre list keeps it without asking you; you can
+  still choose a proposed value on the book's page. A placeholder, cut-off or
+  marked-up description, or a genre list that only names the format, such as
+  "Audiobook", still asks, and so does a field set to Ask me. With tags turned
+  off, no tags choice asks you (#1310).
+- **Clean rebuild required.** A readable current cover is kept without asking,
+  even when a better cover is recommended or an earlier cover choice went
+  stale. Other sources' covers stay choosable on the work's page, which offers
+  to prepare a comparison when none is current (#1310).
+- **Clean rebuild required.** The image now runs Python 3.15, and Python 3.13
+  to 3.15 are supported. Python 3.15's newer Unicode data means an existing
+  application database is refused at startup until it is rebuilt (#1639).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
@@ -89,6 +103,10 @@ brackets are GitHub issues.
   and an "About the book" header line no longer counts as a difference.
   Marketing lines are never chosen as subtitles, and genres or synopses from a
   store in another language wait for your choice (#1317).
+- **Clean rebuild required.** A subtitle that only repeats the series, such as
+  "A <Series> Novel" or "<Series>, Book 3", is never written for you and stays
+  your choice. A title cleanup that would drop such a label after an underscore
+  ("Title_ A <Series> Novel") now asks you first (#1616).
 - **Clean rebuild required.** Every language is written as one display name,
   such as "English"; a current `en` or `eng` is offered for review, never
   rewritten. The `preserve` language option is gone (#1314).
@@ -244,6 +262,12 @@ brackets are GitHub issues.
   (#1607).
 - In setup, on a host that cannot run Codex, Cancel any active sign-in keeps
   keyboard focus while it runs and after it reports (#1615).
+- When Use Codex is refused, or you check the Codex sign-in, Settings ›
+  Reviewer and setup show the sign-in's new state on the same page instead
+  of "ready to use" until a reload: a refused selection shows the sign-in
+  failed with Codex's own remedy, an old warning no longer stays under "ready
+  to use", and a check that meets a sign-in running in another tab shows its
+  code. Keyboard focus moves to the next control (#1617).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

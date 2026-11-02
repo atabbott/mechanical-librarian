@@ -360,9 +360,11 @@ _METADATA_POLICY_RESOLUTIONS_SQL = (
 )
 # Browse probes a proposal's resolution by library and resolved id per field;
 # the primary key leads with generation, so history made that a scan (#1202).
+# The resolved id leads because field facts look a policy up by that id alone
+# (#1310); every other probe fixes both columns.
 _METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL = (
     "CREATE INDEX metadata_policy_resolutions_resolved "
-    "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation)"
+    "ON metadata_policy_resolutions(resolved_policy_id,library_name,generation)"
 )
 _METADATA_POLICY_TRANSITIONS_SQL = (
     "CREATE TABLE metadata_policy_transitions ("
@@ -404,13 +406,44 @@ _REVIEW_CASE_FIELD_FACTS_SQL = (
 )
 
 
+def _policy_settles_choice_sql(proposal_set: str) -> str:
+    """Whether the resolved policy's options settle an undecided choice (#1310).
+
+    The policy is the one the proposal set was evaluated under. A populated
+    description or genre list that passes the floor (the proposal's
+    `populated_value_meets_floor`) is kept when its option only fills an empty
+    field, and tags are never asked about while their option is `off`. Such a
+    choice is not queued; a populated value stays the owner's to choose.
+    """
+    return (
+        "EXISTS (SELECT 1 FROM proposal_set_browse_facts settling_proposal "
+        "JOIN metadata_policy_resolutions settling_policy "
+        "ON settling_policy.resolved_policy_id=settling_proposal.resolved_policy_id "
+        "WHERE settling_proposal.proposal_set_id=" + proposal_set + " AND ("
+        "(json_extract(result.value,'$.destination')='tags' "
+        "AND json_extract(settling_policy.document,'$.options.tags')='off') OR "
+        "(EXISTS (SELECT 1 FROM json_each(result.value,'$.reasons') reason "
+        "WHERE reason.value='populated_value_meets_floor') AND ("
+        "(json_extract(result.value,'$.destination')='genres' "
+        "AND json_extract(settling_policy.document,'$.options.genres')='fill_empty') OR "
+        "(json_extract(result.value,'$.destination')='description' "
+        "AND json_extract(settling_policy.document,'$.options.description_fill') "
+        "IN ('safe_plain_text','google_visible_text'))))))"
+    )
+
+
 def _review_case_field_fact_values_sql(case_document: str) -> str:
     return (
         "json_extract(result.value,'$.destination'),"
         "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
         "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.reasons') reason "
-        "WHERE reason.value='work_alternative_immaterial') "
-        "THEN 1 ELSE 0 END,CASE WHEN "
+        "WHERE reason.value='work_alternative_immaterial' OR ("
+        "json_extract(result.value,'$.destination')='cover' "
+        "AND reason.value='current_cover_verified')) AND NOT "
+        + _policy_settles_choice_sql(
+            case_document.removesuffix(".document") + ".proposal_set_id"
+        )
+        + " THEN 1 ELSE 0 END,CASE WHEN "
         "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
         "AND EXISTS (SELECT 1 FROM json_each("
         + case_document
@@ -435,6 +468,42 @@ def _review_case_field_fact_values_sql(case_document: str) -> str:
 
 
 _REVIEW_CASE_FIELD_FACT_VALUES_SQL = _review_case_field_fact_values_sql("NEW.document")
+_POLICY_CASES_SQL = (
+    "SELECT rc.review_case_id FROM review_cases rc "
+    "JOIN proposal_set_browse_facts policy ON policy.proposal_set_id=rc.proposal_set_id "
+    "WHERE policy.resolved_policy_id=?"
+)
+
+
+def refresh_policy_settled_field_facts(
+    connection: sqlite3.Connection, resolved_policy_id: str
+) -> None:
+    """Re-derive the field facts of cases evaluated under a newly stored policy.
+
+    Whether a policy's options settle a choice reads its resolution row
+    (#1310), so a case admitted before the first row of its resolved policy
+    was stored derived its facts without it. Call this inside the transaction
+    that stores that first row; the facts' own triggers refresh attention.
+    """
+    connection.execute(
+        "DELETE FROM review_case_field_facts WHERE review_case_id IN ("
+        + _POLICY_CASES_SQL
+        + ")",
+        (resolved_policy_id,),
+    )
+    connection.execute(
+        "INSERT INTO review_case_field_facts(review_case_id,destination,"
+        "unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
+        "SELECT rc.review_case_id,"
+        + _review_case_field_fact_values_sql("rc.document")
+        + " FROM review_cases rc JOIN proposal_set_browse_facts policy "
+        "ON policy.proposal_set_id=rc.proposal_set_id,"
+        "json_each(rc.document,'$.results') result "
+        "WHERE policy.resolved_policy_id=?",
+        (resolved_policy_id,),
+    )
+
+
 _REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
     "CREATE TRIGGER review_cases_project_field_facts AFTER INSERT ON review_cases "
     "BEGIN INSERT INTO review_case_field_facts("

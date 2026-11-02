@@ -118,3 +118,44 @@ def test_canary_capabilities_read_the_secret_file_only_without_credentials() -> 
         "synthetic-token",
         configuration.limits.timeout_seconds,
     )
+
+
+def test_canary_target_reads_the_secret_file_only_without_credentials() -> None:
+    """The write target's client follows the same credential seam as capabilities.
+
+    The other target test injects a token equal to the secret file's, so it
+    cannot tell which path built the client. Distinct returns here make a
+    dropped credential map visible.
+    """
+
+    configuration = _configuration()
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfFieldEffectTarget") as built,
+        patch.object(composition, "target_client", return_value="from-file") as file,
+        patch.object(
+            composition, "target_client_token", return_value="from-token"
+        ) as token,
+    ):
+        composition.compose_audiobookshelf_field_effect_target(
+            configuration, Path("/artifacts"), "primary", "books"
+        )
+        assert "from-file" == built.call_args.kwargs["client_factory"]()
+
+        composition.compose_audiobookshelf_field_effect_target(
+            configuration,
+            Path("/artifacts"),
+            "primary",
+            "books",
+            credentials={"target:primary": "synthetic-token"},
+        )
+        assert "from-token" == built.call_args.kwargs["client_factory"]()
+
+    file.assert_called_once_with(
+        "http://127.0.0.1:8080", "/target", configuration.limits.timeout_seconds
+    )
+    token.assert_called_once_with(
+        "http://127.0.0.1:8080",
+        "synthetic-token",
+        configuration.limits.timeout_seconds,
+    )

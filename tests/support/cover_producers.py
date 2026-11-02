@@ -150,7 +150,12 @@ def _qualified_cover_report(
     candidate_size: tuple[int, int] | None = None,
     candidate_designation: CoverDesignation = CoverDesignation.EXACT_EDITION,
     typed_timeout: bool = False,
+    readable_current: bool = True,
 ) -> tuple[MetadataReport, object]:
+    """`readable_current=False` leaves the current cover unread, so it asks.
+
+    A readable current cover is kept without asking (#1310).
+    """
     incumbent_payload = _preview(incumbent_index)
     candidate_payload = _preview(candidate_index)
     incumbent_dimensions = incumbent_size or (
@@ -234,7 +239,11 @@ def _qualified_cover_report(
         else value
         for value in default_target_fields("Synthetic title")
     )
-    sources = [incumbent, incumbent_corroboration, candidate]
+    sources = [
+        *((incumbent,) if readable_current else ()),
+        incumbent_corroboration,
+        candidate,
+    ]
     if typed_timeout:
         sources.append(
             replace(

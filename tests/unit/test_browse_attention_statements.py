@@ -500,7 +500,9 @@ def test_library_and_attention_equal_the_pre_1202_statements(
         states["epub narrators and explicit"] = compare_every_authority()
         assert states["epub narrators and explicit"] == states["policy ask"]
 
-        # A refresh admits a cover only while its choice is unresolved.
+        # A refresh admits a cover by the case's own unresolved outcome, not by
+        # its field fact, which reads a kept readable cover as settled: zeroing
+        # the fact leaves every refreshing cover admitted (#1310).
         def refreshing_total() -> int:
             repository.bind_cover_read_observation(repeat(observations[2]).__next__)
             with repository.browse_observation():
@@ -517,7 +519,7 @@ def test_library_and_attention_equal_the_pre_1202_statements(
         )
         connection.commit()
         states["cover choice resolved"] = compare_every_authority()
-        assert refreshing_total() < refreshing
+        assert refreshing_total() == refreshing
         connection.executemany(
             "UPDATE review_case_field_facts SET unresolved_choice=? "
             "WHERE destination='cover' AND review_case_id=?",

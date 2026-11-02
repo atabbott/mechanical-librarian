@@ -7,17 +7,17 @@ import { ModelPicker } from './ModelPicker'
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import { invalidateForegroundQueries } from '../queryWork'
 import { reviewerStateLabels } from '../labels'
+import { credentialRefused, failureCopy } from '../reviewerAccess'
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
-export const DescriptionReviewerSettings = ({
-  http,
-  view,
-  codexUsable,
-}: {
-  http: ReviewHttp
-  view: ReviewerAccessView
-  codexUsable: boolean
-}) => {
+// The description adviser's draft, its four commands and the words for the
+// latest failure. Split out of the section under the function-size rule, as
+// reviewer access was (#1571, #1617).
+const useDescriptionAdviser = (
+  http: ReviewHttp,
+  view: ReviewerAccessView,
+  onCodexRefused: () => Promise<void>,
+) => {
   const cache = useQueryClient()
   const [model, setModel] = useState(
     view.description_mapping?.engine === 'openrouter' ? view.description_mapping.model : '',
@@ -57,7 +57,9 @@ export const DescriptionReviewerSettings = ({
       setMetadata(null)
       cache.setQueryData(['reviewer-access'], saved)
     },
-    onError: reloadIfUncertain,
+    // A refused Codex sign-in is recorded into reviewer access; read it (#1617).
+    onError: (error, engine) =>
+      engine === 'codex' && credentialRefused(error) ? onCodexRefused() : reloadIfUncertain(error),
   })
   const refresh = useMutation({
     mutationFn: () => http.refreshOpenRouter(undefined, 'description_rewrite'),
@@ -71,8 +73,49 @@ export const DescriptionReviewerSettings = ({
     retry: false,
     onMutate: () => setLatest('contained'),
   })
-  const failure = latest === null ? null : { test, selection, refresh, contained }[latest].error
+  const error = latest === null ? null : { test, selection, refresh, contained }[latest].error
+  const failure =
+    error === null
+      ? null
+      : (latest === 'selection' || latest === 'refresh') && uncertainWriteOutcome(error)
+        ? 'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
+        : credentialRefused(error)
+          ? failureCopy.credential_unavailable
+          : refusalCopy(
+              error,
+              'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
+            )
   const busy = contained.isPending || test.isPending || selection.isPending || refresh.isPending
+  return {
+    model,
+    setModel,
+    key,
+    setKey,
+    metadata,
+    setMetadata,
+    failure,
+    busy,
+    test,
+    selection,
+    refresh,
+    contained,
+  }
+}
+
+export const DescriptionReviewerSettings = ({
+  http,
+  view,
+  codexUsable,
+  onCodexRefused,
+}: {
+  http: ReviewHttp
+  view: ReviewerAccessView
+  codexUsable: boolean
+  onCodexRefused: () => Promise<void>
+}) => {
+  const adviser = useDescriptionAdviser(http, view, onCodexRefused)
+  const { model, setModel, key, setKey, metadata, setMetadata } = adviser
+  const { failure, busy, test, selection, refresh, contained } = adviser
   const selected = view.description_mapping
   const disclosure =
     metadata?.model === model
@@ -244,16 +287,7 @@ export const DescriptionReviewerSettings = ({
               Refresh description model status and prices
             </button>
           ) : null}
-          {failure !== null ? (
-            <p role="alert">
-              {(latest === 'selection' || latest === 'refresh') && uncertainWriteOutcome(failure)
-                ? 'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
-                : refusalCopy(
-                    failure,
-                    'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
-                  )}
-            </p>
-          ) : null}
+          {failure !== null ? <p role="alert">{failure}</p> : null}
         </div>
       </div>
     </section>

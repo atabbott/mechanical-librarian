@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from threading import Event, Lock
-from typing import cast
+from typing import Any, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.activity_documents import (
@@ -2866,10 +2866,26 @@ def open_repository(
             os.close(descriptor)
 
 
+class NonClosingRepository:
+    """Let one composed service borrow a pipeline-owned repository connection."""
+
+    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
+        self._repository = repository
+
+    # A delegating proxy resolves every other member dynamically, so ``Any`` is
+    # the only description of what borrowing a member actually yields.
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._repository, name)
+
+    def close(self) -> None:
+        return None
+
+
 # The schema spine now lives in `schema.py`, but 33 test modules and the
 # composition root import these names from here. Re-export rather than rewrite
 # the call sites.
 __all__ = [
+    "NonClosingRepository",
     "SQLiteMetadataReportRepository",
     "SQLiteShadowPreviewRepository",
     "_LinuxDirectoryChain",

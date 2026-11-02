@@ -5527,6 +5527,33 @@ describe('Library route', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
   })
 
+  it('offers to prepare a comparison for a kept cover that asks for nothing', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const kept: CaseDetailView['fields'][number] = {
+      ...base,
+      destination: 'cover' as const,
+      proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
+      coverConsideration: null,
+      classification: 'owner_choosable',
+      classificationReason:
+        'Your current cover is kept, so no review is needed. You can still choose another cover.',
+      needsAttention: false,
+      decisionActions: [],
+      editable: false,
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [kept],
+      })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    expect(await screen.findByRole('button', { name: 'Prepare cover comparison' })).toBeEnabled()
+  })
+
   const retryableCover = (
     reviewerStatus: 'completed' | 'failed',
   ): NonNullable<CaseDetailView['fields'][number]['coverConsideration']> => ({

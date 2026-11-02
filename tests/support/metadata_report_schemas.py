@@ -17,6 +17,7 @@ from typing import cast
 
 import pytest
 
+import mechanical_librarian.adapters.persistence.review_sql as review_sql
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
 from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
@@ -301,14 +302,37 @@ def retained_report_as_current(document: str) -> MetadataReport:
     return MetadataReport.from_json(canonical_json(data))
 
 
-# Every producer before #1253 counted an immaterial work alternative as an
-# unresolved choice, so its own review-case field-fact trigger lacks the clause.
-PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
+# Every producer before #1310 queued a choice its policy settles, so its
+# review-case field-fact trigger lacks the policy clause.
+PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
     persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL.replace(
-        "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.reasons') reason "
-        "WHERE reason.value='work_alternative_immaterial') ",
+        "AND NOT "
+        + persistence_schema._policy_settles_choice_sql("NEW.proposal_set_id")
+        + " ",
         "",
     )
+)
+assert (
+    PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL
+    != persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL
+)
+
+
+# Every producer before #1253 counted an immaterial work alternative as an
+# unresolved choice, and before #1310 a verified current cover's choice too, so
+# its own review-case field-fact trigger lacks the clause.
+PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
+    PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL.replace(
+        "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.reasons') reason "
+        "WHERE reason.value='work_alternative_immaterial' OR ("
+        "json_extract(result.value,'$.destination')='cover' "
+        "AND reason.value='current_cover_verified')) ",
+        "",
+    )
+)
+assert (
+    PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL
+    != persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL
 )
 
 
@@ -340,8 +364,19 @@ PRIOR_HUMAN_DECIDED_SQL = (
     "AND decision.destination=result.destination) "
 )
 # Every producer before #1358 kept no case episodes.
+# Nor, before #1310, did their cover branch keep a verified current cover.
+_KEPT_COVER_SQL = " AND NOT " + review_sql._VERIFIED_CURRENT_COVER_SQL
+# Nor did they admit a refreshing cover by its raw outcome.
+_RAW_REFRESH_SQL = "THEN " + review_sql._COVER_UNRESOLVED_OUTCOME_SQL + " END"
+
 PRIOR_ATTENTION_FACT_OBJECTS = tuple(
-    (kind, name, sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL))
+    (
+        kind,
+        name,
+        sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL)
+        .replace(_KEPT_COVER_SQL, "")
+        .replace(_RAW_REFRESH_SQL, "THEN result.unresolved_choice END"),
+    )
     for kind, name, sql in persistence_schema._ATTENTION_FACT_OBJECTS
     if not name.startswith("review_case_episodes_")
 )

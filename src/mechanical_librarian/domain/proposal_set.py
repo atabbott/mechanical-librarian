@@ -39,10 +39,13 @@ from mechanical_librarian.domain.field_outcomes import (
     publisher_statement_valid,
 )
 from mechanical_librarian.domain.field_value_comparison import (
+    audiobook_format_only_genres,
     canonical_text,
     creator_list_reordered,
     description_alternative_immaterial,
     genre_alternative_immaterial,
+    plain_audiobook_synopsis,
+    recognized_synopsis_placeholder,
     title_article_key,
     title_has_leading_article,
     title_identity_key,
@@ -108,6 +111,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
     direct_work_title_election_matches,
+    series_label_name,
     series_label_segment,
     work_title_election_matches,
 )
@@ -121,7 +125,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v43"
+POLICY_VERSION = "fixed-conservative-v44"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -302,6 +306,10 @@ VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 RECORDING_ASSOCIATED_ISBN_REASON = "recording_associated_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
 WORK_ALTERNATIVE_IMMATERIAL_REASON = "work_alternative_immaterial"
+# A populated description or genre list that passes the floor. Under a policy
+# option that only fills empty fields it stays choosable but is not queued; the
+# attention facts read the option (#1310).
+POPULATED_VALUE_MEETS_FLOOR_REASON = "populated_value_meets_floor"
 # A current language one class's display name only spells differently (#1314).
 LANGUAGE_DISPLAY_NAME_REASON = "language_display_name"
 
@@ -354,6 +362,8 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("work_publication_cannot_replace",),
             ("competing_evidence", WORK_ALTERNATIVE_IMMATERIAL_REASON),
             ("populated_subjective_field", WORK_ALTERNATIVE_IMMATERIAL_REASON),
+            ("populated_subjective_field", POPULATED_VALUE_MEETS_FLOOR_REASON),
+            ("competing_evidence", POPULATED_VALUE_MEETS_FLOOR_REASON),
         }
     ),
     ProposalOutcome.KEEP: frozenset(
@@ -1416,115 +1426,12 @@ def evaluate_report(
             result = _resolve_series_subset(
                 result, targets[destination], observations, report
             )
-        if (
-            destination is TargetDestination.ISBN
-            and not observations
-            and result.outcome is ProposalOutcome.INELIGIBLE
-            and result.reasons == ("no_supported_evidence",)
-            and (reason := _isbn_rejection_reason(report.identifier_evidence))
-            is not None
-        ):
-            result = ProposalResult(
-                destination,
-                (
-                    ProposalOutcome.DEFER
-                    if reason == "identifier_applicability_unresolved"
-                    else ProposalOutcome.INELIGIBLE
-                ),
-                (),
-                None,
-                (reason,),
-                _dependencies(destination),
+        if destination is TargetDestination.ISBN:
+            result = _isbn_result(report, targets[destination], observations, result)
+        if destination is TargetDestination.SUBTITLE:
+            result = _subtitle_result(
+                report, targets[destination], observations, result
             )
-        if (
-            destination is TargetDestination.SUBTITLE
-            and not observations
-            and result.outcome is ProposalOutcome.INELIGIBLE
-            and result.reasons == ("no_supported_evidence",)
-            and _has_generic_provider_subtitle(report)
-        ):
-            result = ProposalResult(
-                destination,
-                ProposalOutcome.INELIGIBLE,
-                (),
-                None,
-                ("generic_provider_subtitle",),
-                _dependencies(destination),
-            )
-        if (
-            destination is TargetDestination.SUBTITLE
-            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-            and result.reasons == ("competing_evidence",)
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and (elected := _segment_corroborated_subtitle(report, result.alternatives))
-            != (None, None)
-        ):
-            attested, elected_reason = elected
-            result = (
-                ProposalResult(
-                    destination,
-                    ProposalOutcome.PROPOSE_CHANGE,
-                    (attested,),
-                    attested.alternative_id,
-                    (cast(str, elected_reason),),
-                    _dependencies(destination),
-                )
-                if attested is not None
-                # A withheld corroboration states its own guard on the same
-                # seam the uncorroborated diagnostic uses.
-                else _unresolved(result, cast(str, elected_reason))
-            )
-        elif (
-            destination is TargetDestination.SUBTITLE
-            and (
-                result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-                and result.reasons == ("competing_evidence",)
-                or result.outcome is ProposalOutcome.INELIGIBLE
-                and result.reasons == ("no_supported_evidence",)
-            )
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and _has_uncorroborated_subtitle_segment(report, result.alternatives)
-        ):
-            result = ProposalResult(
-                destination,
-                result.outcome,
-                result.alternatives,
-                None,
-                tuple(
-                    sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})
-                ),
-                result.dependencies,
-            )
-        if (
-            destination is TargetDestination.ISBN
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and result.alternatives
-        ):
-            result = _verified_manifestation_isbn_election(report, result)
         if destination is TargetDestination.TITLE:
             result = _evidence_led_title_election(report, result)
         if (
@@ -1631,6 +1538,10 @@ def evaluate_report(
         if result.alternatives and result.reasons != (EVIDENCE_LED_TITLE_REASON,):
             results[destination] = _bibliographic_unresolved(result)
     combinations = _withhold_unoffered_title(report, targets, results, combinations)
+    for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES):
+        results[destination] = _populated_value_meets_floor(
+            results[destination], targets[destination]
+        )
     ordered = tuple(results[value] for value in TargetDestination)
     if resolved_policy_id is None:
         # The production default is a real resolved built-in profile for this
@@ -1652,6 +1563,164 @@ def evaluate_report(
         media_kind=(
             "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
         ),
+    )
+
+
+def _isbn_result(
+    report: MetadataReport,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Refine an ISBN outcome by identifier rejection and manifestation proof."""
+    destination = TargetDestination.ISBN
+    if (
+        not observations
+        and result.outcome is ProposalOutcome.INELIGIBLE
+        and result.reasons == ("no_supported_evidence",)
+        and (reason := _isbn_rejection_reason(report.identifier_evidence)) is not None
+    ):
+        result = ProposalResult(
+            destination,
+            (
+                ProposalOutcome.DEFER
+                if reason == "identifier_applicability_unresolved"
+                else ProposalOutcome.INELIGIBLE
+            ),
+            (),
+            None,
+            (reason,),
+            _dependencies(destination),
+        )
+    if (
+        report.audio is not None
+        or target.state
+        in {
+            TargetFieldState.MISSING,
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+        }
+    ) and result.alternatives:
+        result = _verified_manifestation_isbn_election(report, result)
+    return result
+
+
+def _subtitle_result(
+    report: MetadataReport,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Refine a subtitle outcome by provider genericity and segment corroboration."""
+    destination = TargetDestination.SUBTITLE
+    if (
+        not observations
+        and result.outcome is ProposalOutcome.INELIGIBLE
+        and result.reasons == ("no_supported_evidence",)
+        and _has_generic_provider_subtitle(report)
+    ):
+        result = ProposalResult(
+            destination,
+            ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            ("generic_provider_subtitle",),
+            _dependencies(destination),
+        )
+    if (
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("competing_evidence",)
+        and (
+            report.audio is not None
+            or target.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        )
+        and (elected := _segment_corroborated_subtitle(report, result.alternatives))
+        != (None, None)
+    ):
+        attested, elected_reason = elected
+        result = (
+            ProposalResult(
+                destination,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (attested,),
+                attested.alternative_id,
+                (cast(str, elected_reason),),
+                _dependencies(destination),
+            )
+            if attested is not None
+            # A withheld corroboration states its own guard on the same
+            # seam the uncorroborated diagnostic uses.
+            else _unresolved(result, cast(str, elected_reason))
+        )
+    elif (
+        (
+            result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+            or result.outcome is ProposalOutcome.INELIGIBLE
+            and result.reasons == ("no_supported_evidence",)
+        )
+        and (
+            report.audio is not None
+            or target.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        )
+        and _has_uncorroborated_subtitle_segment(report, result.alternatives)
+    ):
+        result = ProposalResult(
+            destination,
+            result.outcome,
+            result.alternatives,
+            None,
+            tuple(sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})),
+            result.dependencies,
+        )
+    return result
+
+
+def _populated_value_meets_floor(
+    result: ProposalResult, target: TargetField
+) -> ProposalResult:
+    """Mark a populated subjective value that passes the floor (#1310).
+
+    A description passes when it is plain text with no markup, visible cut-off
+    or placeholder; a genre list when it is not format-only. One alternative or
+    several competing ones make no difference: a fill-only option never
+    replaces a populated value either way. Below the floor
+    every alternative stays material, as ADR-0069 reads it. The field stays the
+    owner's to choose; the attention facts decide, from the policy option,
+    whether it is queued.
+    """
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or result.reasons
+        not in {("competing_evidence",), ("populated_subjective_field",)}
+        or target.state is not TargetFieldState.VALUE
+    ):
+        return result
+    current = target.value
+    if result.destination is TargetDestination.DESCRIPTION:
+        if not plain_audiobook_synopsis(current) or recognized_synopsis_placeholder(
+            current
+        ):
+            return result
+    elif audiobook_format_only_genres(current):
+        return result
+    return ProposalResult(
+        result.destination,
+        result.outcome,
+        result.alternatives,
+        result.selected_alternative_id,
+        (*result.reasons, POPULATED_VALUE_MEETS_FLOOR_REASON),
+        result.dependencies,
     )
 
 
@@ -5397,7 +5466,9 @@ _TRAILING_SERIES_POSITION = re.compile(
 
 def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[str, ...]:
     """Every series name one case states: the target's, its sources' and its
-    proposal's alternatives', which is the evidence a title strip is read by."""
+    series alternatives', which is the evidence a series-restating subtitle is
+    read by (#1616). A subtitle alternative never names one here, so one
+    subtitle alternative cannot withhold another."""
     target = canonical_target_fields(report.target.fields)[TargetDestination.SERIES]
     values = [
         cast("tuple[TargetSeries, ...]", value.value.value)
@@ -5413,7 +5484,29 @@ def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[st
     return tuple(member.name for value in values for member in value)
 
 
-_TITLE_PART_BOUNDARY = re.compile(r"[()\[\]]|:| [-–—] |[,;]")
+def strip_series_names(
+    report: MetadataReport, proposal: ProposalSet
+) -> tuple[str, ...]:
+    """The series names a title strip is read by: the case's, and the name of
+    each subtitle alternative the closed series grammar reads as a label
+    ("Saga" from "Saga, Book 4"), so a case whose only series evidence is
+    that label still names it (#1616). Only subtitle alternatives name one."""
+    labelled = (
+        series_label_name(alternative.value.value)
+        for result in proposal.results
+        if result.destination is TargetDestination.SUBTITLE
+        for alternative in result.alternatives
+        if type(alternative.value.value) is str
+        and series_label_segment(alternative.value.value)
+    )
+    return case_series_names(report, proposal) + tuple(
+        name for name in labelled if name
+    )
+
+
+# An underscore then a space stands for a colon in some catalogue titles
+# ("Title_ A Saga Novel") and splits parts like one (#1616).
+_TITLE_PART_BOUNDARY = re.compile(r"[()\[\]]|:|_ | [-–—] |[,;]")
 _TITLE_ENCLOSURE = re.compile(r"\(([^()]*)\)|\[([^\[\]]*)\]")
 
 
@@ -5477,8 +5570,9 @@ def title_strip_series_label(
 ) -> str | None:
     """Name the series label a scalar title replacement deletes, if it deletes one.
 
-    `current` splits into ordered segments at each separator (a colon, a spaced
-    dash, a comma or a semicolon) and each enclosure (parentheses or brackets).
+    `current` splits into ordered segments at each separator (a colon, an
+    underscore then a space, a spaced dash, a comma or a semicolon) and each
+    enclosure (parentheses or brackets).
     `desired` must equal, under `title_identity_key`, one contiguous run of
     those segments; the text before and the text after that run are removed,
     and each deletes a series label when `_series_label_text` reads one in it.
@@ -5539,6 +5633,83 @@ def title_strip_series_label(
         ):
             return named
     return None
+
+
+_SERIES_NUMBER = (
+    r"(?:[0-9]{1,3}(?:\.[0-9]{1,2})?"
+    r"|one|two|three|four|five|six|seven|eight|nine|ten|[ivx]{1,4})"
+)
+_SERIES_ORDINAL = (
+    r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+    r"|[0-9]{1,2}(?:st|nd|rd|th))"
+)
+_SERIES_POSITION_WORD = r"(?:book|volume|vol\.?|part|no\.?)"
+_RESTATEMENT_LEADING_POSITION = re.compile(
+    rf"^{_SERIES_POSITION_WORD} ?#? ?{_SERIES_NUMBER} (?:of|in) ", re.IGNORECASE
+)
+_RESTATEMENT_LEADING_ARTICLE = re.compile(
+    rf"^(?:an?|the) (?:{_SERIES_ORDINAL} )?", re.IGNORECASE
+)
+_RESTATEMENT_ARTICLE_ONLY = re.compile(r"^(?:an?|the) ", re.IGNORECASE)
+_RESTATEMENT_TRAILING_NOUN = re.compile(
+    r" (?:novel|novella|novelette|story|book)$", re.IGNORECASE
+)
+_RESTATEMENT_TRAILING_POSITION = re.compile(
+    rf"[ ,:-]{{1,3}}(?:{_SERIES_POSITION_WORD} ?)?#? ?{_SERIES_NUMBER}$", re.IGNORECASE
+)
+
+
+def subtitle_restates_series(value: object, series_names: tuple[str, ...]) -> bool:
+    """Whether a subtitle value only restates the case's series (#1616).
+
+    It does when the whole value reads as a label by the closed series grammar
+    ("Saga, Book 3", "Saga #2"), or when, once a closed frame is removed, it
+    names a case series under `series_name_equivalence_key`. The frame is a
+    leading position ("Book 3 of", "Book One in"), a leading article with an
+    optional ordinal only together with a trailing "Novel", "Novella",
+    "Novelette", "Story" or "Book" ("A Saga Novel", "The Third Saga Novel"),
+    and a trailing position ("Saga 4", "A Saga Novella 2"), each removed until
+    nothing more comes off. Nothing else is inferred: "A Tale of Saga" and
+    "The Complete Saga Story Collection" are no restatement, and a value never
+    raises.
+    """
+    if type(value) is not str:
+        return False
+    text = " ".join(value.split()).strip(" ,:;-")
+    if not text:
+        return False
+    if series_label_segment(text):
+        return True
+    keys = {
+        key
+        for name in series_names
+        if (key := _part_key(name, series_name_equivalence_key))
+    }
+    if not keys:
+        return False
+
+    def named(candidate: str) -> bool:
+        return _part_key(candidate, series_name_equivalence_key) in keys
+
+    # Identity is asked before each removal, so a series whose own name ends
+    # in a frame word ("Saltmarsh Story") or starts with an ordinal ("First
+    # Law") is never cut short.
+    core = text
+    while True:
+        if named(core):
+            return True
+        before = core
+        core = _RESTATEMENT_LEADING_POSITION.sub("", core)
+        if _RESTATEMENT_TRAILING_NOUN.search(core):
+            for article in (_RESTATEMENT_ARTICLE_ONLY, _RESTATEMENT_LEADING_ARTICLE):
+                framed = article.sub("", core)
+                if named(framed) or named(_RESTATEMENT_TRAILING_NOUN.sub("", framed)):
+                    return True
+            core = _RESTATEMENT_LEADING_ARTICLE.sub("", core)
+            core = _RESTATEMENT_TRAILING_NOUN.sub("", core)
+        core = _RESTATEMENT_TRAILING_POSITION.sub("", core).strip(" ,:;-")
+        if core == before:
+            return False
 
 
 def _eligible_identifier(
@@ -6681,6 +6852,8 @@ __all__ = [
     "mark_stripped_member",
     "provider_candidate_represents_target_work",
     "segment_corroboration",
+    "strip_series_names",
+    "subtitle_restates_series",
     "subtitle_segment_evidence",
     "title_strip_series_label",
 ]

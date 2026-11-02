@@ -62,17 +62,26 @@ def classify_review_field(
     changeable: bool = True,
     owner_entry: bool = False,
     immaterial_alternatives: bool = False,
+    kept_cover: bool = False,
+    kept_by_fill_policy: bool = False,
+    kept_by_tags_off: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
-    `owner_choosable` is a recording's undecided fill that no shared reason
-    queues: it stays editable in its case but is never attention (#1249).
+    `owner_choosable` is an undecided choice that no shared reason queues: a
+    recording's fill (#1249) or a kept readable cover (#1310). It stays
+    editable in its case but is never attention.
     Every other input decides first. `changeable` says whether any owner
     control could replace a recorded decision, and `owner_entry` whether the
     owner may type a value or choose genres; each changes only the reason
     (ADR-0085). `immaterial_alternatives` says an optional choice is optional
     because its alternatives only trim or extend the current value (#1253), so
-    its one statement says why no review is needed (#1450).
+    its one statement says why no review is needed (#1450). `kept_cover` says
+    the optional choice is a cover kept as it is, so its statement speaks of
+    covers rather than values (#1310). `kept_by_fill_policy` says it is
+    optional because the owner's setting only fills empty fields and the
+    current value passes the floor, and `kept_by_tags_off` because the owner's
+    tags setting is off (#1310).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -170,6 +179,15 @@ def classify_review_field(
                 "no review is needed. You can still keep the current value or "
                 "choose a proposed one."
                 if immaterial_alternatives
+                else "Your current cover is kept, so no review is needed. You can "
+                "still choose another cover."
+                if kept_cover
+                else "Your setting only fills empty fields, so the current value is "
+                "kept and no review is needed. You can still choose a proposed one."
+                if kept_by_fill_policy
+                else "Tags are off in your settings, so your tags are left as they are "
+                "and no review is needed. You can still choose proposed tags."
+                if kept_by_tags_off
                 else "No review is needed. You can still keep the current value or "
                 "choose a proposed one."
             ),

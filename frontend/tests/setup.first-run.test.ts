@@ -2287,6 +2287,16 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   ).toHaveLength(0)
 })
 
+// The reviewer step focuses its heading on the next animation frame. A test
+// presses a control only after that, as an owner would; otherwise, under load,
+// the frame can land after the press and take focus from the control.
+const reviewerStepSettled = () =>
+  waitFor(() =>
+    expect(
+      screen.getByRole('heading', { name: 'Choose an optional cover reviewer' }),
+    ).toHaveFocus(),
+  )
+
 it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   let started = false
   let cancelled = false
@@ -2313,6 +2323,7 @@ it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   vi.stubGlobal('fetch', fetch)
   runSetup()
   const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await reviewerStepSettled()
   start.focus()
   fireEvent.click(start)
   const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
@@ -2406,10 +2417,7 @@ it.each([
     runSetup()
     const restart = await screen.findByRole('button', { name: 'Restart device sign-in' })
     expect(screen.getByText(remedyCopy)).toBeVisible()
-    // The step focuses its heading on the next frame; press only after that,
-    // as an owner would, so the frame cannot land after the press.
-    const heading = screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })
-    await waitFor(() => expect(heading).toHaveFocus())
+    await reviewerStepSettled()
     restart.focus()
     fireEvent.click(restart)
     const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
@@ -2435,6 +2443,75 @@ it('keys the remedy on the shown result when Check reports usable over a failed 
   expect(await screen.findByText('Status: ready to use')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
   expect(screen.queryByText(remedyCopy)).toBeNull()
+})
+
+it.each(['usable access at load', 'a usable Check over failed access'] as const)(
+  'shows the recorded failure after a refused Use Codex with %s (#1617)',
+  async (shape) => {
+    let refused = false
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/reviewer/selection') && init?.method === 'POST') {
+        refused = true
+        return response({ detail: { error: 'credential_unavailable' } }, 409)
+      }
+      if (url.endsWith('/recheck') && init?.method === 'POST')
+        return response({ state: 'usable', failure: null, verification_url: null, user_code: null })
+      if (url.endsWith('/reviewer-access'))
+        return response(
+          shape === 'usable access at load' && !refused
+            ? reviewerAccess('usable')
+            : reviewerAccess('failed', 'permission_or_profile'),
+        )
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    if (shape === 'a usable Check over failed access')
+      fireEvent.click(await screen.findByRole('button', { name: 'Check existing sign-in' }))
+    expect(await screen.findByText('Status: ready to use')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Use Codex' }))
+
+    expect(await screen.findByText('Status: failed')).toBeVisible()
+    expect(screen.getByText(remedyCopy)).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Codex sign-in is unavailable. Test or replace it, then select Codex.',
+    )
+    // The refusal sits just above the fresh option's first control.
+    expect(screen.getByRole('alert').nextElementSibling).toBe(
+      screen.getByRole('button', { name: 'Check existing sign-in' }),
+    )
+    expect(screen.getByRole('button', { name: 'Check existing sign-in' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: 'Choose an optional cover reviewer' }),
+      ).toHaveFocus(),
+    )
+  },
+)
+
+it('keeps the read failure when access cannot be read after a refused Use Codex (#1617)', async () => {
+  let refused = false
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/reviewer/selection') && init?.method === 'POST') {
+      refused = true
+      return response({ detail: { error: 'credential_unavailable' } }, 409)
+    }
+    if (url.endsWith('/reviewer-access'))
+      return refused ? response({ error: 'unavailable' }, 503) : response(reviewerAccess('usable'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  fireEvent.click(await screen.findByRole('button', { name: 'Use Codex' }))
+
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull())
+  const alerts = await screen.findAllByRole('alert')
+  expect(alerts).toHaveLength(1)
+  expect(alerts[0]).not.toHaveTextContent('Codex sign-in is unavailable')
 })
 
 it('keeps an issued code in place across polls and copies exactly the code', async () => {
@@ -2583,6 +2660,7 @@ it.each([
     const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
     const cancels = () =>
       fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device/cancel')).length
+    await reviewerStepSettled()
     cancel.focus()
     fireEvent.click(cancel)
     // jsdom has no focus fixup, so focus alone cannot fail here; a browser drops
