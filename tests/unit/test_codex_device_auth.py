@@ -33,6 +33,7 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
 )
+from mechanical_librarian.application.reviewer_contracts import DeviceAuthStatus
 from mechanical_librarian.bootstrap.composition import (
     _CodexAuthLeaseCoordinator,
     _LazyCodexAuth,
@@ -371,6 +372,9 @@ def test_staging_removal_refusal_after_install_never_publishes_usable(
     )
     assert manager.current_credential_status().state == "failed"
     assert manager.recheck_credential_status().state == "failed"
+    assert manager.status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
     assert manager.start().state == "failed"
     with pytest.raises(CodexDeviceAuthError, match="staging"):
         manager.clear()
@@ -807,6 +811,391 @@ def test_status_eof_with_live_child_is_killed_and_fails(
     assert process.poll() == -9
 
 
+_USABLE = CodexDeviceAuthState("usable")
+_REFUSED = CodexDeviceAuthState("failed", failure="permission_or_profile")
+
+
+def _status_popen(
+    output: bytes = _STATUS, returncode: int = 0
+) -> Callable[..., _Process]:
+    def popen(_command: list[str], **_kwargs: Any) -> _Process:
+        return _Process(output, returncode)
+
+    return popen
+
+
+def _installed_credential(tmp_path: Path) -> None:
+    _finish(_manager(tmp_path))
+    assert (tmp_path / "profile" / "auth.json").exists()
+
+
+def _lazy_over(manager: CodexDeviceAuthManager) -> _LazyCodexAuth:
+    lazy = _LazyCodexAuth(Mock(), _CodexAuthLeaseCoordinator())
+    lazy._manager = manager
+    return lazy
+
+
+@pytest.mark.parametrize(
+    ("refusal", "recorded"),
+    [
+        ("status-output", _REFUSED),
+        ("status-returncode", _REFUSED),
+        ("auth-unreadable", _REFUSED),
+        ("auth-absent", CodexDeviceAuthState("ready")),
+    ],
+)
+def test_refused_recheck_after_completed_flow_is_recorded(
+    tmp_path: Path, refusal: str, recorded: CodexDeviceAuthState
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    assert manager.status() == _USABLE
+    installed = tmp_path / "profile" / "auth.json"
+    if refusal == "status-output":
+        manager._popen = _status_popen(b"Not logged in\n")  # type: ignore[assignment]
+    elif refusal == "status-returncode":
+        manager._popen = _status_popen(returncode=1)  # type: ignore[assignment]
+    elif refusal == "auth-unreadable":
+        installed.chmod(0o644)
+    else:
+        installed.unlink()
+
+    assert manager.recheck_credential_status() == recorded
+    assert manager.status() == recorded
+    assert _lazy_over(manager).passive_status() == recorded
+
+
+@pytest.mark.parametrize(
+    "prior",
+    ["recorded-refusal", "expired", "interrupted", "fresh-ready"],
+)
+def test_successful_recheck_records_usable(tmp_path: Path, prior: str) -> None:
+    _installed_credential(tmp_path)
+    if prior == "recorded-refusal":
+        manager = _manager(tmp_path)
+        manager._popen = _status_popen(b"Not logged in\n")  # type: ignore[assignment]
+        assert manager.recheck_credential_status() == _REFUSED
+        assert manager.status() == _REFUSED
+        manager._popen = _status_popen()  # type: ignore[assignment]
+    elif prior == "expired":
+        manager = _manager(tmp_path, output=_PROMPT + _CLI_TIMEOUT, returncode=1)
+        _finish(manager)
+        assert manager.status().state == "expired"
+    elif prior == "interrupted":
+        (tmp_path / "reviewer-auth-stale").mkdir(mode=0o700)
+        manager = _manager(tmp_path)
+        assert manager.status() == CodexDeviceAuthState(
+            "interrupted", failure="restart_interrupted"
+        )
+    else:
+        manager = _manager(tmp_path)
+        assert manager.status().state == "ready"
+
+    assert manager.recheck_credential_status() == _USABLE
+    assert manager.status() == _USABLE
+    assert _lazy_over(manager).passive_status() == _USABLE
+
+
+def test_recheck_after_cancel_records_its_existing_refusal(tmp_path: Path) -> None:
+    # Cancellation stays latched until the next start, so the status child is
+    # refused and the recheck returns the same refusal it always has.
+    _installed_credential(tmp_path)
+    manager = _manager(tmp_path)
+    assert manager.status().state == "ready"
+    assert manager.cancel().state == "cancelled"
+    spawned: list[str] = []
+
+    def popen(command: list[str], **_kwargs: Any) -> _Process:
+        spawned.append(command[-2])
+        return _Process(_STATUS, 0)
+
+    manager._popen = popen  # type: ignore[assignment]
+
+    assert manager.recheck_credential_status() == _REFUSED
+    assert manager.status() == _REFUSED
+    assert spawned == ["status"]
+
+
+@pytest.mark.parametrize("transition", ["clear", "start", "cancel", "equal-value"])
+def test_transition_during_recheck_wins_over_its_outcome(
+    tmp_path: Path, transition: str
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    if transition == "cancel":
+        manager._popen = _status_popen(b"Not logged in\n")  # type: ignore[assignment]
+        assert manager.recheck_credential_status() == _REFUSED
+        assert manager.status() == _REFUSED
+
+    def concurrent() -> CodexDeviceAuthState:
+        if transition == "clear":
+            assert manager.clear().state == "ready"
+        elif transition == "start":
+            with manager._lock:
+                manager._state = CodexDeviceAuthState("starting")
+        elif transition == "equal-value":
+            # A clear and a new completed flow land an equal but new usable.
+            with manager._lock:
+                manager._state = CodexDeviceAuthState("usable")
+        else:
+            assert manager.cancel().state == "cancelled"
+        return _REFUSED
+
+    expected = {
+        "clear": "ready",
+        "start": "starting",
+        "cancel": "cancelled",
+        "equal-value": "usable",
+    }
+    with patch.object(
+        manager, "_recheck_configured_credential_status", side_effect=concurrent
+    ):
+        assert manager.recheck_credential_status() == _REFUSED
+    assert manager.status().state == expected[transition]
+
+
+def test_recheck_exception_is_recorded_value_free_and_reraised(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    command_factory = manager._command_factory
+    private = str(tmp_path / "private profile detail")
+
+    def refuse(_staging: Path, _action: str):
+        raise ValueError(f"private {private}")
+
+    manager._command_factory = refuse
+    with pytest.raises(ValueError, match="private"):
+        manager.recheck_credential_status()
+    assert manager.status() == _REFUSED
+
+    manager._command_factory = command_factory
+    assert manager.recheck_credential_status() == _USABLE
+    assert manager.status() == _USABLE
+
+    lazy = _lazy_over(manager)
+    lazy.activate_lease()
+    manager._command_factory = refuse
+    assert lazy.recheck_credential_status() == _REFUSED
+    passive = lazy.passive_status()
+    assert passive == _REFUSED
+    assert private not in repr(passive)
+    assert str(tmp_path) not in repr(passive)
+
+
+@pytest.mark.parametrize(
+    ("nested", "outer"),
+    [(_USABLE, _REFUSED), (_REFUSED, _USABLE)],
+    ids=["refusal-finishes-last", "success-finishes-last"],
+)
+def test_overlapping_rechecks_record_the_one_finishing_last(
+    tmp_path: Path, nested: CodexDeviceAuthState, outer: CodexDeviceAuthState
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    depth = 0
+
+    def overlapping() -> CodexDeviceAuthState:
+        nonlocal depth
+        depth += 1
+        if depth == 1:
+            assert manager.recheck_credential_status() == nested
+            assert manager.status() == nested
+            return CodexDeviceAuthState(outer.state, failure=outer.failure)
+        return CodexDeviceAuthState(nested.state, failure=nested.failure)
+
+    with patch.object(
+        manager, "_recheck_configured_credential_status", side_effect=overlapping
+    ):
+        assert manager.recheck_credential_status() == outer
+    assert depth == 2
+    assert manager.status() == outer
+
+
+def test_recheck_begun_before_a_clear_never_overwrites_a_later_recheck(
+    tmp_path: Path,
+) -> None:
+    # A success that pauses across a clear and a newer recheck must not
+    # replace the newer "ready" with "usable" once auth.json is gone.
+    manager = _manager(tmp_path)
+    _finish(manager)
+    depth = 0
+
+    def paused_across_clear() -> CodexDeviceAuthState:
+        nonlocal depth
+        depth += 1
+        if depth == 1:
+            assert manager.clear().state == "ready"
+            assert manager.recheck_credential_status().state == "ready"
+            assert manager.status().state == "ready"
+            return CodexDeviceAuthState("usable")
+        return CodexDeviceAuthState("usable")
+
+    with patch.object(
+        manager,
+        "_recheck_configured_credential_status",
+        side_effect=paused_across_clear,
+    ):
+        assert manager.recheck_credential_status() == _USABLE
+    assert depth == 1
+    assert not (tmp_path / "profile" / "auth.json").exists()
+    assert manager.status().state == "ready"
+    assert _lazy_over(manager).passive_status().state == "ready"
+
+
+def test_recheck_failure_during_live_flow_records_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    entered = Event()
+    release = Event()
+    child = _Process(b"", 0)
+    child.returncode = None  # type: ignore[assignment]
+    child.stdout = _BlockingStream(entered, release)  # type: ignore[assignment]
+    manager._popen = lambda *_args, **_kwargs: child  # type: ignore[assignment]
+
+    def terminate(_pid: int, _signal: int) -> None:
+        child.returncode = -15
+
+    monkeypatch.setattr(os, "killpg", terminate)
+    assert manager.start().state == "starting"
+    assert entered.wait(timeout=2)
+    with (
+        patch.object(
+            manager,
+            "_recheck_credential_status",
+            side_effect=CodexDeviceAuthError("lease"),
+        ),
+        pytest.raises(CodexDeviceAuthError, match="lease"),
+    ):
+        manager.recheck_credential_status()
+    assert manager.status().state == "starting"
+    assert manager.cancel().state == "cancelled"
+    release.set()
+    manager.close()
+
+
+@pytest.mark.parametrize("guard", ["quarantined", "trust_failed", "installing"])
+def test_guarded_manager_records_no_recheck(tmp_path: Path, guard: str) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    with manager._lock:
+        setattr(manager, f"_{guard}", True)
+
+    with patch.object(manager, "_recheck_credential_status", return_value=_REFUSED):
+        assert manager.recheck_credential_status() == _REFUSED
+    assert manager.status() == _USABLE
+
+
+@pytest.mark.parametrize("passthrough", ["configured", "expired", "interrupted"])
+def test_recheck_outcome_outside_the_allow_list_is_not_recorded(
+    tmp_path: Path, passthrough: DeviceAuthStatus
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    outcome = CodexDeviceAuthState(passthrough)
+
+    with patch.object(manager, "_recheck_credential_status", return_value=outcome):
+        assert manager.recheck_credential_status() is outcome
+    assert manager.status() == _USABLE
+
+
+def test_application_reads_report_each_recorded_recheck(tmp_path: Path) -> None:
+    import sqlite3
+
+    from mechanical_librarian.adapters.persistence.reviewer_access import (
+        ReviewerAccessStore,
+    )
+    from mechanical_librarian.adapters.persistence.schema import _create_schema
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessApplicationError,
+        ReviewerAccessOperations,
+    )
+    from mechanical_librarian.application.reviewer_contracts import (
+        ReviewerProvisioningStatus,
+    )
+    from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    _create_schema(connection)
+    coordinator = _CodexAuthLeaseCoordinator()
+    holder: dict[str, CodexDeviceAuthManager] = {}
+
+    def factory(
+        lease: Callable[[], bool], guard: Callable[[], AbstractContextManager[None]]
+    ) -> CodexDeviceAuthManager:
+        holder["manager"] = _manager(
+            tmp_path,
+            lease_current=lease,
+            lease_guard=guard,
+            activity_guard=coordinator.activity,
+        )
+        return holder["manager"]
+
+    def unused_binding() -> tuple[str, bytes, Callable[..., str]]:
+        raise AssertionError("a refused credential must not bind")
+
+    operations = ReviewerAccessOperations(
+        ReviewerAccessStore(connection),
+        codex_auth=_LazyCodexAuth(factory, coordinator),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
+        ),
+        codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+        codex_identity=lambda: ("gpt-5.4", b"codex-profile"),
+        codex_binding=unused_binding,
+        openrouter_factory=lambda _key, _model: (_ for _ in ()).throw(
+            AssertionError("openrouter is not configured")
+        ),
+    )
+
+    operations.start_codex(expected_revision=1)
+    manager = holder["manager"]
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not manager._thread.is_alive()
+    assert operations.read().codex.state == "usable"
+
+    spawns = 0
+    allowed = manager._popen
+
+    def refusing(command: list[str], **kwargs: Any) -> _Process:
+        nonlocal spawns
+        spawns += 1
+        return _Process(b"Not logged in\n", 0)
+
+    manager._popen = refusing  # type: ignore[assignment]
+    with pytest.raises(ReviewerAccessApplicationError) as selection:
+        operations.select_codex(expected_revision=1)
+    assert selection.value.code == "credential_unavailable"
+    before = spawns
+    refused = operations.read()
+    assert spawns == before
+    assert (refused.codex.state, refused.codex.reason) == (
+        "failed",
+        "permission_or_profile",
+    )
+    assert str(tmp_path) not in refused.model_dump_json()
+
+    manager._popen = allowed
+    assert operations.recheck_codex() == _USABLE
+    assert operations.read().codex.state == "usable"
+    selected = operations.select_codex(expected_revision=1)
+    assert selected.mapping is not None and selected.mapping.engine == "codex"
+
+    manager._popen = refusing  # type: ignore[assignment]
+    with pytest.raises(ReviewerAccessApplicationError) as dispatch:
+        operations.dispatch_cover_observation()
+    assert dispatch.value.code == "credential_unavailable"
+    after_dispatch = operations.read()
+    assert after_dispatch.mapping is not None
+    assert (after_dispatch.codex.state, after_dispatch.codex.reason) == (
+        "failed",
+        "permission_or_profile",
+    )
+
+
 def test_status_deadline_stops_child_before_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1143,6 +1532,7 @@ def test_active_device_flow_excludes_external_recheck_and_selection_probe(
     assert manager.start().state == "starting"
     assert entered.wait(timeout=2)
     assert manager.recheck_credential_status().state == "starting"
+    assert manager.status().state == "starting"
     assert manager.current_credential_status().state == "starting"
     assert spawn_count == 1
     assert manager.cancel().state == "cancelled"
