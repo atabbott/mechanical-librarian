@@ -1644,6 +1644,10 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "active": True,
             "actionable": True,
             "paused": False,
+            "first_boot": False,
+            "first_boot_complete": False,
+            "first_boot_works": None,
+            "presentation": None,
             "libraries": [
                 {
                     "blocked": 0,
@@ -1655,6 +1659,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "recorded": 7,
                     "not_matched": 0,
                     "rescan_requested": False,
+                    "stages": [],
                     "scan_id": "scan-1",
                     "state": "completed",
                     "total": 12,
@@ -1669,6 +1674,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "recorded": 4,
                     "not_matched": 0,
                     "rescan_requested": False,
+                    "stages": [],
                     "scan_id": "scan-2",
                     "state": "processing",
                     "total": 16,
