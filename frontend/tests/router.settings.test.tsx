@@ -1140,12 +1140,146 @@ describe('owner settings route', () => {
       .mockResolvedValue(codexDevice('usable', null))
     renderRoute('/settings?group=reviewer', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Restart device sign-in' }))
+    ;(await screen.findByRole('button', { name: 'Restart device sign-in' })).focus()
+    await user.keyboard('{Enter}')
     expect(await screen.findByText('ABCD-1234')).toBeVisible()
     await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2), {
       timeout: 3000,
     })
+    // The focused Cancel left with the panel; Try again is the next control (#1617).
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
     await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(http.getReviewerAccess).toHaveBeenCalledTimes(2)
+  })
+
+  // #1617: Check re-reads access, so the panel shows what the server recorded
+  // instead of a view the check has made stale.
+  const usableAccess: ReviewerAccessView = {
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable', reason: null },
+  }
+  const pressCheck = async (user: ReturnType<typeof userEvent.setup>) => {
+    ;(await screen.findByRole('button', { name: 'Check existing Codex sign-in' })).focus()
+    await user.keyboard('{Enter}')
+  }
+  it('shows a sign-in running in another tab after Check (#1617)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(reviewerView)
+      .mockResolvedValue({
+        ...reviewerView,
+        codex: { ...reviewerView.codex, state: 'waiting', reason: null },
+      })
+    http.recheckCodex = vi.fn(async () => codexDevice('waiting'))
+    http.getCodexDevice = vi.fn(async () => codexDevice('waiting'))
+    renderRoute('/settings?group=reviewer', http)
+
+    await pressCheck(user)
+    expect(await screen.findByText('ABCD-1234', {}, { timeout: 3000 })).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toHaveFocus(),
+    )
+    expect(screen.queryByRole('button', { name: 'Check existing Codex sign-in' })).toBeNull()
+  })
+
+  it('withdraws Use Codex when Check finds the sign-in refused (#1617)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(usableAccess)
+      .mockResolvedValue(reviewerView)
+    http.recheckCodex = vi.fn(async () => codexDevice('failed', 'permission_or_profile'))
+    renderRoute('/settings?group=reviewer', http)
+    expect(
+      await screen.findByRole('button', { name: 'Use Codex for cover observations' }),
+    ).toBeEnabled()
+
+    await pressCheck(user)
+    expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.',
+    )
+    expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Use Codex for cover observations' })).toBeNull()
+    // React keeps the pressed Check's node across the branch switch, so focus stays on it.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
+    )
+  })
+
+  // The second row is a server that skipped recording the check (criterion 4):
+  // the reason still follows the shown, checked state.
+  it.each([
+    ['recorded', usableAccess],
+    ['not recorded', reviewerView],
+  ] as const)(
+    'leaves no stale warning under ready to use after a usable Check (%s, #1617)',
+    async (_record, after) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      http.getReviewerAccess = vi
+        .fn<ReviewHttp['getReviewerAccess']>()
+        .mockResolvedValueOnce(reviewerView)
+        .mockResolvedValue(after)
+      http.recheckCodex = vi.fn(async () => codexDevice('usable'))
+      renderRoute('/settings?group=reviewer', http)
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'The installed Codex sign-in could not be validated.',
+      )
+
+      await pressCheck(user)
+      expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+      await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Use Codex for cover observations' })).toBeEnabled()
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
+      )
+    },
+  )
+
+  it('labels a cancelled sign-in ready to sign in after Check (#1617, #1607 O3)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    const passive = (state: 'cancelled' | 'ready'): ReviewerAccessView => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state, reason: null },
+    })
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(passive('cancelled'))
+      .mockResolvedValue(passive('ready'))
+    http.recheckCodex = vi.fn(async () => codexDevice('ready'))
+    renderRoute('/settings?group=reviewer', http)
+    expect(await screen.findByText('Advisory availability: sign-in cancelled')).toBeVisible()
+
+    await pressCheck(user)
+    expect(await screen.findByText('Advisory availability: ready to sign in')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Replace or create Codex sign-in' })).toBeVisible()
+  })
+
+  it('focuses Try again when the read after Check fails (#1617)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(reviewerView)
+      .mockRejectedValue(new ApiError(503, 'unavailable'))
+    http.recheckCodex = vi.fn(async () => codexDevice('usable'))
+    renderRoute('/settings?group=reviewer', http)
+
+    await pressCheck(user)
+    expect(await screen.findByText('Reviewer access is unavailable.')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
     expect(http.getReviewerAccess).toHaveBeenCalledTimes(2)
   })
 
@@ -2149,6 +2283,62 @@ it('reloads reviewer access and says a description adviser change could not be c
   )
 })
 
+it.each(['fresh usable', 'Check-cached usable'] as const)(
+  're-reads access with Codex copy after a refused Use Codex for descriptions (%s, #1617)',
+  async (shape) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    const ready = { ...reviewerView, codex: { ...reviewerView.codex, state: 'ready' as const } }
+    const reads = vi.fn<ReviewHttp['getReviewerAccess']>()
+    if (shape === 'fresh usable')
+      reads.mockResolvedValueOnce({
+        ...reviewerView,
+        codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+      })
+    else reads.mockResolvedValueOnce(ready).mockResolvedValueOnce(ready)
+    reads.mockResolvedValue(reviewerView)
+    http.getReviewerAccess = reads
+    http.describeContainedDescription = vi.fn(async () => ({
+      model: 'contained-model',
+      profile_sha256: 'a'.repeat(64),
+    }))
+    http.recheckCodex = vi.fn(async () => ({
+      state: 'usable' as const,
+      failure: null,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }))
+    http.selectReviewer = vi.fn(async () => {
+      throw new ApiError(409, 'credential_unavailable')
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+    await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+    expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
+    if (shape === 'Check-cached usable')
+      await user.click(screen.getByRole('button', { name: 'Check existing Codex sign-in' }))
+    await waitFor(() => expect(use).toBeEnabled())
+    const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
+    use.focus()
+    await user.keyboard('{Enter}')
+
+    const description = screen.getByRole('region', { name: 'Optional description adviser' })
+    expect(await within(description).findByRole('alert')).toHaveTextContent(
+      'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
+    )
+    expect(within(description).queryByText(/model, key and available pricing/u)).toBeNull()
+    expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
+    expect(screen.queryByText('Advisory availability: ready to use')).toBeNull()
+    expect(use).toBeDisabled()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toHaveFocus(),
+    )
+    expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBeGreaterThan(readsBefore)
+  },
+)
+
 it('offers a reload, not another try, when settings meet a newer build', async () => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => {
@@ -2727,6 +2917,73 @@ it('shows a Use Codex failure under its button, not in the sign-in row (#1584)',
   expect(screen.getAllByRole('alert')).toEqual([alert])
   expect(button).toHaveFocus()
 })
+
+// #1617: a refused Codex selection is recorded by the server, so the panel
+// re-reads access and drops a cached device result that would mask it.
+const unmanagedProfileCopy =
+  'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.'
+const credentialUnavailableCopy =
+  'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.'
+const usableUnmapped: ReviewerAccessView = {
+  ...reviewerView,
+  codex: { ...reviewerView.codex, state: 'usable', reason: null },
+}
+const usableDevice = { ...pendingDevice, state: 'usable' as const }
+it.each(['fresh usable', 'Check-cached usable', 'description-mapped'] as const)(
+  're-reads access after a refused Use Codex for cover observations (%s, #1617)',
+  async (shape) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    const reads = vi.fn<ReviewHttp['getReviewerAccess']>()
+    if (shape === 'fresh usable') reads.mockResolvedValueOnce(usableUnmapped)
+    if (shape === 'Check-cached usable')
+      reads.mockResolvedValueOnce(reviewerView).mockResolvedValueOnce(usableUnmapped)
+    if (shape === 'description-mapped')
+      reads
+        .mockResolvedValueOnce({ ...usableUnmapped, description_mapping: { engine: 'codex' } })
+        .mockResolvedValue({ ...reviewerView, description_mapping: { engine: 'codex' } })
+    else reads.mockResolvedValue(reviewerView)
+    http.getReviewerAccess = reads
+    http.recheckCodex = vi.fn(async () => usableDevice)
+    http.selectReviewer = vi.fn(async () => {
+      throw new ApiError(409, 'credential_unavailable')
+    })
+    renderRoute('/settings?group=reviewer', http)
+    if (shape === 'Check-cached usable') {
+      ;(await screen.findByRole('button', { name: 'Check existing Codex sign-in' })).focus()
+      await user.keyboard('{Enter}')
+      expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+    }
+    const use = await screen.findByRole('button', { name: 'Use Codex for cover observations' })
+    await waitFor(() => expect(use).toBeEnabled())
+    use.focus()
+    await user.keyboard('{Enter}')
+
+    expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
+    expect(screen.queryByText('Advisory availability: ready to use')).toBeNull()
+    if (shape === 'description-mapped') {
+      // A description mapping keeps the row: the refusal stays under its
+      // now-disabled button, and focus moves off it to Replace.
+      const alert = screen.getByText(credentialUnavailableCopy)
+      expect(alert).toHaveAttribute('role', 'alert')
+      expect(use.nextElementSibling).toBe(alert)
+      expect(use).toBeDisabled()
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Replace Codex sign-in' })).toHaveFocus(),
+      )
+      return
+    }
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(unmanagedProfileCopy)
+    expect(screen.queryByRole('button', { name: 'Use Codex for cover observations' })).toBeNull()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toHaveFocus(),
+    )
+    expect(http.getReviewerAccess).toHaveBeenCalledTimes(shape === 'fresh usable' ? 2 : 3)
+    expect(http.getCodexDevice).not.toHaveBeenCalled()
+  },
+)
 
 describe('library languages in Settings (#1466)', () => {
   const title = 'Ebooks & Audiobooks: Collected Editions'

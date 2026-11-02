@@ -152,16 +152,22 @@ function CodexSignIn({
     codexClearTrigger,
     codexReplaceTrigger,
     codexStartTrigger,
+    codexCheckTrigger,
   } = access
   const device = deviceQuery.data
   const codexState = hostUnsupported ? view.codex.state : (device?.state ?? view.codex.state)
-  const reasonKey = !hostUnsupported && device?.failure ? device.failure : view.codex.reason
+  // A checked or polled result replaces the view's reason, as it replaces its
+  // state: a usable check leaves no older warning under it (#1617).
+  const fromDevice = !hostUnsupported && device !== undefined
+  const reasonKey = fromDevice ? device.failure : view.codex.reason
   // Without a managed sign-in the row offers Restart and Check, not Replace.
   const codexReason =
     reasonKey === 'permission_or_profile' && !codexManaged
       ? unmanagedProfileCopy
-      : !hostUnsupported && device?.failure
-        ? deviceFailureCopy[device.failure]
+      : fromDevice
+        ? device.failure
+          ? deviceFailureCopy[device.failure]
+          : null
         : view.codex.reason
           ? codexReasonCopy[view.codex.reason]
           : null
@@ -186,6 +192,7 @@ function CodexSignIn({
         ) : codexManaged ? (
           <>
             <button
+              ref={codexCheckTrigger}
               type="button"
               disabled={hostUnsupported}
               aria-disabled={mutation.isPending || undefined}
@@ -260,6 +267,7 @@ function CodexSignIn({
         ) : (
           <>
             <button
+              ref={codexCheckTrigger}
               type="button"
               disabled={hostUnsupported}
               aria-disabled={mutation.isPending || undefined}
@@ -503,7 +511,7 @@ function OpenRouterReviewer({
 
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const access = useReviewerAccess(http)
-  const { query, deviceQuery, mutation, mutationFailure, waiting } = access
+  const { query, deviceQuery, mutation, mutationFailure, waiting, accessRetryTrigger } = access
   if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
   if (query.error instanceof BuildMismatchError)
     return <StaleBuildRead lead="Reviewer access was not loaded." />
@@ -511,7 +519,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     return (
       <div role="alert">
         <p>Reviewer access is unavailable.</p>
-        <button type="button" onClick={() => void query.refetch()}>
+        <button ref={accessRetryTrigger} type="button" onClick={() => void query.refetch()}>
           Try again
         </button>
       </div>
@@ -606,7 +614,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         ) : null}
         <OpenRouterReviewer access={access} view={view} />
       </section>
-      <DescriptionReviewerSettings http={http} view={view} codexUsable={codexUsable} />
+      <DescriptionReviewerSettings
+        http={http}
+        view={view}
+        codexUsable={codexUsable}
+        onCodexRefused={access.refreshAfterCodexRefusal}
+      />
     </div>
   )
 }

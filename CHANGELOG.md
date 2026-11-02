@@ -262,6 +262,12 @@ brackets are GitHub issues.
   (#1607).
 - In setup, on a host that cannot run Codex, Cancel any active sign-in keeps
   keyboard focus while it runs and after it reports (#1615).
+- When Use Codex is refused, or you check the Codex sign-in, Settings ›
+  Reviewer and setup show the sign-in's new state on the same page instead
+  of "ready to use" until a reload: a refused selection shows the sign-in
+  failed with Codex's own remedy, an old warning no longer stays under "ready
+  to use", and a check that meets a sign-in running in another tab shows its
+  code. Keyboard focus moves to the next control (#1617).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
