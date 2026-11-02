@@ -81,7 +81,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v66` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v67` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v43` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
@@ -90,8 +90,8 @@ refused.
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v9` | The deterministic decision packet |
-| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v26` |
-| `deterministic-shadow-decision-policy-v26` | The shadow decision policy |
+| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v27` |
+| `deterministic-shadow-decision-policy-v27` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v11` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
 
@@ -117,7 +117,7 @@ refused.
 | `audio-inspection-v4` | The isolated audio inspection protocol |
 | `epub-inspection-v3` | The isolated EPUB inspection protocol |
 | `batch-manifest-v5` | Source-only foreground evidence batches ([Ebook evidence batches](../operations/ebook-evidence-batches.md)) |
-| `cold-start-report-v5` | The read-only [cold-start report](../operations/cold-start-report.md) |
+| `cold-start-report-v6` | The read-only [cold-start report](../operations/cold-start-report.md) |
 | `review-react-assets-v1` | The browser bundle identity manifest |
 
 The session database (`/data/private/review-sessions.sqlite`) and the provider

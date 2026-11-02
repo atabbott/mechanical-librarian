@@ -136,6 +136,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "series_conflicting_membership": "The sources disagree about the series.",
     "series_provider_evidence_required": "No metadata source confirms this series.",
     "subtitle_local_corroboration_required": "No other source confirms this subtitle.",
+    "subtitle_restates_series": "The proposed subtitle only repeats the series, so it is never written for you.",
     "subtitle_segment_provider_dissent": "The sources disagree with splitting the title this way.",
     "subtitle_segment_decorated_consensus": "The sources do not support splitting this text into a subtitle.",
     "atomic_bundle_unavailable": "A linked field this choice depends on is unavailable.",
@@ -3075,7 +3076,7 @@ def _report_authors(target: TargetFacts) -> list[str]:
 # text says what the source did and what followed from it, and never a query,
 # header, credential, payload or path.
 _NON_LIMITING_PROVIDER_STATUSES = frozenset(
-    {"candidates", "disabled", "insufficient_input"}
+    {"candidates", "disabled", "insufficient_input", "not_needed"}
 )
 _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "candidates": "Returned metadata candidates for comparison.",
@@ -3091,6 +3092,10 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "oversized": "Returned more than the accepted bound, so nothing was retained.",
     "candidate_limit_exceeded": "Returned too many candidates to compare safely.",
     "query_limit_exceeded": "Reached the bounded query allowance for this work.",
+    "not_needed": (
+        "Not needed, so this source was never asked: another source had already "
+        "matched this recording by its running time."
+    ),
 }
 # A lane whose candidates work-identity admission refused persists as no match,
 # so its dispatch says what happened, in the row's own words (#1407).

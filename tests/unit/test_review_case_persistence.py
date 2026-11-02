@@ -429,6 +429,215 @@ def test_nonactionable_successor_retires_current_case_without_empty_case() -> No
         repository.close()
 
 
+def test_a_nonactionable_retirement_replays_its_own_answer() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        first = _report()
+        repository.publish(first, lambda: True)
+        first_set = _actionable(first)
+        repository.publish_proposal(first_set)
+        repository.admit_review_case(first_set)
+        successor = _report("Changed", "c", "d", actionable=False)
+        repository.publish(successor, lambda: True)
+        successor_set = evaluate_report(successor)
+        repository.publish_proposal(successor_set)
+        retired = repository.admit_review_case(successor_set)
+        # Admission's own retirement is an answer, so it replays (#1568).
+        assert repository.admit_review_case(successor_set) == retired
+        assert json.loads(retired)["status"] == "retired"
+        assert repository._connection.execute(
+            "SELECT checkpoint,actor,kind FROM review_case_transitions "
+            "ORDER BY checkpoint"
+        ).fetchall() == [
+            (1, "review-admission-v1", "admitted"),
+            (2, "review-admission-v1", "retired"),
+        ]
+        repository.close()
+
+
+def test_policy_activation_retirement_readmits_the_same_proposal_set() -> None:
+    """Reactivating an unchanged policy admits each case again (#1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        builtin = MetadataPolicyProfile.builtin()
+        resolved = resolve_policy(builtin, report.target.library)
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report, resolved.resolved_id)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        repository.activate_metadata_policy(
+            builtin.policy_id,
+            builtin.policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+            expected_active_generation=1,
+            reconcile_current=True,
+        )
+        assert not json.loads(repository.get_review_case(case_id))["current"]
+
+        readmitted = ReviewAdmissionResult.from_json(
+            repository.admit_review_case(proposal)
+        )
+        assert (readmitted.status, readmitted.review_case_id) == ("admitted", case_id)
+        assert json.loads(repository.get_review_case(case_id))["current"]
+        # Admitting it again is a replay and records nothing.
+        replayed = ReviewAdmissionResult.from_json(
+            repository.admit_review_case(proposal)
+        )
+        assert (replayed.status, replayed.review_case_id) == ("replayed", case_id)
+        assert repository._connection.execute(
+            "SELECT checkpoint,actor,kind,reason,to_review_case_id "
+            "FROM review_case_transitions ORDER BY checkpoint"
+        ).fetchall() == [
+            (1, "review-admission-v1", "admitted", "actionable", case_id),
+            (2, "policy-activation-v1", "retired", "policy_changed", None),
+            (3, "review-admission-v1", "admitted", "actionable", case_id),
+        ]
+        assert (1,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        repository.close()
+
+
+def _owner_choice(repository, case_id: str, key: str) -> HumanDecision:
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    field = next(
+        value
+        for value in case.proposals
+        if value["result"]["outcome"] == "unresolved_choice"
+    )
+    decision = HumanDecision.create(
+        case,
+        proposal_id=field["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=field["destination"],
+        actor="owner",
+        outcome="accept",
+        selected_value=field["result"]["alternatives"][0]["value"],
+        idempotency_key=key,
+        occurred_at=1_000,
+    )
+    repository.record_human_decision(decision)
+    return decision
+
+
+def _activate(repository, profile, expected, generation, report) -> None:
+    resolved = resolve_policy(profile, report.target.library)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        expected.policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        generation + 1,
+        expected_active_generation=generation,
+        reconcile_current=True,
+    )
+
+
+def _admit_under(repository, profile, report) -> str:
+    proposal = evaluate_report(
+        report, resolve_policy(profile, report.target.library).resolved_id
+    )
+    repository.publish_proposal(proposal)
+    return json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+
+def _episodes(repository, case_id: str) -> tuple[int]:
+    return repository._connection.execute(
+        "SELECT count(*) FROM review_case_episodes WHERE review_case_id=?",
+        (case_id,),
+    ).fetchone()
+
+
+def test_reactivating_an_unchanged_policy_keeps_the_owner_answers() -> None:
+    """The case retired by an unchanged policy continues its episode (#1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        case_id = _admit_under(repository, builtin, report)
+        decision = _owner_choice(repository, case_id, "unchanged-policy-0001")
+        assert decision.to_json() in repository.pending_field_effect_decision_documents(
+            100
+        )
+        _activate(repository, builtin, builtin, 1, report)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _episodes(repository, case_id) == (0,)
+        assert decision.to_json() in repository.pending_field_effect_decision_documents(
+            100
+        )
+        repository.close()
+
+
+def test_returning_through_another_policy_starts_a_new_episode() -> None:
+    """A->B->A admits the first case again as a new episode (#1358, #1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        changed = MetadataPolicyProfile.create(
+            "Changed",
+            {**dict(builtin.options), "date_precision": "full_date"},
+            dict(builtin.destinations),
+        )
+        repository.create_metadata_policy_draft(changed.canonical_json)
+        case_id = _admit_under(repository, builtin, report)
+        decision = _owner_choice(repository, case_id, "changed-policy-0001")
+        _activate(repository, changed, builtin, 1, report)
+        other = _admit_under(repository, changed, report)
+        assert other != case_id
+        _activate(repository, builtin, changed, 2, report)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _episodes(repository, case_id) == (1,)
+        assert (
+            decision.to_json()
+            not in repository.pending_field_effect_decision_documents(100)
+        )
+        repository.close()
+
+
+@pytest.mark.parametrize("reactivations", [0, 1])
+def test_returning_after_an_unreconciled_change_starts_a_new_episode(
+    reactivations: int,
+) -> None:
+    """A->B whose successor never arrives, then A (and A->A), resets (#1568)."""
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        changed = MetadataPolicyProfile.create(
+            "Changed",
+            {**dict(builtin.options), "date_precision": "full_date"},
+            dict(builtin.destinations),
+        )
+        repository.create_metadata_policy_draft(changed.canonical_json)
+        case_id = _admit_under(repository, builtin, report)
+        decision = _owner_choice(repository, case_id, "unreconciled-0001")
+        # B's reconciliation never admits B's case, so the lineage keeps the
+        # retirement of A's case through every later activation.
+        _activate(repository, changed, builtin, 1, report)
+        _activate(repository, builtin, changed, 2, report)
+        for generation in range(3, 3 + reactivations):
+            _activate(repository, builtin, builtin, generation, report)
+        assert repository._connection.execute(
+            "SELECT actor,from_review_case_id FROM review_case_transitions "
+            "WHERE transition_id=(SELECT transition_id FROM "
+            "current_review_case_lineages)"
+        ).fetchone() == ("policy-activation-v1", case_id)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _episodes(repository, case_id) == (1,)
+        assert (
+            decision.to_json()
+            not in repository.pending_field_effect_decision_documents(100)
+        )
+        repository.close()
+
+
 def test_stale_and_cross_target_proposals_mutate_nothing() -> None:
     with tempfile.TemporaryDirectory() as directory:
         repository = open_repository(Path(directory) / "reports.sqlite")

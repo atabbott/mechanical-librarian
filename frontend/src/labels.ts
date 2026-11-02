@@ -209,6 +209,7 @@ export const sourceStatusLabels = {
   oversized: 'Response too large',
   candidate_limit_exceeded: 'Too many candidates',
   query_limit_exceeded: 'Query allowance reached',
+  not_needed: 'Not needed',
   adapter_fault: 'Failed in Mechanical Librarian',
 } satisfies Record<ProviderStatus, string>
 
@@ -503,6 +504,7 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
     'The retained evidence does not resolve series membership for automatic handling.',
   series_provider_evidence_required: 'Provider evidence supporting this series value is required.',
   subtitle_local_corroboration_required: 'Independent evidence does not corroborate this subtitle.',
+  subtitle_restates_series: 'The proposed subtitle only repeats the series.',
   subtitle_segment_provider_dissent:
     'Provider subtitle evidence disagrees with the proposed title split.',
   subtitle_segment_decorated_consensus:

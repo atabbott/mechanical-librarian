@@ -67,6 +67,13 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** An audiobook asks AudioSilo only when neither
+  Audible nor Audnexus has already matched its recording by running time;
+  otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
+  search per audiobook instead of several. Fewer lookups are sent and no match
+  is lost. An Audnexus answer that a recording isn't sold in one region is
+  recorded in the report's diagnostics as a region miss rather than an unknown
+  failure (#1309).
 - **Clean rebuild required.** Hardcover's audio editions are read for every
   matched audiobook work and compared with the file. The report records when
   an edition with a different narrator matches the file and the Audible match
@@ -82,6 +89,10 @@ brackets are GitHub issues.
   and an "About the book" header line no longer counts as a difference.
   Marketing lines are never chosen as subtitles, and genres or synopses from a
   store in another language wait for your choice (#1317).
+- **Clean rebuild required.** A subtitle that only repeats the series, such as
+  "A <Series> Novel" or "<Series>, Book 3", is never written for you and stays
+  your choice. A title cleanup that would drop such a label after an underscore
+  ("Title_ A <Series> Novel") now asks you first (#1616).
 - **Clean rebuild required.** Every language is written as one display name,
   such as "English"; a current `en` or `eng` is offered for review, never
   rewritten. The `preserve` language option is gone (#1314).
@@ -220,6 +231,23 @@ brackets are GitHub issues.
   the next time reviewer access is read they show the sign-in failed and offer
   to check it again or sign in again. A check that succeeds shows Codex as
   ready to use again, including after Mechanical Librarian restarts (#1614).
+- Cancelling a Codex sign-in no longer stops a working sign-in that was
+  already installed from being used: Check, Use Codex and Codex reviews accept
+  it again once the cancelled sign-in has stopped, without signing in again,
+  clearing the sign-in or restarting Mechanical Librarian (#1622).
+- Switching from Automatic to Preview without changing the policy keeps every
+  work in Attention and Library, and keeps your answers: a decision you had
+  not yet written stays decided and is still written. An automatic decision
+  recorded before the switch, including a cover or description, writes
+  nothing in Preview. No clean rebuild is needed (#1568).
+- After you cancel a Codex device sign-in, or it finishes, expires or fails,
+  Settings › Reviewer shows the outcome and offers to check or restart the
+  sign-in, or to use Codex, without a reload, instead of a lone Cancel
+  sign-in. Starting or cancelling a sign-in keeps keyboard focus on the next
+  control, and setup names each sign-in status in words, with its remedy
+  (#1607).
+- In setup, on a host that cannot run Codex, Cancel any active sign-in keeps
+  keyboard focus while it runs and after it reports (#1615).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

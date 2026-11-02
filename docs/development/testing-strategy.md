@@ -206,8 +206,11 @@ another. It fails closed on any pytest environment variable that could change
 what a cohort runs, and disables plugin autoload.
 
 Accounting follows unittest: `AssertionError` is a failure, anything else an
-error, and an unexpected success refuses the tier. A tier passes only when
-pytest's exit code and the runner's accounting agree.
+error, and an unexpected success refuses the tier. An exception a test's
+thread leaves uncaught is an error too: `pyproject.toml` turns pytest's
+unhandled-thread-exception warning into one, so a dead worker thread cannot
+pass as a warning. A tier passes only when pytest's exit code and the
+runner's accounting agree.
 
 A failure is diagnosable from the diagnostic stream alone. A failing tier
 reports every failed identifier and each traceback, within byte bounds that

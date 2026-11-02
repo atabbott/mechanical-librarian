@@ -79,8 +79,8 @@ What each media pass admits is in
 observation built from its lanes (ISBN family, ASIN or work). A lane ends in
 one closed status: `disabled`, `insufficient_input`, `candidates`,
 `no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
-`incomplete`, `malformed`, `oversized`, `candidate_limit_exceeded` or
-`query_limit_exceeded`. Candidates keep a provider-local work identity
+`incomplete`, `malformed`, `oversized`, `candidate_limit_exceeded`,
+`query_limit_exceeded` or `not_needed`. Candidates keep a provider-local work identity
 separate from their edition identity. Their claims record `agreement`,
 `disagreement`, `incompatible` or `not_comparable` against local claims, with
 a named comparison method. Extra provider facts are limited to the closed

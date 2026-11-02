@@ -79,7 +79,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_NOT_DEFERRED_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
     _validate_report_row,
     _validated_report_row,
@@ -608,9 +610,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         expand_cover_consideration(*consideration_row),
                     )
                 else:
+                    # A decision authorizes a write only against its case's
+                    # newest outcome set. Leaving Automatic with the policy
+                    # unchanged projects the same case again under a new
+                    # generation (#1568), so an earlier generation's decision
+                    # fails its binding here whatever order rows are read in.
                     outcome_row = self._connection.execute(
                         "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
-                        "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                        "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+                        "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+                        "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
                         (
                             automatic.review_case_id,
                             automatic.report_id,
@@ -971,6 +980,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 (authority.decision_id,),
             ).fetchone()
             is None
+            # An automatic decision authorizes nothing outside the Automatic
+            # posture; an owner decision is not gated on posture (#1568).
+            and self._connection.execute(
+                "SELECT 1 WHERE NOT "
+                + _AUTOMATIC_POSTURE_SQL
+                + " AND (EXISTS (SELECT 1 FROM automatic_decisions "
+                "WHERE decision_id=?) OR EXISTS (SELECT 1 FROM "
+                "cover_selection_authorities WHERE decision_id=? AND "
+                "kind='automatic') OR EXISTS (SELECT 1 FROM description_decisions "
+                "WHERE decision_id=? AND CASE WHEN json_valid(document) THEN "
+                "json_extract(document,'$.origin') END IS NOT 'human'))",
+                (authority.decision_id,) * 3,
+            ).fetchone()
+            is None
         )
         description = self._connection.execute(
             "SELECT document FROM description_decisions WHERE decision_id=?",
@@ -1050,6 +1073,24 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             try:
                 decision = AutomaticDecision.from_json(automatic_row[0])
             except AutomaticDecisionError:
+                return False
+            # The same newest-outcome-set binding as ``_authority_source``: a
+            # decision recorded before leaving Automatic belongs to an earlier
+            # generation, so a plan from it is stale after Confirm Automatic
+            # (#1568).
+            if self._connection.execute(
+                "SELECT json_extract(document,'$.policy_generation') FROM "
+                "shadow_decision_outcomes WHERE review_case_id=? AND report_id=? "
+                "AND proposal_set_id=? AND resolved_policy_id=? "
+                "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+                "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
+                (
+                    decision.review_case_id,
+                    decision.report_id,
+                    decision.proposal_set_id,
+                    decision.resolved_policy_id,
+                ),
+            ).fetchone() != (decision.policy_generation,):
                 return False
             paired_row = (
                 self._connection.execute(
@@ -1305,8 +1346,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
-                "hold.destination=automatic.destination AND hold.active=1)"
-                " UNION ALL SELECT selection.decision_id,selection.occurred_at,"
+                "hold.destination=automatic.destination AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL SELECT selection.decision_id,selection.occurred_at,"
                 "json_extract(selection.document,'$.decision_document') "
                 "FROM current_cover_selection_authorities current "
                 "JOIN cover_selection_authorities selection "
@@ -1317,14 +1359,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic'"
-                " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                "WHERE selection.kind='automatic' AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
                 # An owner's description is the decision its own hold keeps; an
-                # automatic one under a hold waits for Resume (ADR-0085).
-                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                # automatic one under a hold waits for Resume (ADR-0085), and
+                # outside the Automatic posture waits for Automatic again.
+                " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=d.review_case_id AND "
-                "hold.destination='description' AND hold.active=1))"
+                "hold.destination='description' AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + "))"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
                 "AND "
                 + _FIELD_EFFECT_HOLDS_DECISION_SQL
@@ -1402,7 +1448,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
-                "hold.destination=automatic.destination AND hold.active=1) UNION ALL "
+                "hold.destination=automatic.destination AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL "
                 "SELECT selection.decision_id,consideration.review_case_id,'cover','automatic' "
                 "FROM current_cover_selection_authorities current "
                 "JOIN cover_selection_authorities selection "
@@ -1413,11 +1461,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
-                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                "WHERE selection.kind='automatic' AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + " UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
+                " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=d.review_case_id AND "
-                "hold.destination='description' AND hold.active=1))) "
+                "hold.destination='description' AND hold.active=1) AND "
+                + _AUTOMATIC_POSTURE_SQL
+                + "))) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
@@ -1773,7 +1825,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             counts = {
                 state: count
                 for state, count in self._connection.execute(
-                    "SELECT state,count(*) FROM field_effects GROUP BY state"
+                    "SELECT state,count(*) FROM field_effects effect WHERE "
+                    + _FIELD_EFFECT_NOT_DEFERRED_SQL
+                    + " GROUP BY state"
                 ).fetchall()
             }
             owner_action = self._connection.execute(_OWNER_ACTION_COUNT_SQL).fetchone()
@@ -2005,22 +2059,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     decision.report_id,
                     decision.proposal_set_id,
                     decision.resolved_policy_id,
+                    decision.policy_generation,
                 )
                 for decision in automatic_decisions.values()
                 if type(decision) is AutomaticDecision
             }
         )
+        # Each decision binds the outcome set of its own policy generation:
+        # leaving Automatic with the policy unchanged projects the same case,
+        # report, proposal set and policy again under a new generation (#1568).
         automatic_authority: dict[
-            tuple[str, str, str, str],
+            tuple[str, str, str, str, int],
             tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
         ] = {}
         if automatic_identities:
             authority_rows = _bounded_fetch(
                 self._connection.execute(
-                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id) AS (VALUES "
-                    + ",".join("(?,?,?,?)" for _ in automatic_identities)
+                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id,policy_generation) AS (VALUES "
+                    + ",".join("(?,?,?,?,?)" for _ in automatic_identities)
                     + ") SELECT requested.review_case_id,requested.report_id,"
                     "requested.proposal_set_id,requested.resolved_policy_id,"
+                    "requested.policy_generation,"
                     "review.document,proposal.document,outcome.document "
                     "FROM requested "
                     "JOIN review_cases review "
@@ -2034,7 +2093,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "ON outcome.review_case_id=requested.review_case_id "
                     "AND outcome.report_id=requested.report_id "
                     "AND outcome.proposal_set_id=requested.proposal_set_id "
-                    "AND outcome.resolved_policy_id=requested.resolved_policy_id",
+                    "AND outcome.resolved_policy_id=requested.resolved_policy_id "
+                    "AND json_extract(outcome.document,'$.policy_generation')"
+                    "=requested.policy_generation",
                     tuple(
                         value for identity in automatic_identities for value in identity
                     ),
@@ -2046,6 +2107,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 authority_report_id,
                 proposal_set_id,
                 resolved_policy_id,
+                policy_generation,
                 case_document,
                 proposal_document,
                 outcome_document,
@@ -2055,6 +2117,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     authority_report_id,
                     proposal_set_id,
                     resolved_policy_id,
+                    policy_generation,
                 )
                 if identity in automatic_authority or any(
                     type(value) is not str
@@ -2681,6 +2744,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                 projected_automatic.report_id,
                                 projected_automatic.proposal_set_id,
                                 projected_automatic.resolved_policy_id,
+                                cast(
+                                    AutomaticDecision, projected_automatic
+                                ).policy_generation,
                             )
                         )
                         if authority is None:
@@ -3945,6 +4011,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
             "WHERE effect.state IN "
             + _FIELD_EFFECT_WAITING_STATES_SQL
+            + " AND "
+            + _FIELD_EFFECT_NOT_DEFERRED_SQL
             + " ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
         ).fetchone()
         waiting_title = "Recorded work"
@@ -4396,8 +4464,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
             rows = self._connection.execute(
                 "SELECT connection_name,library_name,work_id,destination,state,document "
-                "FROM field_effects WHERE state NOT IN ('verified','superseded','abandoned') "
-                "ORDER BY updated_at DESC,plan_id LIMIT 256"
+                "FROM field_effects effect WHERE state NOT IN "
+                "('verified','superseded','abandoned') AND "
+                + _FIELD_EFFECT_NOT_DEFERRED_SQL
+                + " ORDER BY updated_at DESC,plan_id LIMIT 256"
             ).fetchall()
             for connection, library, work_id, destination, state, document in rows:
                 operation = FieldEffectOperation.from_json(document)

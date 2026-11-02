@@ -22,6 +22,8 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
+from mechanical_librarian.adapters import cover_evidence_observer
+from mechanical_librarian.adapters.evidence_extractors import isolated_audio
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.remote_cover import RemoteCover
 from mechanical_librarian.application.catalogue import CatalogueEntry
@@ -44,6 +46,7 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
 )
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain import metadata_report
 from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioTrackDigest,
@@ -273,7 +276,7 @@ class _FakeAudiobookProvider:
             # store adapter states for a plan carrying no work lane.
             self.calls.append((self.authority, ProviderQueryKind.NONE))
             return ProviderResult(
-                composition.ProviderObservation(
+                metadata_report.ProviderObservation(
                     self.name,
                     ProviderStatus.INSUFFICIENT_INPUT,
                     authority=self.authority,
@@ -406,7 +409,7 @@ def _run(
 
     with (
         patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
-        patch.object(composition, "_IsolatedAudioInspector", _AudioInspector),
+        patch.object(composition, "IsolatedAudioInspector", _AudioInspector),
         patch.object(composition, "audible_catalog_client", return_value=object()),
         patch.object(composition, "audnexus_client", return_value=object()),
         patch.object(composition, "audiosilo_client", return_value=object()),
@@ -492,9 +495,11 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         repository.close()
 
         # The plan was the ASIN one, and every connected provider in the
-        # audiobook dispatch set was asked. The store is connected, enabled and
-        # outside that set, so it was never asked at all (#1254).
-        assert {"audible_catalog", "audnexus", "audiosilo"} == {
+        # audiobook dispatch set was asked except AudioSilo: Audible had
+        # already admitted the recording by stated runtime (#1309). The store
+        # is connected, enabled and outside that set, so it was never asked at
+        # all (#1254).
+        assert {"audible_catalog", "audnexus"} == {
             authority for authority, _kind in calls
         }
         assert {ProviderQueryKind.ASIN} == {
@@ -507,8 +512,12 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         assert {
             "audible": ProviderStatus.CANDIDATES,
             "enrichment": ProviderStatus.CANDIDATES,
-            "silo": ProviderStatus.CANDIDATES,
+            "silo": ProviderStatus.NOT_NEEDED,
         } == {value.provider: value.status for value in published.providers}
+        silo = next(value for value in published.providers if value.provider == "silo")
+        assert [ProviderQueryKind.ASIN] == [lane.kind for lane in silo.lanes]
+        assert () == silo.input_references
+        assert 0 == silo.request_accounting.logical_requests
         # An ASIN lane is not a work lane, so nothing was filtered: the
         # marketplace, the chapter structure and the narrator all survive.
         enrichment = next(
@@ -520,8 +529,8 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v66" == published.schema_version
-        # Three authorities answered the ASIN lane with candidates, so the
+        assert "metadata-report-v67" == published.schema_version
+        # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
         assert ("proposal", "queued", None, None, None) == work
@@ -539,9 +548,12 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
 ) -> None:
     """The primary going dark changes what is recorded, not what is configured.
 
-    Audible is ADR-0061's primary discovery surface. With it unavailable the
-    other two ASIN providers still answer and their evidence is still bound to
-    the report, under exactly the same configuration.
+    Audible is ADR-0061's primary discovery surface. With it unavailable
+    Audnexus still answers and its evidence is still bound to the report,
+    under exactly the same configuration. Its admission by stated runtime
+    leaves AudioSilo nothing to add, so AudioSilo is recorded as not needed:
+    a failed Audible never suppresses it, but an admitting Audnexus does
+    (#1309).
     """
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -571,7 +583,7 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
         statuses = {value.provider: value.status for value in published.providers}
         assert ProviderStatus.UNAVAILABLE is statuses["audible"]
         assert ProviderStatus.CANDIDATES is statuses["enrichment"]
-        assert ProviderStatus.CANDIDATES is statuses["silo"]
+        assert ProviderStatus.NOT_NEEDED is statuses["silo"]
         assert 3 == len(published.providers)
         # A degraded primary is still a published report, and the two
         # authorities that did answer still admit the recording, so the work
@@ -614,6 +626,14 @@ def test_an_unmatched_audiobook_records_its_evidence_and_completes(
 
         assert 3 == len(published.providers)
         assert not any(observation.candidates for observation in published.providers)
+        # Nothing admitted, so AudioSilo was asked, and its lane was empty.
+        silo = next(value for value in published.providers if value.provider == "silo")
+        assert ProviderStatus.NO_MATCH is silo.status
+        assert ["empty"] * len(silo.lanes) == [
+            lane.dispatch.outcome.value if lane.dispatch else None
+            for lane in silo.lanes
+        ]
+        assert silo.lanes
         assert ("complete", "complete", None, None, "evidence_only") == work
         assert remaining is None
         assert progress is not None
@@ -749,7 +769,7 @@ def _published_with_covers(
         return RemoteCover(url, "image/jpeg", payloads[url])
 
     providers = _cover_providers(calls, audible_url=audible_url)
-    with patch.object(composition, "fetch_remote_cover", side_effect=fetch):
+    with patch.object(cover_evidence_observer, "fetch_remote_cover", side_effect=fetch):
         serialized, repository = _run(root, providers, covers=covers)
     repository.close()
     return MetadataReport.from_json(serialized)
@@ -905,7 +925,7 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             AudioInspectionOutcome.SUCCESS,
         ),
     ):
-        inspected = composition._IsolatedAudioInspector().inspect(
+        inspected = composition.IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
             268435456,
@@ -1210,7 +1230,7 @@ def test_recording_collision_cannot_add_owner_choices(
         "run_probe_child",
         return_value=(json.dumps(probe).encode(), AudioInspectionOutcome.SUCCESS),
     ):
-        inspected = composition._IsolatedAudioInspector().inspect(
+        inspected = composition.IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
             268435456,
@@ -1634,8 +1654,8 @@ def _alternative_flow(
         )
 
     target_file = TargetFile(_FILE_IDENTITY, relative, "m4b")
-    with patch.object(composition, "run_audio_inspector_child", child):
-        inspected = composition._IsolatedAudioInspector().inspect(
+    with patch.object(isolated_audio, "run_audio_inspector_child", child):
+        inspected = composition.IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (target_file,),
             268435456,
@@ -2473,7 +2493,7 @@ def _ebook_flow(root: Path) -> tuple[MetadataReport, tuple[object, ...], list[st
         ):
             stack.enter_context(patch.object(composition, name, return_value=double))
         stack.enter_context(
-            patch.object(composition, "_IsolatedEpubInspector", Inspector)
+            patch.object(composition, "IsolatedEpubInspector", Inspector)
         )
         serialized, repository = _run(
             root,
@@ -2834,9 +2854,11 @@ def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
         ],
         "hardcover": [("work", record(outcome.EMPTY_OR_REFUSED))],
         "openlibrary": [("work", record(outcome.STARVED))],
-        "silo": [("asin", record(outcome.EMPTY))] * 2,
+        # Audnexus admitted by stated runtime, so AudioSilo was not needed
+        # (#1309); an empty ASIN lane is proved by the unmatched audiobook.
+        "silo": [("asin", record(outcome.NOT_DISPATCHED))] * 2,
     } == lanes
-    assert set(DispatchOutcome) == {
+    assert set(DispatchOutcome) - {outcome.EMPTY} == {
         dispatch.outcome
         for values in lanes.values()
         for _kind, dispatch in values
@@ -2848,7 +2870,7 @@ def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
         "enrichment": outcome.ADMITTED,
         "hardcover": outcome.EMPTY_OR_REFUSED,
         "openlibrary": outcome.STARVED,
-        "silo": outcome.EMPTY,
+        "silo": outcome.NOT_DISPATCHED,
     } == {value.provider: provider_dispatch_class(value) for value in report.providers}
     # The two in-band refusals Audible handed on are the only products asked.
     assert {_DISPATCH_ADMITTED, _DISPATCH_FAILING} == {

@@ -20,6 +20,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 import mechanical_librarian.bootstrap.epub_child as child
+from mechanical_librarian.adapters.evidence_extractors import isolated_epub, local_media
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
     _Rejected,
@@ -1055,7 +1056,7 @@ def test_isolated_inspector_maps_rear_series_to_canonical_report_claims(
     )
     payload = request.source.read_at(0, request.source.length)
     (tmp_path / "book.epub").write_bytes(payload)
-    inspection = composition._IsolatedEpubInspector(
+    inspection = composition.IsolatedEpubInspector(
         CoverArtifactStore(tmp_path / "artifacts")
     ).inspect(
         MediaMountConfiguration("books", str(tmp_path), "/library", True),
@@ -1087,17 +1088,17 @@ def test_isolated_inspector_maps_rear_series_to_canonical_report_claims(
 
 @pytest.mark.parametrize(
     "fault",
-    (composition.LocalMediaError("media unavailable"), OSError("I/O unavailable")),
+    (local_media.LocalMediaError("media unavailable"), OSError("I/O unavailable")),
     ids=("local-media", "os-error"),
 )
 def test_isolated_inspector_maps_local_media_failures_to_unreadable_outcome(
     tmp_path: Path, fault: OSError
 ) -> None:
-    inspector = composition._IsolatedEpubInspector(
+    inspector = composition.IsolatedEpubInspector(
         CoverArtifactStore(tmp_path / "artifacts")
     )
     with (
-        patch.object(composition, "open_local_media", side_effect=fault),
+        patch.object(isolated_epub, "open_local_media", side_effect=fault),
         pytest.raises(ItemInspectionError) as raised,
     ):
         inspector.inspect(
@@ -1111,14 +1112,14 @@ def test_isolated_inspector_maps_local_media_failures_to_unreadable_outcome(
 def test_isolated_inspector_maps_media_limit_to_parser_resource_outcome(
     tmp_path: Path,
 ) -> None:
-    inspector = composition._IsolatedEpubInspector(
+    inspector = composition.IsolatedEpubInspector(
         CoverArtifactStore(tmp_path / "artifacts")
     )
     with (
         patch.object(
-            composition,
+            isolated_epub,
             "open_local_media",
-            side_effect=composition.LocalMediaLimitError(
+            side_effect=local_media.LocalMediaLimitError(
                 "local media source exceeds its byte limit"
             ),
         ),
@@ -3168,7 +3169,7 @@ def test_isolated_inspector_keeps_a_recovered_cover_as_shadow_evidence(
     )
     (tmp_path / "book.epub").write_bytes(payload)
     artifacts = tmp_path / "artifacts"
-    inspection = composition._IsolatedEpubInspector(
+    inspection = composition.IsolatedEpubInspector(
         CoverArtifactStore(artifacts)
     ).inspect(
         MediaMountConfiguration("books", str(tmp_path), "/library", True),

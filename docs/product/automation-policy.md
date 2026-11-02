@@ -62,8 +62,9 @@ option while the field is Automatic visibly changes it to Ask me.
 ### Posture and safety controls
 
 The global posture is Review, Preview or Automatic. Automatic decisions are
-recorded only in the Automatic posture. Preview records what policy would do
-without deciding, so an owner can start there and confirm Automatic later.
+recorded only in the Automatic posture, and write only there. Preview records
+what policy would do without deciding or writing, so an owner can start there
+and confirm Automatic later.
 
 Automatic fails closed. While the owner has paused automation, or a global or
 category suspension is active, would-be automatic work stays in Attention for
@@ -287,9 +288,18 @@ title-combination candidate already covers it.
 
 Audiobook subtitles may fill an empty value or replace a recognized whole-field
 award, bestseller or adaptation announcement with descriptive text. On either
-medium, a title candidate with any part (after a colon, spaced dash, comma or
-semicolon, or in an enclosure) that is such an announcement is never automatic.
-A current title holding one may still be replaced by a plain title.
+medium, a title candidate with any part (after a colon, an underscore and a
+space, a spaced dash, a comma or a semicolon, or in an enclosure) that is such
+an announcement is never automatic. A current title holding one may still be
+replaced by a plain title.
+
+On either medium, a subtitle that only restates the series is never written
+for you, filled or replaced; it stays your choice. That is a value the series
+grammar reads as a position ("Saga, Book 3", "Saga #2"), or one naming a series
+that the book's series field, a source's series or a proposed series states,
+inside a closed frame ("A Saga Novel", "Book 3 of Saga",
+"The Third Saga Novel", "Saga 4"). Other wording is left alone, so "A Tale of
+Saga" can still be written.
 
 A corroborated title/subtitle split needs both options Automatic and both
 current decisions and consents. One request writes the pair, both read-backs
@@ -457,7 +467,10 @@ How a recording is admitted is in the
 
 A title replacement that deletes a series label asks the owner unless the
 series is already populated, is filled automatically in the same outcome, or
-the removed text is carried by an automatic subtitle split.
+the removed text is carried by an automatic subtitle split. The removed text is
+read in parts split at the same separators, including an underscore and a space
+("Title_ A Saga Novel"), and a series named only by a subtitle label such as
+"Saga, Book 4" counts as one this book states.
 
 **Work-only review.** When the recording stays unresolved but each source has a
 complete work witness, the owner may choose description, genres, series, series
