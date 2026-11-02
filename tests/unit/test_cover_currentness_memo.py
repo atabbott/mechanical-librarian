@@ -550,7 +550,16 @@ def test_browse_with_a_warm_memo_equals_browse_without_one(
         return seen
 
     states: dict[str, set[str]] = {"fixture": compare()}
-    assert _held(memo) >= len(cases)
+    # A verified current cover is kept without asking (#1310), so browse
+    # reads the currentness of every other case's cover.
+    asking = connection.execute(
+        "SELECT count(*) FROM review_cases rc WHERE NOT EXISTS (SELECT 1 "
+        "FROM json_each(rc.document,'$.results') result,"
+        "json_each(result.value,'$.reasons') reason "
+        "WHERE reason.value='current_cover_verified')"
+    ).fetchone()[0]
+    assert 0 < asking < len(cases)
+    assert _held(memo) >= asking
     with _counted_parses() as parsed:
         for observation in observations():
             if observation is None:

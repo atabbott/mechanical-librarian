@@ -4413,17 +4413,24 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()
                 expect(retry).to_have_count(0)
-                expect(page.get_by_text("1 remaining · field 1 of 1")).to_be_visible()
+                # A readable current cover is kept without asking, and the
+                # owner can still choose another one (#1310).
+                expect(page.get_by_text("0 remaining · field 1 of 1")).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Your current cover is kept, so no review is needed. "
+                        "You can still choose another cover."
+                    )
+                ).to_be_visible()
                 library = page.request.get(f"{origin}/api/v1/library?lens=all").json()
                 attention = page.request.get(f"{origin}/api/v1/attention").json()
-                assert library["counts"]["needs_attention"] == 1, library
-                assert attention["total"] == 1, attention
-                page.get_by_role(
+                assert library["counts"]["needs_attention"] == 0, library
+                assert attention["total"] == 0, attention
+                epub = page.get_by_role(
                     "radio", name="Choose EPUB file cover", exact=True
-                ).click()
-                expect(
-                    page.get_by_role("heading", name="Review complete")
-                ).to_be_visible()
+                )
+                epub.click()
+                expect(epub).to_be_checked()
             browser.close()
 
 

@@ -67,6 +67,10 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** A readable current cover is kept without asking,
+  even when a better cover is recommended or an earlier cover choice went
+  stale. Other sources' covers stay choosable on the work's page, which offers
+  to prepare a comparison when none is current (#1310).
 - **Clean rebuild required.** The image now runs Python 3.15, and Python 3.13
   to 3.15 are supported. Python 3.15's newer Unicode data means an existing
   application database is refused at startup until it is rebuilt (#1639).

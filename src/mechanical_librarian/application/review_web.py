@@ -931,6 +931,7 @@ class InspectCurrentReviewCase:
                         and cover_is_current
                         and current_cover_consideration is not None
                         and current_cover_consideration["ready"] is True
+                        and not _kept_cover(proposal)
                     )
                 ),
                 automatic_outcome=(
@@ -975,17 +976,30 @@ class InspectCurrentReviewCase:
                 proposed_values=tuple(
                     alternative["value"] for alternative in alternatives
                 ),
-                # A recording's undecided fill stays the owner's to choose in
-                # its case without joining the queue (#1249).
-                owner_choosable=cover_admits
-                and case.media_kind == "audiobook"
-                and automatic_decision is None
-                and bool(actions),
+                # A recording's undecided fill, and a kept readable cover,
+                # stay the owner's to choose in their case without joining
+                # the queue (#1249, #1310). A kept cover with no current
+                # comparison is still choosable: the owner can prepare one.
+                owner_choosable=automatic_decision is None
+                and (
+                    (cover_admits and case.media_kind == "audiobook" and bool(actions))
+                    or (
+                        _kept_cover(proposal)
+                        and (
+                            (cover_admits and bool(actions))
+                            or (
+                                cover_preparation_available
+                                and result["outcome"] == "unresolved_choice"
+                            )
+                        )
+                    )
+                ),
                 changeable=bool(actions) or owner_entry,
                 # With no alternative to list, an unsupported field is a
                 # contextual row, which offers no controls (below).
                 owner_entry=owner_entry and bool(alternatives),
                 immaterial_alternatives="work_alternative_immaterial" in reasons,
+                kept_cover=_kept_cover(proposal),
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
@@ -3021,6 +3035,20 @@ def _report_facts(report_document: str) -> LibraryReportFacts:
         raise ReviewWebError("unavailable") from error
 
 
+def _kept_cover(proposal: dict[str, object]) -> bool:
+    """A readable current cover is kept without asking (#1310).
+
+    Its alternatives stay choosable on the work's page; neither its choice nor
+    its consideration puts it in the queue, as `_VERIFIED_CURRENT_COVER_SQL`
+    reads it.
+    """
+    result = proposal["result"]
+    assert type(result) is dict
+    reasons = result["reasons"]
+    assert type(reasons) is list
+    return proposal["destination"] == "cover" and "current_cover_verified" in reasons
+
+
 def _needs_attention(
     proposal: dict[str, object],
     automatic_attention_destinations: tuple[str, ...] = (),
@@ -3034,7 +3062,8 @@ def _needs_attention(
     the case detail hold no medium-specific reason (#1249). The action list
     beside this decides whether a choice exists at all (#967). A work-route
     choice whose alternatives only trim or extend the current value stays
-    choosable without asking, as the persisted field facts read it (#1253).
+    choosable without asking, as the persisted field facts read it (#1253),
+    and so does a cover choice over a verified current cover (#1310).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -3043,10 +3072,10 @@ def _needs_attention(
     return (
         proposal["destination"] in policy_attention_destinations
         or proposal["destination"] in automatic_attention_destinations
-        or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or (
             result["outcome"] == "unresolved_choice"
             and "work_alternative_immaterial" not in reasons
+            and not _kept_cover(proposal)
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons

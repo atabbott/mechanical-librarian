@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -38,6 +39,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
@@ -80,6 +82,7 @@ def _for_item(
     *,
     connection: str | None = None,
     library: str | None = None,
+    readable_cover: bool = True,
 ) -> MetadataReport:
     return MetadataReport.create(
         target=TargetFacts(
@@ -92,7 +95,11 @@ def _for_item(
         local_claims=source.local_claims,
         local_reasons=source.local_reasons,
         providers=source.providers,
-        cover_sources=source.cover_sources,
+        cover_sources=tuple(
+            value
+            for value in source.cover_sources
+            if readable_cover or value.kind is not CoverSourceKind.ABS
+        ),
     )
 
 
@@ -133,6 +140,9 @@ def _publish_current_cover_consideration(
         identity,
         connection=connection,
         library=library,
+        # Without its readable current cover the work's cover asks; a
+        # readable one is kept without asking (#1310).
+        readable_cover=False,
     )
     proposal = evaluate_report(report)
     repository.publish(report, lambda: True)
@@ -1009,7 +1019,6 @@ def _dispatch_configuration() -> ApplicationConfiguration:
 
 def _census_reports() -> tuple[MetadataReport, ...]:
     """Three audiobook reports whose lanes reach every dispatch outcome."""
-    from dataclasses import replace
 
     from mechanical_librarian.application.metadata_report import (
         MetadataDiscoveryLane,
@@ -1437,7 +1446,6 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
     The second work-only report's series comes from a provider outside the
     audiobook authorities, so it retains no recording candidate at all.
     """
-    from dataclasses import replace
 
     from mechanical_librarian.application.metadata_report import (
         MetadataDiscoveryPlan,

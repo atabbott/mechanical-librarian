@@ -506,7 +506,9 @@ def test_failed_fixture_activation_releases_root_authority(
 def test_persistent_browse_observes_live_cover_policy_rebinding(tmp_path: Path) -> None:
     from mechanical_librarian.application.cover_policy import CoverPolicy
 
-    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    # A mixed store's first work has no readable current cover, so its cover
+    # asks and the live policy can hide it (#1310).
+    fixture = OwnerResponsivenessFixture(tmp_path, 3, mixed=True)
     try:
         capture = fixture.browse._capture_cover_read
         assert capture is not None
@@ -1927,7 +1929,9 @@ def test_retained_incumbent_readiness_preserves_admitted_actions(
             candidate["manual_eligible"] for candidate in consideration["candidates"]
         )
         assert cover["editable"] is ineligible_alternative
-        assert cover["needs_attention"] is ineligible_alternative
+        # The readable incumbent is kept without asking; its choice stays
+        # editable on the work's page (#1310).
+        assert cover["needs_attention"] is False
         page = fixture.application.library(
             lens="all", search=None, limit=5, cursor=None
         )
@@ -1935,10 +1939,7 @@ def test_retained_incumbent_readiness_preserves_admitted_actions(
             field["needs_attention"] for field in detail["fields"]
         )
         attention = fixture.application.attention(search=None, limit=10, cursor=None)
-        assert (
-            any(item["destination"] == "cover" for item in attention.items)
-            is ineligible_alternative
-        )
+        assert not any(item["destination"] == "cover" for item in attention.items)
         proposal_id = cover["proposal_id"]
         consideration_id = consideration["consideration_id"]
         assert isinstance(proposal_id, str) and isinstance(consideration_id, str)
