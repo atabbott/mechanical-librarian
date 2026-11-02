@@ -72,6 +72,10 @@ _SERIES = ("Saltmarsh Chronicles",)
         ("A Saltmarsh Story Novel", ("Saltmarsh Story",)),
         ("A Saltmarsh Story", ("Saltmarsh Story",)),
         ("Saltmarsh Book 4", ("Saltmarsh Book",)),
+        # A series that starts with an ordinal keeps it.
+        ("A First Law Novel", ("First Law",)),
+        ("The Second Tidewater Novel", ("Second Tidewater",)),
+        ("The Second Tidewater Novel", ("Tidewater",)),
     ),
 )
 def test_a_series_restating_subtitle_is_read(value, series_names):

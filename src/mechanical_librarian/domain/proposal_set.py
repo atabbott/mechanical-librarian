@@ -5582,6 +5582,7 @@ _RESTATEMENT_LEADING_POSITION = re.compile(
 _RESTATEMENT_LEADING_ARTICLE = re.compile(
     rf"^(?:an?|the) (?:{_SERIES_ORDINAL} )?", re.IGNORECASE
 )
+_RESTATEMENT_ARTICLE_ONLY = re.compile(r"^(?:an?|the) ", re.IGNORECASE)
 _RESTATEMENT_TRAILING_NOUN = re.compile(
     r" (?:novel|novella|novelette|story|book)$", re.IGNORECASE
 )
@@ -5618,21 +5619,26 @@ def subtitle_restates_series(value: object, series_names: tuple[str, ...]) -> bo
     }
     if not keys:
         return False
+
+    def named(candidate: str) -> bool:
+        return _part_key(candidate, series_name_equivalence_key) in keys
+
     # Identity is asked before each removal, so a series whose own name ends
-    # in a frame word ("Saltmarsh Story") is never cut short.
+    # in a frame word ("Saltmarsh Story") or starts with an ordinal ("First
+    # Law") is never cut short.
     core = text
     while True:
-        if _part_key(core, series_name_equivalence_key) in keys:
+        if named(core):
             return True
         before = core
         core = _RESTATEMENT_LEADING_POSITION.sub("", core)
         if _RESTATEMENT_TRAILING_NOUN.search(core):
+            for article in (_RESTATEMENT_ARTICLE_ONLY, _RESTATEMENT_LEADING_ARTICLE):
+                framed = article.sub("", core)
+                if named(framed) or named(_RESTATEMENT_TRAILING_NOUN.sub("", framed)):
+                    return True
             core = _RESTATEMENT_LEADING_ARTICLE.sub("", core)
-            if _part_key(core, series_name_equivalence_key) in keys:
-                return True
             core = _RESTATEMENT_TRAILING_NOUN.sub("", core)
-            if _part_key(core, series_name_equivalence_key) in keys:
-                return True
         core = _RESTATEMENT_TRAILING_POSITION.sub("", core).strip(" ,:;-")
         if core == before:
             return False
