@@ -517,7 +517,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     return <StaleBuildRead lead="Reviewer access was not loaded." />
   if (query.isError)
     return (
-      <div role="alert">
+      <div role="alert" className="settings-reviewer-unavailable">
         <p>Reviewer access is unavailable.</p>
         <button ref={accessRetryTrigger} type="button" onClick={() => void query.refetch()}>
           Try again

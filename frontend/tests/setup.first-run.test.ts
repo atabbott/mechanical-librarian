@@ -596,7 +596,9 @@ describe('shipped first-run setup script', () => {
       const key = screen.getByLabelText('Audiobookshelf API key')
       fireEvent.input(endpoint, { target: { value: 'https://books.invalid:8443' } })
       fireEvent.input(key, { target: { value: 'target-key' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+      const verify = screen.getByRole('button', { name: 'Verify and continue' })
+      verify.focus()
+      fireEvent.click(verify)
 
       const alert = await screen.findByRole('alert')
       await waitFor(() => expect(alert).toHaveTextContent(copy))
@@ -610,9 +612,22 @@ describe('shipped first-run setup script', () => {
         expect(endpoint).not.toHaveAttribute('aria-invalid')
         expect(key).not.toHaveAttribute('aria-invalid')
         expect(document.querySelectorAll('#setup-main [aria-invalid]')).toHaveLength(0)
+        if (code === 'csrf') {
+          // A rotated token reloads the step: the alert opens the fresh form.
+          expect(alert.parentElement?.firstElementChild).toBe(alert)
+        } else {
+          // A refusal about neither field sits directly under the pressed
+          // button, which is usable again and keeps focus (#1664).
+          expect(alert.previousElementSibling).toBe(verify)
+          expect(alert.nextElementSibling).toBeNull()
+          expect(verify).toBeEnabled()
+          expect(verify).toHaveFocus()
+        }
       } else {
         const invalid = invalidField === 'key' ? key : endpoint
         const released = invalidField === 'key' ? endpoint : key
+        // A field refusal stays after its field, above the button.
+        expect(alert.previousElementSibling).toBe(invalid.closest('.field'))
         expect(invalid).toHaveAttribute('aria-invalid', 'true')
         expect(invalid).toHaveAttribute('aria-describedby', alert.id)
         expect(invalid).toHaveFocus()
@@ -975,6 +990,63 @@ describe('shipped first-run setup script', () => {
       expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue('/discovered/books'),
     )
     expect(changes).toEqual([{ expected_revision: 7, step: 'mounts' }])
+  })
+
+  it('places a refused mount comparison under Check mounts and keeps the typed path (#1664)', async () => {
+    const library = {
+      connection: 'primary',
+      display_name: 'Reading Shelf',
+      library_id: 'books-id',
+      media_kind: 'book',
+      name: 'books',
+      provider_connections: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url.startsWith('/api/setup/libraries?'))
+          return response({
+            libraries: [
+              {
+                library_id: 'books-id',
+                media_kind: 'book',
+                name: 'Reading Shelf',
+                service_path: '/discovered/books',
+                service_path_state: 'available',
+              },
+            ],
+          })
+        if (url === '/api/setup/mounts' && init?.method === 'POST')
+          return response({ detail: { error: 'invalid_mounts' } }, 422)
+        return response(
+          setupState('mounts', {
+            completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+            libraries: [library],
+            revision: 5,
+          }),
+        )
+      }),
+    )
+    runSetup()
+
+    const heading = await screen.findByRole('heading', { name: 'Check read-only mounts' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    const path = screen.getByLabelText('Reading Shelf service path')
+    fireEvent.input(path, { target: { value: '/owner/typed/books' } })
+    const check = screen.getByRole('button', { name: 'Check mounts' })
+    check.focus()
+    fireEvent.click(check)
+
+    const alert = await screen.findByRole('alert')
+    await waitFor(() =>
+      expect(alert).toHaveTextContent('One of those service paths could not be used.'),
+    )
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(alert.previousElementSibling).toBe(check)
+    expect(path).toHaveValue('/owner/typed/books')
+    expect(check).toBeEnabled()
+    expect(check).toHaveFocus()
   })
 
   it('changes nothing when a reopen is refused', async () => {
@@ -1351,6 +1423,39 @@ describe('shipped first-run setup script', () => {
         },
       ],
     })
+  })
+
+  it('places a library step failure under Continue and keeps the selection (#1664)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url.startsWith('/api/setup/libraries?'))
+          return response({
+            libraries: [{ library_id: 'books', media_kind: 'book', name: 'Books' }],
+          })
+        if (url === '/api/setup/libraries' && init?.method === 'POST')
+          return response({ detail: { error: 'unavailable' } }, 502)
+        return response(setupState('libraries'))
+      }),
+    )
+    runSetup()
+
+    const heading = await screen.findByRole('heading', { name: 'Choose libraries' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    const books = screen.getByRole('checkbox', { name: 'Books' })
+    fireEvent.click(books)
+    const next = screen.getByRole('button', { name: 'Continue' })
+    next.focus()
+    fireEvent.click(next)
+
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(alert.previousElementSibling).toBe(next)
+    expect(books).toBeChecked()
+    expect(next).toBeEnabled()
+    expect(next).toHaveFocus()
   })
 
   it.each([
@@ -1733,12 +1838,56 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Skip providers' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(
       'Setup changed in another tab. The latest recorded step has been restored.',
+    )
+    // The reloaded step opens with the alert and focuses its heading.
+    expect(alert.parentElement?.firstElementChild).toBe(alert)
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Choose metadata providers' })).toHaveFocus(),
     )
     // The state was read again, which issues this tab a fresh form token.
     expect(reads).toBe(2)
   })
+
+  it.each([
+    ['Continue', 422, 'invalid_providers', 'One of those provider entries could not be recorded.'],
+    ['Skip providers', 503, 'unavailable', 'Setup could not finish that step'],
+  ] as const)(
+    'places a failed %s under the providers action row (#1664)',
+    async (name, status, code, copy) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+          const url = requestUrl(request)
+          if (url.startsWith('/api/setup/libraries?')) return response({ libraries: [] })
+          if (url === '/api/setup/providers' && init?.method === 'POST')
+            return response({ detail: { error: code } }, status)
+          return response(setupState('providers'))
+        }),
+      )
+      runSetup()
+
+      const heading = await screen.findByRole('heading', { name: 'Choose metadata providers' })
+      await waitFor(() => expect(heading).toHaveFocus())
+      const pressed = screen.getByRole('button', { name })
+      pressed.focus()
+      fireEvent.click(pressed)
+
+      const alert = await screen.findByRole('alert')
+      await waitFor(() => expect(alert).toHaveTextContent(copy))
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      // After the whole row, not inside it beside the buttons.
+      const row = alert.previousElementSibling
+      expect(row).toHaveClass('actions')
+      expect(row).toContainElement(screen.getByRole('button', { name: 'Continue' }))
+      expect(row).toContainElement(screen.getByRole('button', { name: 'Skip providers' }))
+      expect(alert.nextElementSibling).toBeNull()
+      expect(pressed).toBeEnabled()
+      expect(pressed).toHaveFocus()
+    },
+  )
 
   it('renders reviewer recommendations, the free catalogue option, and manual entry', async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
@@ -2850,6 +2999,120 @@ it.each([
     expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
   },
 )
+
+it.each([
+  ['Continue without a reviewer', 503, 'unavailable', 'Setup could not finish that step', false],
+  [
+    'Continue with this reviewer',
+    409,
+    'reviewer_unconfigured',
+    'The selected reviewer is no longer ready',
+    true,
+  ],
+] as const)(
+  'places a failed %s under that button (#1664)',
+  async (name, status, code, copy, mapped) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/reviewer' && init?.method === 'POST')
+          return response({ detail: { error: code } }, status)
+        if (url.endsWith('/reviewer-access'))
+          return response({
+            ...reviewerAccess('ready'),
+            mapping: mapped ? { engine: 'openrouter', model: 'openai/gpt-6-luna' } : null,
+          })
+        return response(setupState('reviewer'))
+      }),
+    )
+    runSetup()
+    const pressed = await screen.findByRole('button', { name })
+    await reviewerStepSettled()
+    pressed.focus()
+    fireEvent.click(pressed)
+
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(alert).toHaveTextContent(copy))
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(alert.previousElementSibling).toBe(pressed)
+    if (mapped) expect(alert.nextElementSibling).toBeNull()
+    else
+      expect(alert.nextElementSibling).toBe(
+        screen.getByRole('heading', { name: 'Contained Codex' }).closest('.option'),
+      )
+    expect(pressed).toBeEnabled()
+    expect(pressed).toHaveFocus()
+    expect(screen.getByText('Status: ready to sign in')).toBeVisible()
+  },
+)
+
+it('keeps one alert when a failed Start is followed by a failed Continue (#1664)', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer' && init?.method === 'POST')
+        return response({ detail: { error: 'unavailable' } }, 503)
+      if (init?.method === 'POST') return response({ error: 'unreachable' }, 422)
+      return response(
+        url.endsWith('/reviewer-access') ? reviewerAccess('ready') : setupState('reviewer'),
+      )
+    }),
+  )
+  runSetup()
+  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await reviewerStepSettled()
+  start.focus()
+  fireEvent.click(start)
+  const first = await screen.findByRole('alert')
+  await waitFor(() => expect(first).toHaveTextContent('OpenRouter could not be reached'))
+  expect(first.previousElementSibling).toBe(start)
+
+  const skip = screen.getByRole('button', { name: 'Continue without a reviewer' })
+  skip.focus()
+  fireEvent.click(skip)
+  await waitFor(() =>
+    expect(screen.getByRole('alert')).toHaveTextContent('Setup could not finish that step'),
+  )
+  const alerts = screen.getAllByRole('alert')
+  expect(alerts).toHaveLength(1)
+  expect(alerts[0]?.previousElementSibling).toBe(skip)
+})
+
+it('leaves blocked Codex controls disabled after a failed Continue without a reviewer (#1664)', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer' && init?.method === 'POST')
+        return response({ detail: { error: 'unavailable' } }, 503)
+      return response(
+        url.endsWith('/reviewer-access')
+          ? reviewerAccess('not_provisioned', 'profile_not_provisioned')
+          : setupState('reviewer'),
+      )
+    }),
+  )
+  runSetup()
+  const skip = await screen.findByRole('button', { name: 'Continue without a reviewer' })
+  await reviewerStepSettled()
+  const start = screen.getByRole('button', { name: 'Start device sign-in' })
+  const check = screen.getByRole('button', { name: 'Check existing sign-in' })
+  expect(start).toBeDisabled()
+  expect(check).toBeDisabled()
+  skip.focus()
+  fireEvent.click(skip)
+
+  const alert = await screen.findByRole('alert')
+  await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+  expect(skip).toBeEnabled()
+  // Only what the press disabled is enabled again: the blocked host's
+  // sign-in controls stay as they were.
+  expect(start).toBeDisabled()
+  expect(check).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Validate and use OpenRouter' })).toBeEnabled()
+})
 
 it.each([
   ['cancelled', 'Any active sign-in was cancelled.'],

@@ -19,6 +19,10 @@ import pytest
 
 from mechanical_librarian.adapters.reviewers import codex_device_auth as auth_module
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
+from mechanical_librarian.adapters.reviewers.codex_auth_lease import (
+    CodexAuthLeaseCoordinator,
+    LazyCodexAuth,
+)
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexAuthCommand,
     CodexDeviceAuthError,
@@ -34,10 +38,6 @@ from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
 )
 from mechanical_librarian.application.reviewer_contracts import DeviceAuthStatus
-from mechanical_librarian.bootstrap.composition import (
-    _CodexAuthLeaseCoordinator,
-    _LazyCodexAuth,
-)
 
 # Captured once from the pinned Codex CLI; a pin bump must recapture it.
 _CAPTURE_PATH = Path(__file__).parents[1] / "fixtures" / "codex-device-auth-prompt.json"
@@ -452,7 +452,7 @@ def test_flow_retains_activity_and_process_until_cleanup_is_proven(
 def test_permanent_cleanup_failure_stops_and_quarantines_shared_admission(
     tmp_path: Path,
 ) -> None:
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     holder: dict[str, CodexDeviceAuthManager] = {}
 
     def manager_factory(
@@ -470,8 +470,8 @@ def test_permanent_cleanup_failure_stops_and_quarantines_shared_admission(
         holder["manager"] = manager
         return manager
 
-    owner = _LazyCodexAuth(manager_factory, coordinator)
-    successor = _LazyCodexAuth(manager_factory, coordinator)
+    owner = LazyCodexAuth(manager_factory, coordinator)
+    successor = LazyCodexAuth(manager_factory, coordinator)
     owner.activate_lease()
     assert owner.status().state == "ready"
     manager = holder["manager"]
@@ -518,7 +518,7 @@ def test_foreground_recheck_cleanup_failure_quarantines_every_codex_admission(
     credential = profile / "auth.json"
     credential.write_bytes(_auth_document())
     credential.chmod(0o600)
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     holder: dict[str, CodexDeviceAuthManager] = {}
     spawns = 0
 
@@ -544,8 +544,8 @@ def test_foreground_recheck_cleanup_failure_quarantines_every_codex_admission(
         holder["manager"] = manager
         return manager
 
-    owner = _LazyCodexAuth(manager_factory, coordinator)
-    successor = _LazyCodexAuth(manager_factory, coordinator)
+    owner = LazyCodexAuth(manager_factory, coordinator)
+    successor = LazyCodexAuth(manager_factory, coordinator)
     owner.activate_lease()
     assert owner.current_credential_status().state == "configured"
     manager = holder["manager"]
@@ -829,8 +829,8 @@ def _installed_credential(tmp_path: Path) -> None:
     assert (tmp_path / "profile" / "auth.json").exists()
 
 
-def _lazy_over(manager: CodexDeviceAuthManager) -> _LazyCodexAuth:
-    lazy = _LazyCodexAuth(Mock(), _CodexAuthLeaseCoordinator())
+def _lazy_over(manager: CodexDeviceAuthManager) -> LazyCodexAuth:
+    lazy = LazyCodexAuth(Mock(), CodexAuthLeaseCoordinator())
     lazy._manager = manager
     return lazy
 
@@ -1239,7 +1239,7 @@ def test_application_reads_report_each_recorded_recheck(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(":memory:", isolation_level=None)
     _create_schema(connection)
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     holder: dict[str, CodexDeviceAuthManager] = {}
 
     def factory(
@@ -1258,7 +1258,7 @@ def test_application_reads_report_each_recorded_recheck(tmp_path: Path) -> None:
 
     operations = ReviewerAccessOperations(
         ReviewerAccessStore(connection),
-        codex_auth=_LazyCodexAuth(factory, coordinator),
+        codex_auth=LazyCodexAuth(factory, coordinator),
         codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
             True, None, model="gpt-5.6-sol"
         ),
@@ -1549,7 +1549,7 @@ def test_cancelled_flow_child_is_released_at_spawn_and_never_read(
 def test_terminal_install_uses_lease_before_manager_lock_and_handoff_completes(
     tmp_path: Path,
 ) -> None:
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     validation_complete = Event()
     release_validation = Event()
     foreground_has_lease = Event()
@@ -1591,8 +1591,8 @@ def test_terminal_install_uses_lease_before_manager_lock_and_handoff_completes(
         holder["manager"] = manager
         return manager
 
-    predecessor = _LazyCodexAuth(predecessor_factory, coordinator)
-    successor = _LazyCodexAuth(
+    predecessor = LazyCodexAuth(predecessor_factory, coordinator)
+    successor = LazyCodexAuth(
         lambda lease, guard: _manager(tmp_path, lease_current=lease, lease_guard=guard),
         coordinator,
     )
@@ -1701,7 +1701,7 @@ def test_active_device_flow_excludes_external_recheck_and_selection_probe(
 
 
 def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> None:
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     validating = Event()
     validation_finishing = Event()
     release_validation = Event()
@@ -1737,8 +1737,8 @@ def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> No
         holder["manager"] = manager
         return manager
 
-    predecessor = _LazyCodexAuth(predecessor_factory, coordinator)
-    successor = _LazyCodexAuth(
+    predecessor = LazyCodexAuth(predecessor_factory, coordinator)
+    successor = LazyCodexAuth(
         lambda lease, _guard: _manager(tmp_path, lease_current=lease), coordinator
     )
     predecessor.activate_lease()
@@ -1774,7 +1774,7 @@ def test_successor_lease_revokes_flow_before_stale_install(tmp_path: Path) -> No
 
 
 def test_handoff_winning_before_start_admission_touches_nothing(tmp_path: Path) -> None:
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     approaching_guard = Event()
     resume_start = Event()
     popen_calls = 0
@@ -1805,8 +1805,8 @@ def test_handoff_winning_before_start_admission_touches_nothing(tmp_path: Path) 
         holder["manager"] = manager
         return manager
 
-    predecessor = _LazyCodexAuth(predecessor_factory, coordinator)
-    successor = _LazyCodexAuth(
+    predecessor = LazyCodexAuth(predecessor_factory, coordinator)
+    successor = LazyCodexAuth(
         lambda lease, guard: _manager(tmp_path, lease_current=lease, lease_guard=guard),
         coordinator,
     )
@@ -1831,11 +1831,11 @@ def test_handoff_winning_before_start_admission_touches_nothing(tmp_path: Path) 
 
 
 def test_failed_predecessor_drain_admits_no_successor_owner() -> None:
-    coordinator = _CodexAuthLeaseCoordinator()
+    coordinator = CodexAuthLeaseCoordinator()
     manager = Mock(spec=CodexDeviceAuthManager)
     manager.close.side_effect = CodexDeviceAuthError("process")
-    predecessor = _LazyCodexAuth(lambda _lease, _guard: manager, coordinator)
-    successor = _LazyCodexAuth(lambda _lease, _guard: manager, coordinator)
+    predecessor = LazyCodexAuth(lambda _lease, _guard: manager, coordinator)
+    successor = LazyCodexAuth(lambda _lease, _guard: manager, coordinator)
     predecessor.activate_lease()
     predecessor._manager = manager
 
@@ -1889,7 +1889,7 @@ def test_clear_failures_never_report_success(
 def test_lazy_production_wrapper_propagates_clear_failure() -> None:
     manager = Mock(spec=CodexDeviceAuthManager)
     manager.clear.side_effect = OSError("private unlink detail")
-    lazy = _LazyCodexAuth(lambda _lease, _guard: manager, _CodexAuthLeaseCoordinator())
+    lazy = LazyCodexAuth(lambda _lease, _guard: manager, CodexAuthLeaseCoordinator())
     lazy.activate_lease()
 
     with pytest.raises(OSError, match="private unlink detail"):
@@ -1898,7 +1898,7 @@ def test_lazy_production_wrapper_propagates_clear_failure() -> None:
 
 def test_lazy_passive_status_does_not_construct_codex_authority() -> None:
     factory = Mock()
-    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+    lazy = LazyCodexAuth(factory, CodexAuthLeaseCoordinator())
 
     assert lazy.passive_status() == CodexDeviceAuthState("ready")
     assert lazy.cancel() == CodexDeviceAuthState("ready")
@@ -1920,7 +1920,7 @@ def test_lazy_passive_status_contains_an_existing_manager_failure_like_status(
     factory = Mock()
     manager = Mock(spec=CodexDeviceAuthManager)
     manager.status.side_effect = failure
-    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+    lazy = LazyCodexAuth(factory, CodexAuthLeaseCoordinator())
     lazy._manager = manager
     failed = CodexDeviceAuthState("failed", failure="permission_or_profile")
 
@@ -2172,7 +2172,7 @@ def test_lazy_cancel_uses_existing_manager_after_profile_disappears(
         calls.append(profile.read_bytes())
         return manager
 
-    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+    lazy = LazyCodexAuth(factory, CodexAuthLeaseCoordinator())
     assert lazy.status().state == "ready"
     profile.unlink()
     process = cast("subprocess.Popen[bytes]", _Process(b"", 0))
