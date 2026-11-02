@@ -45,7 +45,7 @@ dev = [
   # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which no
   # documented command does.
   "coverage==7.17.0",
-  "hypothesis==6.165.10",
+  "hypothesis==6.170.11",
   # `starlette.testclient` prefers `httpx2` and warns on the
   # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
   # `scripts/qualify_exact_artifact.py` fails its installed-workspace probe on
