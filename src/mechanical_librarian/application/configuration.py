@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
-from mechanical_librarian.domain.field_outcomes import library_languages_valid
+from mechanical_librarian.domain.field_outcomes import (
+    language_identity,
+    library_languages_valid,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
+from mechanical_librarian.domain.metadata_report import (
+    AUDIOBOOK_MARKETPLACE_LANGUAGES,
+    AUDIOBOOK_MARKETPLACES,
+)
 from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_DEFAULT,
     http_origin,
@@ -454,6 +461,44 @@ class ApplicationConfiguration:
         return target, selected, mount, providers
 
 
+def audiobook_marketplaces(
+    providers: Sequence[ProviderConnectionConfiguration],
+    languages: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Read the one marketplace order every ASIN lookup in this build walks.
+
+    `marketplaces` is configurable on the enabled Audible catalog and on
+    nothing else, but an ASIN is marketplace-scoped for Audnexus in exactly the
+    same way and it has no configuration surface of its own. Both read the
+    owner's one stated order here rather than each inventing a default.
+
+    A library's declared languages move the marketplaces in its first
+    language to the front, then those in its second, and so on, each in the
+    owner's order (#1315). The title search asks the first marketplace, so a
+    German library searches Audible.de. Nothing is added or removed.
+    """
+    stated = next(
+        (
+            value.marketplaces
+            for value in providers
+            if value.adapter == "audible_catalog"
+            and value.enabled
+            and value.marketplaces
+        ),
+        ("us",),
+    )
+    # Each marketplace ranks by the first declared language whose catalogue
+    # it carries; the sort is stable, so ties keep the owner's order.
+    rank: dict[str, int] = {}
+    for position, language in enumerate(languages):
+        identity = language_identity(language)
+        if identity is not None:
+            for code, bases in AUDIOBOOK_MARKETPLACE_LANGUAGES.items():
+                if identity.base in bases:
+                    rank.setdefault(code, position)
+    return tuple(sorted(stated, key=lambda code: rank.get(code, len(languages))))
+
+
 __all__ = [
     "AUDIOBOOK_DISPATCH_ADAPTERS",
     "AUDIOBOOK_PROVIDER_ADAPTERS",
@@ -466,5 +511,6 @@ __all__ = [
     "ProviderConnectionConfiguration",
     "ReportLimits",
     "TargetConnectionConfiguration",
+    "audiobook_marketplaces",
     "dispatch_adapters",
 ]

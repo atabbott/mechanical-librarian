@@ -506,6 +506,9 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
 ) -> None:
     import threading
 
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        NonClosingRepository,
+    )
     from mechanical_librarian.application.catalogue import CatalogueReader
     from mechanical_librarian.application.configuration import (
         ApplicationConfiguration,
@@ -526,7 +529,6 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
     from mechanical_librarian.application.review_pipeline_stages import (
         ReviewPipelineStages,
     )
-    from mechanical_librarian.bootstrap.composition import _NonClosingRepository
     from mechanical_librarian.domain.audio_inspection import AudioTrackDigest
     from mechanical_librarian.domain.metadata_report import MetadataReport
     from tests.support.metadata_report_doubles import (
@@ -564,7 +566,7 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
         )
         inspector = FakeInspector(InspectionResult("c" * 64, ()))
         inspectors.append(inspector)
-        borrowed = _NonClosingRepository(repository)
+        borrowed = NonClosingRepository(repository)
 
         def receipt(_bound, report):
             published.append(report.report_id)

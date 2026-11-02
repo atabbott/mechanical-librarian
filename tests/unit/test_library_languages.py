@@ -22,6 +22,7 @@ from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
+    audiobook_marketplaces,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
@@ -29,7 +30,6 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     qualify_provider_observation,
 )
-from mechanical_librarian.bootstrap.composition import _audiobook_marketplaces
 from mechanical_librarian.domain.audiobook_corroboration import recording_admitted
 from mechanical_librarian.domain.field_outcomes import library_languages_valid
 from mechanical_librarian.domain.metadata_report import (
@@ -215,25 +215,23 @@ _ALL = ("us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es")
 def test_declared_languages_order_the_marketplaces(
     languages: tuple[str, ...], expected: tuple[str, ...]
 ) -> None:
-    assert expected == _audiobook_marketplaces((_audible(_ALL),), languages)
+    assert expected == audiobook_marketplaces((_audible(_ALL),), languages)
 
 
 def test_the_order_never_adds_a_marketplace_the_owner_left_out() -> None:
-    assert ("us", "uk") == _audiobook_marketplaces((_audible(("us", "uk")),), ("de",))
+    assert ("us", "uk") == audiobook_marketplaces((_audible(("us", "uk")),), ("de",))
     # A region narrows nothing: English keeps the owner's own English order.
-    assert ("us", "uk") == _audiobook_marketplaces(
-        (_audible(("us", "uk")),), ("en-GB",)
-    )
-    assert ("us",) == _audiobook_marketplaces((), ("de",))
+    assert ("us", "uk") == audiobook_marketplaces((_audible(("us", "uk")),), ("en-GB",))
+    assert ("us",) == audiobook_marketplaces((), ("de",))
 
 
 def test_marketplaces_in_one_language_keep_the_owners_order() -> None:
     # The title search asks only the first marketplace, so declaring English
     # must not move a UK owner's search to the US catalogue.
-    assert ("uk", "us", "de") == _audiobook_marketplaces(
+    assert ("uk", "us", "de") == audiobook_marketplaces(
         (_audible(("de", "uk", "us")),), ("en",)
     )
-    assert ("ca", "fr", "uk") == _audiobook_marketplaces(
+    assert ("ca", "fr", "uk") == audiobook_marketplaces(
         (_audible(("uk", "ca", "fr")),), ("fr", "en")
     )
 

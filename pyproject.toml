@@ -70,6 +70,7 @@ source_paths = [
   "src/mechanical_librarian/adapters/evidence_extractors/isolated_epub.py",
   "src/mechanical_librarian/adapters/evidence_extractors/local_media.py",
   "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+  "src/mechanical_librarian/application/configuration.py",
   "src/mechanical_librarian/application/review_web.py",
   "src/mechanical_librarian/bootstrap/composition.py",
   "src/mechanical_librarian/interfaces/cli/__init__.py",
