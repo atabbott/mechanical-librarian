@@ -2287,6 +2287,156 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   ).toHaveLength(0)
 })
 
+it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
+  let started = false
+  let cancelled = false
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device/cancel')) {
+      cancelled = true
+      return response({ state: 'cancelled' })
+    }
+    if (url.endsWith('/device') && init?.method === 'POST') {
+      started = true
+      return response({ state: 'starting' })
+    }
+    if (url.endsWith('/device'))
+      return response({
+        state: 'waiting',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-1234',
+      })
+    if (url.endsWith('/reviewer-access'))
+      return response(reviewerAccess(cancelled ? 'cancelled' : started ? 'starting' : 'ready'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  start.focus()
+  fireEvent.click(start)
+  const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
+  await waitFor(() => expect(cancel).toHaveFocus())
+  expect(await screen.findByText('ABCD-1234')).toBeVisible()
+  fireEvent.click(cancel)
+  expect(await screen.findByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+  expect(screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })).toBeVisible()
+  expect(screen.getByText('Status: sign-in cancelled')).toBeVisible()
+})
+
+it.each([
+  ['usable access', 'usable', null, null, 'Status: ready to use', null],
+  [
+    'failed access (#1598 shape)',
+    'failed',
+    'permission_or_profile',
+    null,
+    'Status: failed',
+    'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.',
+  ],
+  [
+    'a failed poll (main shape)',
+    'waiting',
+    null,
+    'protocol_or_process',
+    'Status: failed',
+    'Codex returned an unexpected sign-in result. Restart the sign-in flow.',
+  ],
+  ['cancelled access', 'cancelled', null, null, 'Status: sign-in cancelled', null],
+] as const)(
+  'names the Codex status in words, with its remedy, after %s (#1607)',
+  async (_case, state, reason, pollFailure, status, remedy) => {
+    let reads = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device'))
+        return response({
+          state: 'failed',
+          failure: pollFailure,
+          verification_url: null,
+          user_code: null,
+        })
+      if (url.endsWith('/reviewer-access')) {
+        reads += 1
+        // Before #1598 the passive state after a finished flow reads `ready`.
+        return response(reviewerAccess(pollFailure && reads > 1 ? 'ready' : state, reason))
+      }
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    expect(await screen.findByText(status)).toBeVisible()
+    if (state === 'usable') expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
+    else expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+    if (remedy) expect(screen.getByText(remedy)).toBeVisible()
+    for (const copy of [
+      'Restart device sign-in, or check the existing sign-in.',
+      'Restart the sign-in flow.',
+    ])
+      if (!remedy?.endsWith(copy)) expect(screen.queryByText(new RegExp(copy, 'u'))).toBeNull()
+  },
+)
+
+const remedyCopy = /Restart device sign-in, or check|Restart the sign-in flow/u
+
+it.each([
+  ['failed', 'protocol_or_process'],
+  ['interrupted', 'restart_interrupted'],
+] as const)(
+  'clears the %s remedy once Restart starts a new sign-in (#1607)',
+  async (state, reason) => {
+    let started = false
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device') && init?.method === 'POST') {
+        started = true
+        return response({ state: 'starting' })
+      }
+      if (url.endsWith('/device'))
+        return response({
+          state: 'waiting',
+          verification_url: 'https://auth.openai.com/codex/device',
+          user_code: 'ABCD-1234',
+        })
+      if (url.endsWith('/reviewer-access'))
+        return response(started ? reviewerAccess('starting') : reviewerAccess(state, reason))
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    const restart = await screen.findByRole('button', { name: 'Restart device sign-in' })
+    expect(screen.getByText(remedyCopy)).toBeVisible()
+    // The step focuses its heading on the next frame; press only after that,
+    // as an owner would, so the frame cannot land after the press.
+    const heading = screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    restart.focus()
+    fireEvent.click(restart)
+    const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
+    await waitFor(() => expect(cancel).toHaveFocus())
+    expect(await screen.findByText('ABCD-1234')).toBeVisible()
+    expect(screen.queryByText(remedyCopy)).toBeNull()
+  },
+)
+
+it('keys the remedy on the shown result when Check reports usable over a failed access (#1607)', async () => {
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/recheck') && init?.method === 'POST')
+      return response({ state: 'usable', failure: null, verification_url: null, user_code: null })
+    if (url.endsWith('/reviewer-access'))
+      return response(reviewerAccess('failed', 'permission_or_profile'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  expect(await screen.findByText(remedyCopy)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Check existing sign-in' }))
+  expect(await screen.findByText('Status: ready to use')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
+  expect(screen.queryByText(remedyCopy)).toBeNull()
+})
+
 it('keeps an issued code in place across polls and copies exactly the code', async () => {
   const fetch = vi.fn(async (request: RequestInfo | URL) => {
     const url = requestUrl(request)
@@ -2402,7 +2552,7 @@ it.each([
   fireEvent.click(await screen.findByRole('button', { name: 'Cancel any active sign-in' }))
   expect(await screen.findByText(new RegExp(message.replaceAll('.', '\\.')))).toBeVisible()
   expect(screen.getByRole('button', { name: 'Start device sign-in' })).toBeDisabled()
-  expect(screen.getByText('Status: not provisioned')).toBeVisible()
+  expect(screen.getByText('Status: not set up on this host')).toBeVisible()
 })
 
 it('keeps validated reviewer prices visible before Continue and on reopen', async () => {
