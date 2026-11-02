@@ -1425,115 +1425,12 @@ def evaluate_report(
             result = _resolve_series_subset(
                 result, targets[destination], observations, report
             )
-        if (
-            destination is TargetDestination.ISBN
-            and not observations
-            and result.outcome is ProposalOutcome.INELIGIBLE
-            and result.reasons == ("no_supported_evidence",)
-            and (reason := _isbn_rejection_reason(report.identifier_evidence))
-            is not None
-        ):
-            result = ProposalResult(
-                destination,
-                (
-                    ProposalOutcome.DEFER
-                    if reason == "identifier_applicability_unresolved"
-                    else ProposalOutcome.INELIGIBLE
-                ),
-                (),
-                None,
-                (reason,),
-                _dependencies(destination),
+        if destination is TargetDestination.ISBN:
+            result = _isbn_result(report, targets[destination], observations, result)
+        if destination is TargetDestination.SUBTITLE:
+            result = _subtitle_result(
+                report, targets[destination], observations, result
             )
-        if (
-            destination is TargetDestination.SUBTITLE
-            and not observations
-            and result.outcome is ProposalOutcome.INELIGIBLE
-            and result.reasons == ("no_supported_evidence",)
-            and _has_generic_provider_subtitle(report)
-        ):
-            result = ProposalResult(
-                destination,
-                ProposalOutcome.INELIGIBLE,
-                (),
-                None,
-                ("generic_provider_subtitle",),
-                _dependencies(destination),
-            )
-        if (
-            destination is TargetDestination.SUBTITLE
-            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-            and result.reasons == ("competing_evidence",)
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and (elected := _segment_corroborated_subtitle(report, result.alternatives))
-            != (None, None)
-        ):
-            attested, elected_reason = elected
-            result = (
-                ProposalResult(
-                    destination,
-                    ProposalOutcome.PROPOSE_CHANGE,
-                    (attested,),
-                    attested.alternative_id,
-                    (cast(str, elected_reason),),
-                    _dependencies(destination),
-                )
-                if attested is not None
-                # A withheld corroboration states its own guard on the same
-                # seam the uncorroborated diagnostic uses.
-                else _unresolved(result, cast(str, elected_reason))
-            )
-        elif (
-            destination is TargetDestination.SUBTITLE
-            and (
-                result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-                and result.reasons == ("competing_evidence",)
-                or result.outcome is ProposalOutcome.INELIGIBLE
-                and result.reasons == ("no_supported_evidence",)
-            )
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and _has_uncorroborated_subtitle_segment(report, result.alternatives)
-        ):
-            result = ProposalResult(
-                destination,
-                result.outcome,
-                result.alternatives,
-                None,
-                tuple(
-                    sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})
-                ),
-                result.dependencies,
-            )
-        if (
-            destination is TargetDestination.ISBN
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and result.alternatives
-        ):
-            result = _verified_manifestation_isbn_election(report, result)
         if destination is TargetDestination.TITLE:
             result = _evidence_led_title_election(report, result)
         if (
@@ -1666,6 +1563,126 @@ def evaluate_report(
             "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
         ),
     )
+
+
+def _isbn_result(
+    report: MetadataReport,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Refine an ISBN outcome by identifier rejection and manifestation proof."""
+    destination = TargetDestination.ISBN
+    if (
+        not observations
+        and result.outcome is ProposalOutcome.INELIGIBLE
+        and result.reasons == ("no_supported_evidence",)
+        and (reason := _isbn_rejection_reason(report.identifier_evidence)) is not None
+    ):
+        result = ProposalResult(
+            destination,
+            (
+                ProposalOutcome.DEFER
+                if reason == "identifier_applicability_unresolved"
+                else ProposalOutcome.INELIGIBLE
+            ),
+            (),
+            None,
+            (reason,),
+            _dependencies(destination),
+        )
+    if (
+        report.audio is not None
+        or target.state
+        in {
+            TargetFieldState.MISSING,
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+        }
+    ) and result.alternatives:
+        result = _verified_manifestation_isbn_election(report, result)
+    return result
+
+
+def _subtitle_result(
+    report: MetadataReport,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Refine a subtitle outcome by provider genericity and segment corroboration."""
+    destination = TargetDestination.SUBTITLE
+    if (
+        not observations
+        and result.outcome is ProposalOutcome.INELIGIBLE
+        and result.reasons == ("no_supported_evidence",)
+        and _has_generic_provider_subtitle(report)
+    ):
+        result = ProposalResult(
+            destination,
+            ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            ("generic_provider_subtitle",),
+            _dependencies(destination),
+        )
+    if (
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("competing_evidence",)
+        and (
+            report.audio is not None
+            or target.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        )
+        and (elected := _segment_corroborated_subtitle(report, result.alternatives))
+        != (None, None)
+    ):
+        attested, elected_reason = elected
+        result = (
+            ProposalResult(
+                destination,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (attested,),
+                attested.alternative_id,
+                (cast(str, elected_reason),),
+                _dependencies(destination),
+            )
+            if attested is not None
+            # A withheld corroboration states its own guard on the same
+            # seam the uncorroborated diagnostic uses.
+            else _unresolved(result, cast(str, elected_reason))
+        )
+    elif (
+        (
+            result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+            or result.outcome is ProposalOutcome.INELIGIBLE
+            and result.reasons == ("no_supported_evidence",)
+        )
+        and (
+            report.audio is not None
+            or target.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        )
+        and _has_uncorroborated_subtitle_segment(report, result.alternatives)
+    ):
+        result = ProposalResult(
+            destination,
+            result.outcome,
+            result.alternatives,
+            None,
+            tuple(sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})),
+            result.dependencies,
+        )
+    return result
 
 
 def _populated_value_meets_floor(

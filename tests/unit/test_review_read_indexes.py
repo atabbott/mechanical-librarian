@@ -803,7 +803,7 @@ def test_browse_probes_decision_and_policy_history_by_index() -> None:
                 plan = _plan(connection, statement, ())
                 assert any(
                     "INDEX metadata_policy_resolutions_resolved "
-                    "(library_name=? AND resolved_policy_id=?)" in step
+                    "(resolved_policy_id=? AND library_name=?)" in step
                     for step in plan
                 )
             for statement in statements:

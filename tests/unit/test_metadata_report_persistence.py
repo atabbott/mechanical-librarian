@@ -2604,8 +2604,14 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE review_case_episodes;"
                 )
             else:
-                # The v20 producer predates #1358's case episodes.
-                repository._connection.execute("DROP TABLE review_case_episodes")
+                # The v20 producer predates #1358's case episodes and #1310's
+                # resolution index led by the resolved id.
+                repository._connection.executescript(
+                    "DROP TABLE review_case_episodes;"
+                    "DROP INDEX metadata_policy_resolutions_resolved;"
+                    "CREATE INDEX metadata_policy_resolutions_resolved "
+                    "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation);"
+                )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()

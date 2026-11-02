@@ -360,9 +360,11 @@ _METADATA_POLICY_RESOLUTIONS_SQL = (
 )
 # Browse probes a proposal's resolution by library and resolved id per field;
 # the primary key leads with generation, so history made that a scan (#1202).
+# The resolved id leads because field facts look a policy up by that id alone
+# (#1310); every other probe fixes both columns.
 _METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL = (
     "CREATE INDEX metadata_policy_resolutions_resolved "
-    "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation)"
+    "ON metadata_policy_resolutions(resolved_policy_id,library_name,generation)"
 )
 _METADATA_POLICY_TRANSITIONS_SQL = (
     "CREATE TABLE metadata_policy_transitions ("
