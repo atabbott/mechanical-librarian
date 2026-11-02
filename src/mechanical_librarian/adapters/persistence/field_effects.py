@@ -98,6 +98,16 @@ _RETIRED_CASE_WAITING_SQL = (
 _AUTOMATIC_DECISION_SQL = (
     " AND decision_id IN (SELECT decision_id FROM automatic_decisions)"
 )
+# The cases other than a work's current one that a lost connection left plans
+# waiting on. Preparation names the case it left the work on, or none; the
+# target index finds the work's effects and the rest only filters (#1658).
+_DISPLACED_CASES_SQL = (
+    "SELECT DISTINCT json_extract(document,'$.plan.authority.review_case_id') "
+    "FROM field_effects WHERE connection_name=? AND library_name=? "
+    "AND work_id=? AND state='stale' "
+    "AND json_extract(document,'$.failure')='connection' "
+    "AND json_extract(document,'$.plan.authority.review_case_id') IS NOT ?"
+)
 
 
 class SQLiteFieldEffectRepository(ConnectionScoped):
@@ -1734,6 +1744,35 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 self._schedule_field_effect_cleanup(operation, changed_at)
             closed += len(rows)
         return closed
+
+    def _supersede_displaced_case_waiting_plans(
+        self,
+        connection: str,
+        library: str,
+        work_id: str,
+        current_case_id: str | None,
+        changed_at: int,
+    ) -> int:
+        """Supersede the waiting plans of cases preparation moved a work past.
+
+        Preparation admits or retires the work in the caller's transaction and
+        names the case it left the work on, or ``None`` when the work has none.
+        A case other than that one can return only as a new episode, whose
+        authority none of its plans carries, so every plan still waiting on
+        such a case closes, whatever its origin. A plan on the current case,
+        including one that returned as itself, keeps waiting (#1658).
+        """
+        rows = self._connection.execute(
+            _DISPLACED_CASES_SQL, (connection, library, work_id, current_case_id)
+        ).fetchall()
+        return self._supersede_retired_case_waiting_plans(
+            tuple(
+                (connection, library, work_id, review_case_id)
+                for (review_case_id,) in rows
+            ),
+            False,
+            changed_at,
+        )
 
     @local_operation
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:

@@ -44,6 +44,9 @@ bound report. Any other ProposalSet is `incompatible` and publishes nothing.
 Admission makes no decision, plan or write.
 
 A newer report makes an earlier case historical without rewriting it.
+When preparation admits or retires a work past a case, a write still waiting
+for Audiobookshelf to come back on that case closes, and a cover's restore
+point is removed.
 Inspection never writes.
 Earlier schemas are refused; rebuild from a clean state
 ([compatibility](../reference/compatibility.md)).

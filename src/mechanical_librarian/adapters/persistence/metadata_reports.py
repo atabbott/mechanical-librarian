@@ -377,6 +377,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
+            supersede_displaced_waiting_effects=(
+                lambda name, library, item, case_id, changed_at: (
+                    self._field_effects._supersede_displaced_case_waiting_plans(
+                        name, library, item, case_id, changed_at
+                    )
+                )
+            ),
         )
         self._review_cases = SQLiteReviewCaseRepository(
             connection,
