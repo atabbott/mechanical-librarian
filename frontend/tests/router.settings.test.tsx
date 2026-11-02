@@ -1086,7 +1086,9 @@ describe('owner settings route', () => {
 
       await user.click(await screen.findByRole('button', { name: 'Restart device sign-in' }))
       expect(await screen.findByText('ABCD-1234')).toBeVisible()
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toHaveFocus())
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toHaveFocus(),
+      )
       await waitFor(
         () => expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull(),
         { timeout: 3000 },
