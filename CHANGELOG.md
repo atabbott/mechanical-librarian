@@ -275,8 +275,10 @@ brackets are GitHub issues.
   code. Keyboard focus moves to the next control (#1617).
 - In setup's reviewer step, when Start or Restart device sign-in, Check
   existing sign-in, Use Codex, Cancel sign-in or Cancel any active sign-in
-  fails, its message now appears directly under that button instead of at the
-  top of the form, and it clears once the next sign-in step succeeds (#1618).
+  fails, or the sign-in poll fails, its message now appears directly under
+  that button instead of at the top of the form, and it clears once the next
+  sign-in step succeeds. A refused Codex sign-in on Use Codex still shows
+  above the refreshed option, as in #1617 (#1618).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
