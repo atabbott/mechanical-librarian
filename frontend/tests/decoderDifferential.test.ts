@@ -805,6 +805,13 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string])[]
     'reviewerStatus http.ts:2031-2034: the codex model is null exactly when not_provisioned; cross-field',
   ],
   [
+    'check:reviewerStatus.codex-model',
+    codexCleared,
+    '/codex/model',
+    'provider/model',
+    'reviewerStatus http.ts:2032-2034: a codex model matches ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$; ReviewerEngineStatus.model is shared with the openrouter statuses, whose provider/model values are valid, so only a codex-specific status type could carry this pattern',
+  ],
+  [
     'check:mapReviewerAccess.cover-model',
     openRouterRefresh,
     '/cover_metadata/model',
@@ -1209,14 +1216,6 @@ const PENDING_SERVER: readonly (readonly [string, Case, string, unknown, string,
     'paused',
     'preparationProgress http.ts:2617: SCAN_STATES',
     'interfaces/web/app.py _PreparationProgress.state',
-  ],
-  [
-    'check:reviewerStatus.codex-model',
-    codexCleared,
-    '/codex/model',
-    'model\nsecret',
-    'reviewerStatus http.ts:2032-2034: a codex model matches ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$',
-    'application/reviewer_access.py ReviewerEngineStatus.model; built per read by ReviewerAccessApplication._view and never stored (adapters/persistence/reviewer_access.py stores only ReviewerAccessDocument)',
   ],
   [
     'check:mapReviewerAccess.recommendation',
