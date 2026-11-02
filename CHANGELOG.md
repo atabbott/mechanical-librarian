@@ -307,8 +307,9 @@ brackets are GitHub issues.
 - In setup, Kick off preparation keeps keyboard focus while it runs, and a
   failed kickoff shows its message directly under that button; a kickoff
   refused because setup changed in another tab now reloads the latest step.
-  On Choose libraries, "Select at least one…" sits under Continue and an
-  invalid library name sits beside its field, which is opened if needed (#1677).
+  On Choose libraries, "Select at least one…" sits under Continue, and the
+  message for an invalid library name sits beside that name's field, which is
+  opened if needed (#1677).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
