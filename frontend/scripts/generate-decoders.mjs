@@ -156,7 +156,11 @@ export class DecodeFailure {
     readonly reason: string,
   ) {}
 }
-export type D<T> = (v: unknown, at: string) => T
+// Where a value sits. A field passes its parent and key, and only a failure
+// joins them into a JSON pointer, so a valid document builds no pointer.
+type Seg = { readonly parent: Path; readonly key: string | number }
+export type Path = string | Seg
+export type D<T> = (v: unknown, at: Path) => T
 export interface Field<T> {
   readonly kind: 'req' | 'opt' | 'dflt'
   readonly d: D<T>
@@ -164,11 +168,13 @@ export interface Field<T> {
   readonly inv?: (t: T) => void
 }
 type Rec = Record<string, unknown>
-const fail = (at: string, reason: string): never => {
-  throw new DecodeFailure(at, reason)
+const text = (at: Path): string =>
+  typeof at === 'string' ? at : \`\${text(at.parent)}/\${String(at.key).replaceAll('~', '~0').replaceAll('/', '~1')}\`
+const fail = (at: Path, reason: string): never => {
+  throw new DecodeFailure(text(at), reason)
 }
-const ptr = (at: string, key: string | number) => \`\${at}/\${String(key).replaceAll('~', '~0').replaceAll('/', '~1')}\`
-const record = (v: unknown, at: string): Rec =>
+const ptr = (parent: Path, key: string | number): Path => ({ parent, key })
+const record = (v: unknown, at: Path): Rec =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Rec) : fail(at, 'type')
 const is = (kind: Kind, v: unknown): boolean =>
   kind === 'null' ? v === null
@@ -177,7 +183,7 @@ const is = (kind: Kind, v: unknown): boolean =>
   : kind === 'integer' ? Number.isSafeInteger(v)
   : kind === 'number' ? Number.isFinite(v)
   : typeof v === kind
-const bounds = (v: number, at: string, min?: number, max?: number) => {
+const bounds = (v: number, at: Path, min?: number, max?: number) => {
   if (min !== undefined && v < min) fail(at, 'min')
   if (max !== undefined && v > max) fail(at, 'max')
   return v
@@ -279,7 +285,7 @@ export const anyOf =
           if (!(error instanceof DecodeFailure)) throw error
           if (!deepest || error.at.split('/').length > deepest.at.split('/').length) deepest = error
         }
-    throw deepest ?? new DecodeFailure(at, 'no_branch')
+    throw deepest ?? new DecodeFailure(text(at), 'no_branch')
   }
 const rt = <O extends keyof operations, St extends keyof operations[O]['responses']>(d: D<Body<O, St>>) => d
 `

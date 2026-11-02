@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError, CsrfRenewedError, mapCaseDetail } from '../src/api/http'
+import { ApiError, CsrfRenewedError, UncertainMutationError, mapCaseDetail } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { ownerChoiceCount } from '../src/reviewChoiceCounts'
@@ -31,6 +31,7 @@ import {
   createHttp,
   createLiveStream,
   detail,
+  idlePreparation,
   library,
   recordedAcknowledgement,
   renderRoute,
@@ -281,6 +282,7 @@ const terminalPreparation = (
   runId: string,
   updatedAt = 101,
 ): PreparationView & { presentation: NonNullable<PreparationView['presentation']> } => ({
+  ...idlePreparation,
   schema_version: 'review-preparation-v2',
   recovery_required: false,
   active: false,
@@ -468,6 +470,7 @@ describe('Library route', () => {
     const http = createHttp()
     const updates = createLiveStream()
     const confirmed: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2' as const,
       recovery_required: false,
       active: true,
@@ -476,6 +479,7 @@ describe('Library route', () => {
       libraries: [],
       connections: [],
       presentation: {
+        now: null,
         run_id: `preparation_run_${'a'.repeat(64)}`,
         state: 'running' as const,
         triggers: [
@@ -1463,65 +1467,79 @@ describe('Library route', () => {
     expect(http.getPreparation).toHaveBeenCalledTimes(readsBeforeDismissal)
   })
 
-  it.each([
-    ['committed', true],
-    ['not committed', false],
-  ])('refreshes preparation after an unconfirmed dismissal that %s', async (_name, committed) => {
-    const user = userEvent.setup()
-    const http = createHttp()
-    const runId = `preparation_run_${'e'.repeat(64)}`
-    const confirmed = terminalPreparation(runId)
-    let current: PreparationView = confirmed
-    http.getPreparation = vi.fn(async () => current)
-    http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
-      // Only the response was lost; the write may or may not have committed.
-      if (committed)
-        current = {
-          ...confirmed,
-          presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
-        }
-      throw new ApiError(503, 'persistence')
+  // A dismissal answered with a body the decoder refuses is as unconfirmed as
+  // one whose answer was lost (#1685).
+  const undecodableDismissal = () =>
+    new UncertainMutationError({
+      operation: 'POST /api/v1/review-preparation/dismiss',
+      responseStatus: 200,
+      at: '/presentation/now',
+      reason: 'required',
     })
-    renderRoute('/library?lens=all&preview=case-1&field=title', http)
-    await user.click(
-      await screen.findByRole('button', { name: /Preparation completed with failures/u }),
-    )
-    // Opening the detail moves route focus to its heading; let that settle
-    // before pressing Dismiss so the focus assertions measure the dismissal.
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole('heading', { name: 'Preparation completed with failures' })
-          .closest('[data-route-focus]'),
-      ).toHaveFocus(),
-    )
-    await screen.findByRole('button', { name: 'Dismiss preparation' })
-    const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
-
-    await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
-
-    await waitFor(() =>
-      expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(
-        readsBeforeDismissal,
-      ),
-    )
-    if (committed) {
-      // The refreshed state no longer holds the run, so its detail and the
-      // control close; nothing claims the dismissal failed.
+  it.each([
+    ['committed', true, () => new ApiError(503, 'persistence')],
+    ['not committed', false, () => new ApiError(503, 'persistence')],
+    ['committed, answered undecodably', true, undecodableDismissal],
+    ['not committed, answered undecodably', false, undecodableDismissal],
+  ])(
+    'refreshes preparation after an unconfirmed dismissal that %s',
+    async (_name, committed, failure) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      const runId = `preparation_run_${'e'.repeat(64)}`
+      const confirmed = terminalPreparation(runId)
+      let current: PreparationView = confirmed
+      http.getPreparation = vi.fn(async () => current)
+      http.dismissPreparation = vi.fn<ReviewHttp['dismissPreparation']>(async () => {
+        // Only the response was lost; the write may or may not have committed.
+        if (committed)
+          current = {
+            ...confirmed,
+            presentation: { ...confirmed.presentation, state: 'dismissed', dismissible: false },
+          }
+        throw failure()
+      })
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      await user.click(
+        await screen.findByRole('button', { name: /Preparation completed with failures/u }),
+      )
+      // Opening the detail moves route focus to its heading; let that settle
+      // before pressing Dismiss so the focus assertions measure the dismissal.
       await waitFor(() =>
-        expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+        expect(
+          screen
+            .getByRole('heading', { name: 'Preparation completed with failures' })
+            .closest('[data-route-focus]'),
+        ).toHaveFocus(),
       )
-      expect(screen.queryByRole('alert')).toBeNull()
-    } else {
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+      await screen.findByRole('button', { name: 'Dismiss preparation' })
+      const readsBeforeDismissal = vi.mocked(http.getPreparation).mock.calls.length
+
+      await user.click(screen.getByRole('button', { name: 'Dismiss preparation' }))
+
+      await waitFor(() =>
+        expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(
+          readsBeforeDismissal,
+        ),
       )
-      const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
-      expect(dismiss).not.toHaveAttribute('aria-disabled', 'true')
-      expect(dismiss).toHaveFocus()
-    }
-    expect(http.dismissPreparation).toHaveBeenCalledOnce()
-  })
+      if (committed) {
+        // The refreshed state no longer holds the run, so its detail and the
+        // control close; nothing claims the dismissal failed.
+        await waitFor(() =>
+          expect(screen.queryByRole('button', { name: 'Dismiss preparation' })).toBeNull(),
+        )
+        expect(screen.queryByRole('alert')).toBeNull()
+      } else {
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+        )
+        const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
+        expect(dismiss).not.toHaveAttribute('aria-disabled', 'true')
+        expect(dismiss).toHaveFocus()
+      }
+      expect(http.dismissPreparation).toHaveBeenCalledOnce()
+    },
+  )
 
   it('keeps focus on a pending dismissal through an unconfirmed failure', async () => {
     const user = userEvent.setup()
@@ -1630,6 +1648,7 @@ describe('Library route', () => {
     const http = createHttp()
     const updates = createLiveStream()
     const confirmed: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -1638,6 +1657,7 @@ describe('Library route', () => {
       libraries: [],
       connections: [],
       presentation: {
+        now: null,
         run_id: `preparation_run_${'b'.repeat(64)}`,
         state: 'starting',
         triggers: [
@@ -1706,6 +1726,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2' as const,
         recovery_required: false,
         active: false,
@@ -1753,6 +1774,7 @@ describe('Library route', () => {
             scan_id: null,
             state: 'completed' as const,
             total: 1,
+            stages: [],
           },
         ],
       })),
@@ -11140,6 +11162,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2' as const,
         recovery_required: false,
         active: true,
@@ -11159,6 +11182,7 @@ describe('Library route', () => {
             recorded: 0,
             not_matched: 0,
             rescan_requested: false,
+            stages: [],
           },
         ],
       })),
@@ -11248,6 +11272,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2' as const,
         recovery_required: false,
         active: false,
@@ -12764,6 +12789,7 @@ describe('library provider throttling notice (#1282)', () => {
     entries: ProviderThrottleEntry[],
     retry: ProviderThrottlingView['retry'] = 'available',
   ): PreparationView => ({
+    ...idlePreparation,
     schema_version: 'review-preparation-v2',
     recovery_required: false,
     active: false,

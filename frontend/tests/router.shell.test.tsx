@@ -10,12 +10,20 @@ import {
   BuildMismatchError,
   CsrfRenewedError,
   SessionExpiredError,
+  UncertainMutationError,
 } from '../src/api/http'
 import type { LibraryView, PreparationView, ReviewHttp, ScanState } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { RoutePending, createApplicationRouter, preparationQuery } from '../src/router'
-import { createHttp, createLiveStream, library, renderRoute, wholeText } from './fixtures'
+import {
+  createHttp,
+  createLiveStream,
+  idlePreparation,
+  library,
+  renderRoute,
+  wholeText,
+} from './fixtures'
 
 const reducedMotion = () => ({
   matches: true,
@@ -155,6 +163,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -202,6 +211,7 @@ describe('Application shell', () => {
         },
         libraries: [
           {
+            stages: [],
             blocked: 0,
             recorded: 0,
             not_matched: 0,
@@ -234,6 +244,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: false,
@@ -362,6 +373,7 @@ describe('Application shell', () => {
     const view = (
       presentation: NonNullable<PreparationView['presentation']> | null,
     ): PreparationView => ({
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: false,
@@ -489,6 +501,7 @@ describe('Application shell', () => {
       const http: ReviewHttp = {
         ...createHttp(),
         getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+          ...idlePreparation,
           schema_version: 'review-preparation-v2',
           recovery_required: false,
           active: true,
@@ -496,6 +509,7 @@ describe('Application shell', () => {
           paused: false,
           libraries: [
             {
+              stages: [],
               blocked: 0,
               recorded: 0,
               not_matched: 0,
@@ -534,6 +548,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: true,
         active: true,
@@ -541,6 +556,7 @@ describe('Application shell', () => {
         paused: false,
         libraries: [
           {
+            stages: [],
             blocked: 1,
             recorded: 0,
             not_matched: 0,
@@ -581,6 +597,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -588,6 +605,7 @@ describe('Application shell', () => {
         paused: false,
         libraries: [
           {
+            stages: [],
             blocked: 0,
             recorded: 0,
             not_matched: 0,
@@ -641,6 +659,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -648,6 +667,7 @@ describe('Application shell', () => {
         paused: false,
         libraries: [
           {
+            stages: [],
             blocked: 0,
             recorded: 0,
             not_matched: 0,
@@ -698,6 +718,7 @@ describe('Application shell', () => {
     'renders %s connection recovery through Library, full Detail, and Activity without replacing route state',
     async (state, title, action, disabled) => {
       const preparation: PreparationView = {
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -705,6 +726,7 @@ describe('Application shell', () => {
         paused: false,
         libraries: [
           {
+            stages: [],
             blocked: 1,
             recorded: 0,
             not_matched: 0,
@@ -789,6 +811,7 @@ describe('Application shell', () => {
 
   it('reads the library summary on Activity only while a connection notice is shown', async () => {
     const paused = (connections: NonNullable<PreparationView['connections']>): PreparationView => ({
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -844,6 +867,7 @@ describe('Application shell', () => {
 
   it('does not restore a completed connection incident from retained recovered state', async () => {
     const recovered: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -876,6 +900,7 @@ describe('Application shell', () => {
 
   it('sums simultaneous connection holds while keeping one focused recovery control', async () => {
     const preparation: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -911,6 +936,7 @@ describe('Application shell', () => {
     'uses safe owner-readable %s connection copy without raw connection values',
     async (code, expected) => {
       const preparation: PreparationView = {
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -947,6 +973,7 @@ describe('Application shell', () => {
       updated_at: 1,
     }
     const paused: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -1005,6 +1032,7 @@ describe('Application shell', () => {
         updated_at: 1,
       }
       const paused: PreparationView = {
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -1093,6 +1121,7 @@ describe('Application shell', () => {
       updated_at: 1,
     }
     const paused: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -1129,6 +1158,7 @@ describe('Application shell', () => {
       affected: 2,
     }
     const view = (state: 'paused' | 'recovered', updated_at: number): PreparationView => ({
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -1181,6 +1211,7 @@ describe('Application shell', () => {
         updated_at: 1,
       }
       const paused: PreparationView = {
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -1231,6 +1262,16 @@ describe('Application shell', () => {
       new ApiError(503, 'persistence'),
       'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.',
     ],
+    [
+      // A 2xx the decoder refused (#1685).
+      new UncertainMutationError({
+        operation: 'POST /api/v1/review-preparation/{connection}/check-connection',
+        responseStatus: 200,
+        at: '/connections/0/state',
+        reason: 'enum',
+      }),
+      'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.',
+    ],
   ])(
     'restores the actionable paused connection notice when %s and refetch fail',
     async (failure, copy) => {
@@ -1243,6 +1284,7 @@ describe('Application shell', () => {
         updated_at: 1,
       }
       const paused: PreparationView = {
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -1284,6 +1326,7 @@ describe('Application shell', () => {
     // Idle libraries keep the trigger (#1282); only a deployment with no
     // library leaves nothing for it to control.
     const active: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -1291,6 +1334,7 @@ describe('Application shell', () => {
       paused: false,
       libraries: [
         {
+          stages: [],
           blocked: 0,
           recorded: 0,
           not_matched: 0,
@@ -1307,6 +1351,7 @@ describe('Application shell', () => {
       ],
     }
     const inactive: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: false,
@@ -1331,6 +1376,7 @@ describe('Application shell', () => {
 
   describe('idle preparation masthead (#1282)', () => {
     const library = (state: ScanState) => ({
+      stages: [],
       blocked: 0,
       recorded: 0,
       not_matched: 0,
@@ -1345,6 +1391,7 @@ describe('Application shell', () => {
       total: 3,
     })
     const view = (state: ScanState, overrides: Partial<PreparationView> = {}): PreparationView => ({
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: state !== 'completed',
@@ -1401,36 +1448,50 @@ describe('Application shell', () => {
       expect(http.preparationAction).toHaveBeenCalledTimes(3)
     })
 
-    it('reports an unconfirmed pause from refreshed state without offering a retry', async () => {
-      const user = userEvent.setup()
-      let current = view('completed')
-      const http: ReviewHttp = {
-        ...createHttp(),
-        getPreparation: vi.fn(async () => current),
-        preparationAction: vi.fn(async () => {
-          // The pause committed; only the response was lost to a failed read.
-          current = view('completed', { paused: true })
-          throw new ApiError(503, 'persistence')
+    it.each([
+      ['a failed read', new ApiError(503, 'persistence')],
+      [
+        'an undecodable answer (#1685)',
+        new UncertainMutationError({
+          operation: 'POST /api/v1/review-preparation/pause',
+          responseStatus: 200,
+          at: '/libraries/0/stages',
+          reason: 'required',
         }),
-      }
-      renderRoute('/library?lens=all', http)
-      await user.click(await screen.findByRole('button', { name: 'Preparation idle' }))
-      const popover = screen.getByRole('region', { name: 'Background activity' })
-      await user.click(within(popover).getByRole('button', { name: 'Pause' }))
+      ],
+    ])(
+      'reports a pause unconfirmed by %s from refreshed state without a retry',
+      async (_name, failure) => {
+        const user = userEvent.setup()
+        let current = view('completed')
+        const http: ReviewHttp = {
+          ...createHttp(),
+          getPreparation: vi.fn(async () => current),
+          preparationAction: vi.fn(async () => {
+            // The pause committed; only its answer was lost or unreadable.
+            current = view('completed', { paused: true })
+            throw failure
+          }),
+        }
+        renderRoute('/library?lens=all', http)
+        await user.click(await screen.findByRole('button', { name: 'Preparation idle' }))
+        const popover = screen.getByRole('region', { name: 'Background activity' })
+        await user.click(within(popover).getByRole('button', { name: 'Pause' }))
 
-      const alert = await within(popover).findByRole('alert')
-      expect(alert).toHaveTextContent(
-        'The preparation change could not be confirmed. It may have been saved; the current state is shown. Check it before pressing again.',
-      )
-      expect(alert).not.toHaveTextContent('Try again')
-      const resume = await within(popover).findByRole('button', { name: 'Resume' })
-      // The message sits with the control it describes, not below the fold.
-      expect(resume.nextElementSibling).toBe(alert)
-      expect(http.preparationAction).toHaveBeenCalledOnce()
-      await user.click(resume)
-      expect(http.preparationAction).toHaveBeenLastCalledWith('resume')
-      expect(http.preparationAction).toHaveBeenCalledTimes(2)
-    })
+        const alert = await within(popover).findByRole('alert')
+        expect(alert).toHaveTextContent(
+          'The preparation change could not be confirmed. It may have been saved; the current state is shown. Check it before pressing again.',
+        )
+        expect(alert).not.toHaveTextContent('Try again')
+        const resume = await within(popover).findByRole('button', { name: 'Resume' })
+        // The message sits with the control it describes, not below the fold.
+        expect(resume.nextElementSibling).toBe(alert)
+        expect(http.preparationAction).toHaveBeenCalledOnce()
+        await user.click(resume)
+        expect(http.preparationAction).toHaveBeenLastCalledWith('resume')
+        expect(http.preparationAction).toHaveBeenCalledTimes(2)
+      },
+    )
 
     it('keeps the safe-failure copy for a refused preparation control', async () => {
       const user = userEvent.setup()
@@ -1662,6 +1723,7 @@ describe('Application shell', () => {
         for (const listener of [...listeners]) listener(update)
       }
       const active: PreparationView = {
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -1790,6 +1852,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: true,
@@ -1842,6 +1905,7 @@ describe('Application shell', () => {
   it('takes a distinct authoritative read for an event arriving during a slow refresh', async () => {
     const updates = createLiveStream()
     const initial: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -1891,6 +1955,7 @@ describe('Application shell', () => {
     const updates = createLiveStream()
     const runId = `preparation_run_${'c'.repeat(64)}`
     const initialPresentation: NonNullable<PreparationView['presentation']> = {
+      now: null,
       run_id: runId,
       state: 'running',
       triggers: [
@@ -1913,6 +1978,7 @@ describe('Application shell', () => {
       dismissible: false,
     }
     const initial: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -2003,6 +2069,7 @@ describe('Application shell', () => {
   it('does not discharge reconnect debt from a cancellation state restoration', async () => {
     const updates = createLiveStream()
     const initial: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
@@ -2058,6 +2125,7 @@ describe('Application shell', () => {
       },
     }
     const degraded: PreparationView = {
+      ...idlePreparation,
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,

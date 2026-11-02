@@ -16,7 +16,7 @@ import type {
   ShadowPostureView,
 } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
-import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
+import { createHttp, idlePreparation, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
 import { policyProfile } from './wireFixtures'
 
@@ -2193,10 +2193,12 @@ it.each([
       completed_at: 101,
       total: 1,
       dismissible: true,
+      now: null,
     }
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: recovered,
