@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol, get_args
 
 from mechanical_librarian.application.cover_packet_semantics import (
     MAX_COVER_PREVIEW_BYTES as MAX_IMAGE_BYTES,
@@ -21,12 +21,17 @@ MAX_SCHEMA_BYTES = 65_536
 COVER_MEMORY_BYTES = 1_073_741_824
 COVER_PROCESS_LIMIT = 32
 COVER_MODEL = "gpt-5.6-sol"
-_COVER_PROFILE_CONTRACT_REASONS = frozenset(
-    {
-        f"profile contract requires model={COVER_MODEL}",
-        f"profile contract requires memory_bytes={COVER_MEMORY_BYTES}",
-        f"profile contract requires process_limit={COVER_PROCESS_LIMIT}",
-    }
+# The reasons a cover consideration may report for an unavailable reviewer:
+# the browser's two resource limits. A stale model is not one. No production
+# path reports it (a profile that breaks any cover limit is refused whole as
+# profile_contract_mismatch, and composition passes no reason), and the
+# response schema and browser state exactly these two.
+CoverUnavailableReason = Literal[
+    "profile contract requires memory_bytes=1073741824",
+    "profile contract requires process_limit=32",
+]
+_COVER_PROFILE_CONTRACT_REASONS: frozenset[str] = frozenset(
+    get_args(CoverUnavailableReason)
 )
 _COVER_REFERENCE = re.compile(r"^cover_transport_ref_[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -348,6 +353,7 @@ __all__ = [
     "ContainedReviewerAttempt",
     "ContainedReviewerError",
     "ContainedReviewerIdentity",
+    "CoverUnavailableReason",
     "admit_cover_review_request",
     "canonical_json",
 ]

@@ -55,6 +55,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.contained_reviewer_contract import (
+    CoverUnavailableReason,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.live_updates import (
     LiveUpdateCapacityError,
@@ -552,7 +555,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_access_revision: StrictInt | None = Field(ge=0)
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
-    reviewer_unavailable_reason: str | None
+    reviewer_unavailable_reason: CoverUnavailableReason | None
     schema_version: Literal["cover-consideration-v4"]
     supersedes_id: str | None
     target_fingerprint: str

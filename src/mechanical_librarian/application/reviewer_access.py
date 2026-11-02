@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Callable
 from importlib.resources import files
 from threading import RLock
-from typing import Literal, Protocol, cast
+from typing import Annotated, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
@@ -26,6 +26,7 @@ from mechanical_librarian.application.reviewer_contracts import (
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.reviewer_access import (
+    _OPENROUTER_MODEL_ID,
     CodexTaskSelection,
     CoverModelMetadata,
     DescriptionModelMetadata,
@@ -146,26 +147,34 @@ class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+# A catalogue model id in the browser's openRouterModel grammar. The views
+# below are built per read and never stored, so the pattern binds only the
+# response; the persisted selection keeps the domain's own OpenRouterModelId.
+_OpenRouterModel = Annotated[StrictStr, Field(pattern=_OPENROUTER_MODEL_ID.pattern)]
+
+
 class CodexDescriptionDisclosure(_Closed):
-    model: StrictStr
-    profile_sha256: StrictStr
+    model: StrictStr = Field(min_length=1)
+    profile_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ReviewerEngineStatus(_Closed):
     engine: ReviewerEngine
     state: ReviewerStatus
     reason: ReviewerStatusReason | None = None
+    # Not tightened: the codex and openrouter slots need different grammars,
+    # so the pattern is a slot coupling the schema cannot state (ADR-0091, X43).
     model: StrictStr | None = None
-    tier: StrictStr | None = None
-    host_headroom_bytes: StrictInt | None = None
+    tier: Literal["free", "paid"] | None = None
+    host_headroom_bytes: Annotated[StrictInt, Field(ge=0)] | None = None
 
 
 class OpenRouterRecommendation(_Closed):
-    model: StrictStr
+    model: _OpenRouterModel
     tier: Literal["free", "paid"]
     qualified: Literal[False] = False
     evidence: Literal["catalogue_capability_only"] = "catalogue_capability_only"
-    requests_per_minute: StrictInt | None = None
+    requests_per_minute: Annotated[StrictInt, Field(ge=1)] | None = None
     requests_per_day: StrictStr | None = None
 
 
@@ -192,7 +201,7 @@ class ReviewerAccessView(_Closed):
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
     openrouter: ReviewerEngineStatus
-    recommendations: tuple[StrictStr, ...] = ("openai/gpt-6-luna",)
+    recommendations: tuple[_OpenRouterModel, ...] = ("openai/gpt-6-luna",)
     candidates: tuple[OpenRouterRecommendation, ...] = (
         OpenRouterRecommendation(
             model="dots-studio/dots-3-note-preview:free",
