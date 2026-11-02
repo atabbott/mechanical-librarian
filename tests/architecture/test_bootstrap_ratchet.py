@@ -62,18 +62,18 @@ ENTRY_POINTS = {
 }
 CEILING = {
     "__init__.py": 8,
-    "composition.py": 3402,
+    "composition.py": 3204,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
 DEF_COUNT = {
     "__init__.py": 1,
-    "composition.py": 141,
+    "composition.py": 111,
     "contained_reviewer.py": 5,
 }
 # Set to the measured size only by an owner review; lowered by a refactor
 # stage's own net change; raised only on the owner's instruction.
-REVIEWED_NCNC = 3395
+REVIEWED_NCNC = 3197
 REVIEW_BAND = 300
 REVIEWED_MODULE = "composition.py"
 _C = "composition.py::"
@@ -91,9 +91,6 @@ RESIDUAL: dict[str, int | None] = {
     _C + "compose_store_runtime_generation": 237,
     _C + "_compose_setup_runtime_generation": 145,
     _C + "run_review_server": 350,
-    _C + "_UnavailableCodexAuth": 18,
-    _C + "_LazyCodexAuth": 126,
-    _C + "_CodexAuthLeaseCoordinator": 90,
     _C + "_compose_reviewer_access": 167,
     _C + "_compose_cover_considerations": 74,
     _C + "_OfflineSessionStore": 40,
