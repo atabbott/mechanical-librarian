@@ -172,6 +172,28 @@ describe('the generator guard', () => {
     ],
     ['maxProperties on an object with no value schema', { type: 'object', maxProperties: 1 }, at],
     ['a non-object schema node', true, at],
+    ['uniqueItems false', { type: 'array', items: { type: 'string' }, uniqueItems: false }, at],
+    [
+      'uniqueItems over objects',
+      { type: 'array', items: ref('LibrarySettings'), uniqueItems: true },
+      at,
+    ],
+    ['uniqueItems with no item schema', { type: 'array', uniqueItems: true }, at],
+    [
+      'an open tuple',
+      { type: 'array', prefixItems: [{ type: 'string' }], items: {}, minItems: 1, maxItems: 1 },
+      at,
+    ],
+    [
+      'a tuple of free length',
+      { type: 'array', prefixItems: [{ type: 'string' }], maxItems: 1 },
+      at,
+    ],
+    [
+      'a tuple position it cannot state',
+      { type: 'array', prefixItems: [{ allOf: [] }], minItems: 1, maxItems: 1 },
+      `${at}/prefixItems/0`,
+    ],
   ])('refuses %s and names where it is', (_name, schema, location) => {
     const { status, stderr } = generate(property(schema))
     expect(status).not.toBe(0)
@@ -222,9 +244,20 @@ const rich = synthetic(
         m: { type: 'object', additionalProperties: true },
         n: NAMES,
         o: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+        p: {
+          type: 'array',
+          prefixItems: [
+            { type: 'string', const: 'k' },
+            { type: 'integer', minimum: 0 },
+          ],
+          items: false,
+          minItems: 2,
+          maxItems: 2,
+        },
+        q: { type: 'array', items: { type: 'string', maxLength: 2 }, uniqueItems: true },
       },
       // `b` is optional with a default in the document; rule P still requires it.
-      ['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o'],
+      ['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q'],
     ),
   },
   {
@@ -256,6 +289,8 @@ const item = {
   m: { free: 1 },
   n: {},
   o: 2,
+  p: ['k', 1],
+  q: ['a', 'b'],
 }
 
 describe('emitted decoders', () => {
@@ -328,6 +363,12 @@ describe('emitted decoders', () => {
     ['a constant key name', { ...item, k: { other: 1 } }, 'property_name@/k/other'],
     ['no branch of the value type', { ...item, o: true }, 'no_branch@/o'],
     ['a key needing escapes', { ...item, n: { 'a/b~c': 'x' } }, 'type@/n/a~1b~0c'],
+    ['a tuple position before length', { ...item, p: ['j'] }, 'const@/p/0'],
+    ['a later tuple position', { ...item, p: ['k', -1, 2] }, 'min@/p/1'],
+    ['a short tuple', { ...item, p: ['k'] }, 'min_items@/p'],
+    ['a long tuple', { ...item, p: ['k', 1, 2] }, 'max_items@/p'],
+    ['each item before uniqueness', { ...item, q: ['a', 'a', 'abc'] }, 'max_length@/q/2'],
+    ['a repeated item', { ...item, q: ['a', 'a'] }, 'unique@/q'],
   ])('reports %s', async (_name, value, expected) => {
     const emitted = await richModule()
     const wire = JSON.parse(JSON.stringify(value)) as unknown

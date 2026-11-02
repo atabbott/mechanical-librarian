@@ -15,9 +15,10 @@ const KNOWN = new Set([
   ...['type', 'const', 'enum', 'properties', 'required', 'additionalProperties', 'items'],
   ...['anyOf', 'oneOf', 'discriminator', '$ref', 'minimum', 'maximum', 'minLength'],
   ...['maxLength', 'pattern', 'minItems', 'maxItems', 'maxProperties', 'default', 'title'],
-  ...['description', 'writeOnly', 'format', 'propertyNames'],
+  ...['description', 'writeOnly', 'format', 'propertyNames', 'uniqueItems', 'prefixItems'],
 ])
 const TYPES = new Set(['string', 'integer', 'number', 'boolean', 'null', 'array', 'object'])
+const SCALARS = ['string', 'integer', 'number', 'boolean', 'null']
 const METHODS = ['get', 'put', 'post', 'delete', 'patch']
 const PREFIX = '#/components/schemas/'
 const pointer = (...parts) => parts.map((p) => String(p).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')
@@ -81,8 +82,17 @@ function guard(document, node, at, top = false) {
     if ((enumForm ? names.enum : [names.const]).some((name) => typeof name !== 'string'))
       fail(`${at}/propertyNames`, 'propertyNames value')
   }
+  // A unique array compares its items as JSON primitives, and a tuple is closed:
+  // exactly one schema per position and nothing after them.
+  if ('uniqueItems' in node && (node.uniqueItems !== true || node.type !== 'array' || !SCALARS.includes(kind(node.items ?? {}))))
+    fail(at, 'uniqueItems form')
+  if ('prefixItems' in node) {
+    const { prefixItems: items, minItems, maxItems } = node
+    if (!Array.isArray(items) || node.type !== 'array' || ![undefined, false].includes(node.items) || minItems !== items.length || maxItems !== items.length)
+      fail(at, 'prefixItems form')
+    items.forEach((item, index) => guard(document, item, `${at}/prefixItems/${index}`))
+  } else if ('items' in node) guard(document, node.items, `${at}/items`)
   for (const [key, value] of Object.entries(node.properties ?? {})) guard(document, value, `${at}/properties/${pointer(key)}`)
-  if ('items' in node) guard(document, node.items, `${at}/items`)
   if (plain(node.additionalProperties)) guard(document, node.additionalProperties, `${at}/additionalProperties`)
   else if ('additionalProperties' in node && typeof node.additionalProperties !== 'boolean')
     fail(`${at}/additionalProperties`, 'not a schema')
@@ -105,7 +115,7 @@ function analyse(document) {
     const refs = [node.$ref, ...Object.values(node.discriminator?.mapping ?? {})]
     for (const name of refs.filter(Boolean).map((ref) => ref.slice(PREFIX.length)))
       if (!reached.has(name)) reached.add(name) && visit(schemas[name])
-    const children = [...Object.values(node.properties ?? {}), ...(node.anyOf ?? []), ...(node.oneOf ?? [])]
+    const children = [...Object.values(node.properties ?? {}), ...(node.anyOf ?? []), ...(node.oneOf ?? []), ...(node.prefixItems ?? [])]
     for (const child of [...children, node.items, node.additionalProperties]) if (plain(child)) visit(child)
   }
   entries.forEach((entry) => visit(entry.schema))
@@ -214,12 +224,23 @@ export const lit =
     return literals.some((literal) => literal === v) ? (v as L[number]) : fail(at, literals.length === 1 ? 'const' : 'enum')
   }
 export const arr =
-  <T>(item: D<T>, min?: number, max?: number): D<readonly T[]> =>
+  <T>(item: D<T>, min?: number, max?: number, unique?: true): D<readonly T[]> =>
   (v, at) => {
     if (!Array.isArray(v)) return fail(at, 'type')
     if (min !== undefined && v.length < min) fail(at, 'min_items')
     if (max !== undefined && v.length > max) fail(at, 'max_items')
-    return v.map((element, index) => item(element, ptr(at, index)))
+    const out = v.map((element, index) => item(element, ptr(at, index)))
+    if (unique && new Set(out).size !== out.length) fail(at, 'unique')
+    return out
+  }
+// A closed tuple: each present position, then the length.
+export const tuple =
+  <const T extends readonly D<unknown>[]>(...items: T): D<{ readonly [I in keyof T]: T[I] extends D<infer U> ? U : never }> =>
+  (v, at) => {
+    if (!Array.isArray(v)) return fail(at, 'type')
+    const out = items.slice(0, v.length).map((item, index) => item(v[index], ptr(at, index)))
+    if (v.length !== items.length) fail(at, v.length < items.length ? 'min_items' : 'max_items')
+    return out as never
   }
 export const map =
   <T>(value: D<T>, max?: number, names?: readonly string[]): D<{ readonly [key: string]: T }> =>
@@ -318,7 +339,8 @@ export function emitDecoders(document) {
       case 'null':
         return 'nil'
       case 'array':
-        return `arr(${args(expr(node.items ?? {}), node.minItems, node.maxItems)})`
+        if ('prefixItems' in node) return `tuple(${node.prefixItems.map(expr).join(', ')})`
+        return `arr(${args(expr(node.items ?? {}), node.minItems, node.maxItems, node.uniqueItems)})`
       case 'object': {
         if (plain(node.additionalProperties)) {
           const names = node.propertyNames && ('const' in node.propertyNames ? [node.propertyNames.const] : node.propertyNames.enum)
