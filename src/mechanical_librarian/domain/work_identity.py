@@ -1631,10 +1631,13 @@ def series_label_segment(segment: str) -> bool:
 
 def series_label_name(segment: str) -> str:
     """The series name a trailing-position label carries, by the same grammar
-    `series_label_segment` reads: "Saga" from "Saga, Book IV", "Saga Vol. 2"
-    or "Saga #3", and "" when only a position remains (#1616)."""
-    text = _SERIES_MARKER.sub("", _clean(segment))
-    return _clean(_POSITION_NUMBER.sub("", text))
+    `series_label_segment` reads: "Saga" from "Saga, Book IV", "Saga Vol. 2",
+    "Saga #3" or "Saga#3", and "" when only a position remains (#1616)."""
+    text = _clean(segment)
+    inverted = _INVERTED_SERIES.fullmatch(f"{text} - x")
+    if inverted is not None and inverted.group("title") == "x":
+        return _clean(inverted.group("series"))
+    return _clean(_POSITION_NUMBER.sub("", _SERIES_MARKER.sub("", text)))
 
 
 def work_title_election_matches(

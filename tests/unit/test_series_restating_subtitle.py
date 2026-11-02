@@ -271,6 +271,9 @@ def test_only_a_subtitle_label_names_a_series_for_the_strip():
         "Saltmarsh Chronicles, Book IV",
         "Saltmarsh Chronicles Vol. 2",
         "Saltmarsh Chronicles #3",
+        "Saltmarsh Chronicles#3",
+        "Saltmarsh Chronicles Book 2",
+        "Saltmarsh Chronicles, No. 4",
     ),
 )
 def test_a_subtitle_label_names_its_series_by_the_label_grammar(label):
