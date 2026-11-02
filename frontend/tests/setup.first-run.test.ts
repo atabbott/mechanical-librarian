@@ -2287,6 +2287,16 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   ).toHaveLength(0)
 })
 
+// The reviewer step focuses its heading on the next animation frame. A test
+// presses a control only after that, as an owner would; otherwise, under load,
+// the frame can land after the press and take focus from the control.
+const reviewerStepSettled = () =>
+  waitFor(() =>
+    expect(
+      screen.getByRole('heading', { name: 'Choose an optional cover reviewer' }),
+    ).toHaveFocus(),
+  )
+
 it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   let started = false
   let cancelled = false
@@ -2313,6 +2323,7 @@ it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   vi.stubGlobal('fetch', fetch)
   runSetup()
   const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await reviewerStepSettled()
   start.focus()
   fireEvent.click(start)
   const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
@@ -2406,10 +2417,7 @@ it.each([
     runSetup()
     const restart = await screen.findByRole('button', { name: 'Restart device sign-in' })
     expect(screen.getByText(remedyCopy)).toBeVisible()
-    // The step focuses its heading on the next frame; press only after that,
-    // as an owner would, so the frame cannot land after the press.
-    const heading = screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })
-    await waitFor(() => expect(heading).toHaveFocus())
+    await reviewerStepSettled()
     restart.focus()
     fireEvent.click(restart)
     const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
@@ -2583,6 +2591,7 @@ it.each([
     const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
     const cancels = () =>
       fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device/cancel')).length
+    await reviewerStepSettled()
     cancel.focus()
     fireEvent.click(cancel)
     // jsdom has no focus fixup, so focus alone cannot fail here; a browser drops
