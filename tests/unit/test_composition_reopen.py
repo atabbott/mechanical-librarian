@@ -1110,6 +1110,10 @@ def test_completed_first_library_keeps_marker_until_initial_cohort_is_terminal(
         ("model", "profile_contract_mismatch"),
         ("memory", "profile_contract_mismatch"),
         ("processes", "profile_contract_mismatch"),
+        ("nul_codex", "profile_unreadable"),
+        ("nul_sandbox", "profile_unreadable"),
+        ("nul_auth_store", "profile_unreadable"),
+        ("nul_job_root", "profile_unreadable"),
     ],
 )
 def test_composed_provisioning_precedes_host_and_refuses_current_drift(
@@ -1160,6 +1164,14 @@ def test_composed_provisioning_precedes_host_and_refuses_current_drift(
                 raw["model"] = "synthetic-model"
             elif mutation == "memory":
                 raw["limits"]["memory_bytes"] = 536870912
+            elif mutation == "nul_codex":
+                raw["codex"]["path"] += "\x00"
+            elif mutation == "nul_sandbox":
+                raw["sandbox"]["path"] += "\x00"
+            elif mutation == "nul_auth_store":
+                raw["auth_store_path"] += "\x00"
+            elif mutation == "nul_job_root":
+                raw["job_root_path"] += "\x00"
             else:
                 raw["limits"]["processes"] = 16
             profile.write_text(canonical_json(raw))
@@ -1180,8 +1192,109 @@ def test_composed_provisioning_precedes_host_and_refuses_current_drift(
         assert view.codex.state == "not_provisioned"
         assert view.codex.reason == reason
         assert view.codex.model is None
+        assert str(tmp_path) not in view.model_dump_json()
         assert view.mapping is None and view.description_mapping is None
         assert operations.cancel_codex().state == "ready"
+    finally:
+        operations.close()
+        repository.close()
+
+
+def test_reviewer_access_route_answers_when_an_existing_codex_status_fails(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+        CodexDeviceAuthState,
+    )
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+    from tests.support.description_advice import _contained_profile
+    from tests.unit.review_app_fixture import (
+        TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
+    )
+
+    class _UnreadableStore:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.status_calls = 0
+
+        def start(self) -> CodexDeviceAuthState:
+            return CodexDeviceAuthState("starting")
+
+        def status(self) -> CodexDeviceAuthState:
+            self.status_calls += 1
+            raise ValueError(f"embedded null byte {tmp_path}")
+
+        def close(self) -> None:
+            return None
+
+    managers: list[_UnreadableStore] = []
+
+    def factory(*args, **kwargs) -> _UnreadableStore:
+        managers.append(_UnreadableStore(*args, **kwargs))
+        return managers[-1]
+
+    monkeypatch.setattr(composition, "CodexDeviceAuthManager", factory)
+    monkeypatch.setattr(
+        composition,
+        "reviewer_host_status",
+        lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+    )
+    profile = _contained_profile(tmp_path)
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(password, 0o600)
+    origin = "https://review.test"
+    configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
+        canonical_origin=origin,
+        owner_password_hash_file=str(password),
+        session_lifetime_seconds=600,
+        cover_reviewer_profile_file=str(profile),
+    )
+    repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
+    operations = composition._compose_reviewer_access(repository, configuration)
+    try:
+        _view, device = operations.start_codex(expected_revision=1)
+        assert device.state == "starting"
+        assert len(managers) == 1 and managers[0].status_calls == 1
+        app = create_transport_test_app(
+            repository,
+            configuration,
+            clock=lambda: 1_000,
+            reviewer_access=operations,
+        )
+        with TestClient(app, base_url=origin) as client:
+            login = client.post(
+                "/api/v1/session/login",
+                json={"password": "correct horse"},
+                headers={"Origin": origin},
+            )
+            assert login.status_code == 200, login.text
+            response = client.get(
+                "/api/v1/reviewer-access",
+                headers={
+                    "Origin": origin,
+                    "X-CSRF-Token": login.json()["csrf_token"],
+                    "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+                },
+            )
+        assert response.status_code == 200, response.text
+        codex = response.json()["codex"]
+        assert codex["engine"] == "codex"
+        assert codex["state"] == "ready"
+        assert codex["reason"] is None
+        assert str(tmp_path) not in response.text
+        assert managers[0].status_calls == 2
     finally:
         operations.close()
         repository.close()

@@ -27,7 +27,9 @@ import uvicorn
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from playwright.sync_api import (
+    APIResponse,
     BrowserContext,
+    ConsoleMessage,
     Locator,
     Page,
     Request,
@@ -2390,6 +2392,128 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
         assert errors == []
 
 
+# Reports, on the console, each cross-document navigation the page starts and
+# each settled Library read two tasks late: a 401's expiry hand-off is a 0 ms
+# timer queued as that response settles, so by then it has run and navigated,
+# if it would. (A navigating page can no longer be evaluated.) The probe marks
+# its reads, so only they are held, not reads of the page it replaced.
+_SIGN_OUT_NAVIGATION_PROBE = """
+navigation.addEventListener('navigate', (event) => {
+  if (!event.destination.sameDocument) console.debug('ml-1588 navigate', event.destination.url)
+})
+const send = window.fetch
+window.fetch = function (input, init) {
+  if (!String(input instanceof Request ? input.url : input).includes('/api/v1/library'))
+    return send.call(this, input, init)
+  const headers = new Headers(init?.headers)
+  headers.set('x-ml-1588-probe', '1')
+  const sent = send.call(this, input, { ...init, headers })
+  const settle = () =>
+    setTimeout(() => setTimeout(() => console.debug('ml-1588 read-settled'), 0), 0)
+  sent.then(settle, settle)
+  return sent
+}
+"""
+
+
+@pytest.mark.parametrize("read_answers", ["before_login_commits", "before_logout_ends"])
+def test_sign_out_lands_on_login_when_a_held_read_answers_401(
+    read_answers: str,
+) -> None:
+    """A Library read held across Sign out answers 401 once the session is
+    revoked. Sign out alone navigates, to /login exactly: the read's expiry
+    must neither abort that navigation nor replace it with /login?next (#1588).
+    /login documents are held, so the signed-in page records every navigation
+    it starts."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright, closing(ReservedPort()) as port:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_context(ignore_https_errors=True).new_page()
+            with _server(
+                database=root / "review.sqlite",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=port,
+            ) as (origin, _case_id):
+                _login(page, origin)
+                reads: list[Route] = []
+                documents: list[Route] = []
+                logouts: list[tuple[Route, APIResponse]] = []
+                navigations: list[str] = []
+                settled: list[str] = []
+
+                def observe(message: ConsoleMessage) -> None:
+                    kind, _, value = message.text.removeprefix("ml-1588 ").partition(
+                        " "
+                    )
+                    if message.text.startswith("ml-1588 "):
+                        (navigations if kind == "navigate" else settled).append(value)
+
+                def until(condition: Callable[[], bool]) -> None:
+                    for _ in range(500):
+                        if condition():
+                            return
+                        page.wait_for_timeout(20)
+                    raise AssertionError("condition not reached")
+
+                def release_reads() -> None:
+                    held = len(reads)
+                    for route in reads:
+                        route.continue_()
+                    until(lambda: len(settled) >= held)
+
+                page.add_init_script(_SIGN_OUT_NAVIGATION_PROBE)
+                page.on("console", observe)
+                page.route(
+                    "**/api/v1/library?*",
+                    lambda route: (
+                        reads.append(route)
+                        if route.request.headers.get("x-ml-1588-probe")
+                        else route.continue_()
+                    ),
+                )
+                page.route(
+                    re.compile(r".*/login(\?.*)?$"),
+                    lambda route: (
+                        documents.append(route)
+                        if route.request.is_navigation_request()
+                        else route.continue_()
+                    ),
+                )
+                if read_answers == "before_logout_ends":
+                    # The server revokes the session; its answer is held.
+                    page.route(
+                        "**/api/v1/session/logout",
+                        lambda route: logouts.append((route, route.fetch())),
+                    )
+                page.goto(f"{origin}/library?lens=all")
+                until(lambda: len(reads) >= 1)
+                # The /login document is held, so the click must not wait for it.
+                page.get_by_role("button", name="Sign out").click(no_wait_after=True)
+                if read_answers == "before_login_commits":
+                    until(lambda: len(documents) >= 1)
+                    release_reads()
+                else:
+                    until(lambda: len(logouts) == 1)
+                    release_reads()
+                    logout, response = logouts[0]
+                    logout.fulfill(response=response)
+                login = f"{origin}/login"
+                until(lambda: login in navigations)
+                assert navigations == [login]
+                until(lambda: len(documents) >= 1)
+                documents[0].continue_()
+                page.wait_for_url(login)
+                expect(page.get_by_role("button", name="Sign in")).to_be_visible()
+            browser.close()
+
+
 @pytest.mark.parametrize("transport_mode", ["direct", "http", "proxy"])
 def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
     transport_mode: str,
@@ -4300,6 +4424,106 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 expect(
                     page.get_by_role("heading", name="Review complete")
                 ).to_be_visible()
+            browser.close()
+
+
+def test_reviewer_access_failure_sits_under_its_focused_button() -> None:
+    """#1584: a pending Continue without a reviewer keeps real focus, ignores a
+    second press, and its unconfirmed failure renders directly under it inside
+    the row's inset at 1440 and 390 px and at 200% text."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1440, "height": 900}
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    cover=True,
+                    configured_cover_reviewer=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                held: list[Route] = []
+                page.route(
+                    "**/api/v1/reviewer-access/selection",
+                    lambda route: held.append(route),
+                )
+                page.goto(f"{origin}/settings?group=reviewer")
+                button = page.get_by_role("button", name="Continue without a reviewer")
+                button.focus()
+                page.keyboard.press("Enter")
+                expect(button).to_have_attribute("aria-disabled", "true")
+                # Chromium blurs a natively disabled button; this one keeps focus.
+                expect(button).to_be_focused()
+                page.keyboard.press("Enter")
+                button.click(force=True)
+                assert len(held) == 1
+                held[0].fulfill(
+                    status=503,
+                    json={
+                        "schema_version": "review-error-v1",
+                        "error": {"code": "reviewer_access_unavailable"},
+                    },
+                )
+                alert = page.get_by_text(
+                    "The change could not be fully confirmed. It may have been saved; "
+                    "reviewer access was reloaded. Check it before trying again."
+                )
+                expect(alert).to_be_visible()
+                expect(alert).to_have_attribute("role", "alert")
+                expect(button).to_be_focused()
+                assert len(held) == 1
+                for width, size in (
+                    (1440, ""),
+                    (390, ""),
+                    (1440, "200%"),
+                    (390, "200%"),
+                ):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    set_root_text(page, size)
+                    placement = button.evaluate("""button => {
+                      const alert = button.nextElementSibling;
+                      const row = button.closest('.settings-field-row');
+                      const control = button.closest('.settings-field-control');
+                      const own = button.getBoundingClientRect();
+                      const shown = alert.getBoundingClientRect();
+                      const box = row.getBoundingClientRect();
+                      const style = getComputedStyle(row);
+                      return {
+                        sibling: alert.getAttribute('role') === 'alert',
+                        inside: control.contains(alert),
+                        gap: shown.top - own.bottom,
+                        rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+                        left: shown.left - (box.left + parseFloat(style.paddingLeft)),
+                        right: box.right - parseFloat(style.paddingRight) - shown.right,
+                        scroll: document.documentElement.scrollWidth,
+                      };
+                    }""")
+                    assert placement["sibling"] and placement["inside"], placement
+                    assert 0 <= placement["gap"] <= placement["rem"], (
+                        width,
+                        size,
+                        placement,
+                    )
+                    assert placement["left"] >= -0.5, (width, size, placement)
+                    assert placement["right"] >= -0.5, (width, size, placement)
+                    assert placement["scroll"] <= width, (width, size, placement)
+                    expect(button).to_be_focused()
+                set_root_text(page, "")
             browser.close()
 
 
@@ -9477,6 +9701,24 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 retry = page.get_by_role("button", name="Try the same decision again")
                 expect(retry).to_be_visible()
                 expect(retry).to_be_focused()
+                # #1584: the failure sits directly under the retry it describes.
+                for width in (1440, 390):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    placement = retry.evaluate("""retry => {
+                      const message = retry.nextElementSibling;
+                      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+                      return {
+                        alert: message?.getAttribute('role') === 'alert',
+                        gap: message.getBoundingClientRect().top - retry.getBoundingClientRect().bottom,
+                        rem,
+                        scroll: document.documentElement.scrollWidth,
+                      };
+                    }""")
+                    assert placement["alert"], (width, placement)
+                    # Clear of the focused retry's ring, and still directly under it.
+                    assert 4 <= placement["gap"] <= placement["rem"], (width, placement)
+                    assert placement["scroll"] <= width, (width, placement)
+                page.set_viewport_size({"width": 1280, "height": 720})
                 retry.click()
                 page.get_by_role(
                     "heading", name="Which series should this work use?"

@@ -150,8 +150,10 @@ function CodexSignIn({
             ) : null}
             <button
               type="button"
-              disabled={mutation.isPending}
-              onClick={() => mutation.mutate({ kind: 'codex-cancel' })}
+              aria-disabled={mutation.isPending || undefined}
+              onClick={() => {
+                if (!mutation.isPending) mutation.mutate({ kind: 'codex-cancel' })
+              }}
             >
               Cancel sign-in
             </button>
@@ -160,8 +162,11 @@ function CodexSignIn({
           <>
             <button
               type="button"
-              disabled={mutation.isPending || hostUnsupported}
-              onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
+              disabled={hostUnsupported}
+              aria-disabled={mutation.isPending || undefined}
+              onClick={() => {
+                if (!mutation.isPending) mutation.mutate({ kind: 'codex-recheck' })
+              }}
             >
               Check existing Codex sign-in
             </button>
@@ -174,7 +179,11 @@ function CodexSignIn({
                 <button
                   type="button"
                   autoFocus
-                  onClick={() => mutation.mutate({ kind: 'codex-start', revision: view.revision })}
+                  aria-disabled={mutation.isPending || undefined}
+                  onClick={() => {
+                    if (!mutation.isPending)
+                      mutation.mutate({ kind: 'codex-start', revision: view.revision })
+                  }}
                 >
                   Confirm replace Codex sign-in
                 </button>
@@ -201,8 +210,11 @@ function CodexSignIn({
                 <button
                   type="button"
                   autoFocus
-                  disabled={mutation.isPending}
-                  onClick={() => mutation.mutate({ kind: 'codex-clear', revision: view.revision })}
+                  aria-disabled={mutation.isPending || undefined}
+                  onClick={() => {
+                    if (!mutation.isPending)
+                      mutation.mutate({ kind: 'codex-clear', revision: view.revision })
+                  }}
                 >
                   Confirm clear Codex sign-in
                 </button>
@@ -224,15 +236,22 @@ function CodexSignIn({
           <>
             <button
               type="button"
-              disabled={mutation.isPending || hostUnsupported}
-              onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
+              disabled={hostUnsupported}
+              aria-disabled={mutation.isPending || undefined}
+              onClick={() => {
+                if (!mutation.isPending) mutation.mutate({ kind: 'codex-recheck' })
+              }}
             >
               Check existing Codex sign-in
             </button>
             <button
               type="button"
-              disabled={mutation.isPending || hostUnsupported}
-              onClick={() => mutation.mutate({ kind: 'codex-start', revision: view.revision })}
+              disabled={hostUnsupported}
+              aria-disabled={mutation.isPending || undefined}
+              onClick={() => {
+                if (!mutation.isPending)
+                  mutation.mutate({ kind: 'codex-start', revision: view.revision })
+              }}
             >
               {['expired', 'failed', 'cancelled', 'interrupted'].includes(view.codex.state)
                 ? 'Restart device sign-in'
@@ -243,8 +262,10 @@ function CodexSignIn({
         {hostUnsupported && !waiting ? (
           <button
             type="button"
-            disabled={mutation.isPending}
-            onClick={() => mutation.mutate({ kind: 'codex-cancel' })}
+            aria-disabled={mutation.isPending || undefined}
+            onClick={() => {
+              if (!mutation.isPending) mutation.mutate({ kind: 'codex-cancel' })
+            }}
           >
             Cancel any active sign-in
           </button>
@@ -258,7 +279,7 @@ function CodexSignIn({
                 : 'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}
           </p>
         ) : null}
-        {mutation.isError && mutation.variables.kind.startsWith('codex') ? (
+        {mutation.isError && mutation.variables.kind.startsWith('codex-') ? (
           <p role="alert">{mutationFailure}</p>
         ) : null}
       </div>
@@ -330,8 +351,10 @@ function OpenRouterReviewer({
         <button
           ref={openrouterReplaceTrigger}
           type="button"
-          disabled={mutation.isPending || !effectiveModel || !key}
+          disabled={!effectiveModel || !key}
+          aria-disabled={mutation.isPending || undefined}
           onClick={() => {
+            if (mutation.isPending) return
             if (view.openrouter_key_configured && confirmReplace !== 'openrouter') {
               setConfirmReplace('openrouter')
               return
@@ -359,8 +382,10 @@ function OpenRouterReviewer({
           <>
             <button
               type="button"
-              disabled={mutation.isPending}
-              onClick={() => mutation.mutate({ kind: 'openrouter-refresh' })}
+              aria-disabled={mutation.isPending || undefined}
+              onClick={() => {
+                if (!mutation.isPending) mutation.mutate({ kind: 'openrouter-refresh' })
+              }}
             >
               Refresh current status
             </button>
@@ -373,10 +398,11 @@ function OpenRouterReviewer({
                 <button
                   type="button"
                   autoFocus
-                  disabled={mutation.isPending}
-                  onClick={() =>
-                    mutation.mutate({ kind: 'openrouter-clear', revision: view.revision })
-                  }
+                  aria-disabled={mutation.isPending || undefined}
+                  onClick={() => {
+                    if (!mutation.isPending)
+                      mutation.mutate({ kind: 'openrouter-clear', revision: view.revision })
+                  }}
                 >
                   Confirm clear OpenRouter key
                 </button>
@@ -511,11 +537,17 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             </p>
             <button
               type="button"
-              disabled={mutation.isPending || view.mapping === null}
-              onClick={() => mutation.mutate({ kind: 'without', revision: view.revision })}
+              aria-disabled={mutation.isPending || view.mapping === null || undefined}
+              onClick={() => {
+                if (!mutation.isPending && view.mapping !== null)
+                  mutation.mutate({ kind: 'without', revision: view.revision })
+              }}
             >
               Continue without a reviewer
             </button>
+            {mutation.isError && mutation.variables.kind === 'without' ? (
+              <p role="alert">{mutationFailure}</p>
+            ) : null}
           </div>
         </div>
 
@@ -531,18 +563,22 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             <div className="settings-field-control">
               <button
                 type="button"
-                disabled={mutation.isPending || !codexUsable || view.mapping?.engine === 'codex'}
-                onClick={() => mutation.mutate({ kind: 'codex', revision: view.revision })}
+                disabled={!codexUsable || view.mapping?.engine === 'codex'}
+                aria-disabled={mutation.isPending || undefined}
+                onClick={() => {
+                  if (!mutation.isPending)
+                    mutation.mutate({ kind: 'codex', revision: view.revision })
+                }}
               >
                 Use Codex for cover observations
               </button>
+              {mutation.isError && mutation.variables.kind === 'codex' ? (
+                <p role="alert">{mutationFailure}</p>
+              ) : null}
             </div>
           </div>
         ) : null}
         <OpenRouterReviewer access={access} view={view} />
-        {mutation.isError && mutation.variables.kind === 'without' ? (
-          <p role="alert">{mutationFailure}</p>
-        ) : null}
       </section>
       <DescriptionReviewerSettings http={http} view={view} codexUsable={codexUsable} />
     </div>

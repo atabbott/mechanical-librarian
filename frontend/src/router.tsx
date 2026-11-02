@@ -463,7 +463,7 @@ export const ConnectionNotice = ({
         {condition.state === 'recovered' ? 'Dismiss' : action}
       </button>
       {error ? (
-        <p role="alert">
+        <p>
           {uncertainWriteOutcome(error)
             ? 'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.'
             : refusalCopy(
@@ -1176,19 +1176,17 @@ const Shell = () => {
   const signOut = async () => {
     setShellError('')
     setShellUncertain(false)
-    try {
-      await http.logout()
-      window.location.assign('/login')
-    } catch (error) {
-      if (!(error instanceof BuildMismatchError)) {
-        const uncertain = uncertainWriteOutcome(error)
-        setShellUncertain(uncertain)
-        setShellError(
-          uncertain
-            ? 'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.'
-            : refusalCopy(error, 'Sign out failed. Try again.'),
-        )
-      }
+    const failure = await http.logout().catch((error: unknown) => error)
+    // A session already gone is signed out too (#1588).
+    if (!failure || failure instanceof SessionExpiredError) window.location.assign('/login')
+    else if (!(failure instanceof BuildMismatchError)) {
+      const uncertain = uncertainWriteOutcome(failure)
+      setShellUncertain(uncertain)
+      setShellError(
+        uncertain
+          ? 'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.'
+          : refusalCopy(failure, 'Sign out failed. Try again.'),
+      )
     }
   }
   return (

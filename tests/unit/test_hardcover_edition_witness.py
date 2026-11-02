@@ -3,7 +3,7 @@
 An edition counts when it credits a narrator and states a runtime inside the
 tight band of the file's. A match is challenged only when it is outside the
 band and credits only narrators the counted editions do not: the same
-narrator at a nearby runtime is the same recording (ADR-0089).
+narrator at a nearby runtime is the same recording (ADR-0090).
 """
 
 from __future__ import annotations

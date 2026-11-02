@@ -49,6 +49,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
     carried_asin_claim,
     corroborated_recording_candidate,
+    hardcover_edition_leads,
     local_claim_runtime_seconds,
     recording_lookup_hints,
     runtime_agreement,
@@ -1160,7 +1161,8 @@ def audiobook_asin_feed_plan(
     preparation admitted and this one carries (#1316), an ASIN the search pass
     corroborated, and one the target asserts. All are fed here, carried first,
     so the order over an item is always local, carried, promoted, asserted,
-    and the band-first hints last.
+    Hardcover edition leads (#962), searched products, and the band-first
+    hints last.
 
     The bound is the plan's own `MAX_ASIN_DISCOVERY_LANES`, counted across
     every origin, and there is no second round: this reads phase-one
@@ -1189,6 +1191,12 @@ def audiobook_asin_feed_plan(
         # One ASIN promoted *and* asserted is one product, so it is one lane
         # whose references name both origins rather than two competing lanes.
         ordered[asin] = tuple(sorted(set(ordered.get(asin, ())) | set(references)))
+    # Hardcover's counted audio editions name the recording when they
+    # challenge the accepted match or no authority put one forward (#962,
+    # ADR-0090). Their ASINs come before the products the search itself
+    # returned, which a challenge has just said are the wrong recording.
+    for asin in hardcover_edition_leads(plan.local_claims, plan.audio, observations):
+        ordered[asin] = tuple(sorted(set(ordered.get(asin, ())) | set(work_references)))
     for observation in observations:
         if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
             continue
