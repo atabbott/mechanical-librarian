@@ -1751,7 +1751,8 @@ export default function LibraryPage({
   const selectedCoverPreparation =
     selected?.destination === 'cover' &&
     selected.coverConsideration?.current !== true &&
-    selected.needsAttention
+    // A kept cover asks for nothing but stays choosable (#1310).
+    (selected.needsAttention || selected.classification === 'owner_choosable')
   const selectedCoverInspection =
     selected?.destination === 'cover' &&
     (selected.coverConsideration !== null || selectedCoverPreparation)

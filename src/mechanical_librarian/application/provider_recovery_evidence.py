@@ -38,7 +38,11 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     ReportValueError,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    POPULATED_VALUE_MEETS_FLOOR_REASON,
+    ProposalOutcome,
+    ProposalSet,
+)
 from mechanical_librarian.domain.provider_recovery import (
     RECOVERY_FAILURES,
     ProviderRecoveryJob,
@@ -113,7 +117,12 @@ def provider_budget_dispatch_reason(
         return "zero_provider_evidence", 1
     if any(
         result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-        and result.reasons == ("competing_evidence",)
+        # A populated value that passes the floor still disagrees (#1310).
+        and result.reasons
+        in {
+            ("competing_evidence",),
+            ("competing_evidence", POPULATED_VALUE_MEETS_FLOOR_REASON),
+        }
         and can_add_independence(result)
         for result in unresolved
     ):

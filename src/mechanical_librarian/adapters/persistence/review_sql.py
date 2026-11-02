@@ -102,12 +102,21 @@ _CURRENT_COVER_AUTHORITY_PREFIX_SQL = (
 _CURRENT_COVER_AUTHORITY_MANUAL_READY_SQL = (
     "AND json_extract(authority_consideration.currentness_document,'$.manual_ready')=1 "
 )
+# Whether the case's cover result is an unresolved choice. A comparison
+# awaiting refresh keeps a cover in attention by this raw outcome, not by the
+# field fact, which reads a kept readable cover as settled (#1310): a reason
+# that still queues a kept cover, such as a shadow abstention, keeps it.
+_COVER_UNRESOLVED_OUTCOME_SQL = (
+    "(SELECT count(*) FROM json_each(rc.document,'$.results') raw_cover "
+    "WHERE json_extract(raw_cover.value,'$.destination')='cover' "
+    "AND json_extract(raw_cover.value,'$.outcome')='unresolved_choice')"
+)
 _CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
     _CURRENT_COVER_AUTHORITY_PREFIX_SQL
     + "AND json_extract(authority_consideration.document,'$.policy_reference')=? "
     + _CURRENT_COVER_AUTHORITY_MANUAL_READY_SQL
     + "AND CASE ml_cover_consideration_current(authority_consideration.currentness_document,?) "
-    "WHEN 1 THEN 1 WHEN 2 THEN result.unresolved_choice ELSE 0 END=1))"
+    "WHEN 1 THEN 1 WHEN 2 THEN " + _COVER_UNRESOLVED_OUTCOME_SQL + " ELSE 0 END=1))"
 )
 _STORED_COVER_ATTENTION_AUTHORITY_SQL = (
     _CURRENT_COVER_AUTHORITY_PREFIX_SQL
@@ -118,6 +127,16 @@ _STORED_COVER_ATTENTION_AUTHORITY_SQL = (
 # authority below admits it, and nothing in `_REVIEW_FIELD_ATTENTION_CLEAR_SQL`
 # has already settled or suspended it. No reason is medium-specific: a
 # recording joins the queue under exactly an ebook's conditions (#1249).
+# A verified current cover is kept without asking (#1310): its alternatives
+# stay choosable on the work's page, but neither its field fact nor its
+# consideration puts it in the queue. A case has one cover result, so the probe
+# reads the case's document rather than the field's own row.
+_VERIFIED_CURRENT_COVER_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') cover_result,"
+    "json_each(cover_result.value,'$.reasons') cover_reason "
+    "WHERE json_extract(cover_result.value,'$.destination')='cover' "
+    "AND cover_reason.value='current_cover_verified')"
+)
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
     "OR (result.destination='cover' AND EXISTS (SELECT 1 "
@@ -125,7 +144,8 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=current_cover.consideration_id "
     "WHERE current_cover.review_case_id=rc.review_case_id "
-    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1)) "
+    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1) "
+    "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ") "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "
@@ -267,7 +287,7 @@ _ATTENTION_FACT_SOURCE_SQL = (
     "CASE WHEN result.destination='cover' AND EXISTS (SELECT 1 "
     "FROM current_cover_considerations pointer "
     "WHERE pointer.review_case_id=rc.review_case_id) "
-    "THEN result.unresolved_choice END "
+    "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL + " END "
     "FROM current_review_packages c "
     "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
     "JOIN metadata_reports mr ON mr.report_id IN (c.report_id,rc.report_id)"
@@ -378,6 +398,8 @@ __all__ = [
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
+    "_COVER_UNRESOLVED_OUTCOME_SQL",
+    "_VERIFIED_CURRENT_COVER_SQL",
     "_LATEST_PREPARATION_FAILED_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",

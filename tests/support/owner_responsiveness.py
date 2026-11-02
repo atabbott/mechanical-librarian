@@ -51,6 +51,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -195,7 +196,17 @@ class OwnerResponsivenessFixture:
                     local_claims=(*base.local_claims, title_claim),
                     local_reasons=(*base.local_reasons, "opening_matter_title"),
                     providers=providers,
-                    cover_sources=base.cover_sources,
+                    # A readable current cover is kept without asking (#1310),
+                    # so most of a mixed store's works lack one and ask.
+                    cover_sources=tuple(
+                        source
+                        for source in base.cover_sources
+                        if not (
+                            mixed
+                            and index % 3 != 1
+                            and source.kind is CoverSourceKind.ABS
+                        )
+                    ),
                 )
                 self.reports[report.target.item] = report
                 if mixed and index == works - 1:

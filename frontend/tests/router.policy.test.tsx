@@ -642,7 +642,7 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     const tags = screen.getByRole('region', { name: 'Tags' })
     expect(tags).toHaveTextContent(
-      'Tags are off by default. When enabled, use compatible source tags or review them yourself.',
+      'Tags are off by default, and while off they never ask for review. When enabled, use compatible source tags or review them yourself.',
     )
     expect(within(tags).getByText('Automatic not supported')).toBeVisible()
     expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()

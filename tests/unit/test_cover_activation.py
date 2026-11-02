@@ -939,7 +939,15 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         )
         assert stale_cover["human_decision"] is None
         assert stale_cover["cover_consideration"] is None
-        assert stale_cover["needs_attention"]
+        # The current cover is still the readable one, so it is kept without
+        # asking. It stays choosable: with no current comparison, the work's
+        # page offers to prepare one (#1310).
+        assert not stale_cover["needs_attention"]
+        assert stale_cover["classification"] == "owner_choosable"
+        assert stale_cover["classification_reason"] == (
+            "Your current cover is kept, so no review is needed. You can still "
+            "choose another cover."
+        )
 
         consideration_now[0] = 103
         successor = consideration_service.ensure(

@@ -31,6 +31,8 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
+    _COVER_UNRESOLVED_OUTCOME_SQL,
+    _VERIFIED_CURRENT_COVER_SQL,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from tests.support.audiobook_reports import (
@@ -79,6 +81,11 @@ _AUTHORS_ASK = (
     "'$.destinations.contributor_names')='ask') OR "
 )
 _NARRATORS_ASK = _AUTHORS_ASK.replace("'authors'", "'narrators'")
+# #1310 later keeps a readable current cover out of the cover branch, and
+# admits a refreshing cover by its raw outcome rather than its fact.
+_KEPT_COVER_SQL = " AND NOT " + _VERIFIED_CURRENT_COVER_SQL
+_RAW_REFRESH_SQL = "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL + " END"
+_FACT_REFRESH_SQL = "THEN result.unresolved_choice END"
 _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
     _ATTENTION_FACT_SOURCE_SQL.replace(_NARRATORS_ASK, "", 1)
     .replace(
@@ -87,7 +94,13 @@ _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
         1,
     )
     .replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL, 1)
+    .replace(_KEPT_COVER_SQL, "", 1)
+    .replace(_RAW_REFRESH_SQL, _FACT_REFRESH_SQL, 1)
 )
+# The #1249 comparison holds every later rule fixed, so it keeps #1310's.
+_PRE_1249_WITH_KEPT_COVER_SQL = _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
+    "'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1
+).replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
 
 
 def _facts(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -1016,7 +1029,7 @@ def test_a_write_that_changes_no_read_column_refreshes_no_fact(
 
 def _predecessor(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     return sorted(
-        connection.execute(_PRE_1249_ATTENTION_FACT_SOURCE_SQL).fetchall(), key=repr
+        connection.execute(_PRE_1249_WITH_KEPT_COVER_SQL).fetchall(), key=repr
     )
 
 
@@ -1026,13 +1039,16 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         == "1513216e8213975ceedf17f5ddd01cf7f3ba4c8ab6c68678f9013399bc7b9d86"
     )
     # Exactly two edits: the audiobook clause leaves, and narrators asks
-    # beside authors; #1285 later lets a withdrawn field ask again.
+    # beside authors; #1285 later lets a withdrawn field ask again, and #1310
+    # keeps a verified current cover out of the cover branch.
     assert _ATTENTION_FACT_SOURCE_SQL.count(_NARRATORS_ASK) == 1
     assert _PRE_1249_ATTENTION_FACT_SOURCE_SQL.count(_AUTHORS_ASK) == 1
     assert (
         _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace("OR facts.format <> 'epub' ", "", 1)
         .replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
         .replace(PRIOR_HUMAN_DECIDED_SQL, HUMAN_DECIDED_SQL, 1)
+        .replace("'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1)
+        .replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
         == _ATTENTION_FACT_SOURCE_SQL
     )
 
@@ -1077,7 +1093,7 @@ def test_open_refuses_a_store_maintained_by_the_predecessor_source(
         connection.executescript(
             "DROP TRIGGER review_attention_refresh_apply;"
             + schema._ATTENTION_REFRESH_SQL.replace(
-                _ATTENTION_FACT_SOURCE_SQL, _PRE_1249_ATTENTION_FACT_SOURCE_SQL, 1
+                _ATTENTION_FACT_SOURCE_SQL, _PRE_1249_WITH_KEPT_COVER_SQL, 1
             )
             + ";"
         )

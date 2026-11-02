@@ -2184,6 +2184,22 @@ _SERIES_STRIP: dict[str, Any] = {
             None,
         ),
         ("Saltmarsh (Unabridged)", "Saltmarsh", ("Saltmarsh Chronicles",), None),
+        # An underscore then a space splits parts like a colon (#1616).
+        (
+            "Saltmarsh_ A Saltmarsh Chronicles Novel",
+            "Saltmarsh",
+            ("Saltmarsh Chronicles",),
+            "A Saltmarsh Chronicles Novel",
+        ),
+        ("Saltmarsh_ A Saltmarsh Chronicles Novel", "Saltmarsh", (), None),
+        (
+            "Saltmarsh_ Saltmarsh Chronicles, Book 1",
+            "Saltmarsh",
+            (),
+            "Saltmarsh Chronicles, Book 1",
+        ),
+        ("Saltmarsh_ Rising Tide", "Saltmarsh", ("Saltmarsh Chronicles",), None),
+        ("Salt_marsh: Book 1", "Salt_marsh", (), "Book 1"),
     ),
 )
 def test_title_strip_series_label_reads_exactly_one_removed_segment(
@@ -2284,6 +2300,47 @@ _REPLACED_TITLE = (
     "candidate",
     "title_and_subtitle:audiobook_title_replace",
 )
+
+_UNDERSCORE_STRIP: dict[str, Any] = {
+    "title": "Saltmarsh_ A Saltmarsh Chronicles Novel",
+    "source_title": "Saltmarsh",
+    "source_subtitle": None,
+}
+
+
+@pytest.mark.parametrize(
+    "variant,routing",
+    (
+        ("series_empty", ("ask", "manual", "title_and_subtitle")),
+        ("series_populated", _REPLACED_TITLE),
+        ("named_by_a_subtitle_label", ("ask", "manual", "title_and_subtitle")),
+    ),
+)
+def test_an_underscore_strip_deleting_an_unpreserved_series_label_is_asked(
+    variant, routing, monkeypatch
+):
+    """ "Title_ A <Series> Novel" loses its label after the underscore, read as a
+    part like a colon; the series may be named only by a subtitle label (#1616)."""
+    variants: dict[str, dict[str, Any]] = {
+        "series_empty": {"source_series": ("Saltmarsh Chronicles", "1")},
+        "series_populated": {
+            "source_series": ("Saltmarsh Chronicles", "1"),
+            "target_series": ("Saltmarsh Chronicles", "1"),
+        },
+        "named_by_a_subtitle_label": {
+            "source_subtitle": "Saltmarsh Chronicles, Book 1"
+        },
+    }
+    report = synthetic_audiobook_bibliographic_report(
+        **{**_UNDERSCORE_STRIP, **variants[variant]}
+    )
+    automatic = ("title_layout", "subtitle")
+    assert _routing(_recording_outcomes(report, automatic)["title"]) == routing
+    # Without the guard the same strip is the qualified automatic replacement.
+    monkeypatch.setattr(shadow_outcome, "title_strip_series_label", lambda *_args: None)
+    assert _routing(_recording_outcomes(report, automatic)["title"]) == (
+        _REPLACED_TITLE
+    )
 
 
 @pytest.mark.parametrize(
@@ -2768,6 +2825,17 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             'The proposed title carries an announcement such as "Now a Major '
             'Motion Picture", so it is never written for you.',
         ),
+        (
+            {
+                "title": "Saltmarsh",
+                "source_title": "Saltmarsh",
+                "source_subtitle": "Saltmarsh Chronicles, Book 3",
+            },
+            "subtitle",
+            "subtitle",
+            "The proposed subtitle only repeats the series, so it is never "
+            "written for you.",
+        ),
     ),
     ids=(
         "credit_prefixed",
@@ -2775,6 +2843,7 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
         "strips_marks_beside_the_files_accented_tag",
         "insufficient_support_beside_an_unsupported_tag",
         "promotional_title",
+        "series_restating_subtitle",
     ),
 )
 def test_a_degraded_candidate_tells_the_owner_why_it_was_withheld(
@@ -2805,7 +2874,16 @@ def test_a_degraded_candidate_tells_the_owner_why_it_was_withheld(
         )
     assert field["automatic_decision"] is None
     assert field["automatic_withheld_reason"] == message
-    assert field["needs_attention"]
+    if destination == "subtitle":
+        # The withheld subtitle stays an optional choice, offered unchanged,
+        # as a withheld marketing subtitle does (#1317, #1616).
+        assert field["proposed_values"] == [
+            {"kind": "text", "value": variant["source_subtitle"]}
+        ]
+        assert "accept" in field["decision_actions"]
+        assert not field["needs_attention"]
+    else:
+        assert field["needs_attention"]
 
 
 def _confirmed_promotional_title_report():

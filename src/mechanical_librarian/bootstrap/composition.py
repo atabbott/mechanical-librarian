@@ -62,6 +62,7 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
     activity_projector_event,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
+    NonClosingRepository,
     cover_currentness_cache,
     open_repository,
     open_shadow_preview_repository,
@@ -142,6 +143,7 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
     ReviewWebConfiguration,
+    audiobook_marketplaces,
 )
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -257,13 +259,11 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
     description_digest,
 )
-from mechanical_librarian.domain.field_outcomes import language_identity
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
 )
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
-    AUDIOBOOK_MARKETPLACE_LANGUAGES,
     MetadataReport,
     ProviderStatus,
 )
@@ -323,6 +323,8 @@ from mechanical_librarian.interfaces.web.runtime_dispatch import (
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 
 if TYPE_CHECKING:
+    import httpx
+
     from mechanical_librarian.adapters.persistence.catalogue import (
         SQLiteCatalogueRepository,
     )
@@ -528,6 +530,28 @@ def _required_secret_file(value: str | None) -> str:
     return value
 
 
+def _target_client_factory(
+    configuration: ApplicationConfiguration,
+    credentials: dict[str, str] | None,
+    connection: TargetConnectionConfiguration,
+) -> Callable[[], httpx.Client]:
+    """Open a target connection's client from its secret file, or from the
+    injected credential when the runtime supplied them."""
+    return lambda: (
+        target_client(
+            connection.endpoint,
+            _required_secret_file(connection.secret_file),
+            configuration.limits.timeout_seconds,
+        )
+        if credentials is None
+        else target_client_token(
+            connection.endpoint,
+            credentials["target:" + connection.name],
+            configuration.limits.timeout_seconds,
+        )
+    )
+
+
 def compose_audiobookshelf_field_effect_target(
     configuration: ApplicationConfiguration,
     artifact_store_path: Path,
@@ -550,19 +574,7 @@ def compose_audiobookshelf_field_effect_target(
         artifact_store_path, create=False, expected_identity=artifact_identity
     )
     return AudiobookshelfFieldEffectTarget(
-        client_factory=lambda: (
-            target_client(
-                connection.endpoint,
-                _required_secret_file(connection.secret_file),
-                configuration.limits.timeout_seconds,
-            )
-            if credentials is None
-            else target_client_token(
-                connection.endpoint,
-                credentials["target:" + connection.name],
-                configuration.limits.timeout_seconds,
-            )
-        ),
+        client_factory=_target_client_factory(configuration, credentials, connection),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         artifacts=artifacts,
@@ -581,19 +593,7 @@ def compose_audiobookshelf_field_effect_capabilities(
         connection_name, library_name
     )
     return AudiobookshelfFieldEffectCapabilities(
-        client_factory=lambda: (
-            target_client(
-                connection.endpoint,
-                _required_secret_file(connection.secret_file),
-                configuration.limits.timeout_seconds,
-            )
-            if credentials is None
-            else target_client_token(
-                connection.endpoint,
-                credentials["target:" + connection.name],
-                configuration.limits.timeout_seconds,
-            )
-        ),
+        client_factory=_target_client_factory(configuration, credentials, connection),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         maximum_response_bytes=configuration.limits.target_response_bytes,
@@ -851,59 +851,6 @@ def run_metadata_report(
     )
 
 
-class _NonClosingRepository:
-    """Let one composed service borrow a pipeline-owned repository connection."""
-
-    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
-        self._repository = repository
-
-    # A delegating proxy resolves every other member dynamically, so ``Any`` is
-    # the only description of what borrowing a member actually yields.
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._repository, name)
-
-    def close(self) -> None:
-        return None
-
-
-def _audiobook_marketplaces(
-    providers: Sequence[ProviderConnectionConfiguration],
-    languages: tuple[str, ...] = (),
-) -> tuple[str, ...]:
-    """Read the one marketplace order every ASIN lookup in this build walks.
-
-    `marketplaces` is configurable on the enabled Audible catalog and on
-    nothing else, but an ASIN is marketplace-scoped for Audnexus in exactly the
-    same way and it has no configuration surface of its own. Both read the
-    owner's one stated order here rather than each inventing a default.
-
-    A library's declared languages move the marketplaces in its first
-    language to the front, then those in its second, and so on, each in the
-    owner's order (#1315). The title search asks the first marketplace, so a
-    German library searches Audible.de. Nothing is added or removed.
-    """
-    stated = next(
-        (
-            value.marketplaces
-            for value in providers
-            if value.adapter == "audible_catalog"
-            and value.enabled
-            and value.marketplaces
-        ),
-        ("us",),
-    )
-    # Each marketplace ranks by the first declared language whose catalogue
-    # it carries; the sort is stable, so ties keep the owner's order.
-    rank: dict[str, int] = {}
-    for position, language in enumerate(languages):
-        identity = language_identity(language)
-        if identity is not None:
-            for code, bases in AUDIOBOOK_MARKETPLACE_LANGUAGES.items():
-                if identity.base in bases:
-                    rank.setdefault(code, position)
-    return tuple(sorted(stated, key=lambda code: rank.get(code, len(languages))))
-
-
 def run_metadata_report_loaded(
     configuration: ApplicationConfiguration,
     database_path: Path,
@@ -941,19 +888,7 @@ def run_metadata_report_loaded(
         artifact_store_path, create=False, expected_identity=artifact_identity
     )
     target = AudiobookshelfItemReader(
-        client_factory=lambda: (
-            target_client(
-                connection.endpoint,
-                _required_secret_file(connection.secret_file),
-                configuration.limits.timeout_seconds,
-            )
-            if credentials is None
-            else target_client_token(
-                connection.endpoint,
-                credentials["target:" + connection.name],
-                configuration.limits.timeout_seconds,
-            )
-        ),
+        client_factory=_target_client_factory(configuration, credentials, connection),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         service_path=mount.service_path,
@@ -1000,104 +935,32 @@ def run_metadata_report_loaded(
         for provider in provider_configs
     ):
         itunes_search_pacer = ITunesSearchPacer()
-    marketplaces = _audiobook_marketplaces(provider_configs, library.languages)
+    marketplaces = audiobook_marketplaces(provider_configs, library.languages)
+    pacers = _ProviderPacers(
+        google_books=google_books_pacer,
+        open_library=open_library_pacer,
+        inventaire=inventaire_pacer,
+        hardcover=hardcover_pacer,
+        audible_catalog=audible_catalog_pacer,
+        audnexus=audnexus_pacer,
+        audiosilo=audiosilo_pacer,
+        itunes_search=itunes_search_pacer,
+    )
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
 
         def factory(
             value: ProviderConnectionConfiguration = provider,
         ) -> MetadataProvider:
-            instance: MetadataProvider
-            if value.adapter == "google_books":
-                api_key = (
-                    credentials.get("provider:" + value.name)
-                    if credentials is not None
-                    else (
-                        None
-                        if value.secret_file is None
-                        else read_secret(value.secret_file)
-                    )
+            instance = _metadata_provider(
+                value, configuration, credentials, marketplaces, pacers
+            )
+            if isinstance(instance, str):
+                raise MetadataReportError(
+                    "provider credential unavailable"
+                    if instance == "credential unavailable"
+                    else "provider configuration is invalid"
                 )
-                instance = GoogleBooksMetadataProvider(
-                    value.name,
-                    google_books_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    api_key=api_key,
-                    pacer=google_books_pacer,
-                )
-            elif value.adapter == "hardcover":
-                if value.secret_file is None and credentials is None:
-                    raise MetadataReportError("provider credential unavailable")
-                instance = HardcoverMetadataProvider(
-                    value.name,
-                    hardcover_client(
-                        _required_secret_file(value.secret_file),
-                        configuration.limits.timeout_seconds,
-                    )
-                    if credentials is None
-                    else hardcover_client_token(
-                        credentials["provider:" + value.name],
-                        configuration.limits.timeout_seconds,
-                    ),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=hardcover_pacer,
-                )
-            elif value.adapter == "open_library" and value.contact_email is not None:
-                instance = OpenLibraryMetadataProvider(
-                    value.name,
-                    open_library_client(
-                        value.contact_email, configuration.limits.timeout_seconds
-                    ),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=open_library_pacer,
-                )
-            elif value.adapter == "inventaire":
-                instance = InventaireMetadataProvider(
-                    value.name,
-                    inventaire_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=inventaire_pacer,
-                )
-            elif value.adapter == "audible_catalog":
-                instance = AudibleCatalogMetadataProvider(
-                    value.name,
-                    audible_catalog_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    marketplaces=marketplaces,
-                    pacer=audible_catalog_pacer,
-                )
-            elif value.adapter == "audnexus":
-                instance = AudnexusMetadataProvider(
-                    value.name,
-                    audnexus_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    marketplaces=marketplaces,
-                    pacer=audnexus_pacer,
-                )
-            elif value.adapter == "audiosilo":
-                instance = AudioSiloMetadataProvider(
-                    value.name,
-                    audiosilo_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=audiosilo_pacer,
-                )
-            elif value.adapter == "itunes_search":
-                instance = ITunesSearchMetadataProvider(
-                    value.name,
-                    itunes_search_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=itunes_search_pacer,
-                )
-            else:
-                raise MetadataReportError("provider configuration is invalid")
             return instance
 
         bindings.append(
@@ -1105,8 +968,8 @@ def run_metadata_report_loaded(
         )
 
     def repository_factory() -> ReportRepository:
-        repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
-            _NonClosingRepository(pipeline_repository)
+        repository: NonClosingRepository | SQLiteMetadataReportRepository = (
+            NonClosingRepository(pipeline_repository)
             if pipeline_repository is not None
             else open_repository(
                 database_path,
@@ -1181,19 +1044,7 @@ def _require_report_current_loaded(
     if mount is None:
         raise CurrentnessError("target or media changed")
     target = AudiobookshelfItemReader(
-        client_factory=lambda: (
-            target_client(
-                connection.endpoint,
-                _required_secret_file(connection.secret_file),
-                configuration.limits.timeout_seconds,
-            )
-            if credentials is None
-            else target_client_token(
-                connection.endpoint,
-                credentials["target:" + connection.name],
-                configuration.limits.timeout_seconds,
-            )
-        ),
+        client_factory=_target_client_factory(configuration, credentials, connection),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         service_path=mount.service_path,
@@ -1225,8 +1076,8 @@ def create_proposal_set_loaded(
     credentials: dict[str, str] | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
-        _NonClosingRepository(pipeline_repository)
+    repository: NonClosingRepository | SQLiteMetadataReportRepository = (
+        NonClosingRepository(pipeline_repository)
         if pipeline_repository is not None
         else open_repository(
             database_path, create=False, authority=repository_authority
@@ -1271,8 +1122,8 @@ def admit_review_case_loaded(
     credentials: dict[str, str] | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
-        _NonClosingRepository(pipeline_repository)
+    repository: NonClosingRepository | SQLiteMetadataReportRepository = (
+        NonClosingRepository(pipeline_repository)
         if pipeline_repository is not None
         else open_repository(
             database_path, create=False, authority=repository_authority
@@ -1338,15 +1189,18 @@ class _ProviderPacers:
         )
 
 
-def _retry_provider(
+_ProviderRefusal = Literal["credential unavailable", "configuration invalid"]
+
+
+def _metadata_provider(
     value: ProviderConnectionConfiguration,
     configuration: ApplicationConfiguration,
     credentials: dict[str, str] | None,
     marketplaces: tuple[str, ...],
     pacers: _ProviderPacers,
-) -> MetadataProvider:
-    """Construct a provider retry's adapter from the configuration it was
-    resolved against, or refuse one that configuration no longer supports."""
+) -> MetadataProvider | _ProviderRefusal:
+    """Construct one provider connection's adapter, or name why its
+    configuration supports none; each caller raises its own refusal."""
     if value.adapter == "google_books":
         api_key = (
             credentials.get("provider:" + value.name)
@@ -1361,9 +1215,9 @@ def _retry_provider(
             api_key=api_key,
             pacer=pacers.google_books,
         )
-    if value.adapter == "hardcover" and (
-        value.secret_file is not None or credentials is not None
-    ):
+    if value.adapter == "hardcover":
+        if value.secret_file is None and credentials is None:
+            return "credential unavailable"
         return HardcoverMetadataProvider(
             value.name,
             (
@@ -1435,7 +1289,24 @@ def _retry_provider(
             configuration.limits.timeout_seconds,
             pacer=pacers.itunes_search,
         )
-    raise ProviderRetrySuccessorError("provider retry configuration changed")
+    return "configuration invalid"
+
+
+def _retry_provider(
+    value: ProviderConnectionConfiguration,
+    configuration: ApplicationConfiguration,
+    credentials: dict[str, str] | None,
+    marketplaces: tuple[str, ...],
+    pacers: _ProviderPacers,
+) -> MetadataProvider:
+    """Construct a provider retry's adapter from the configuration it was
+    resolved against, or refuse one that configuration no longer supports."""
+    instance = _metadata_provider(
+        value, configuration, credentials, marketplaces, pacers
+    )
+    if isinstance(instance, str):
+        raise ProviderRetrySuccessorError("provider retry configuration changed")
+    return instance
 
 
 def create_review_pipeline(
@@ -1563,7 +1434,7 @@ def create_review_pipeline(
                 value,
                 configuration,
                 credentials,
-                _audiobook_marketplaces(configured, selected.languages),
+                audiobook_marketplaces(configured, selected.languages),
                 pacers,
             )
 

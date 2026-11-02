@@ -43,6 +43,11 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _ATTENTION_FACT_SOURCE_SQL,
+    _COVER_UNRESOLVED_OUTCOME_SQL,
+    _CURRENT_COVER_ATTENTION_AUTHORITY_SQL,
+)
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     cover_reviewer_profile_contract_mismatch,
 )
@@ -1103,7 +1108,11 @@ def _assert_no_cover_effect_authority(repository) -> None:
 
 
 def _assert_manual_cover_surface(
-    repository, case_id: str, considerations, reviewer_status: str
+    repository,
+    case_id: str,
+    considerations,
+    reviewer_status: str,
+    readable_current: bool = True,
 ) -> None:
     detail = InspectCurrentReviewCase(repository, considerations).run(case_id)
     cover = next(field for field in detail["fields"] if field["destination"] == "cover")
@@ -1113,7 +1122,29 @@ def _assert_manual_cover_surface(
     assert reviewer_status == consideration["reviewer_status"]
     assert any(candidate["selectable"] for candidate in consideration["candidates"])
     assert cover["editable"]
-    assert cover["needs_attention"]
+    # A readable current cover is kept without asking: its field fact is no
+    # unresolved choice, and its choice stays editable on the work's page.
+    # Without one, the cover asks as before (#1310).
+    assert cover["needs_attention"] is not readable_current
+    assert cover["classification"] == (
+        "owner_choosable" if readable_current else "needs_attention"
+    )
+    assert (int(not readable_current), 1) == repository._connection.execute(
+        "SELECT unresolved_choice,has_owner_decision_actions "
+        "FROM review_case_field_facts WHERE review_case_id=? AND destination='cover'",
+        (case_id,),
+    ).fetchone()
+    # A comparison awaiting refresh admits either cover by its raw outcome, so
+    # a reason that still queues a kept cover (an abstention, a safety pause)
+    # keeps Library and Attention agreeing with this detail (#1310).
+    assert (1,) == repository._connection.execute(
+        "SELECT " + _COVER_UNRESOLVED_OUTCOME_SQL + " FROM review_cases rc "
+        "WHERE rc.review_case_id=?",
+        (case_id,),
+    ).fetchone()
+    for refresh in (_CURRENT_COVER_ATTENTION_AUTHORITY_SQL, _ATTENTION_FACT_SOURCE_SQL):
+        assert "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL in refresh
+        assert "THEN result.unresolved_choice" not in refresh
     assert cover["human_decision"] is None
 
 
@@ -4016,12 +4047,17 @@ def test_composed_projection_prepares_one_qualified_cover_advice_before_f22() ->
         repository.close()
 
 
-def test_composed_projection_without_reviewer_persists_unavailable_before_f22() -> None:
+@pytest.mark.parametrize("readable_current", [True, False])
+def test_composed_projection_without_reviewer_persists_unavailable_before_f22(
+    readable_current: bool,
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
         repository = open_repository(database)
-        report, proposal = _qualified_cover_report(root)
+        report, proposal = _qualified_cover_report(
+            root, readable_current=readable_current
+        )
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
         )
@@ -4065,7 +4101,9 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22() 
             _pipeline_configuration().review,
             _test_reviewer_access(repository),
         )
-        _assert_manual_cover_surface(repository, case_id, considerations, "unavailable")
+        _assert_manual_cover_surface(
+            repository, case_id, considerations, "unavailable", readable_current
+        )
         assert (1,) == repository._connection.execute(
             "SELECT count(*) FROM provider_recovery_outbox"
         ).fetchone()
@@ -4950,7 +4988,8 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
         )
-        report, _qualified = _qualified_cover_report(root)
+        # The current cover is unread, so the cover asks (#1310).
+        report, _qualified = _qualified_cover_report(root, readable_current=False)
         proposal = evaluate_report(report)
         repository.enter_shadow_preview(1, ())
         repository.publish(report, lambda: True)

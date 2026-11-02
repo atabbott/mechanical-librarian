@@ -40,7 +40,9 @@ def test_managed_upgrades_use_strict_current_platform_automerge() -> None:
     assert CONFIG["lockFileMaintenance"]["automerge"]
 
 
-def test_only_replacements_compatibility_and_runtime_lines_remain_manual() -> None:
+def test_only_majors_replacements_compatibility_and_python_lines_remain_manual() -> (
+    None
+):
     restrictions = [
         rule
         for rule in CONFIG["packageRules"]
@@ -56,8 +58,7 @@ def test_only_replacements_compatibility_and_runtime_lines_remain_manual() -> No
             "enabled": False,
         },
         {
-            "description": "Require approval for a new Node major line",
-            "matchDepNames": ["node"],
+            "description": "Require approval for every major update",
             "matchUpdateTypes": ["major"],
             "automerge": False,
             "dependencyDashboardApproval": True,
@@ -97,9 +98,46 @@ def test_tool_groups_cover_every_native_manager_name(
     ] == [names]
 
 
+def test_minor_and_patch_updates_batch_per_manager_under_the_tool_groups() -> None:
+    """One weekly pull request per manager keeps the backlog inside the limits.
+
+    One pull request per package exceeded the two-per-hour limit in the weekly
+    window, so updates queued for weeks as rate-limited. Later package rules
+    win, so the tool groups must follow the batches to keep their own branch.
+    """
+    rules = CONFIG["packageRules"]
+    batches = [
+        (index, rule["matchManagers"], rule["groupName"])
+        for index, rule in enumerate(rules)
+        if rule.get("matchUpdateTypes") == ["minor", "patch"] and "groupName" in rule
+    ]
+    assert [(managers, group) for _, managers, group in batches] == [
+        (["pep621"], "Python packages"),
+        (["npm"], "npm packages"),
+        (["github-actions"], "GitHub Actions"),
+    ]
+    assert all(
+        set(rules[index])
+        == {"description", "matchManagers", "matchUpdateTypes", "groupName"}
+        for index, _, _ in batches
+    )
+    last_batch = max(index for index, _, _ in batches)
+    tool_groups = {
+        "Node runtime",
+        "Python runtime",
+        "uv resolver",
+        "npm package manager",
+    }
+    assert all(
+        index > last_batch
+        for index, rule in enumerate(rules)
+        if rule.get("groupName") in tool_groups
+    )
+
+
 def test_application_manifests_remain_exact() -> None:
     python = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert python["project"]["requires-python"] == ">=3.13,<3.15"
+    assert python["project"]["requires-python"] == ">=3.13,<3.16"
     for requirement in (
         python["project"]["dependencies"]
         + python["dependency-groups"]["dev"]

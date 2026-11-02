@@ -60,6 +60,7 @@ from mechanical_librarian.domain.human_decision import (
     UNREVERSIBLE_DESTINATIONS,
     DecisionScope,
     HumanDecision,
+    HumanDecisionAction,
     HumanDecisionError,
     decision_actions,
     genre_subset_available,
@@ -101,6 +102,7 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
+    ReviewFieldClassification,
     classify_review_field,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
@@ -136,6 +138,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "series_conflicting_membership": "The sources disagree about the series.",
     "series_provider_evidence_required": "No metadata source confirms this series.",
     "subtitle_local_corroboration_required": "No other source confirms this subtitle.",
+    "subtitle_restates_series": "The proposed subtitle only repeats the series, so it is never written for you.",
     "subtitle_segment_provider_dissent": "The sources disagree with splitting the title this way.",
     "subtitle_segment_decorated_consensus": "The sources do not support splitting this text into a subtitle.",
     "atomic_bundle_unavailable": "A linked field this choice depends on is unavailable.",
@@ -230,6 +233,10 @@ class CurrentReviewCaseSnapshot:
     automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     policy_attention_destinations: tuple[str, ...] = ()
+    # The undecided choices the persisted field facts settle: a work-route
+    # choice that only trims or extends (#1253), a populated subjective value
+    # a fill-only option keeps, and tags while their option is off (#1310).
+    settled_choice_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
     override_blocked_destinations: tuple[str, ...] = ()
@@ -654,6 +661,239 @@ class OwnerSessionService:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _ReviewCaseReadContext:
+    """What every field of one current case is projected from."""
+
+    case: ReviewCase
+    report: MetadataReport
+    snapshot: CurrentReviewCaseSnapshot
+    decisions: dict[str, HumanDecision]
+    automatic: dict[str, dict[str, object]]
+    automatic_source_outcome_ids: dict[str, str]
+    automatic_sources: dict[str, tuple[str, ...]]
+    target_fields: dict[str, dict[str, object]]
+    evidence: dict[str, dict[str, str | None]]
+    suspension_causes: dict[str, ReviewFieldCause]
+    proposals: tuple[dict[str, object], ...]
+    publication_date_present: bool
+    current_cover_consideration: dict[str, object] | None
+    cover_is_current: bool
+    cover_refresh_required: bool
+    cover_undecided: bool
+
+
+def _automatic_field_decision(
+    context: _ReviewCaseReadContext,
+    destination: str,
+    alternatives: list[dict[str, object]],
+) -> tuple[dict[str, object] | None, list[str]]:
+    """The field's current automatic decision with its selected value and sources."""
+    report = context.report
+    snapshot = context.snapshot
+    automatic_sources = context.automatic_sources
+    automatic_source_outcome_ids = context.automatic_source_outcome_ids
+    automatic_decision = context.automatic.get(destination)
+    automatic_selection_sources: list[str] = []
+    if automatic_decision is not None:
+        automatic_selection_sources = _provider_source_labels(
+            report,
+            list(automatic_sources.get(automatic_source_outcome_ids[destination], ())),
+        )
+        decision_id = automatic_decision["decision_id"]
+        assert type(decision_id) is str
+        selected = (
+            next(
+                (
+                    alternative["value"]
+                    for alternative in alternatives
+                    if alternative["alternative_id"]
+                    == automatic_decision["candidate_id"]
+                ),
+                None,
+            )
+            if destination == "cover"
+            else dict(snapshot.automatic_selected_values).get(decision_id)
+        )
+        if automatic_decision["outcome"] == "candidate" and selected is None:
+            raise ReviewWebError("unavailable")
+        automatic_decision = {
+            **automatic_decision,
+            "selected_value": selected,
+        }
+    return automatic_decision, automatic_selection_sources
+
+
+def _cover_admission(
+    context: _ReviewCaseReadContext,
+    destination: str,
+    result: dict[str, object],
+    *,
+    preparation_possible: bool,
+) -> tuple[bool, bool]:
+    """Whether a cover's choices count now, and whether a comparison can be prepared."""
+    snapshot = context.snapshot
+    cover_is_current = context.cover_is_current
+    current_cover_consideration = context.current_cover_consideration
+    cover_refresh_required = context.cover_refresh_required
+    cover_undecided = context.cover_undecided
+    cover_admits = (
+        destination != "cover"
+        or snapshot.cover_consideration_document is None
+        or (
+            cover_is_current
+            and current_cover_consideration is not None
+            and current_cover_consideration["ready"] is True
+        )
+        or (
+            cover_refresh_required
+            and result["outcome"] == "unresolved_choice"
+            and cover_undecided
+        )
+    )
+    cover_preparation_available = (
+        destination == "cover"
+        and preparation_possible
+        and not cover_is_current
+        and (
+            snapshot.cover_consideration_document is None
+            or (
+                cover_refresh_required
+                and result["outcome"] == "unresolved_choice"
+                and cover_undecided
+            )
+        )
+    )
+    return cover_admits, cover_preparation_available
+
+
+def _classify_field(
+    context: _ReviewCaseReadContext,
+    proposal: dict[str, object],
+    *,
+    decision: HumanDecision | None,
+    automatic_decision: dict[str, object] | None,
+    authored_selection: object,
+    carried_hold: bool,
+    cover_admits: bool,
+    cover_preparation_available: bool,
+    actions: tuple[HumanDecisionAction, ...],
+    owner_entry: bool,
+) -> ReviewFieldClassification:
+    """Classify one field from its proposal, decisions and cover state."""
+    snapshot = context.snapshot
+    current_cover_consideration = context.current_cover_consideration
+    cover_is_current = context.cover_is_current
+    target_fields = context.target_fields
+    result = proposal["result"]
+    assert type(result) is dict
+    destination = cast(str, proposal["destination"])
+    alternatives = result["alternatives"]
+    assert type(alternatives) is list
+    reasons = result["reasons"]
+    assert type(reasons) is list
+    # The persisted facts settle an undecided choice its policy's
+    # options keep (#1310); an immaterial one is #1253's, not this.
+    policy_settled = (
+        result["outcome"] == "unresolved_choice"
+        and "work_alternative_immaterial" not in reasons
+        and not _kept_cover(proposal)
+        and destination in snapshot.settled_choice_destinations
+    )
+    return classify_review_field(
+        attention_candidate=(
+            (
+                cover_admits
+                and _needs_attention(
+                    proposal,
+                    snapshot.automatic_attention_destinations,
+                    policy_attention_destinations=snapshot.policy_attention_destinations,
+                    settled_choice_destinations=snapshot.settled_choice_destinations,
+                )
+            )
+            or (
+                destination == "cover"
+                and cover_is_current
+                and current_cover_consideration is not None
+                and current_cover_consideration["ready"] is True
+                and not _kept_cover(proposal)
+            )
+        ),
+        automatic_outcome=(
+            "candidate"
+            if authored_selection is not None
+            else "abstention"
+            if destination in snapshot.shadow_abstention_destinations
+            else None
+            if automatic_decision is None
+            else str(automatic_decision["outcome"])
+        ),
+        override_available=(
+            destination not in snapshot.override_blocked_destinations
+            and (
+                destination != "cover"
+                or (
+                    current_cover_consideration is not None
+                    and current_cover_consideration["current"] is True
+                    and current_cover_consideration["ready"] is True
+                )
+            )
+        ),
+        has_human_decision=decision is not None
+        or carried_hold
+        or (
+            destination == "cover"
+            and cover_is_current
+            and snapshot.current_cover_selection is not None
+            and snapshot.current_cover_selection[1] == "owner"
+        )
+        or (
+            type(authored_selection) is dict
+            and authored_selection.get("origin") == "human"
+        ),
+        suspended=destination in snapshot.suspended_destinations,
+        cause=(
+            "automatic_safety_suspended"
+            if destination in snapshot.automatic_safety_suspended_destinations
+            else context.suspension_causes.get(destination)
+        ),
+        current_value=target_fields[destination]["value"],
+        proposed_values=tuple(alternative["value"] for alternative in alternatives),
+        # A recording's undecided fill, a kept readable cover, and a
+        # choice the policy's options settle (a populated subjective
+        # value a fill-only option keeps, or tags while they are off)
+        # stay the owner's to choose in their case without joining the
+        # queue (#1249, #1310). A kept cover with no current comparison
+        # is still choosable: the owner can prepare one.
+        owner_choosable=automatic_decision is None
+        and (
+            (
+                cover_admits
+                and (context.case.media_kind == "audiobook" or policy_settled)
+                and bool(actions)
+            )
+            or (
+                _kept_cover(proposal)
+                and (
+                    (cover_admits and bool(actions))
+                    or (
+                        cover_preparation_available
+                        and result["outcome"] == "unresolved_choice"
+                    )
+                )
+            )
+        ),
+        changeable=bool(actions) or owner_entry,
+        # With no alternative to list, an unsupported field is a
+        # contextual row, which offers no controls (below).
+        owner_entry=owner_entry and bool(alternatives),
+        immaterial_alternatives="work_alternative_immaterial" in reasons,
+        kept_cover=_kept_cover(proposal),
+        kept_by_fill_policy=policy_settled and destination != "tags",
+        kept_by_tags_off=policy_settled and destination == "tags",
+    )
+
+
 class InspectCurrentReviewCase:
     def __init__(
         self,
@@ -775,295 +1015,28 @@ class InspectCurrentReviewCase:
         publication_date_present = any(
             value["destination"] == "publishedDate" for value in proposals
         )
+        context = _ReviewCaseReadContext(
+            case=case,
+            report=report,
+            snapshot=snapshot,
+            decisions=decisions,
+            automatic=automatic,
+            automatic_source_outcome_ids=automatic_source_outcome_ids,
+            automatic_sources=automatic_sources,
+            target_fields=target_fields,
+            evidence=evidence,
+            suspension_causes=suspension_causes,
+            proposals=proposals,
+            publication_date_present=publication_date_present,
+            current_cover_consideration=current_cover_consideration,
+            cover_is_current=cover_is_current,
+            cover_refresh_required=cover_refresh_required,
+            cover_undecided=cover_undecided,
+        )
         for proposal in proposals:
-            result = proposal["result"]
-            assert type(result) is dict
-            destination = cast(str, proposal["destination"])
-            all_alternatives = result["alternatives"]
-            assert type(all_alternatives) is list
-            eligible_alternatives = [
-                alternative
-                for alternative in all_alternatives
-                if alternative["assessment"] != "preserves_target"
-            ]
-            alternatives = all_alternatives
-            references = sorted(
-                {
-                    reference
-                    for alternative in alternatives
-                    for reference in alternative["evidence_references"]
-                }
-            )
-            reasons = result["reasons"]
-            assert type(reasons) is list
-            decision = decisions.get(destination)
-            automatic_decision = automatic.get(destination)
-            automatic_selection_sources: list[str] = []
-            if automatic_decision is not None:
-                automatic_selection_sources = _provider_source_labels(
-                    report,
-                    list(
-                        automatic_sources.get(
-                            automatic_source_outcome_ids[destination], ()
-                        )
-                    ),
-                )
-                decision_id = automatic_decision["decision_id"]
-                assert type(decision_id) is str
-                selected = (
-                    next(
-                        (
-                            alternative["value"]
-                            for alternative in alternatives
-                            if alternative["alternative_id"]
-                            == automatic_decision["candidate_id"]
-                        ),
-                        None,
-                    )
-                    if destination == "cover"
-                    else dict(snapshot.automatic_selected_values).get(decision_id)
-                )
-                if automatic_decision["outcome"] == "candidate" and selected is None:
-                    raise ReviewWebError("unavailable")
-                automatic_decision = {
-                    **automatic_decision,
-                    "selected_value": selected,
-                }
-            choice_contexts = _choice_contexts(
-                # Direct choices pair projected values with proposed contexts by
-                # position. Keep their exact eligible order first, while
-                # retaining preservation lineage after it for inspection.
-                [
-                    *eligible_alternatives,
-                    *(
-                        alternative
-                        for alternative in all_alternatives
-                        if alternative["assessment"] == "preserves_target"
-                    ),
-                ],
-                result,
-                report,
-                target_fields[destination],
-                automatic_decision,
-                evidence,
-            )
-            selected_advice = (
-                snapshot.description_advice.get("selected_advice")
-                if snapshot.description_advice is not None
-                else None
-            )
-            authored_selection = (
-                snapshot.description_advice.get("selection")
-                if destination == "description"
-                and snapshot.description_advice is not None
-                and isinstance(selected_advice, dict)
-                and selected_advice.get("current") is True
-                else None
-            )
-            if authored_selection is not None:
-                automatic_decision = None
-            cover_admits = (
-                destination != "cover"
-                or snapshot.cover_consideration_document is None
-                or (
-                    cover_is_current
-                    and current_cover_consideration is not None
-                    and current_cover_consideration["ready"] is True
-                )
-                or (
-                    cover_refresh_required
-                    and result["outcome"] == "unresolved_choice"
-                    and cover_undecided
-                )
-            )
-            cover_preparation_available = (
-                destination == "cover"
-                and self._cover_considerations is not None
-                and not cover_is_current
-                and (
-                    snapshot.cover_consideration_document is None
-                    or (
-                        cover_refresh_required
-                        and result["outcome"] == "unresolved_choice"
-                        and cover_undecided
-                    )
-                )
-            )
-            actions = () if cover_preparation_available else decision_actions(proposal)
-            owner_control = _owner_control(
-                proposal,
-                target_fields,
-                proposals,
-                decision,
-                automatic_decision is not None,
-                snapshot,
-            )
-            # The owner's hold follows the work: a successor case holds the
-            # field as the owner's decision on the earlier case left it, once
-            # it has an automatic decision to hold, a description's automatic
-            # authored selection among them.
-            carried_hold = (
-                decision is None
-                and (
-                    automatic_decision is not None
-                    or isinstance(authored_selection, dict)
-                    and authored_selection.get("origin") == "automatic_policy"
-                )
-                and destination in snapshot.held_destinations
-            )
-            owner_entry = owner_control is not None and (
-                owner_control["entry"] is not None
-                or owner_control["subset"] is not None
-            )
-            classification = classify_review_field(
-                attention_candidate=(
-                    (
-                        cover_admits
-                        and _needs_attention(
-                            proposal,
-                            snapshot.automatic_attention_destinations,
-                            policy_attention_destinations=snapshot.policy_attention_destinations,
-                        )
-                    )
-                    or (
-                        destination == "cover"
-                        and cover_is_current
-                        and current_cover_consideration is not None
-                        and current_cover_consideration["ready"] is True
-                    )
-                ),
-                automatic_outcome=(
-                    "candidate"
-                    if authored_selection is not None
-                    else "abstention"
-                    if destination in snapshot.shadow_abstention_destinations
-                    else None
-                    if automatic_decision is None
-                    else str(automatic_decision["outcome"])
-                ),
-                override_available=(
-                    destination not in snapshot.override_blocked_destinations
-                    and (
-                        destination != "cover"
-                        or (
-                            current_cover_consideration is not None
-                            and current_cover_consideration["current"] is True
-                            and current_cover_consideration["ready"] is True
-                        )
-                    )
-                ),
-                has_human_decision=decision is not None
-                or carried_hold
-                or (
-                    destination == "cover"
-                    and cover_is_current
-                    and snapshot.current_cover_selection is not None
-                    and snapshot.current_cover_selection[1] == "owner"
-                )
-                or (
-                    type(authored_selection) is dict
-                    and authored_selection.get("origin") == "human"
-                ),
-                suspended=destination in snapshot.suspended_destinations,
-                cause=(
-                    "automatic_safety_suspended"
-                    if destination in snapshot.automatic_safety_suspended_destinations
-                    else suspension_causes.get(destination)
-                ),
-                current_value=target_fields[destination]["value"],
-                proposed_values=tuple(
-                    alternative["value"] for alternative in alternatives
-                ),
-                # A recording's undecided fill stays the owner's to choose in
-                # its case without joining the queue (#1249).
-                owner_choosable=cover_admits
-                and case.media_kind == "audiobook"
-                and automatic_decision is None
-                and bool(actions),
-                changeable=bool(actions) or owner_entry,
-                # With no alternative to list, an unsupported field is a
-                # contextual row, which offers no controls (below).
-                owner_entry=owner_entry and bool(alternatives),
-                immaterial_alternatives="work_alternative_immaterial" in reasons,
-            )
-            # Classification retains the field's owner context. Action
-            # availability is a separate exact-proposal contract; an empty
-            # action list is context-only, never an implied choice envelope.
-            has_owner_action = bool(actions) or cover_preparation_available
-            needs_attention = classification.needs_attention and has_owner_action
-            inventory_role = _field_inventory_role(
-                classification.state,
-                destination,
-                report.file.format,
-                alternatives,
-                publication_date_present,
-            )
-            if inventory_role == "omitted":
-                continue
-            if inventory_role == "contextual":
-                owner_control = None
-            field = {
-                "current": target_fields[destination],
-                "deterministic_disposition": result["outcome"],
-                "destination": destination,
-                "manual_required": proposal["manual_required"],
-                "human_decision": (
-                    None if decision is None else _decision_projection(decision)
-                ),
-                "automatic_decision": automatic_decision,
-                "automatic_withheld_reason": None,
-                "automatic_selection_sources": automatic_selection_sources,
-                # Held only while the hold row is in force: Return to
-                # automatic releases it on the deciding case too (#1358).
-                "manual_hold": destination in snapshot.held_destinations
-                and (
-                    carried_hold
-                    or (decision is not None and automatic_decision is not None)
-                ),
-                "classification": classification.state,
-                "classification_reason": classification.reason,
-                "editable": classification.editable and has_owner_action,
-                "navigation_role": classification.navigation_role,
-                "needs_attention": needs_attention,
-                "decision_actions": list(actions),
-                "inventory_role": inventory_role,
-                "preservation_only": classification.preservation_only,
-                "notices": reasons,
-                "proposed_values": [
-                    alternative["value"] for alternative in eligible_alternatives
-                ],
-                "choice_contexts": choice_contexts,
-                "provenance": references,
-                "corroboration_sources": _corroboration_source_labels(
-                    report,
-                    references,
-                    reasons,
-                ),
-                "owner_control": owner_control,
-                "proposal_id": proposal["proposal_id"],
-                "target_fingerprint": case.target_fingerprint,
-                "uncertainty": (
-                    reasons
-                    if result["outcome"] == "unresolved_choice"
-                    or proposal["manual_required"] is True
-                    else []
-                ),
-            }
-            if destination == "cover" and self._cover_considerations is not None:
-                field["cover_consideration"] = current_cover_consideration
-                field["current_cover_selection_id"] = (
-                    None
-                    if snapshot.current_cover_selection is None
-                    else snapshot.current_cover_selection[0]
-                )
-                field["current_cover_selection_artifact_id"] = (
-                    None
-                    if snapshot.current_cover_selection is None
-                    else snapshot.current_cover_selection[2]
-                )
-            if destination == "description":
-                field["description_advice"] = snapshot.description_advice
-            fields.append(field)
+            projected = self._field(context, proposal)
+            if projected is not None:
+                fields.append(projected)
         fields.sort(key=lambda value: not value["needs_attention"])
         return (
             {
@@ -1095,6 +1068,198 @@ class InspectCurrentReviewCase:
             report,
             snapshot,
         )
+
+    def _field(
+        self, context: _ReviewCaseReadContext, proposal: dict[str, object]
+    ) -> dict[str, object] | None:
+        """Project one proposal into its review field, or None when omitted."""
+        case = context.case
+        report = context.report
+        snapshot = context.snapshot
+        decisions = context.decisions
+        target_fields = context.target_fields
+        evidence = context.evidence
+        proposals = context.proposals
+        publication_date_present = context.publication_date_present
+        current_cover_consideration = context.current_cover_consideration
+        result = proposal["result"]
+        assert type(result) is dict
+        destination = cast(str, proposal["destination"])
+        all_alternatives = result["alternatives"]
+        assert type(all_alternatives) is list
+        eligible_alternatives = [
+            alternative
+            for alternative in all_alternatives
+            if alternative["assessment"] != "preserves_target"
+        ]
+        alternatives = all_alternatives
+        references = sorted(
+            {
+                reference
+                for alternative in alternatives
+                for reference in alternative["evidence_references"]
+            }
+        )
+        reasons = result["reasons"]
+        assert type(reasons) is list
+        decision = decisions.get(destination)
+        automatic_decision, automatic_selection_sources = _automatic_field_decision(
+            context, destination, alternatives
+        )
+        choice_contexts = _choice_contexts(
+            # Direct choices pair projected values with proposed contexts by
+            # position. Keep their exact eligible order first, while
+            # retaining preservation lineage after it for inspection.
+            [
+                *eligible_alternatives,
+                *(
+                    alternative
+                    for alternative in all_alternatives
+                    if alternative["assessment"] == "preserves_target"
+                ),
+            ],
+            result,
+            report,
+            target_fields[destination],
+            automatic_decision,
+            evidence,
+        )
+        selected_advice = (
+            snapshot.description_advice.get("selected_advice")
+            if snapshot.description_advice is not None
+            else None
+        )
+        authored_selection = (
+            snapshot.description_advice.get("selection")
+            if destination == "description"
+            and snapshot.description_advice is not None
+            and isinstance(selected_advice, dict)
+            and selected_advice.get("current") is True
+            else None
+        )
+        if authored_selection is not None:
+            automatic_decision = None
+        cover_admits, cover_preparation_available = _cover_admission(
+            context,
+            destination,
+            result,
+            preparation_possible=self._cover_considerations is not None,
+        )
+        actions = () if cover_preparation_available else decision_actions(proposal)
+        owner_control = _owner_control(
+            proposal,
+            target_fields,
+            proposals,
+            decision,
+            automatic_decision is not None,
+            snapshot,
+        )
+        # The owner's hold follows the work: a successor case holds the
+        # field as the owner's decision on the earlier case left it, once
+        # it has an automatic decision to hold, a description's automatic
+        # authored selection among them.
+        carried_hold = (
+            decision is None
+            and (
+                automatic_decision is not None
+                or isinstance(authored_selection, dict)
+                and authored_selection.get("origin") == "automatic_policy"
+            )
+            and destination in snapshot.held_destinations
+        )
+        owner_entry = owner_control is not None and (
+            owner_control["entry"] is not None or owner_control["subset"] is not None
+        )
+        classification = _classify_field(
+            context,
+            proposal,
+            decision=decision,
+            automatic_decision=automatic_decision,
+            authored_selection=authored_selection,
+            carried_hold=carried_hold,
+            cover_admits=cover_admits,
+            cover_preparation_available=cover_preparation_available,
+            actions=actions,
+            owner_entry=owner_entry,
+        )
+        # Classification retains the field's owner context. Action
+        # availability is a separate exact-proposal contract; an empty
+        # action list is context-only, never an implied choice envelope.
+        has_owner_action = bool(actions) or cover_preparation_available
+        needs_attention = classification.needs_attention and has_owner_action
+        inventory_role = _field_inventory_role(
+            classification.state,
+            destination,
+            report.file.format,
+            alternatives,
+            publication_date_present,
+        )
+        if inventory_role == "omitted":
+            return None
+        if inventory_role == "contextual":
+            owner_control = None
+        field = {
+            "current": target_fields[destination],
+            "deterministic_disposition": result["outcome"],
+            "destination": destination,
+            "manual_required": proposal["manual_required"],
+            "human_decision": (
+                None if decision is None else _decision_projection(decision)
+            ),
+            "automatic_decision": automatic_decision,
+            "automatic_withheld_reason": None,
+            "automatic_selection_sources": automatic_selection_sources,
+            # Held only while the hold row is in force: Return to
+            # automatic releases it on the deciding case too (#1358).
+            "manual_hold": destination in snapshot.held_destinations
+            and (
+                carried_hold
+                or (decision is not None and automatic_decision is not None)
+            ),
+            "classification": classification.state,
+            "classification_reason": classification.reason,
+            "editable": classification.editable and has_owner_action,
+            "navigation_role": classification.navigation_role,
+            "needs_attention": needs_attention,
+            "decision_actions": list(actions),
+            "inventory_role": inventory_role,
+            "preservation_only": classification.preservation_only,
+            "notices": reasons,
+            "proposed_values": [
+                alternative["value"] for alternative in eligible_alternatives
+            ],
+            "choice_contexts": choice_contexts,
+            "provenance": references,
+            "corroboration_sources": _corroboration_source_labels(
+                report,
+                references,
+                reasons,
+            ),
+            "owner_control": owner_control,
+            "proposal_id": proposal["proposal_id"],
+            "target_fingerprint": case.target_fingerprint,
+            "uncertainty": (
+                reasons
+                if result["outcome"] == "unresolved_choice"
+                or proposal["manual_required"] is True
+                else []
+            ),
+        }
+        if destination == "cover" and self._cover_considerations is not None:
+            field["cover_consideration"] = current_cover_consideration
+            field["current_cover_selection_id"] = (
+                None
+                if snapshot.current_cover_selection is None
+                else snapshot.current_cover_selection[0]
+            )
+            field["current_cover_selection_artifact_id"] = (
+                None
+                if snapshot.current_cover_selection is None
+                else snapshot.current_cover_selection[2]
+            )
+        if destination == "description":
+            field["description_advice"] = snapshot.description_advice
+        return field
 
     def successor(self, review_case_id: str) -> str | None:
         """Name the current replacement for one stale case, if it has one."""
@@ -3020,11 +3185,26 @@ def _report_facts(report_document: str) -> LibraryReportFacts:
         raise ReviewWebError("unavailable") from error
 
 
+def _kept_cover(proposal: dict[str, object]) -> bool:
+    """A readable current cover is kept without asking (#1310).
+
+    Its alternatives stay choosable on the work's page; neither its choice nor
+    its consideration puts it in the queue, as `_VERIFIED_CURRENT_COVER_SQL`
+    reads it.
+    """
+    result = proposal["result"]
+    assert type(result) is dict
+    reasons = result["reasons"]
+    assert type(reasons) is list
+    return proposal["destination"] == "cover" and "current_cover_verified" in reasons
+
+
 def _needs_attention(
     proposal: dict[str, object],
     automatic_attention_destinations: tuple[str, ...] = (),
     *,
     policy_attention_destinations: tuple[str, ...] = (),
+    settled_choice_destinations: tuple[str, ...] = (),
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
@@ -3033,7 +3213,11 @@ def _needs_attention(
     the case detail hold no medium-specific reason (#1249). The action list
     beside this decides whether a choice exists at all (#967). A work-route
     choice whose alternatives only trim or extend the current value stays
-    choosable without asking, as the persisted field facts read it (#1253).
+    choosable without asking, as the persisted field facts read it (#1253),
+    and so does a cover choice over a readable current cover (#1310). So do
+    a populated subjective value a fill-only option keeps and tags while their
+    option is off; the facts read those options, so the detail passes their
+    settled destinations (#1310).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -3042,10 +3226,11 @@ def _needs_attention(
     return (
         proposal["destination"] in policy_attention_destinations
         or proposal["destination"] in automatic_attention_destinations
-        or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or (
             result["outcome"] == "unresolved_choice"
             and "work_alternative_immaterial" not in reasons
+            and not _kept_cover(proposal)
+            and proposal["destination"] not in settled_choice_destinations
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
