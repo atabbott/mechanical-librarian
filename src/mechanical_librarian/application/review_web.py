@@ -2553,6 +2553,11 @@ def _provider_source_labels(
         for provider in report.providers
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
         for claim in candidate.claims
+    } | {
+        claim.reference: _audio_edition_label(provider.authority)
+        for provider in report.providers
+        for edition in provider.audio_editions
+        for claim in edition.claims
     }
     labels = {
         by_reference[reference] for reference in references if reference in by_reference
@@ -2685,7 +2690,9 @@ def _current_value_present(value: object) -> bool:
 
 def _choice_rationale(rows: list[dict[str, object]]) -> str:
     """Name the sources an alternative came from, or nothing when none is known (#1519)."""
-    named = set(PROVIDER_LABELS.values())
+    named = set(PROVIDER_LABELS.values()) | {
+        _audio_edition_label(authority) for authority in PROVIDER_LABELS
+    }
     return ", ".join(
         sorted(
             {
@@ -2704,7 +2711,8 @@ def _choice_evidence(
 ) -> dict[str, object]:
     return {
         **({"destinations": sorted(destinations)} if destinations is not None else {}),
-        "observation": _choice_observation(evidence),
+        "observation": _choice_observation(evidence)
+        + (f" ({evidence['edition']})" if evidence.get("edition") else ""),
         "role": "local_presence"
         if _choice_is_local(evidence)
         else "external_observation"
@@ -2715,8 +2723,44 @@ def _choice_evidence(
     }
 
 
+def _audio_edition_label(authority: str | None) -> str:
+    """Name a provider's audio edition as such, never as its book (#1642)."""
+    return _provider_label(authority) + " audio edition"
+
+
+def _audio_edition_note(edition: dict[str, object]) -> str:
+    """Name one audio edition by its catalogue number and runtime (#1642).
+
+    Two editions can credit the same cast, so each evidence row says which
+    edition it reads.
+    """
+    identity = edition.get("identity")
+    number = (
+        identity.rsplit("-", 1)[-1].lstrip("0") or "0"
+        if type(identity) is str and identity.rsplit("-", 1)[-1].isdigit()
+        else None
+    )
+    seconds = next(
+        (
+            parsed
+            for claim in cast("list[object]", edition.get("claims", []))
+            if type(claim) is dict
+            and claim.get("kind") == "duration"
+            and (parsed := _duration_seconds(claim.get("value"))) is not None
+        ),
+        None,
+    )
+    parts = (
+        *(() if number is None else (f"Edition {number}",)),
+        *(() if seconds is None else (hours_minutes(seconds),)),
+    )
+    return ", ".join(parts) if parts else "Audio edition"
+
+
 def _choice_source_label(evidence: dict[str, str | None]) -> str:
     provider = evidence["provider"]
+    if provider in PROVIDER_LABELS and evidence["source"] == "audio_edition":
+        return _audio_edition_label(provider)
     if provider in PROVIDER_LABELS:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
@@ -2776,6 +2820,12 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
     claim_kind = fact.get("kind")
     if claim_kind == "contributor" and fact.get("role") in {None, "narrator"}:
         kind = "Narration credit"
+    elif (
+        claim_kind == "publication_date"
+        and fact.get("date_event") == "work_first_publication"
+    ):
+        # A work's date is its first publication, not this edition's (#1642).
+        kind = "First published (book)"
     elif type(claim_kind) is str:
         kind = _OBSERVATION_KINDS.get(claim_kind, "Metadata")
     else:
@@ -2958,11 +3008,13 @@ def _evidence_by_reference(
         reference_key: str = "reference",
         provider: str | None = None,
         candidate: str | None = None,
+        edition: str | None = None,
     ) -> None:
         if type(fact) is not dict or type(fact.get(reference_key)) is not str:
             return
         reference = fact[reference_key]
         values[reference] = {
+            **({"edition": edition} if edition is not None else {}),
             "candidate": candidate,
             "fact": json.dumps(
                 fact, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -3038,6 +3090,17 @@ def _evidence_by_reference(
                     rich_fact,
                     provider=public_authority or provider_name,
                     candidate=candidate_identity,
+                )
+        # An audio edition's narrators may be a work-route choice (#1642).
+        for edition in provider["audio_editions"]:
+            assert type(edition) is dict
+            for fact in edition["claims"]:
+                add(
+                    "audio_edition",
+                    fact,
+                    provider=public_authority or provider_name,
+                    candidate=edition["identity"],
+                    edition=_audio_edition_note(edition),
                 )
     for fact in cast("list[object]", data["identifier_evidence"]):
         assert type(fact) is dict

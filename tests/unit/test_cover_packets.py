@@ -3712,3 +3712,39 @@ def test_format_branding_clarification_preserves_visual_positive_and_collision_r
         in INSTRUCTION
     )
     assert len(INSTRUCTION.encode()) <= 4096
+
+
+def test_a_work_route_packet_names_a_pending_work_cover() -> None:
+    """The gallery says why it is incomplete (#1642)."""
+    from mechanical_librarian.application.cover_packets import cover_source_reference
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+        CoverSource,
+        CoverSourceKind,
+        CoverSourceState,
+        cover_source_id,
+    )
+    from tests.support.hardcover_work_route import (
+        WORK,
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    payload = _preview(71)
+    pending = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:work:pending"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.TIMEOUT,
+        timeout_scope="attempted",
+        provenance=CoverProvenance("hardcover", CoverDesignation.DEFAULT, WORK),
+    )
+    report = hardcover_work_report(
+        cover_sources=(work_cover_source(preview=payload), pending)
+    )
+    prepared = prepare_cover_packet(report.to_json(), lambda *_key: payload)
+    omissions = json.loads(prepared.document)["omissions"]
+    assert {
+        "reason": "source_timeout",
+        "reference": cover_source_reference(report.report_id, pending.source_id),
+    } in omissions

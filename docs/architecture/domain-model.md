@@ -141,8 +141,9 @@ Each lineage change is an append-only transition: `admitted`, `superseded`,
 `no_case`, `retired` or `tombstoned`. Admitting the same ProposalSet again is
 reported as `replayed` and records nothing new. A newer report makes an
 older case historical without rewriting it. An audiobook whose recording is
-not admitted gets at most a work-only case (series, title, description and
-genre choices, with no automatic authority); with no supported book evidence
+not admitted gets at most a work-only case (series, title, description,
+genre, publication date, cover and edition narrator choices, with no automatic
+authority); with no supported book evidence
 either, it completes as evidence only. See
 [review cases](../operations/review-case.md#audiobook-cases).
 

@@ -244,3 +244,186 @@ def test_audio_editions_round_trip_through_the_report() -> None:
         (_edition(3, _LOCAL + 34, "R. C. Bray"),), _product(700, "Wil Wheaton")
     )
     assert report == MetadataReport.from_json(report.to_json())
+
+
+# --- Editions Audible cannot confirm (#1642) ----------------------------------
+#
+# An edition is independent of Audible only when Audible was asked for each of
+# its ASINs and found nothing, or when it states none (ADR-0090 decision 2,
+# narrowed). Built on the lead feed, so each lane is the one production asks.
+
+
+def _confirmation_report(
+    editions: tuple[ProviderCandidate, ...],
+    answers: tuple[tuple[str, str, ProviderStatus], ...] = (),
+    *,
+    narrator: str | None = None,
+) -> MetadataReport:
+    """The editions, plus each (ASIN, authority, status) lead answer."""
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_asin_feed_plan,
+        provider_observation,
+    )
+    from tests.unit.test_carried_recording_admission import (
+        _claims as _lead_claims,
+    )
+    from tests.unit.test_carried_recording_admission import (
+        _lane_result,
+        _plan,
+        _snapshot,
+    )
+    from tests.unit.test_carried_recording_admission import (
+        _report as _lead_report,
+    )
+    from tests.unit.test_hardcover_asin_leads import _hardcover
+
+    claims = _lead_claims(carried=None, narrator=narrator)
+    hardcover = _hardcover(*editions)
+    feed = audiobook_asin_feed_plan(_snapshot(), _plan(claims), (hardcover,))
+    observations: list[ProviderObservation] = [hardcover]
+    for authority in sorted({authority for _asin, authority, _status in answers}):
+        assert feed is not None
+        results = tuple(
+            _lane_result(feed, lane, authority, authority, status=status)
+            for asin, lane_authority, status in answers
+            if lane_authority == authority
+            for lane in feed.lanes
+            if lane.canonical_asin == asin
+        )
+        observations.append(
+            provider_observation(authority, results, authority=authority)
+        )
+    return _lead_report(claims, tuple(observations))
+
+
+def _unconfirmed(report: MetadataReport) -> tuple[str, ...]:
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        unconfirmed_audio_editions,
+    )
+
+    return tuple(edition.identity for _, edition in unconfirmed_audio_editions(report))
+
+
+def _lead_edition(edition_id: int, asin: str | None, narrator: str = "Ilsa Brandt"):
+    from tests.unit.test_hardcover_asin_leads import _LOCAL as _LEAD_LOCAL
+    from tests.unit.test_hardcover_asin_leads import _edition as _lead
+
+    return _lead(edition_id, _LEAD_LOCAL, narrator, asin)
+
+
+def test_an_edition_with_no_asin_is_unconfirmed() -> None:
+    report = _confirmation_report((_lead_edition(3, None),))
+    assert ("hardcover-edition-0000000003",) == _unconfirmed(report)
+
+
+@pytest.mark.parametrize("authority", ("audible_catalog", "audnexus", "audiosilo"))
+def test_an_asin_audible_could_not_find_is_unconfirmed(authority: str) -> None:
+    report = _confirmation_report(
+        (_lead_edition(3, "B0LEADREC1"),),
+        (("B0LEADREC1", authority, ProviderStatus.NO_MATCH),),
+    )
+    assert ("hardcover-edition-0000000003",) == _unconfirmed(report)
+
+
+@pytest.mark.parametrize(
+    "answers",
+    (
+        # An ASIN never asked of Audible.
+        (),
+        # Asked only of iTunes, which lists no Audible product.
+        (("B0LEADREC1", "itunes_search", ProviderStatus.NO_MATCH),),
+        # A lane that failed says nothing about the ASIN.
+        (("B0LEADREC1", "audnexus", ProviderStatus.UNAVAILABLE),),
+        # Every lane that asked must find nothing.
+        (
+            ("B0LEADREC1", "audnexus", ProviderStatus.NO_MATCH),
+            ("B0LEADREC1", "audible_catalog", ProviderStatus.RATE_LIMITED),
+        ),
+    ),
+    ids=("never_asked", "not_audible", "failed", "one_lane_failed"),
+)
+def test_an_asin_audible_did_not_answer_is_not_unconfirmed(answers) -> None:
+    report = _confirmation_report((_lead_edition(3, "B0LEADREC1"),), answers)
+    assert () == _unconfirmed(report)
+
+
+@pytest.mark.parametrize("admitted", (False, True), ids=("outside_band", "admitted"))
+def test_an_asin_audible_answers_with_a_product_is_not_unconfirmed(
+    admitted: bool,
+) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_asin_feed_plan,
+        provider_observation,
+    )
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
+    from tests.unit.test_carried_recording_admission import (
+        _candidate,
+        _lane_result,
+        _plan,
+        _snapshot,
+    )
+    from tests.unit.test_carried_recording_admission import _claims as _lead_claims
+    from tests.unit.test_carried_recording_admission import _report as _lead_report
+    from tests.unit.test_hardcover_asin_leads import _LOCAL as _LEAD_LOCAL
+    from tests.unit.test_hardcover_asin_leads import _hardcover
+
+    claims = _lead_claims(carried=None, narrator=None)
+    hardcover = _hardcover(_lead_edition(3, "B0LEADREC1"), _lead_edition(5, None))
+    feed = audiobook_asin_feed_plan(_snapshot(), _plan(claims), (hardcover,))
+    assert feed is not None
+    lane = next(value for value in feed.lanes if value.canonical_asin == "B0LEADREC1")
+    # Audnexus knows the ASIN. Outside the band it admits no recording, and the
+    # edition is still Audible's word; inside it, the recording is admitted
+    # and no edition is offered at all.
+    answer = _candidate(
+        "audnexus",
+        ("B0LEADREC1",),
+        **({} if admitted else {"duration": f"{_LEAD_LOCAL + 900}.000"}),
+    )
+    fed = provider_observation(
+        "audnexus",
+        (_lane_result(feed, lane, "audnexus", "audnexus", (answer,)),),
+        authority="audnexus",
+    )
+    report = _lead_report(claims, (fed, hardcover))
+    assert admitted_audiobook_identity(report) is admitted
+    assert _unconfirmed(report) == (
+        () if admitted else ("hardcover-edition-0000000005",)
+    )
+
+
+def test_editions_that_disagree_leave_nothing_unconfirmed() -> None:
+    report = _confirmation_report(
+        (_lead_edition(3, None), _lead_edition(4, None, "Other Reader"))
+    )
+    assert HardcoverEditionWitness.EDITIONS_DISAGREE is hardcover_edition_witness(
+        report
+    )
+    assert () == _unconfirmed(report)
+
+
+@pytest.mark.parametrize(
+    ("narrator", "kept"),
+    (("Ilsa Brandt", True), ("Someone Else", False), (None, True)),
+    ids=("same_cast", "disjoint_cast", "file_names_none"),
+)
+def test_an_edition_must_share_the_files_own_cast(
+    narrator: str | None, kept: bool
+) -> None:
+    report = _confirmation_report((_lead_edition(3, None),), narrator=narrator)
+    assert bool(_unconfirmed(report)) is kept
+
+
+def test_unconfirmed_editions_survive_the_report_round_trip() -> None:
+    report = _confirmation_report(
+        (_lead_edition(3, "B0LEADREC1"), _lead_edition(5, None)),
+        (("B0LEADREC1", "audnexus", ProviderStatus.NO_MATCH),),
+    )
+    restored = MetadataReport.from_json(report.to_json())
+    assert restored == report
+    assert (
+        "hardcover-edition-0000000003",
+        "hardcover-edition-0000000005",
+    ) == _unconfirmed(restored)

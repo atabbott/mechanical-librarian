@@ -409,3 +409,283 @@ def test_an_immaterial_work_genre_list_stays_a_choice(current, offered, marked):
     result = _results(evaluate_report(report))["genres"]
     assert result.alternatives
     assert (WORK_ALTERNATIVE_IMMATERIAL_REASON in result.reasons) is marked
+
+
+# --- The widened work route (#1642) -------------------------------------------
+#
+# Hardcover's admitted book, read by the real adapter, offers its first
+# publication date and a cover, and an audio edition Audible cannot confirm
+# offers its narrators for an empty narrator field. Every one is an owner
+# choice; the recording is still unresolved.
+
+
+def _hardcover_results(**kwargs: object) -> dict[str, ProposalResult]:
+    from tests.support.hardcover_work_route import hardcover_work_report
+
+    report = hardcover_work_report(**kwargs)  # type: ignore[arg-type]
+    assert not admitted_audiobook_identity(report)
+    return _results(evaluate_report(report))
+
+
+def test_the_work_route_offers_the_books_first_publication_date():
+    results = _hardcover_results(release_date="1999-05")
+    date = results["publishedDate"]
+    assert date.outcome is ProposalOutcome.PROPOSE_CHANGE
+    assert _values(date) == {"1999-05"}
+    (alternative,) = date.alternatives
+    assert alternative.date_event is not None
+    assert alternative.date_event.value == "work_first_publication"
+    assert alternative.date_precision is not None
+    assert alternative.date_precision.value == "month"
+    # The year stays the date's context, never a field of its own.
+    assert results["publishedYear"].outcome is ProposalOutcome.INELIGIBLE
+
+
+def test_a_work_date_conflicting_with_the_current_year_stays_a_choice():
+    # The current year is the canonical current date, and a work date never
+    # replaces it by itself: the owner decides.
+    date = _hardcover_results(
+        release_date="1999-05-01", current={TargetDestination.PUBLISHED_YEAR: "2004"}
+    )["publishedDate"]
+    assert date.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    assert date.selected_alternative_id is None
+    assert _values(date) == {"1999-05-01"}
+
+
+def test_an_unconfirmed_edition_offers_its_narrators_as_a_choice_only():
+    from tests.support.hardcover_work_route import NARRATOR, audio_edition
+
+    narrators = _hardcover_results(editions=(audio_edition(3),))["narrators"]
+    assert narrators.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    assert narrators.reasons == ("insufficient_independent_corroboration",)
+    assert narrators.selected_alternative_id is None
+    assert _values(narrators) == {(NARRATOR,)}
+    (alternative,) = narrators.alternatives
+    assert alternative.scope.value == "edition"
+    assert len(alternative.correlations) == 1
+
+
+def test_two_agreeing_editions_are_one_catalogues_word_not_a_vote():
+    from tests.support.hardcover_work_route import NARRATOR, audio_edition
+
+    narrators = _hardcover_results(
+        editions=(audio_edition(3), audio_edition(4, seconds=58_200))
+    )["narrators"]
+    assert narrators.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    (alternative,) = narrators.alternatives
+    assert _values(narrators) == {(NARRATOR,)}
+    assert len(alternative.correlations) == 1
+    assert len(alternative.evidence_references) == 2
+
+
+@pytest.mark.parametrize(
+    ("current", "local_narrator"),
+    ((("Present Reader",), None), (None, "Someone Else")),
+    ids=("target_populated", "file_credits_another_cast"),
+)
+def test_edition_narrators_fill_only_an_empty_field_of_a_matching_cast(
+    current, local_narrator
+):
+    from tests.support.hardcover_work_route import audio_edition
+
+    results = _hardcover_results(
+        editions=(audio_edition(3),),
+        current={} if current is None else {TargetDestination.NARRATORS: current},
+        local_narrator=local_narrator,
+    )
+    assert results["narrators"].outcome is ProposalOutcome.INELIGIBLE
+    assert results["narrators"].reasons == ("no_supported_evidence",)
+
+
+@pytest.mark.parametrize(
+    ("size", "incumbent", "offered"),
+    (
+        ((500, 750), None, True),
+        ((600, 600), None, True),
+        ((750, 500), None, False),
+        ((500, 1100), None, False),
+        ((500, 750), (200, 300), True),
+        ((500, 750), (300, 450), False),
+    ),
+    ids=(
+        "portrait_empty",
+        "square_empty",
+        "landscape",
+        "too_tall",
+        "small_incumbent",
+        "usable_incumbent",
+    ),
+)
+def test_the_work_route_offers_a_cover_under_the_audiobook_cover_rule(
+    size, incumbent, offered
+):
+    from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+    from tests.support.hardcover_work_route import (
+        hardcover_work_report,
+        incumbent_cover_source,
+        work_cover_source,
+    )
+
+    sources = (
+        work_cover_source(*size),
+        *(() if incumbent is None else (incumbent_cover_source(*incumbent),)),
+    )
+    report = hardcover_work_report(cover_sources=sources)
+    cover = _results(evaluate_report(report))["cover"]
+    assert work_route_cover_offered(report) is offered
+    if not offered:
+        assert cover.outcome is ProposalOutcome.INELIGIBLE
+        assert cover.reasons in {
+            ("audiobook_cover_withheld",),
+            ("no_supported_evidence",),
+        }
+    elif incumbent is None:
+        assert cover.outcome is ProposalOutcome.PROPOSE_CHANGE
+        assert cover.alternatives[0].assessment.value == "fills_empty"
+    else:
+        assert cover.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        assert "owner_cover_choice_required" in cover.reasons
+
+
+def test_a_cover_not_bound_to_the_admitted_work_is_not_offered():
+    from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+    from tests.support.hardcover_work_route import (
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    report = hardcover_work_report(
+        cover_sources=(work_cover_source(work_identity="hardcover-work-0000000099"),)
+    )
+    assert not work_route_cover_offered(report)
+    cover = _results(evaluate_report(report))["cover"]
+    assert cover.outcome is ProposalOutcome.INELIGIBLE
+    assert cover.alternatives == ()
+
+
+def test_a_date_narrators_or_cover_alone_open_the_work_route():
+    from tests.support.hardcover_work_route import (
+        audio_edition,
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    # The book states no description, genres or series, so each new field
+    # opens the route on its own, and nothing opens it with all three absent.
+    def scope(**kwargs: object) -> object:
+        return audiobook_review_scope(
+            hardcover_work_report(description=None, **kwargs)  # type: ignore[arg-type]
+        )
+
+    assert scope(release_date=None) is None
+    assert scope(release_date="1999") == "work"
+    assert scope(release_date=None, editions=(audio_edition(3),)) == "work"
+    assert scope(release_date=None, cover_sources=(work_cover_source(),)) == "work"
+
+
+def test_authors_are_never_reached_by_the_work_route():
+    """A target with no authors has no work identity, so no lane asks (Q4)."""
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_discovery_plan,
+    )
+    from tests.support.audiobook_providers import audio_target, target_title_claim
+    from tests.support.hardcover_work_route import audio_edition
+
+    assert (
+        audiobook_discovery_plan(
+            audio_target("Synthetic Journey", ()),
+            (target_title_claim("Synthetic Journey"),),
+        ).lanes
+        == ()
+    )
+    results = _hardcover_results(editions=(audio_edition(3),))
+    assert results["authors"].outcome is ProposalOutcome.INELIGIBLE
+    assert results["authors"].reasons == ("no_supported_evidence",)
+
+
+def test_current_genres_with_no_work_evidence_keep_their_owner_controls():
+    """Description and genres stay open on the work route, as before #1642.
+
+    A route opened by the book's date alone leaves a current genre list with
+    nothing to compare, so it defers and the owner can still trim it.
+    """
+    from mechanical_librarian.domain.human_decision import genre_subset_available
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.hardcover_work_route import hardcover_work_report
+
+    report = hardcover_work_report(
+        description=None,
+        current={
+            TargetDestination.GENRES: ("Fantasy", "Adventure"),
+            TargetDestination.DESCRIPTION: "A current synopsis.",
+        },
+    )
+    assert audiobook_review_scope(report) == "work"
+    proposal = evaluate_report(report)
+    results = _results(proposal)
+    for destination in ("genres", "description"):
+        assert results[destination].outcome is ProposalOutcome.DEFER
+        assert results[destination].reasons == ("no_positive_preservation_evidence",)
+    genres = next(
+        value
+        for value in ReviewCase.create(proposal, report).proposals
+        if value["destination"] == "genres"
+    )
+    assert genre_subset_available(genres, ["Fantasy", "Adventure"])
+
+
+@pytest.mark.parametrize(
+    "state",
+    [TargetFieldState.MALFORMED, TargetFieldState.UNLOADED, TargetFieldState.OVERSIZED],
+)
+def test_unreadable_narrators_do_not_open_the_work_route(state):
+    """Only a field known to be empty takes an edition's cast (#1642)."""
+    from tests.support.hardcover_work_route import (
+        audio_edition,
+        hardcover_work_report,
+    )
+
+    editions = (audio_edition(3),)
+    assert (
+        audiobook_review_scope(
+            hardcover_work_report(
+                description=None, release_date=None, editions=editions
+            )
+        )
+        == "work"
+    )
+    report = hardcover_work_report(
+        description=None,
+        release_date=None,
+        editions=editions,
+        states={TargetDestination.NARRATORS: state},
+    )
+    assert audiobook_review_scope(report) is None
+
+
+def test_a_pending_work_cover_keeps_the_gallery_incomplete():
+    """A retrieved work cover beside a pending one defers, never proposes (#1642)."""
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+        CoverSource,
+        CoverSourceKind,
+        CoverSourceState,
+        cover_source_id,
+    )
+    from tests.support.hardcover_work_route import WORK, work_cover_source
+
+    pending = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:work:pending"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.TIMEOUT,
+        timeout_scope="attempted",
+        provenance=CoverProvenance("hardcover", CoverDesignation.DEFAULT, WORK),
+    )
+    alone = _hardcover_results(cover_sources=(work_cover_source(),))["cover"]
+    assert alone.outcome is ProposalOutcome.PROPOSE_CHANGE
+    cover = _hardcover_results(cover_sources=(work_cover_source(), pending))["cover"]
+    assert cover.outcome is not ProposalOutcome.PROPOSE_CHANGE
+    assert cover.selected_alternative_id is None
+    assert "cover_gallery_incomplete" in cover.reasons
+    assert cover.alternatives == alone.alternatives

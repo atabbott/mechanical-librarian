@@ -55,10 +55,12 @@ decisions carry `application='apply'` and use the one guarded path
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
 
 When only the book, not the recording, is supported, the case offers series,
-title, description and genre choices, never subtitle
-([review experience](../product/review-experience.md)). This
-work-only scope gives no authority to Automatic, other fields, covers or
-authored descriptions.
+title, description, genre, publication date and cover choices, and a narrator
+choice from an audio edition Audible cannot confirm, never subtitle
+([review experience](../product/review-experience.md)). Such a case prepares
+its cover consideration with no image observer, and never an authored
+description. This work-only scope gives no authority to Automatic or to any
+other field.
 
 Audiobook Automatic needs the exact field, option and operation named by the
 audiobook qualification record

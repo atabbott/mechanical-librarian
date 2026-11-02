@@ -475,8 +475,15 @@ read in parts split at the same separators, including an underscore and a space
 
 **Work-only review.** When the recording stays unresolved but each source has a
 complete work witness, the owner may choose description, genres, series, series
-position and a witnessed title cleanup. Automatic becomes Ask me and Ignore
-stays Ignore; no automatic authority follows
+position, a witnessed title cleanup and the work's first publication date. A
+cover is offered when the current one is empty or under 300 pixels on its
+shorter edge and the candidate is portrait or square and bound to the witnessed
+work. Narrators are offered only for an empty field, from Hardcover audio
+editions Audible cannot confirm, and always as an unsettled choice
+([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
+A target with no authors has no work witness, so authors are never offered.
+Automatic becomes Ask me and Ignore stays Ignore; no automatic authority
+follows
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
 The owner's view is in the
 [review experience](review-experience.md#audiobooks).

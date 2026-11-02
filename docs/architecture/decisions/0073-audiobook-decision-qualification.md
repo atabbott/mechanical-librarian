@@ -68,11 +68,19 @@ authority ranking. Conflicting work identity, unsafe relevant text and internall
 competing texts within one record remain refusals. Ebook selection is unchanged.
 
 The work-only review route (#1166) does not activate these automatic envelopes.
-It permits explicit owner description, genre, series and title choices while
-recording admission remains unresolved (ADR-0069, #1253). Automatic is routed to Ask, Ignore remains authoritative,
-and persisted automatic reconstruction refuses this scope. It cannot invoke
-cover or authored-description preparation. Existing recording-admitted and ebook
-qualification and guarded manual effect contracts remain unchanged.
+It permits explicit owner description, genre, series, title and
+first-publication date choices while recording admission remains unresolved
+(ADR-0069, #1253, #1642). It also offers a cover bound to the witnessed work
+when the current cover is empty or under 300 pixels on its shorter edge and
+the candidate is portrait or square, and, for an empty narrator field, the
+narrators of audio editions Audible cannot confirm
+([ADR-0090](0090-hardcover-audio-edition-witness.md)), which stay unsettled.
+Every value comes from an exact work source, so a target without authors has
+no work route. Automatic is routed to Ask, Ignore remains authoritative, and
+persisted automatic reconstruction refuses this scope. It prepares a cover
+consideration, with no image observer, only when it offers a cover, and never
+invokes authored-description preparation. Existing recording-admitted and
+ebook qualification and guarded manual effect contracts remain unchanged.
 
 Authority comes from an F46 record and nowhere else. No F19a, F20, F38 or cover
 digest admits an audiobook identity, and an audiobook record admits none of

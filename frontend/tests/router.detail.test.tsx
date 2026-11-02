@@ -179,6 +179,61 @@ describe('Library review ownership', () => {
     expect(within(section).queryByText(/series|ASIN/u)).toBeNull()
   })
 
+  it('names a work-route date and cover, and gives narrators their own sentence (#1642)', async () => {
+    const [title] = detail.fields
+    if (!title) throw new Error('the fixture offers a title')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        audiobookReviewScope: 'work' as const,
+        fields: [
+          title,
+          { ...title, destination: 'narrators' as const },
+          { ...title, destination: 'cover' as const },
+          { ...title, destination: 'publishedDate' as const },
+        ],
+      })),
+    }
+    renderRoute('/review/case-1?subview=evidence', http)
+
+    const section = await screen.findByRole('region', { name: 'Book-level evidence' })
+    expect(
+      within(section).getByText(
+        'Book-level evidence supports title, publication date, and cover choices. A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
+      ),
+    ).toBeVisible()
+    // Covers can now be chosen here, so the note no longer says they cannot.
+    expect(
+      within(section).getByText(
+        'Your choices apply only to these fields. Recording identifiers and automatic changes are unavailable from this evidence.',
+      ),
+    ).toBeVisible()
+    expect(within(section).queryByText(/covers/u)).toBeNull()
+  })
+
+  it('states a narrator-only work route without a book-level sentence (#1642)', async () => {
+    const [title] = detail.fields
+    if (!title) throw new Error('the fixture offers a title')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        audiobookReviewScope: 'work' as const,
+        fields: [{ ...title, destination: 'narrators' as const }],
+      })),
+    }
+    renderRoute('/review/case-1?subview=evidence', http)
+
+    const section = await screen.findByRole('region', { name: 'Book-level evidence' })
+    expect(
+      within(section).getByText(
+        'A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
+      ),
+    ).toBeVisible()
+    expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
+  })
+
   it('states media health on the case an admitted audiobook opens', async () => {
     // An audiobook's row opens its case, never the recorded-evidence view, so
     // a section that existed only there would be invisible for exactly the
