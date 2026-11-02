@@ -10,6 +10,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import openapi from '../../docs/reference/review-openapi-v1.json'
 import {
   ApiError,
+  DECODED,
   ReviewApiClient,
   mapActivity,
   mapActivityConsent,
@@ -20,7 +21,6 @@ import {
   mapEvidence,
   mapHistory,
   mapLibrary,
-  mapPreparation,
   mapReportDetail,
   mapReviewerAccess,
   mapSettings,
@@ -83,6 +83,9 @@ type Divergence = 'decoder_stricter' | 'mapper_cross_field'
 interface Expected {
   readonly class: Divergence
   readonly check: string
+  // The mapper result the row's own check gives, once its family is decoded
+  // (stage-3 Q7): a neighbouring check cannot then stand in for it.
+  readonly result?: string
 }
 
 // ---- Documents ---------------------------------------------------------------
@@ -391,98 +394,190 @@ const libraryWithWork = builder('Library', 'library.work', LIBRARY, () =>
 
 // ---- Presence rows: one per `exactKeys` call site (lines at 04fa742) --------
 
-// [site, component, accept document, pointer of the component instance in it]
-const PRESENCE_SITES: readonly (readonly [string, string, Case, string])[] = [
-  ['ReviewApiClient.startCodexDevice:1517', '_CodexDeviceStartResponse', issued, ''],
-  ['reviewerStatus:2020', 'ReviewerEngineStatus', codexCleared, '/codex'],
-  ['mapDescriptionMetadata:2067', 'DescriptionModelMetadata', modelTest, ''],
-  ['mapCostEvidence:2111', 'ReviewerCostEvidence', codexCleared, '/cost_evidence'],
-  ['mapCostEvidence:2123', 'MeasuredRun', codexCleared, '/cost_evidence/models/0/measured_run'],
-  ['mapCostEvidence:2130', 'ReviewerCostEstimate', codexCleared, '/cost_evidence/models/0'],
-  ['mapReviewerAccess:2179', 'ReviewerAccessView', codexCleared, ''],
-  ['mapReviewerAccess:2207', 'OpenRouterRecommendation', codexCleared, '/candidates/0'],
-  ['mapReviewerAccess:2233', 'OpenRouterTaskSelection', openRouterRefresh, '/mapping'],
-  ['mapReviewerAccess:2256', 'CoverModelMetadata', openRouterRefresh, '/cover_metadata'],
-  ['mapReviewerAccess:2279', 'CodexTaskSelection', openRouterCleared, '/description_mapping'],
+// [site, family whose PR deletes the site, component, accept document, pointer
+// of the component instance in it]. A decoded family's sites are gone from
+// http.ts; their cases stay, and both sides must still reject (stage-3 Q6).
+const PRESENCE_SITES: readonly (readonly [string, Family, string, Case, string])[] = [
+  [
+    'ReviewApiClient.startCodexDevice:1517',
+    'ReviewerAccess',
+    '_CodexDeviceStartResponse',
+    issued,
+    '',
+  ],
+  ['reviewerStatus:2020', 'ReviewerAccess', 'ReviewerEngineStatus', codexCleared, '/codex'],
+  ['mapDescriptionMetadata:2067', 'ReviewerAccess', 'DescriptionModelMetadata', modelTest, ''],
+  [
+    'mapCostEvidence:2111',
+    'ReviewerAccess',
+    'ReviewerCostEvidence',
+    codexCleared,
+    '/cost_evidence',
+  ],
+  [
+    'mapCostEvidence:2123',
+    'ReviewerAccess',
+    'MeasuredRun',
+    codexCleared,
+    '/cost_evidence/models/0/measured_run',
+  ],
+  [
+    'mapCostEvidence:2130',
+    'ReviewerAccess',
+    'ReviewerCostEstimate',
+    codexCleared,
+    '/cost_evidence/models/0',
+  ],
+  ['mapReviewerAccess:2179', 'ReviewerAccess', 'ReviewerAccessView', codexCleared, ''],
+  [
+    'mapReviewerAccess:2207',
+    'ReviewerAccess',
+    'OpenRouterRecommendation',
+    codexCleared,
+    '/candidates/0',
+  ],
+  [
+    'mapReviewerAccess:2233',
+    'ReviewerAccess',
+    'OpenRouterTaskSelection',
+    openRouterRefresh,
+    '/mapping',
+  ],
+  [
+    'mapReviewerAccess:2256',
+    'ReviewerAccess',
+    'CoverModelMetadata',
+    openRouterRefresh,
+    '/cover_metadata',
+  ],
+  [
+    'mapReviewerAccess:2279',
+    'ReviewerAccess',
+    'CodexTaskSelection',
+    openRouterCleared,
+    '/description_mapping',
+  ],
   [
     'mapReviewerAccess:2281',
+    'ReviewerAccess',
     'OpenRouterTaskSelection',
     describedByOpenRouter,
     '/description_mapping',
   ],
-  ['mapCodexDevice:2292', '_CodexDeviceAuthResponse', issued, '/device'],
-  ['mapSettings:2389', 'DescriptionAdviceSettings', settings, '/document/description_advice'],
+  ['mapCodexDevice:2292', 'ReviewerAccess', '_CodexDeviceAuthResponse', issued, '/device'],
+  [
+    'mapSettings:2389',
+    'Settings',
+    'DescriptionAdviceSettings',
+    settings,
+    '/document/description_advice',
+  ],
   [
     'mapDecisionAcknowledgement:2598',
+    'CaseDetail',
     '_UnavailableDecisionConfirmation',
     unavailable,
     '/confirmation',
   ],
-  ['mapDecisionAcknowledgement:2602', '_ConfirmedDecision', selection, '/confirmation'],
-  ['preparationPresentation:2736', '_PreparationNow', preparationNow, '/presentation/now'],
-  ['providerThrottling:2767', '_PreparationThrottling', throttled, '/provider_throttling'],
+  [
+    'mapDecisionAcknowledgement:2602',
+    'CaseDetail',
+    '_ConfirmedDecision',
+    selection,
+    '/confirmation',
+  ],
+  [
+    'preparationPresentation:2736',
+    'Preparation',
+    '_PreparationNow',
+    preparationNow,
+    '/presentation/now',
+  ],
+  [
+    'providerThrottling:2767',
+    'Preparation',
+    '_PreparationThrottling',
+    throttled,
+    '/provider_throttling',
+  ],
   [
     'providerThrottling:2781',
+    'Preparation',
     '_PreparationThrottleEntry',
     throttled,
     '/provider_throttling/entries/0',
   ],
-  ['activityLapses:2977', '_ActivityLapsedConsent', lapsed, '/lapsed_consents/0'],
-  ['mapActivityConsent:2993', '_ActivityConsentState', consentState, ''],
-  ['mapActivityPermissionReadiness:3017', '_ActivityPermissionReadiness', permissionReadiness, ''],
+  ['activityLapses:2977', 'Activity', '_ActivityLapsedConsent', lapsed, '/lapsed_consents/0'],
+  ['mapActivityConsent:2993', 'Activity', '_ActivityConsentState', consentState, ''],
+  [
+    'mapActivityPermissionReadiness:3017',
+    'Activity',
+    '_ActivityPermissionReadiness',
+    permissionReadiness,
+    '',
+  ],
   [
     'mapRecordingIdentityBasis:3308',
+    'CaseDetail',
     '_RecordingIdentityBasis',
     recordingBasis,
     '/recording_identity_basis',
   ],
   [
     'mapDescriptionCandidate:3589',
+    'CaseDetail',
     'DescriptionAdviceCandidate',
     advice,
     '/fields/8/description_advice/candidate',
   ],
   [
     'mapDescriptionCandidate:3615',
+    'CaseDetail',
     'DescriptionAdviceOutput',
     advice,
     '/fields/8/description_advice/candidate/output',
   ],
   [
     'mapDescriptionBinding:3640',
+    'CaseDetail',
     'DescriptionAdviceBinding',
     advice,
     '/fields/8/description_advice/binding',
   ],
   [
     'mapDescriptionAdvice:3669',
+    'CaseDetail',
     '_DescriptionAdviceResponse',
     advice,
     '/fields/8/description_advice',
   ],
   [
     'mapDescriptionAdvice:3718',
+    'CaseDetail',
     'AuthoredDescriptionDecision',
     preserved,
     '/fields/8/description_advice/selection',
   ],
   [
     'mapDescriptionAdvice:3746',
+    'CaseDetail',
     '_SelectedDescriptionAdvice',
     preserved,
     '/fields/8/description_advice/selected_advice',
   ],
-  ['mapOwnerControl:3932', '_OwnerControl', advice, '/fields/1/owner_control'],
-  ['mapOwnerControl:3938', '_OwnerEntry', advice, '/fields/3/owner_control/entry'],
-  ['mapOwnerControl:3943', '_OwnerSubset', advice, '/fields/1/owner_control/subset'],
+  ['mapOwnerControl:3932', 'CaseDetail', '_OwnerControl', advice, '/fields/1/owner_control'],
+  ['mapOwnerControl:3938', 'CaseDetail', '_OwnerEntry', advice, '/fields/3/owner_control/entry'],
+  ['mapOwnerControl:3943', 'CaseDetail', '_OwnerSubset', advice, '/fields/1/owner_control/subset'],
   [
     'mapOwnerControl:3956',
+    'CaseDetail',
     '_OwnerSuggestion',
     suggested,
     '/fields/3/owner_control/entry/suggestions/0',
   ],
   [
     'mapOwnerControl:3976',
+    'CaseDetail',
     '_OwnerSubsetOption',
     advice,
     '/fields/1/owner_control/subset/options/0',
@@ -496,7 +591,7 @@ const tagKeys = new Set(
   [...JSON.stringify(openapi).matchAll(/"propertyName":"([^"]+)"/g)].map((match) => match[1]),
 )
 // Each presence case with the decoder results its deletion may give.
-const presence = PRESENCE_SITES.flatMap(([site, component, instance, pointer]) =>
+const presence = PRESENCE_SITES.flatMap(([site, , component, instance, pointer]) =>
   Object.keys(schemas[component]?.properties ?? { [`<no ${component}>`]: null }).map((key) => {
     const at = `${pointer}/${key}`
     const results = [`required@${at}`, ...(tagKeys.has(key) ? [`discriminator@${at}`] : [])]
@@ -532,12 +627,6 @@ const TOLERANCES = [
     'mapLibrary http.ts:3472 reads an absent work cover as none (item.cover == null)',
   ],
   [
-    'T5',
-    preparationBase,
-    '/provider_throttling',
-    'providerThrottling http.ts:2764 reads an absent provider_throttling as null',
-  ],
-  [
     'T6',
     activityItems,
     '/provider_recovery/0/failure_reasons',
@@ -545,6 +634,10 @@ const TOLERANCES = [
   ],
 ] as const
 for (const [row, instance, pointer] of TOLERANCES) deletion(`tolerance:${row}`, instance, pointer)
+// Tolerances whose family is decoded: the absence is now refused on both sides,
+// so the case agrees and keeps no row (#1685 drained T5).
+const DRAINED = [['T5', preparationBase, '/provider_throttling']] as const
+for (const [row, instance, pointer] of DRAINED) deletion(`tolerance:${row}`, instance, pointer)
 
 // ---- B4 reject rows for the two families with no `exactKeys` site -----------
 
@@ -677,10 +770,11 @@ builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
 )
 
 // [case id, accept case, pointer, replacement, the http.ts check (lines at
-// 6f660c8) and why it stays hand-written]. Each relates two or more fields, or
-// a position or identity across items or documents (A5), or is a single-field
-// check whose only owner is persisted (B3).
-const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string])[] = [
+// 6f660c8, or where its family PR moved it) and why it stays hand-written, and
+// once the family is decoded the mapper result of that check alone]. Each
+// relates two or more fields, or a position or identity across items or
+// documents (A5), or is a single-field check whose only owner is persisted (B3).
+const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, string?])[] = [
   [
     'check:mapActivity.failure-reasons-order',
     activityItems,
@@ -749,7 +843,8 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string])[]
     preparationNow,
     '/presentation/passage/checked',
     3,
-    'preparationPresentation http.ts:2666-2672: each passage count is at most the one before it; cross-field',
+    'preparationPresentation http.ts:2742-2748: each passage count is at most the one before it; cross-field',
+    'reject:invalid_preparation_passage_order',
   ],
   [
     'check:preparationPresentation.trigger-families',
@@ -759,35 +854,40 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string])[]
       { trigger: 'manual_scan', accepted_count: 1, first_accepted_at: 100, last_accepted_at: 100 },
       { trigger: 'manual_scan', accepted_count: 1, first_accepted_at: 100, last_accepted_at: 100 },
     ],
-    'preparationPresentation http.ts:2685: one entry per trigger family; identity across items',
+    'preparationPresentation http.ts:2749: one entry per trigger family; identity across items',
+    'reject:invalid_preparation_trigger',
   ],
   [
     'check:preparationPresentation.active-within-total',
     preparationNow,
     '/presentation/active_overflow',
     5,
-    'preparationPresentation http.ts:2709: active books plus overflow are at most total; cross-field',
+    'preparationPresentation http.ts:2756: active books plus overflow are at most total; cross-field',
+    'reject:invalid_preparation_passage_total',
   ],
   [
     'check:preparationPresentation.updated-after-start',
     preparationNow,
     '/presentation/updated_at',
     99,
-    'preparationPresentation http.ts:2710: updated_at is not before started_at; cross-field',
+    'preparationPresentation http.ts:2757: updated_at is not before started_at; cross-field',
+    'reject:invalid_preparation_passage_total',
   ],
   [
     'check:preparationPresentation.completion-iff-terminal',
     preparationNow,
     '/presentation/state',
     'completed_clean',
-    'preparationPresentation http.ts:2711-2712: completed_at is set exactly for a terminal state; cross-field',
+    'preparationPresentation http.ts:2758-2759: completed_at is set exactly for a terminal state; cross-field',
+    'reject:invalid_preparation_passage_total',
   ],
   [
     'check:preparationPresentation.completed-after-start',
     completed,
     '/presentation/completed_at',
     99,
-    'preparationPresentation http.ts:2711: completed_at is not before started_at; cross-field',
+    'preparationPresentation http.ts:2758: completed_at is not before started_at; cross-field',
+    'reject:invalid_preparation_passage_total',
   ],
   [
     'check:reviewerStatus.codex-reason',
@@ -986,9 +1086,9 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     ]),
   ),
   ...Object.fromEntries(
-    CROSS_FIELD.map(([id, , , , check]): [string, Expected] => [
+    CROSS_FIELD.map(([id, , , , check, result]): [string, Expected] => [
       id,
-      { class: 'mapper_cross_field', check },
+      { class: 'mapper_cross_field', check, ...(result === undefined ? {} : { result }) },
     ]),
   ),
 }
@@ -1054,7 +1154,7 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
     client(c).recordDecision(caseId(c), authored),
   'POST /api/v1/review-cases/{review_case_id}/description-advice/retry': (c) =>
     client(c).retryDescriptionAdvice(caseId(c)),
-  'GET /api/v1/review-preparation': (c) => mapPreparation(c.doc()),
+  'GET /api/v1/review-preparation': (c) => client(c).getPreparation(),
   'POST /api/v1/review-preparation/{connection}/{library_name}/scan': (c) =>
     client(c).preparationAction(c.path.slice('/api/v1/review-preparation/'.length)),
   'GET /api/v1/activity': (c) => mapActivity(c.doc()),
@@ -1150,15 +1250,41 @@ describe('expected-divergence table', () => {
   })
 })
 
+// A family is decoded once `request()` decodes the operation of every case it
+// owns; its mapper then has no presence check of its own.
+const decodedFamilies = new Set(
+  cases
+    .map(({ family }) => family)
+    .filter((family) =>
+      cases
+        .filter((c) => c.family === family)
+        .every((c) => {
+          const key = matchOperation(c.method, c.path)
+          return key !== undefined && DECODED.has(key)
+        }),
+    ),
+)
+
 describe('presence parity', () => {
-  it('has a row for every exactKeys call site', () => {
+  it('has a row for every exactKeys call site of a family not yet decoded', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/api/http.ts'), 'utf8')
-    expect(source.match(/\bexactKeys\(/g)?.length).toBe(PRESENCE_SITES.length)
+    const undecoded = PRESENCE_SITES.filter(([, family]) => !decodedFamilies.has(family))
+    expect(source.match(/\bexactKeys\(/g)?.length ?? 0).toBe(undecoded.length)
   })
   it.each(presence)('%s rejects at the deleted key on both sides', (id, results) => {
     expect(results).toContain(seen(id).decoder)
     expect(seen(id).mapper).toMatch(/^reject:/)
   })
+  it.each(DRAINED.map(([row, , pointer]) => [row, pointer]))(
+    '%s, drained, is refused at its one deleted key on both sides',
+    (row, pointer) => {
+      expect(seen(`tolerance:${row}`)).toMatchObject({
+        decoder: `required@${pointer}`,
+        mapper: 'reject:invalid_response',
+        observed: 'agree',
+      })
+    },
+  )
   it.each(TOLERANCES.map(([row, , pointer]) => [row, pointer]))(
     '%s is decoder-stricter at its one deleted key',
     (row, pointer) => {
@@ -1168,6 +1294,19 @@ describe('presence parity', () => {
       })
     },
   )
+})
+
+describe('pinned cross-field results', () => {
+  const pinned = Object.entries(EXPECTED).flatMap(([id, row]) =>
+    row.result === undefined ? [] : [[id, row.result] as const],
+  )
+  it('pins every row of a decoded family, and only those', () => {
+    const decodedRows = CROSS_FIELD.filter(([, from]) => decodedFamilies.has(from.family))
+    expect(pinned.map(([id]) => id).sort()).toEqual(decodedRows.map(([id]) => id).sort())
+  })
+  it.each(pinned)('%s fails its own check', (id, result) => {
+    expect(seen(id).mapper).toBe(result)
+  })
 })
 
 describe('bars', () => {

@@ -55,7 +55,8 @@ import {
   mapLibrary,
   mapEvidence,
   mapHistory,
-  mapPreparation,
+  ResponseDecodeError,
+  UncertainMutationError,
   mapCoverConsideration,
   mapCodexDevice,
   mapReportDetail,
@@ -70,6 +71,26 @@ const renewedToken = 'b'.repeat(32)
 const csrf = {
   current: vi.fn(() => token),
   renew: vi.fn(async () => renewedToken),
+}
+
+// The preparation family is decoded centrally (#1685): a document reaches the
+// mapper's named checks only through the client, after its generated decoder.
+const readPreparation = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getPreparation()
+// The decoder's `reason@at` for a refused read, with the route-safe message.
+const refused = (failure: string) => {
+  const [reason, at] = failure.split('@')
+  return {
+    name: 'ResponseDecodeError',
+    status: 502,
+    code: 'invalid_response',
+    message: 'Review API request failed (502: invalid_response)',
+    reason,
+    at,
+  }
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
@@ -2340,44 +2361,47 @@ describe('ReviewApiClient', () => {
     })
   })
 
-  it('maps only closed target-connection preparation conditions', () => {
+  it('reads only closed target-connection preparation conditions', async () => {
     const base = preparation({ active: true })
     for (const state of ['paused', 'checking', 'recovered']) {
-      expect(
-        mapPreparation({
-          ...base,
-          connections: [
-            {
-              connection: 'primary',
-              code: 'unavailable',
-              state,
-              affected: state === 'recovered' ? 0 : 2,
-              updated_at: 1,
-            },
-          ],
-        }).connections?.[0]?.state,
-      ).toBe(state)
-    }
-    for (const invalid of [
-      { ...base, connections: undefined },
-      {
+      const view = await readPreparation({
         ...base,
         connections: [
-          { connection: 'primary', code: 'unknown', state: 'paused', affected: 1, updated_at: 1 },
+          {
+            connection: 'primary',
+            code: 'unavailable',
+            state,
+            affected: state === 'recovered' ? 0 : 2,
+            updated_at: 1,
+          },
         ],
-      },
-      {
-        ...base,
-        connections: [{ connection: 'primary', code: 'tls', state: 'paused', affected: 1 }],
-      },
-    ])
-      expect(() => mapPreparation(invalid)).toThrow(ApiError)
+      })
+      expect(view.connections[0]?.state).toBe(state)
+    }
+    for (const [invalid, failure] of [
+      [{ ...base, connections: undefined }, 'required@/connections'],
+      [
+        {
+          ...base,
+          connections: [
+            { connection: 'primary', code: 'unknown', state: 'paused', affected: 1, updated_at: 1 },
+          ],
+        },
+        'enum@/connections/0/code',
+      ],
+      [
+        {
+          ...base,
+          connections: [{ connection: 'primary', code: 'tls', state: 'paused', affected: 1 }],
+        },
+        'required@/connections/0/updated_at',
+      ],
+    ] as const)
+      await expect(readPreparation(invalid)).rejects.toMatchObject(refused(failure))
   })
 
-  it('maps only closed, bounded provider throttling (#1282)', () => {
+  it('reads only closed, bounded provider throttling (#1282)', async () => {
     const base: Record<string, unknown> = preparation()
-    // The mapper reads an absent block as none; the absent case removes it.
-    delete base.provider_throttling
     const entry = {
       library: 'Synthetic ebooks',
       adapter: 'google_books',
@@ -2388,33 +2412,66 @@ describe('ReviewApiClient', () => {
       remedy: 'add_api_key',
     }
     const throttling = { generation: 3, retry: 'available', entries: [entry] }
-    expect(mapPreparation(base).provider_throttling).toBeNull()
-    expect(mapPreparation({ ...base, provider_throttling: null }).provider_throttling).toBeNull()
+    // An absent block was once read as none (T5); the schema requires it.
+    const absent = { ...base }
+    delete absent.provider_throttling
+    await expect(readPreparation(absent)).rejects.toMatchObject(
+      refused('required@/provider_throttling'),
+    )
     expect(
-      mapPreparation({ ...base, provider_throttling: throttling }).provider_throttling,
+      (await readPreparation({ ...base, provider_throttling: null })).provider_throttling,
+    ).toBeNull()
+    expect(
+      (await readPreparation({ ...base, provider_throttling: throttling })).provider_throttling,
     ).toEqual(throttling)
     const maximal = { ...throttling, entries: Array.from({ length: 256 }, () => entry) }
     expect(
-      mapPreparation({ ...base, provider_throttling: maximal }).provider_throttling?.entries,
+      (await readPreparation({ ...base, provider_throttling: maximal })).provider_throttling
+        ?.entries,
     ).toHaveLength(256)
-    for (const invalid of [
-      { ...throttling, entries: Array.from({ length: 257 }, () => entry) },
-      { ...throttling, entries: [{ ...entry, adapter: 'unknown_source' }] },
-      { ...throttling, entries: [{ ...entry, deferred: -1 }] },
-      { ...throttling, entries: [{ ...entry, deferred: 1.5 }] },
-      { ...throttling, entries: [{ ...entry, state: 'recovered' }] },
-      { ...throttling, entries: [{ ...entry, reasons: ['unknown'] }] },
-      { ...throttling, entries: [{ ...entry, remedy: 'buy_more' }] },
-      { ...throttling, entries: [{ ...entry, library: '' }] },
-      { ...throttling, entries: [{ ...entry, library: 'x'.repeat(65) }] },
-      { ...throttling, entries: [{ ...entry, connection: 'primary-google' }] },
-      { ...throttling, retry: 'later' },
-      { ...throttling, generation: 0 },
-      { ...throttling, extra: true },
-    ])
-      expect(() => mapPreparation({ ...base, provider_throttling: invalid })).toThrow(
-        expect.objectContaining({ status: 502 }),
-      )
+    const at = '/provider_throttling'
+    for (const [invalid, failure] of [
+      [
+        { ...throttling, entries: Array.from({ length: 257 }, () => entry) },
+        `max_items@${at}/entries`,
+      ],
+      [
+        { ...throttling, entries: [{ ...entry, adapter: 'unknown_source' }] },
+        `enum@${at}/entries/0/adapter`,
+      ],
+      [{ ...throttling, entries: [{ ...entry, deferred: -1 }] }, `min@${at}/entries/0/deferred`],
+      [{ ...throttling, entries: [{ ...entry, deferred: 1.5 }] }, `type@${at}/entries/0/deferred`],
+      [
+        { ...throttling, entries: [{ ...entry, state: 'recovered' }] },
+        `enum@${at}/entries/0/state`,
+      ],
+      [
+        { ...throttling, entries: [{ ...entry, reasons: ['unknown'] }] },
+        `enum@${at}/entries/0/reasons/0`,
+      ],
+      [
+        { ...throttling, entries: [{ ...entry, remedy: 'buy_more' }] },
+        `enum@${at}/entries/0/remedy`,
+      ],
+      [
+        { ...throttling, entries: [{ ...entry, library: '' }] },
+        `min_length@${at}/entries/0/library`,
+      ],
+      [
+        { ...throttling, entries: [{ ...entry, library: 'x'.repeat(65) }] },
+        `max_length@${at}/entries/0/library`,
+      ],
+      [
+        { ...throttling, entries: [{ ...entry, connection: 'primary-google' }] },
+        `unknown_key@${at}/entries/0/connection`,
+      ],
+      [{ ...throttling, retry: 'later' }, `enum@${at}/retry`],
+      [{ ...throttling, generation: 0 }, `min@${at}/generation`],
+      [{ ...throttling, extra: true }, `unknown_key@${at}/extra`],
+    ] as const)
+      await expect(
+        readPreparation({ ...base, provider_throttling: invalid }),
+      ).rejects.toMatchObject(refused(failure))
   })
 
   it("accepts a library's languages only when absent or a list of strings", async () => {
@@ -2463,7 +2520,7 @@ describe('ReviewApiClient', () => {
     expect(new Headers(init?.headers).get('x-csrf-token')).toBe(renewedToken)
   })
 
-  it("accepts only a closed count of the run's works as they stand now", () => {
+  it("accepts only a closed count of the run's works as they stand now", async () => {
     const now = {
       ready: 1,
       recorded: 2,
@@ -2473,26 +2530,29 @@ describe('ReviewApiClient', () => {
       scan_ids: ['scan-1'],
     }
     const view = (value: unknown) =>
-      mapPreparation(
+      readPreparation(
         preparation({ active: true, presentation: preparationPresentation({ now: value }) }),
       )
-    expect(view(now).presentation?.now).toEqual(now)
-    expect(view(null).presentation?.now).toBeNull()
-    for (const malformed of [
-      { ...now, extra: 0 },
-      { ready: 1, recorded: 2, not_matched: 0, failed: 0, in_progress: 1 },
-      [],
-    ])
-      expect(() => view(malformed)).toThrow('502: invalid_preparation_now)')
-    expect(() => view({ ...now, failed: -1 })).toThrow('502: invalid_preparation_now_failed)')
-    expect(() => view({ ...now, ready: true })).toThrow('502: invalid_preparation_now_ready)')
-    for (const scanIds of ['scan-1', [1], Array.from({ length: 129 }, () => 'scan')])
-      expect(() => view({ ...now, scan_ids: scanIds })).toThrow(
-        '502: invalid_preparation_now_scan_ids)',
-      )
+    expect((await view(now)).presentation?.now).toEqual(now)
+    expect((await view(null)).presentation?.now).toBeNull()
+    const at = '/presentation/now'
+    for (const [malformed, failure] of [
+      [{ ...now, extra: 0 }, `unknown_key@${at}/extra`],
+      [
+        { ready: 1, recorded: 2, not_matched: 0, failed: 0, in_progress: 1 },
+        `required@${at}/scan_ids`,
+      ],
+      [[], `type@${at}`],
+      [{ ...now, failed: -1 }, `min@${at}/failed`],
+      [{ ...now, ready: true }, `type@${at}/ready`],
+      [{ ...now, scan_ids: 'scan-1' }, `type@${at}/scan_ids`],
+      [{ ...now, scan_ids: [1] }, `type@${at}/scan_ids/0`],
+      [{ ...now, scan_ids: Array.from({ length: 129 }, () => 'scan') }, `max_items@${at}/scan_ids`],
+    ] as const)
+      await expect(view(malformed)).rejects.toMatchObject(refused(failure))
   })
 
-  it('accepts only ordered and bounded preparation presentation content', () => {
+  it('accepts only ordered and bounded preparation presentation content', async () => {
     const presentation = preparationPresentation({
       passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
       active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
@@ -2500,143 +2560,97 @@ describe('ReviewApiClient', () => {
       throughput_per_minute: 1.2,
     })
     const base = preparation({ active: true, presentation })
-    expect(mapPreparation(base).presentation?.passage.ready).toBe(1)
+    const read = (changes: Record<string, unknown>) =>
+      readPreparation({ ...base, presentation: { ...presentation, ...changes } })
+    expect((await readPreparation(base)).presentation?.passage.ready).toBe(1)
     const fourTriggers = ['initial_setup', 'manual_scan', 'library_added', 'title_recovery'].map(
       (trigger) => ({ ...presentation.triggers[0], trigger }),
     )
-    expect(
-      mapPreparation({ ...base, presentation: { ...presentation, triggers: fourTriggers } })
-        .presentation?.triggers,
-    ).toHaveLength(4)
-    expect(
-      mapPreparation({ ...base, presentation: { ...presentation, triggers: [fourTriggers[3]] } })
-        .presentation?.triggers[0]?.trigger,
-    ).toBe('title_recovery')
-    for (const triggers of [
-      [...fourTriggers, { ...fourTriggers[0], trigger: 'unknown' }],
-      [{ ...fourTriggers[0], trigger: 'unknown' }],
-      [fourTriggers[3], fourTriggers[3]],
-    ])
-      expect(() =>
-        mapPreparation({ ...base, presentation: { ...presentation, triggers } }),
-      ).toThrow(ApiError)
+    expect((await read({ triggers: fourTriggers })).presentation?.triggers).toHaveLength(4)
+    expect((await read({ triggers: [fourTriggers[3]] })).presentation?.triggers[0]?.trigger).toBe(
+      'title_recovery',
+    )
+    await expect(
+      read({ triggers: [...fourTriggers, { ...fourTriggers[0], trigger: 'unknown' }] }),
+    ).rejects.toMatchObject(refused('max_items@/presentation/triggers'))
+    await expect(
+      read({ triggers: [{ ...fourTriggers[0], trigger: 'unknown' }] }),
+    ).rejects.toMatchObject(refused('enum@/presentation/triggers/0/trigger'))
+    // One entry per trigger family is a named check (ADR-0091), not the schema's.
+    await expect(read({ triggers: [fourTriggers[3], fourTriggers[3]] })).rejects.toThrow(
+      new ApiError(502, 'invalid_preparation_trigger'),
+    )
 
     const maximumName = 'x'.repeat(2048)
     expect(
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
+      (
+        await read({
           active_books: [{ name: maximumName, stage: 'Reading' }],
           recent_completions: [{ name: maximumName, outcome: 'ready', completed_at: 101 }],
-        },
-      }).presentation?.active_books[0]?.name,
+        })
+      ).presentation?.active_books[0]?.name,
     ).toBe(maximumName)
     const maximumMultibyteName = `${'界'.repeat(682)}ab`
     expect(new TextEncoder().encode(maximumMultibyteName)).toHaveLength(2048)
     expect(
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
+      (
+        await read({
           active_books: [{ name: maximumMultibyteName, stage: 'Reading' }],
           recent_completions: [{ name: maximumMultibyteName, outcome: 'ready', completed_at: 101 }],
-        },
-      }).presentation?.recent_completions[0]?.name,
+        })
+      ).presentation?.recent_completions[0]?.name,
     ).toBe(maximumMultibyteName)
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
-          active_books: [{ name: `${maximumName}x`, stage: 'Reading' }],
-        },
+    await expect(
+      read({ active_books: [{ name: `${maximumName}x`, stage: 'Reading' }] }),
+    ).rejects.toMatchObject(refused('max_length@/presentation/active_books/0/name'))
+    await expect(
+      read({
+        recent_completions: [{ name: `${maximumName}x`, outcome: 'ready', completed_at: 101 }],
       }),
-    ).toThrow('invalid_preparation_active_name')
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
-          recent_completions: [{ name: `${maximumName}x`, outcome: 'ready', completed_at: 101 }],
-        },
-      }),
-    ).toThrow('invalid_preparation_completion_name')
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
-          passage: { ...presentation.passage, checked: 1, ready: 2 },
-        },
-      }),
-    ).toThrow('invalid_preparation_passage_order')
+    ).rejects.toMatchObject(refused('max_length@/presentation/recent_completions/0/name'))
+    await expect(
+      read({ passage: { ...presentation.passage, checked: 1, ready: 2 } }),
+    ).rejects.toThrow(new ApiError(502, 'invalid_preparation_passage_order'))
     expect(
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
+      (
+        await read({
           passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 1 },
-        },
-      }).presentation?.passage.failed,
+        })
+      ).presentation?.passage.failed,
     ).toBe(1)
     expect(
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
+      (
+        await read({
           passage: { read: 1, searches_finished: 1, compared: 1, checked: 1, ready: 1, failed: 1 },
           total: 1,
-        },
-      }).presentation?.passage,
+        })
+      ).presentation?.passage,
     ).toMatchObject({ ready: 1, failed: 1 })
-    expect(() =>
-      mapPreparation({ ...base, presentation: { ...presentation, updated_at: 99 } }),
-    ).toThrow('invalid_preparation_passage_total')
-    expect(() =>
-      mapPreparation({ ...base, presentation: { ...presentation, state: 'completed_clean' } }),
-    ).toThrow('invalid_preparation_passage_total')
-    expect(() =>
-      mapPreparation({ ...base, presentation: { ...presentation, completed_at: 101 } }),
-    ).toThrow('invalid_preparation_passage_total')
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: { ...presentation, state: 'dismissed', completed_at: 99 },
+    const total = new ApiError(502, 'invalid_preparation_passage_total')
+    await expect(read({ updated_at: 99 })).rejects.toThrow(total)
+    await expect(read({ state: 'completed_clean' })).rejects.toThrow(total)
+    await expect(read({ completed_at: 101 })).rejects.toThrow(total)
+    await expect(read({ state: 'dismissed', completed_at: 99 })).rejects.toThrow(total)
+    await expect(
+      read({
+        passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+        active_overflow: 1,
+        total: 1,
       }),
-    ).toThrow('invalid_preparation_passage_total')
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
-          passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
-          active_overflow: 1,
-          total: 1,
-        },
+    ).rejects.toThrow(total)
+    await expect(
+      read({
+        active_books: Array.from({ length: 6 }, () => ({
+          name: 'Private title',
+          stage: 'Reading',
+        })),
       }),
-    ).toThrow('invalid_preparation_passage_total')
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
-          active_books: Array.from({ length: 6 }, () => ({
-            name: 'Private title',
-            stage: 'Reading',
-          })),
-        },
+    ).rejects.toMatchObject(refused('max_items@/presentation/active_books'))
+    await expect(
+      read({
+        recent_completions: [{ name: 'Private title', outcome: 'invented', completed_at: 101 }],
       }),
-    ).toThrow('invalid_preparation_presentation')
-    expect(() =>
-      mapPreparation({
-        ...base,
-        presentation: {
-          ...presentation,
-          recent_completions: [{ name: 'Private title', outcome: 'invented', completed_at: 101 }],
-        },
-      }),
-    ).toThrow('invalid_preparation_completion')
+    ).rejects.toMatchObject(refused('enum@/presentation/recent_completions/0/outcome'))
   })
 
   it('preserves structured server error codes and rejects malformed DTOs', async () => {
@@ -3313,12 +3327,18 @@ it('sends the actual read scheduling hint while ordinary reads remain foreground
   ).toEqual(['foreground', 'background'])
 })
 
-it('requires an exact recovery flag in every preparation response', () => {
+it('requires an exact recovery flag in every preparation response', async () => {
   const response = preparation({ actionable: true })
   for (const recovery_required of [undefined, null, 0, 1, 'false', {}, []]) {
-    expect(() => mapPreparation({ ...response, recovery_required })).toThrow()
+    await expect(readPreparation({ ...response, recovery_required })).rejects.toMatchObject(
+      refused(
+        recovery_required === undefined ? 'required@/recovery_required' : 'type@/recovery_required',
+      ),
+    )
   }
-  expect(mapPreparation({ ...response, recovery_required: true }).recovery_required).toBe(true)
+  expect((await readPreparation({ ...response, recovery_required: true })).recovery_required).toBe(
+    true,
+  )
 })
 
 it.each(['invalid JSON', 'interrupted body'])(
@@ -3435,32 +3455,32 @@ describe('preparation scan identity', () => {
   }
   const envelope = preparation({ active: true, libraries: [active, idle] })
 
-  it('retains an active scan beside a library that has never been requested', () => {
-    expect(mapPreparation(envelope).libraries).toEqual([active, idle])
+  it('retains an active scan beside a library that has never been requested', async () => {
+    expect((await readPreparation(envelope)).libraries).toEqual([active, idle])
   })
 
-  it('refuses a scan state outside the closed set (#1286 C6)', () => {
-    expect(() =>
-      mapPreparation({ ...envelope, libraries: [active, { ...idle, state: 'paused' }] }),
-    ).toThrow(new ApiError(502, 'invalid_preparation_state'))
+  it('refuses a scan state outside the closed set (#1286 C6)', async () => {
+    await expect(
+      readPreparation({ ...envelope, libraries: [active, { ...idle, state: 'paused' }] }),
+    ).rejects.toMatchObject(refused('enum@/libraries/1/state'))
   })
 
   it.each([
-    ['missing', {}],
-    ['undefined', { scan_id: undefined }],
-    ['number', { scan_id: 1 }],
-    ['boolean', { scan_id: false }],
-    ['object', { scan_id: {} }],
-    ['array', { scan_id: [] }],
-  ])('refuses a %s scan identity with the existing error', (_name, identity) => {
+    ['missing', {}, 'required@/libraries/1/scan_id'],
+    ['undefined', { scan_id: undefined }, 'required@/libraries/1/scan_id'],
+    ['number', { scan_id: 1 }, 'type@/libraries/1/scan_id'],
+    ['boolean', { scan_id: false }, 'type@/libraries/1/scan_id'],
+    ['object', { scan_id: {} }, 'type@/libraries/1/scan_id'],
+    ['array', { scan_id: [] }, 'type@/libraries/1/scan_id'],
+  ])('refuses a %s scan identity at the decoder', async (_name, identity, failure) => {
     const withoutIdentity: Record<string, unknown> = { ...idle }
     delete withoutIdentity.scan_id
-    expect(() =>
-      mapPreparation({
+    await expect(
+      readPreparation({
         ...envelope,
         libraries: [active, { ...withoutIdentity, ...identity }],
       }),
-    ).toThrow(new ApiError(502, 'invalid_preparation_scan_id'))
+    ).rejects.toMatchObject(refused(failure))
   })
 })
 
@@ -3644,5 +3664,138 @@ describe('uncertainWriteOutcome', () => {
 
   it('allow-lists only the code the session dependency raises before a handler runs', () => {
     expect([...PRE_CALL_SERVER_CODES]).toEqual(['react_assets_unavailable'])
+  })
+})
+
+describe('central response decoding (#1685)', () => {
+  const answering = (body: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      body === undefined ? new Response(null, { status }) : Response.json(body, { status }),
+    )
+    return new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+  }
+  const undecodable = preparation({ libraries: [{}] })
+  const progressPaths = ['primary/Books/scan', 'primary/Books/retry']
+  const viewPaths = ['first-boot/acknowledge', 'pause', 'resume', 'primary/check-connection']
+  const operation = (path: string) =>
+    `POST /api/v1/review-preparation/${path
+      .replace(/^primary\/Books\//u, '{connection}/{library_name}/')
+      .replace(/^primary\//u, '{connection}/')}`
+
+  it('reports an undecodable read as a 502 with its reason and pointer in properties', async () => {
+    const failure = await answering(undecodable)
+      .getPreparation()
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ResponseDecodeError)
+    expect(failure).toBeInstanceOf(ApiError)
+    expect(failure).not.toBeInstanceOf(AmbiguousMutationError)
+    expect(failure).toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+      operation: 'GET /api/v1/review-preparation',
+      responseStatus: 200,
+      reason: 'required',
+      at: '/libraries/0/blocked',
+    })
+    expect((failure as Error).message).not.toContain('/')
+    expect(uncertainWriteOutcome(failure)).toBe(true)
+  })
+
+  type Answer = readonly [path: string, body: unknown, status: number, reason: string, at: string]
+  it.each<Answer>([
+    ...progressPaths.map((path): Answer => [
+      path,
+      scanProgress({ total: -1 }),
+      202,
+      'min',
+      '/total',
+    ]),
+    ...viewPaths.map((path): Answer => [
+      path,
+      undecodable,
+      200,
+      'required',
+      '/libraries/0/blocked',
+    ]),
+  ])('reports an undecodable %s answer as uncertain', async (path, body, status, reason, at) => {
+    const failure = await answering(body, status)
+      .preparationAction(path)
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(UncertainMutationError)
+    expect(failure).toBeInstanceOf(AmbiguousMutationError)
+    expect(failure).toMatchObject({
+      status: 0,
+      code: 'mutation_outcome_unknown',
+      operation: operation(path),
+      responseStatus: status,
+      reason,
+      at,
+    })
+    expect((failure as Error).message).not.toContain('/')
+    expect(uncertainWriteOutcome(failure)).toBe(true)
+  })
+
+  it('reports an undecodable dismissal as uncertain', async () => {
+    const failure = await answering(undecodable)
+      .dismissPreparation(`preparation_run_${'a'.repeat(64)}`)
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(UncertainMutationError)
+    expect(failure).toMatchObject({
+      operation: 'POST /api/v1/review-preparation/dismiss',
+      responseStatus: 200,
+      reason: 'required',
+      at: '/libraries/0/blocked',
+    })
+    expect((failure as Error).message).not.toContain('/')
+  })
+
+  it('reports a named check failed by an unsafe answer as uncertain', async () => {
+    const disordered = preparation({
+      active: true,
+      presentation: preparationPresentation({
+        passage: { read: 4, searches_finished: 3, compared: 2, checked: 1, ready: 2, failed: 0 },
+      }),
+    })
+    for (const send of [
+      (client: ReviewApiClient) => client.preparationAction('pause'),
+      (client: ReviewApiClient) => client.dismissPreparation(`preparation_run_${'a'.repeat(64)}`),
+    ])
+      await expect(send(answering(disordered))).rejects.toMatchObject({
+        name: 'UncertainMutationError',
+        code: 'mutation_outcome_unknown',
+        reason: 'invariant',
+        at: 'invalid_preparation_passage_order',
+      })
+    // The same answer to a read keeps the check's own 502.
+    await expect(answering(disordered).getPreparation()).rejects.toThrow(
+      new ApiError(502, 'invalid_preparation_passage_order'),
+    )
+  })
+
+  it('fails closed on a 2xx status the operation does not document', async () => {
+    await expect(answering(preparation(), 203).getPreparation()).rejects.toMatchObject({
+      name: 'ResponseDecodeError',
+      operation: 'GET /api/v1/review-preparation',
+      responseStatus: 203,
+      reason: 'no_decoder',
+      at: '',
+    })
+    await expect(
+      answering(scanProgress(), 200).preparationAction('primary/Books/scan'),
+    ).rejects.toMatchObject({
+      name: 'UncertainMutationError',
+      responseStatus: 200,
+      reason: 'no_decoder',
+    })
+  })
+
+  it('does not decode a 204 answer', async () => {
+    await expect(answering(undefined, 204).preparationAction('pause')).resolves.toBeUndefined()
+  })
+
+  it('passes an operation outside the decode gate through unchanged', async () => {
+    await expect(answering({ unexpected: true }, 201).policyCommand('drafts', {})).resolves.toEqual(
+      { unexpected: true },
+    )
   })
 })
