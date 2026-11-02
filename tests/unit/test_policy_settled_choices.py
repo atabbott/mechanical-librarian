@@ -1,4 +1,4 @@
-"""Choices a library's options settle stay the owner's on every medium (#1310)."""
+"""Choices a library's options settle stay the owner's on every medium (#1310, #1661)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
+    RecordHumanDecision,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -22,13 +23,19 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FieldState,
     MetadataReport,
+    ProviderClaim,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    publish_audiobook_preview,
+)
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.proposal_evidence import _claim
 
@@ -175,3 +182,122 @@ def test_storing_a_cases_policy_later_re_derives_its_settled_facts(
                 search=None, limit=50, cursor=None
             )["total"]
         )
+
+
+def _with_audiobook_tag(report: MetadataReport, tag: str) -> MetadataReport:
+    """Add one work-scope tag claim to every candidate of a recording's report."""
+    providers = tuple(
+        replace(
+            provider,
+            candidates=tuple(
+                replace(
+                    candidate,
+                    claims=candidate.claims
+                    + (
+                        ProviderClaim.create(
+                            provider=provider.provider,
+                            candidate=candidate.identity,
+                            kind=ClaimKind.TAG,
+                            value=tag,
+                            state=FieldState.VALID,
+                            scope=ClaimScope.WORK,
+                            applicability="not_applicable",
+                            raw_order=len(candidate.claims),
+                        ),
+                    ),
+                )
+                for candidate in provider.candidates
+            ),
+        )
+        for provider in report.providers
+    )
+    return MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=providers,
+        audio=report.audio,
+    )
+
+
+@pytest.mark.parametrize(
+    ("medium", "tags_option"),
+    (("epub", "off"), ("m4b", "off"), ("epub", "fill_empty")),
+)
+def test_a_single_proposed_tag_list_under_off_is_kept_and_still_choosable(
+    tmp_path: Path, medium: str, tags_option: str
+) -> None:
+    """With tags off, one proposed list for empty Tags is the owner's to choose.
+
+    On every medium the case page says tags are off and left as they are rather
+    than "nothing to decide", the queue and facts are unchanged, and the owner
+    can still accept the proposed list (#1661). With tags on, an ebook's fill
+    reads exactly as before.
+    """
+    if medium == "epub":
+        report = genre_report(current=("Mystery",), genres=("Fantasy",))
+    else:
+        report = _with_audiobook_tag(admitted_audiobook_report(), "Espionage")
+    assert report.file.format == medium
+    assert {field.destination: field.state for field in report.target.fields}[
+        TargetDestination.TAGS
+    ] is TargetFieldState.MISSING
+    database = tmp_path / "application.sqlite3"
+    with closing(open_repository(database)) as repository:
+        if medium == "epub" and tags_option == "off":
+            case_id, proposal = publish_genre_case(repository, report, "ask")
+        else:
+            case_id, resolved = publish_audiobook_preview(
+                repository,
+                report,
+                ("isbn_form",),
+                selected_options={"tags": tags_option},
+            )
+            repository.persist_shadow_outcome(case_id, 4)
+            proposal = evaluate_report(
+                report, resolved.resolved_id, human_review_destinations(resolved)
+            )
+    tags = next(r for r in proposal.results if r.destination is TargetDestination.TAGS)
+    assert tags.outcome.value == "propose_change"
+    with closing(open_repository(database, create=False)) as repository:
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        field = next(f for f in detail["fields"] if f["destination"] == "tags")
+        assert field["deterministic_disposition"] == "propose_change"
+        assert field["decision_actions"] == ["keep_current", "accept"]
+        assert field["needs_attention"] is False
+        if tags_option == "fill_empty":
+            assert field["classification"] == "unsupported"
+            assert field["editable"] is False
+            assert field["classification_reason"] != _TAGS_OFF
+            return
+        assert field["classification"] == "owner_choosable"
+        assert field["editable"] is True
+        assert field["classification_reason"] == _TAGS_OFF
+        attention = BrowseReviewLibrary(repository).attention(
+            search=None, limit=50, cursor=None
+        )
+        assert "tags" not in {item["destination"] for item in attention["items"]}
+        assert attention["total"] == repository.count_current_attention_fields(None)
+        assert _tags_fact(repository, case_id) == 0
+        (proposed,) = field["proposed_values"]
+        RecordHumanDecision(repository, clock=lambda: 10).run(
+            case_id,
+            proposal_id=field["proposal_id"],
+            target_fingerprint=field["target_fingerprint"],
+            destination="tags",
+            actor="owner",
+            outcome="accept",
+            selected_value=proposed,
+            idempotency_key=f"owner-accepts-tags-{medium}",
+        )
+        decided = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "tags"
+        )
+        assert decided["classification"] == "human_recorded"
+        assert decided["classification_reason"] == (
+            "You decided this field. You can change it here."
+        )
+        assert _tags_fact(repository, case_id) == 0

@@ -86,6 +86,10 @@ brackets are GitHub issues.
   marked-up description, or a genre list that only names the format, such as
   "Audiobook", still asks, and so does a field set to Ask me. With tags turned
   off, no tags choice asks you (#1310).
+- With tags turned off, a book with no tags that a source offers tags for now
+  says tags are off and left as they are, instead of "There is nothing to
+  decide for this field", and you can still choose the proposed tags on its
+  page (#1661).
 - **Clean rebuild required.** A readable current cover is kept without asking,
   even when a better cover is recommended or an earlier cover choice went
   stale. Other sources' covers stay choosable on the work's page, which offers

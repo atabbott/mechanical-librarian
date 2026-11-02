@@ -4,10 +4,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError, CsrfRenewedError, UncertainMutationError, mapCaseDetail } from '../src/api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  EMPTY_TARGET_TEXT,
+  UncertainMutationError,
+  mapCaseDetail,
+} from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { ownerChoiceCount } from '../src/reviewChoiceCounts'
+import { UNOFFERED_DISSENT_TEXT } from '../src/fieldReasons'
 import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabels } from '../src/labels'
 import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
@@ -7343,6 +7350,42 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(canvas.textContent).not.toContain('choose the value yourself')
       expect(canvas.textContent).not.toContain('so a change needs you')
+      expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
+    })
+
+    it("offers an empty ebook's single proposed tag list while tags are off (#1661)", async () => {
+      const user = userEvent.setup()
+      const reason =
+        'Tags are off in your settings, so your tags are left as they are and no review is needed. You can still choose proposed tags.'
+      const tags = {
+        ...asin,
+        destination: 'tags' as const,
+        classificationReason: reason,
+        currentValue: EMPTY_TARGET_TEXT,
+        decisionActions: ['keep_current' as const, 'accept' as const],
+        proposedValues: [{ kind: 'list' as const, value: ['Espionage'] }],
+        proposalId: 'proposal-tags',
+      }
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...recording,
+          target: { ...recording.target, mediaKind: 'epub' as const },
+          fields: [title, tags],
+        })),
+      })
+      const rail = await screen.findByRole('button', { name: /^Tags/u })
+      expect(rail).toHaveAccessibleName('Tags Optional')
+      await user.click(rail)
+      const choices = await screen.findByRole('region', { name: 'Tags choices' })
+      expect(
+        within(choices).getByRole('radio', { name: /^Choose proposed value: Espionage/u }),
+      ).toBeEnabled()
+      const canvas = document.querySelector('.decision-canvas')
+      if (!(canvas instanceof HTMLElement)) throw new Error('decision canvas missing')
+      expect(within(canvas).getByText(reason)).toBeVisible()
+      expect(canvas.textContent).not.toContain('There is nothing to decide for this field.')
+      expect(canvas.textContent).not.toContain(UNOFFERED_DISSENT_TEXT)
       expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
     })
 

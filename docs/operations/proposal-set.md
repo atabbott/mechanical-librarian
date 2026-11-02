@@ -116,7 +116,9 @@ AI.
   description `safe_plain_text` or `google_visible_text`), the choice stays the
   owner's but is not queued, and reads as kept by the setting; an explicit Ask
   for that field still asks. While the tags option is `off`, a tags choice is
-  never queued.
+  never queued; it, and a single proposed list for empty Tags, stays the
+  owner's to choose and reads as left as it is by the setting, on every medium
+  (#1661).
 - **Language** values in one base-and-script class (`English`, `en`, `eng`,
   regional variants) form one alternative that keeps every reference and
   states the class's display name, such as `English`. `bh` resolves to `bih`,
