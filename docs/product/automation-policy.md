@@ -287,9 +287,17 @@ title-combination candidate already covers it.
 
 Audiobook subtitles may fill an empty value or replace a recognized whole-field
 award, bestseller or adaptation announcement with descriptive text. On either
-medium, a title candidate with any part (after a colon, spaced dash, comma or
-semicolon, or in an enclosure) that is such an announcement is never automatic.
-A current title holding one may still be replaced by a plain title.
+medium, a title candidate with any part (after a colon, an underscore and a
+space, a spaced dash, a comma or a semicolon, or in an enclosure) that is such
+an announcement is never automatic. A current title holding one may still be
+replaced by a plain title.
+
+On either medium, a subtitle that only restates the series is never written
+for you, filled or replaced; it stays your choice. That is a value the series
+grammar reads as a position ("Saga, Book 3", "Saga #2"), or one naming a series
+this book states inside a closed frame ("A Saga Novel", "Book 3 of Saga",
+"The Third Saga Novel", "Saga 4"). Other wording is left alone, so "A Tale of
+Saga" can still be written.
 
 A corroborated title/subtitle split needs both options Automatic and both
 current decisions and consents. One request writes the pair, both read-backs
@@ -457,7 +465,10 @@ How a recording is admitted is in the
 
 A title replacement that deletes a series label asks the owner unless the
 series is already populated, is filled automatically in the same outcome, or
-the removed text is carried by an automatic subtitle split.
+the removed text is carried by an automatic subtitle split. The removed text is
+read in parts split at the same separators, including an underscore and a space
+("Title_ A Saga Novel"), and a series named only by a subtitle label such as
+"Saga, Book 4" counts as one this book states.
 
 **Work-only review.** When the recording stays unresolved but each source has a
 complete work witness, the owner may choose description, genres, series, series

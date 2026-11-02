@@ -90,8 +90,8 @@ refused.
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v9` | The deterministic decision packet |
-| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v26` |
-| `deterministic-shadow-decision-policy-v26` | The shadow decision policy |
+| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v27` |
+| `deterministic-shadow-decision-policy-v27` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v11` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
 

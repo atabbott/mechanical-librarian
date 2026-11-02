@@ -150,6 +150,7 @@ _RICH_REFUSAL_REASONS = {
             "atomic_bundle_unavailable",
             "corroborated_split_unavailable",
             "subtitle_local_corroboration_required",
+            "subtitle_restates_series",
             "subtitle_segment_provider_dissent",
             "subtitle_segment_decorated_consensus",
         }

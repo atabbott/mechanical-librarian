@@ -329,3 +329,10 @@ a declared cover that `encryption.xml` lists, before reading it, as
 `unsupported_format`. The report schema is unchanged, but a report carries forward while
 its file and configuration fingerprints are unchanged, so a stored report would
 keep the earlier cover outcome. No adoption is supplied.
+
+Issue #1616 also takes the clean-rebuild branch. An automatic subtitle that
+only restates the case's series is withheld, and a title strip reads an
+underscore segment and a series named only by a subtitle label (ADR-0073), so
+the decision policy moves to `deterministic-shadow-decision-policy-v27`: an
+outcome minted under v26 could state a write v27 refuses. The proposal policy
+and report schema are unchanged; no adoption is supplied.

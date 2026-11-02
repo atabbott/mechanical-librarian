@@ -5397,7 +5397,13 @@ _TRAILING_SERIES_POSITION = re.compile(
 
 def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[str, ...]:
     """Every series name one case states: the target's, its sources' and its
-    proposal's alternatives', which is the evidence a title strip is read by."""
+    proposal's alternatives', which is the evidence a title strip and a
+    series-restating subtitle are read by.
+
+    A subtitle alternative that the closed series grammar reads as a label
+    ("Saga, Book 4") states its name less the trailing position ("Saga")
+    (#1616), so a case whose only series evidence is that label still names it.
+    """
     target = canonical_target_fields(report.target.fields)[TargetDestination.SERIES]
     values = [
         cast("tuple[TargetSeries, ...]", value.value.value)
@@ -5410,10 +5416,22 @@ def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[st
     ]
     if target.state is TargetFieldState.VALUE and type(target.value) is tuple:
         values.append(cast("tuple[TargetSeries, ...]", target.value))
-    return tuple(member.name for value in values for member in value)
+    labelled = (
+        _TRAILING_SERIES_POSITION.sub("", alternative.value.value).strip(" ,:;-")
+        for result in proposal.results
+        if result.destination is TargetDestination.SUBTITLE
+        for alternative in result.alternatives
+        if type(alternative.value.value) is str
+        and series_label_segment(alternative.value.value)
+    )
+    return tuple(member.name for value in values for member in value) + tuple(
+        name for name in labelled if name
+    )
 
 
-_TITLE_PART_BOUNDARY = re.compile(r"[()\[\]]|:| [-–—] |[,;]")
+# An underscore then a space stands for a colon in some catalogue titles
+# ("Title_ A Saga Novel") and splits parts like one (#1616).
+_TITLE_PART_BOUNDARY = re.compile(r"[()\[\]]|:|_ | [-–—] |[,;]")
 _TITLE_ENCLOSURE = re.compile(r"\(([^()]*)\)|\[([^\[\]]*)\]")
 
 
@@ -5477,8 +5495,9 @@ def title_strip_series_label(
 ) -> str | None:
     """Name the series label a scalar title replacement deletes, if it deletes one.
 
-    `current` splits into ordered segments at each separator (a colon, a spaced
-    dash, a comma or a semicolon) and each enclosure (parentheses or brackets).
+    `current` splits into ordered segments at each separator (a colon, an
+    underscore then a space, a spaced dash, a comma or a semicolon) and each
+    enclosure (parentheses or brackets).
     `desired` must equal, under `title_identity_key`, one contiguous run of
     those segments; the text before and the text after that run are removed,
     and each deletes a series label when `_series_label_text` reads one in it.
@@ -5539,6 +5558,70 @@ def title_strip_series_label(
         ):
             return named
     return None
+
+
+_SERIES_NUMBER = (
+    r"(?:[0-9]{1,3}(?:\.[0-9]{1,2})?"
+    r"|one|two|three|four|five|six|seven|eight|nine|ten|[ivx]{1,4})"
+)
+_SERIES_ORDINAL = (
+    r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+    r"|[0-9]{1,2}(?:st|nd|rd|th))"
+)
+_SERIES_POSITION_WORD = r"(?:book|volume|vol\.?|part|no\.?)"
+_RESTATEMENT_LEADING_POSITION = re.compile(
+    rf"^{_SERIES_POSITION_WORD} ?#? ?{_SERIES_NUMBER} (?:of|in) ", re.IGNORECASE
+)
+_RESTATEMENT_LEADING_ARTICLE = re.compile(
+    rf"^(?:an?|the) (?:{_SERIES_ORDINAL} )?", re.IGNORECASE
+)
+_RESTATEMENT_TRAILING_NOUN = re.compile(
+    rf" (?:novel|novella|novelette|story|book)(?: ?#? ?{_SERIES_NUMBER})?$",
+    re.IGNORECASE,
+)
+_RESTATEMENT_TRAILING_POSITION = re.compile(
+    rf"[ ,:-]+(?:{_SERIES_POSITION_WORD} ?)?#? ?{_SERIES_NUMBER}$", re.IGNORECASE
+)
+
+
+def subtitle_restates_series(value: object, series_names: tuple[str, ...]) -> bool:
+    """Whether a subtitle value only restates the case's series (#1616).
+
+    It does when the whole value reads as a label by the closed series grammar
+    ("Saga, Book 3", "Saga #2"), or when, once a closed frame is removed, it
+    names a case series under `series_name_equivalence_key`. The frame is a
+    leading position ("Book 3 of", "Book One in"), a leading article with an
+    optional ordinal only together with a trailing "Novel", "Novella",
+    "Novelette", "Story" or "Book" and its optional number ("A Saga Novel",
+    "The Third Saga Novel"), and a trailing position ("Saga 4"). Nothing else
+    is inferred: "A Tale of Saga" and "The Complete Saga Story Collection"
+    are no restatement, and a value never raises.
+    """
+    if type(value) is not str:
+        return False
+    text = " ".join(value.split()).strip(" ,:;-")
+    if not text:
+        return False
+    if series_label_segment(text):
+        return True
+    keys = {
+        key
+        for name in series_names
+        if (key := _part_key(name, series_name_equivalence_key))
+    }
+    if not keys:
+        return False
+    core = text
+    while True:
+        before = core
+        core = _RESTATEMENT_LEADING_POSITION.sub("", core)
+        if _RESTATEMENT_TRAILING_NOUN.search(core):
+            core = _RESTATEMENT_LEADING_ARTICLE.sub("", core)
+            core = _RESTATEMENT_TRAILING_NOUN.sub("", core)
+        core = _RESTATEMENT_TRAILING_POSITION.sub("", core).strip(" ,:;-")
+        if core == before:
+            break
+    return _part_key(core, series_name_equivalence_key) in keys
 
 
 def _eligible_identifier(
@@ -6681,6 +6764,7 @@ __all__ = [
     "mark_stripped_member",
     "provider_candidate_represents_target_work",
     "segment_corroboration",
+    "subtitle_restates_series",
     "subtitle_segment_evidence",
     "title_strip_series_label",
 ]

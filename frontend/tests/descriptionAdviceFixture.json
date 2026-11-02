@@ -542,7 +542,7 @@
     {
       "automatic_decision": {
         "candidate_id": null,
-        "decision_id": "automatic_decision_1308a439d0da02872cb752c296f30233781f97832b2d23514cb10f1e4a331f36",
+        "decision_id": "automatic_decision_b5e22bc6aabc1a3d381b24e7427a28a13890a69a4dc124c7bc7db52534f44672",
         "destination": "description",
         "occurred_at": 4,
         "outcome": "keep_current",
