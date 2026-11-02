@@ -700,12 +700,13 @@ def synthetic_audiobook_bibliographic_report(
     source_narrators: tuple[str, ...] = (),
     target_narrators: tuple[str, ...] = (),
     local_narrators: tuple[str, ...] = (),
+    local_subtitles: tuple[str, ...] = (),
 ) -> MetadataReport:
     """A real adapter produces a recording-admitted synthetic bibliographic pair.
 
     The keywords vary only the target title, subtitle, series and narrators,
     the product's title, subtitle, series and narrators, the second product's
-    authors, and the file's own narrator tags (#1252, #1616).
+    authors, and the file's own narrator and subtitle tags (#1252, #1616).
     """
     from dataclasses import replace
 
@@ -752,6 +753,10 @@ def synthetic_audiobook_bibliographic_report(
         *(
             audio_claim(ClaimKind.CONTRIBUTOR, name, 4 + index, role="narrator")
             for index, name in enumerate(local_narrators)
+        ),
+        *(
+            audio_claim(ClaimKind.SUBTITLE, value, 4 + len(local_narrators) + index)
+            for index, value in enumerate(local_subtitles)
         ),
     )
     audio = single_track_audio_facts("b" * 64)

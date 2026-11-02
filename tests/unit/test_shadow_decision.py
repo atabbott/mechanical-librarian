@@ -1016,6 +1016,18 @@ def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
             "recommend_candidate",
             "unique_supported_candidate",
         ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey_ Now a Major Motion Picture"},
+            "manual",
+            "candidate_promotional_title",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic_Journey Now a Major Motion Picture"},
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
     ),
     ids=(
         "written_by",
@@ -1024,6 +1036,8 @@ def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
         "announcement_subtitle",
         "enclosed_announcement",
         "descriptive_subtitle",
+        "underscore_announcement",
+        "underscore_without_space",
     ),
 )
 def test_credit_lines_and_announcements_are_never_eligible_candidates(
@@ -1039,6 +1053,14 @@ def test_the_candidate_rule_names_its_credit_and_announcement_refusals() -> None
     rule = shadow_decision_module._RULE_TABLE["candidate"]
     assert rule["credit_prefixed_contributor_refused_for"] == ["authors", "narrators"]
     assert rule["promotional_title_part_refused"] is True
+    assert rule["title_parts_split_at"] == [
+        "enclosure",
+        "colon",
+        "underscore_space",
+        "spaced_dash",
+        "comma",
+        "semicolon",
+    ]
     assert rule["degraded_preservation_refused_in_combination"] is True
     for name in ("ebook_synopsis", "audiobook_synopsis"):
         synopsis = shadow_decision_module._RULE_TABLE[name]

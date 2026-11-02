@@ -37,8 +37,8 @@ from mechanical_librarian.domain.proposal_set import (
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
     canonical_target_fields,
-    case_series_names,
     select_language_representation,
+    strip_series_names,
     title_strip_series_label,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -443,7 +443,7 @@ def _withdrawn_audiobook_identity(
         return False
     if identity.endswith(":audiobook_title_replace"):
         removed = title_strip_series_label(
-            current, desired, case_series_names(report, proposal)
+            current, desired, strip_series_names(report, proposal)
         )
         return not (
             removed is None

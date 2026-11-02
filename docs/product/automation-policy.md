@@ -295,7 +295,8 @@ replaced by a plain title.
 On either medium, a subtitle that only restates the series is never written
 for you, filled or replaced; it stays your choice. That is a value the series
 grammar reads as a position ("Saga, Book 3", "Saga #2"), or one naming a series
-this book states inside a closed frame ("A Saga Novel", "Book 3 of Saga",
+that the book's series field, a source's series or a proposed series states,
+inside a closed frame ("A Saga Novel", "Book 3 of Saga",
 "The Third Saga Novel", "Saga 4"). Other wording is left alone, so "A Tale of
 Saga" can still be written.
 

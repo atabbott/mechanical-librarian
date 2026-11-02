@@ -22,7 +22,9 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
+    case_series_names,
     evaluate_report,
+    strip_series_names,
     subtitle_restates_series,
 )
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -60,6 +62,10 @@ _SERIES = ("Saltmarsh Chronicles",)
         ("Book One of the Saltmarsh Chronicles", _SERIES),
         ("Volume IV in the Saltmarsh Chronicles", _SERIES),
         ("  a   saltmarsh chronicles novel  ", _SERIES),
+        # The frame is removed until nothing more comes off: a position after
+        # the trailing noun first, then the article and the noun.
+        ("A Saltmarsh Chronicles Novel, 4", _SERIES),
+        ("Book 2 of the Saltmarsh Chronicles, Part 1", _SERIES),
     ),
 )
 def test_a_series_restating_subtitle_is_read(value, series_names):
@@ -78,6 +84,8 @@ def test_a_series_restating_subtitle_is_read(value, series_names):
         ("A Tidewater Hollow Novel", _SERIES),
         ("A Novel", _SERIES),
         ("Saltmarsh Chronicles Rising", _SERIES),
+        # A trailing position needs a separator before it.
+        ("Saltmarsh Chronicles3", _SERIES),
         # An article without a trailing noun is not part of the frame.
         ("The First Saltmarsh Chronicles", _SERIES),
         ("", _SERIES),
@@ -216,3 +224,35 @@ def test_an_ebook_subtitle_fill_is_guarded_alike(subtitle, series, outcome):
     if outcome == "abstain":
         assert preview.reason == "subtitle_restates_series"
     assert _offered(proposal) == [subtitle]
+
+
+def test_one_subtitle_alternative_never_withholds_another():
+    """A sibling label names a series for the title strip only (#1616)."""
+    report = synthetic_audiobook_bibliographic_report(
+        title="Saltmarsh",
+        source_title="Saltmarsh",
+        source_subtitle="A Memoir",
+        local_subtitles=("A Memoir, Part 1",),
+    )
+    preview, proposal = _preview(report)
+    assert _offered(proposal) == ["A Memoir, Part 1", "A Memoir"]
+    assert (preview.outcome, preview.desired_value) == ("projected", "A Memoir")
+    assert case_series_names(report, proposal) == ()
+    assert strip_series_names(report, proposal) == ("A Memoir",)
+
+
+def test_only_a_subtitle_label_names_a_series_for_the_strip():
+    titled = synthetic_audiobook_bibliographic_report(
+        title="Saltmarsh",
+        source_title="Saltmarsh Chronicles, Book 1",
+        source_subtitle=None,
+    )
+    _preview_value, proposal = _preview(titled)
+    assert strip_series_names(titled, proposal) == ()
+    subtitled = synthetic_audiobook_bibliographic_report(
+        title="Saltmarsh",
+        source_title="Saltmarsh",
+        source_subtitle="Saltmarsh Chronicles, Book 1",
+    )
+    _preview_value, proposal = _preview(subtitled)
+    assert strip_series_names(subtitled, proposal) == ("Saltmarsh Chronicles",)

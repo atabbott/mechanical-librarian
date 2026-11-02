@@ -5397,13 +5397,9 @@ _TRAILING_SERIES_POSITION = re.compile(
 
 def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[str, ...]:
     """Every series name one case states: the target's, its sources' and its
-    proposal's alternatives', which is the evidence a title strip and a
-    series-restating subtitle are read by.
-
-    A subtitle alternative that the closed series grammar reads as a label
-    ("Saga, Book 4") states its name less the trailing position ("Saga")
-    (#1616), so a case whose only series evidence is that label still names it.
-    """
+    series alternatives', which is the evidence a series-restating subtitle is
+    read by (#1616). A subtitle alternative never names one here, so one
+    subtitle alternative cannot withhold another."""
     target = canonical_target_fields(report.target.fields)[TargetDestination.SERIES]
     values = [
         cast("tuple[TargetSeries, ...]", value.value.value)
@@ -5416,6 +5412,16 @@ def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[st
     ]
     if target.state is TargetFieldState.VALUE and type(target.value) is tuple:
         values.append(cast("tuple[TargetSeries, ...]", target.value))
+    return tuple(member.name for value in values for member in value)
+
+
+def strip_series_names(
+    report: MetadataReport, proposal: ProposalSet
+) -> tuple[str, ...]:
+    """The series names a title strip is read by: the case's, and the name of
+    each subtitle alternative the closed series grammar reads as a label
+    ("Saga" from "Saga, Book 4"), so a case whose only series evidence is
+    that label still names it (#1616). Only subtitle alternatives name one."""
     labelled = (
         _TRAILING_SERIES_POSITION.sub("", alternative.value.value).strip(" ,:;-")
         for result in proposal.results
@@ -5424,7 +5430,7 @@ def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[st
         if type(alternative.value.value) is str
         and series_label_segment(alternative.value.value)
     )
-    return tuple(member.name for value in values for member in value) + tuple(
+    return case_series_names(report, proposal) + tuple(
         name for name in labelled if name
     )
 
@@ -5576,11 +5582,10 @@ _RESTATEMENT_LEADING_ARTICLE = re.compile(
     rf"^(?:an?|the) (?:{_SERIES_ORDINAL} )?", re.IGNORECASE
 )
 _RESTATEMENT_TRAILING_NOUN = re.compile(
-    rf" (?:novel|novella|novelette|story|book)(?: ?#? ?{_SERIES_NUMBER})?$",
-    re.IGNORECASE,
+    r" (?:novel|novella|novelette|story|book)$", re.IGNORECASE
 )
 _RESTATEMENT_TRAILING_POSITION = re.compile(
-    rf"[ ,:-]+(?:{_SERIES_POSITION_WORD} ?)?#? ?{_SERIES_NUMBER}$", re.IGNORECASE
+    rf"[ ,:-]{{1,3}}(?:{_SERIES_POSITION_WORD} ?)?#? ?{_SERIES_NUMBER}$", re.IGNORECASE
 )
 
 
@@ -5592,10 +5597,11 @@ def subtitle_restates_series(value: object, series_names: tuple[str, ...]) -> bo
     names a case series under `series_name_equivalence_key`. The frame is a
     leading position ("Book 3 of", "Book One in"), a leading article with an
     optional ordinal only together with a trailing "Novel", "Novella",
-    "Novelette", "Story" or "Book" and its optional number ("A Saga Novel",
-    "The Third Saga Novel"), and a trailing position ("Saga 4"). Nothing else
-    is inferred: "A Tale of Saga" and "The Complete Saga Story Collection"
-    are no restatement, and a value never raises.
+    "Novelette", "Story" or "Book" ("A Saga Novel", "The Third Saga Novel"),
+    and a trailing position ("Saga 4", "A Saga Novella 2"), each removed until
+    nothing more comes off. Nothing else is inferred: "A Tale of Saga" and
+    "The Complete Saga Story Collection" are no restatement, and a value never
+    raises.
     """
     if type(value) is not str:
         return False
@@ -6764,6 +6770,7 @@ __all__ = [
     "mark_stripped_member",
     "provider_candidate_represents_target_work",
     "segment_corroboration",
+    "strip_series_names",
     "subtitle_restates_series",
     "subtitle_segment_evidence",
     "title_strip_series_label",
