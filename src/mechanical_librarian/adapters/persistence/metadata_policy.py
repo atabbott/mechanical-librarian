@@ -20,7 +20,8 @@ These seams cross this aggregate's boundary, and each is resolved differently:
   (#1370).
 - `_supersede_retired_waiting_effects` writes `field_effects`, so activation
   hands the field-effect aggregate every case it retires, and whether the
-  policy is unchanged, inside this transaction (#1599).
+  policy is unchanged, inside this transaction (#1599), and also every case an
+  earlier activation retired that preparation never readmitted (#1657).
 - `enter_shadow_preview` writes `metadata_policy_state` and now lives here. It
   calls `activate_metadata_policy` to reconcile the automatic cohort, and a
   unit test replaces that call on the composing repository to prove the posture
@@ -80,6 +81,20 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
     ReviewTransition,
+)
+
+# Each work whose current case an earlier activation retired and preparation
+# never readmitted: it can return only as a new episode, so nothing waiting on
+# that case is due back (#1657). The lineage's current transition excludes any
+# later readmission, supersession, tombstone or admission retirement.
+_UNRETURNED_CASES_SQL = (
+    "SELECT awaiting.connection_name,awaiting.library_name,awaiting.item_id,"
+    "retirement.from_review_case_id "
+    "FROM current_review_case_lineages awaiting JOIN review_case_transitions retirement "
+    "ON retirement.transition_id=awaiting.transition_id "
+    "AND retirement.actor='policy-activation-v1' "
+    "WHERE awaiting.review_case_id IS NULL AND awaiting.outcome='retired' "
+    "ORDER BY awaiting.connection_name,awaiting.library_name,awaiting.item_id"
 )
 
 
@@ -742,6 +757,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 + _CURRENT_REVIEW_FROM_SQL
                 + " WHERE 1 ORDER BY c.connection_name,c.library_name,c.item_id"
             ).fetchall()
+            # Before this activation retires its cohort, so only an earlier
+            # activation's retirements are read (#1657).
+            awaiting = self._connection.execute(_UNRETURNED_CASES_SQL).fetchall()
             parsed_resolutions = _parsed_activation_resolutions(
                 policy_id, state[2], resolutions
             )
@@ -786,6 +804,14 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             self._supersede_retired_waiting_effects(
                 tuple((row[0], row[1], row[2], row[5]) for row in cohort),
                 policy_id == state[0],
+                activated_at,
+            )
+            # A case an earlier activation retired and preparation never
+            # readmitted returns only as a new episode, so its waiting plans
+            # close whatever their origin and whatever this policy (#1657).
+            self._supersede_retired_waiting_effects(
+                tuple((row[0], row[1], row[2], row[3]) for row in awaiting),
+                False,
                 activated_at,
             )
             # Before the state moves, so each library's outgoing resolution is

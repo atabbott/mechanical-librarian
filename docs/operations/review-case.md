@@ -208,7 +208,8 @@ waits while its case is retired by that reactivation and not yet returned.
 A write waiting for Audiobookshelf to come back closes when it could never be
 written: on a change of policy, whose case does not return, and for an
 automatic field write when leaving Automatic, whose earlier-generation decision
-no longer decides its field.
+no longer decides its field. One whose case an earlier activation retired and
+preparation could not bring back closes at the next activation.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still

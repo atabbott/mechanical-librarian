@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from mechanical_librarian.adapters.persistence import field_effects
+from mechanical_librarian.adapters.persistence import field_effects, metadata_policy
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_HOLDS_DECISION_SQL,
@@ -1664,3 +1664,22 @@ def test_a_policy_activation_reaches_waiting_effects_by_the_target_index(
         "SEARCH field_effects USING INDEX field_effects_target "
         "(connection_name=? AND library_name=? AND work_id=?)"
     ) in plan
+
+
+def test_the_unreturned_case_lookup_uses_its_indexes(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    """Finding the cases an earlier activation left retired reads the null-case
+    lineages by index and probes each transition by key, never walking the
+    append-only transitions (#1657)."""
+    connection, _ = store
+    plan = _plan(connection, metadata_policy._UNRETURNED_CASES_SQL, ())
+    assert any(
+        step.startswith("SEARCH awaiting USING INDEX current_review_case_lineages_case")
+        for step in plan
+    ), plan
+    assert (
+        "SEARCH retirement USING INDEX sqlite_autoindex_review_case_transitions_1 "
+        "(transition_id=?)"
+    ) in plan
+    assert not any(step.startswith("SCAN retirement") for step in plan), plan
