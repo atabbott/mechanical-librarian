@@ -2377,6 +2377,62 @@ it.each([
   },
 )
 
+const remedyCopy = /Restart device sign-in, or check|Restart the sign-in flow/u
+
+it.each([
+  ['failed', 'protocol_or_process'],
+  ['interrupted', 'restart_interrupted'],
+] as const)(
+  'clears the %s remedy once Restart starts a new sign-in (#1607)',
+  async (state, reason) => {
+    let started = false
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device') && init?.method === 'POST') {
+        started = true
+        return response({ state: 'starting' })
+      }
+      if (url.endsWith('/device'))
+        return response({
+          state: 'waiting',
+          verification_url: 'https://auth.openai.com/codex/device',
+          user_code: 'ABCD-1234',
+        })
+      if (url.endsWith('/reviewer-access'))
+        return response(started ? reviewerAccess('starting') : reviewerAccess(state, reason))
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    const restart = await screen.findByRole('button', { name: 'Restart device sign-in' })
+    expect(screen.getByText(remedyCopy)).toBeVisible()
+    restart.focus()
+    fireEvent.click(restart)
+    const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
+    await waitFor(() => expect(cancel).toHaveFocus())
+    expect(await screen.findByText('ABCD-1234')).toBeVisible()
+    expect(screen.queryByText(remedyCopy)).toBeNull()
+  },
+)
+
+it('keys the remedy on the shown result when Check reports usable over a failed access (#1607)', async () => {
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/recheck') && init?.method === 'POST')
+      return response({ state: 'usable', failure: null, verification_url: null, user_code: null })
+    if (url.endsWith('/reviewer-access'))
+      return response(reviewerAccess('failed', 'permission_or_profile'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  expect(await screen.findByText(remedyCopy)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Check existing sign-in' }))
+  expect(await screen.findByText('Status: ready to use')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
+  expect(screen.queryByText(remedyCopy)).toBeNull()
+})
+
 it('keeps an issued code in place across polls and copies exactly the code', async () => {
   const fetch = vi.fn(async (request: RequestInfo | URL) => {
     const url = requestUrl(request)

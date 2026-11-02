@@ -157,10 +157,10 @@ export const useReviewerAccess = (http: ReviewHttp) => {
       if (result !== null) queryClient.setQueryData(['reviewer-access'], result)
     },
   })
-  const waiting =
-    deviceActive ||
-    (query.data !== undefined &&
-      ['starting', 'issued', 'waiting', 'validating'].includes(query.data.codex.state))
+  const accessInProgress =
+    query.data !== undefined &&
+    ['starting', 'issued', 'waiting', 'validating'].includes(query.data.codex.state)
+  const waiting = deviceActive || accessInProgress
   const deviceQuery = useQuery({
     queryKey: ['reviewer-access', 'codex-device'] as const,
     queryFn: (queryContext) =>
@@ -173,9 +173,6 @@ export const useReviewerAccess = (http: ReviewHttp) => {
         ? 1_000
         : false,
   })
-  const accessInProgress =
-    query.data !== undefined &&
-    ['starting', 'issued', 'waiting', 'validating'].includes(query.data.codex.state)
   const { refetch } = query
   useEffect(() => {
     const state = deviceQuery.data?.state

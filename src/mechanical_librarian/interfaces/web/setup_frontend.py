@@ -933,7 +933,8 @@ const renderPreparation=(host,visible)=>{
   const allowance=document.createElement('p');allowance.textContent='Uses your signed-in plan allowance. No per-request monetary estimate is available.';codex.append(heading,modelName,line,allowance);
   const reasons={profile_not_provisioned:'The contained profile is missing. A deployment owner must restore the supported image profile or explicit override. OpenRouter and no reviewer remain available.',profile_unreadable:'The contained profile cannot be read safely. A deployment owner must correct its ownership, permissions or contents, then restart.',profile_contract_mismatch:'The contained profile does not match the required model and resource limits. A deployment owner must replace it with a supported profile, then restart.',host_evidence_unavailable:'Host memory evidence is unavailable. A deployment owner must correct host or container memory reporting.',cgroup_limit_below_1_gib:'The container memory limit is below 1 GiB. A deployment owner must increase it.',headroom_below_1_gib:'Less than 1 GiB of reviewer headroom is available. Free memory, then retry.'};
   if(access.codex.reason&&reasons[access.codex.reason]){const remedy=document.createElement('p');remedy.textContent=reasons[access.codex.reason];codex.append(remedy)}
-  const codexRemedy=blocked?null:deviceRemedy[codexState.failure??access.codex.reason];if(codexRemedy){const remedy=document.createElement('p');remedy.textContent=codexRemedy;codex.append(remedy)}
+  // The remedy follows the shown result, and leaves once a new sign-in starts.
+  const codexRemedy=document.createElement('p');codexRemedy.textContent=blocked?'':deviceRemedy[codexTerminal?codexTerminal.failure:access.codex.reason]||'';if(codexRemedy.textContent)codex.append(codexRemedy);
   const active=value=>['starting','issued','waiting','validating'].includes(value);
   // Only a press moves focus to Cancel; resuming on page load leaves it.
   const follow=async focus=>{
@@ -951,7 +952,7 @@ const renderPreparation=(host,visible)=>{
     const check=button('Check existing sign-in');check.type='button';check.disabled=blocked;
     check.addEventListener('click',async()=>{if(check.disabled)return;check.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.disabled=blocked;failed(e)}});
     const start=button(['expired','failed','cancelled','interrupted'].includes(codexState.state)?'Restart device sign-in':'Start device sign-in');start.type='button';start.disabled=blocked;
-    start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();await follow(true)}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e)}});codex.append(check,start);
+    start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();await follow(true)}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e)}});codex.append(check,start);
   }
   if(blocked){
     const cancel=button('Cancel any active sign-in');cancel.type='button';
