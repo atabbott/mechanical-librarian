@@ -1386,6 +1386,12 @@ export class ReviewApiClient implements ReviewHttp {
   private readonly buildIdentity: string | undefined
   private sessionExpiryReported = false
   private sessionExpiryNavigationScheduled = false
+  // Set while signing out: a 401 then is the sign-out itself, so the shell's
+  // own navigation to /login is the only one (#1588). Once a logout has
+  // succeeded the mark stays; a refused one replays any expiry it held back.
+  private signingOut = false
+  private signedOut = false
+  private expiryWhileSigningOut = false
   constructor(private readonly options: HttpClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.onSessionExpired =
@@ -1808,7 +1814,17 @@ export class ReviewApiClient implements ReviewHttp {
     return value === undefined ? undefined : mapActivity(value)
   }
   async logout(signal?: AbortSignal) {
-    await this.mutate('/api/v1/session/logout', undefined, signal)
+    this.signingOut = true
+    try {
+      await this.mutate('/api/v1/session/logout', undefined, signal)
+      this.signingOut = this.signedOut = true
+    } catch (error) {
+      if (!(error instanceof SessionExpiredError) && !this.signedOut) {
+        this.signingOut = false
+        if (this.expiryWhileSigningOut) this.reportSessionExpiry()
+      }
+      throw error
+    }
   }
 
   private async read(path: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
@@ -1910,6 +1926,10 @@ export class ReviewApiClient implements ReviewHttp {
   }
 
   private reportSessionExpiry() {
+    if (this.signingOut) {
+      this.expiryWhileSigningOut = true
+      return
+    }
     if (this.sessionExpiryReported) return
     this.sessionExpiryReported = true
     if (this.sessionExpiryNavigationScheduled) return

@@ -428,7 +428,7 @@ jobs:
           # The action downloads the Buildx binary at run time; without this
           # pin an unchanged commit would execute whatever upstream released
           # last.
-          version: v0.36.1
+          version: v0.38.1
 
       # The shipped image must assemble from the exact revision. The build is
       # never pushed or run here: running the built image's lifecycle

@@ -498,7 +498,8 @@ is set by the deployment, never in the browser.
   invalid.
 
 The profile must be an owner-only regular file in canonical form, opened
-without following symlinks. Its fixed contract is:
+without following symlinks, whose paths are absolute paths that contain no NUL
+character. Its fixed contract is:
 
 | Setting | Value |
 | --- | --- |

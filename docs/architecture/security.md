@@ -133,6 +133,13 @@ verification every three seconds.
   own proxy handling is off.
 - Every unsafe request needs the session, the CSRF token and an
   `x-ml-build-identity` header matching the installed build.
+- The build identity is a non-secret version gate, not a credential. It is
+  sent only to the audience that already receives it in the authenticated
+  shell: as a response header on `/api/v1` responses to requests that
+  authenticated an owner session. It is never sent on a 401, on sign-in, in
+  asset-recovery mode, on an early Host, Origin or body-size refusal, or to a
+  request without a valid session
+  ([ADR-0091](decisions/0091-decode-browser-responses-and-report-uncertain-writes.md)).
 - Serving an authenticated page rotates the CSRF digest. The raw token lives
   only in that no-store HTML and page memory.
 - After a `403 csrf` the client renews the token and resends once, only a

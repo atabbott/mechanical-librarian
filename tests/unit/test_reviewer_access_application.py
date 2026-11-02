@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 import pytest
+from pydantic import ValidationError
 
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
@@ -22,6 +23,7 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessView,
 )
 from mechanical_librarian.application.reviewer_contracts import (
+    DeviceAuthFailure,
     DeviceAuthStatus,
     OpenRouterFailure,
     OpenRouterReviewerError,
@@ -198,6 +200,57 @@ def test_generic_read_reports_an_existing_flow_without_credential_work() -> None
 
     assert view.mapping is None
     assert view.codex.state == "waiting"
+    assert auth.status_calls == 0
+    assert auth.current_calls == 0
+    assert codex == []
+
+
+@pytest.mark.parametrize(
+    ("flow", "failure", "host_available", "state", "reason"),
+    (
+        ("failed", "permission_or_profile", True, "failed", "permission_or_profile"),
+        ("failed", "permission_or_process", True, "failed", "permission_or_process"),
+        ("failed", "protocol_or_process", True, "failed", "protocol_or_process"),
+        ("expired", None, True, "expired", None),
+        ("cancelled", None, True, "cancelled", None),
+        (
+            "interrupted",
+            "restart_interrupted",
+            True,
+            "interrupted",
+            "restart_interrupted",
+        ),
+        ("usable", None, True, "usable", None),
+        ("ready", None, True, "ready", None),
+        ("configured", None, True, "ready", None),
+        (
+            "failed",
+            "permission_or_profile",
+            False,
+            "host_unsupported",
+            "headroom_below_1_gib",
+        ),
+    ),
+)
+def test_generic_read_reports_terminal_flow_without_credential_work(
+    flow: DeviceAuthStatus,
+    failure: DeviceAuthFailure | None,
+    host_available: bool,
+    state: str,
+    reason: str | None,
+) -> None:
+    operations, auth, _openrouter, codex = _operations()
+    auth.passive_status = lambda: CodexDeviceAuthState(flow, failure=failure)  # type: ignore[method-assign]  # reason: the fake's passive status is the seam each case sets
+    if not host_available:
+        operations._codex_host = lambda: ReviewerHostStatus(
+            False, "headroom_below_1_gib", None
+        )
+
+    view = operations.read()
+
+    assert view.mapping is None
+    assert view.codex.state == state
+    assert view.codex.reason == reason
     assert auth.status_calls == 0
     assert auth.current_calls == 0
     assert codex == []
@@ -1183,6 +1236,15 @@ def _codex_selected(operations: ReviewerAccessOperations) -> int:
     return operations.select_codex(expected_revision=1).revision
 
 
+def _description_configured(operations: ReviewerAccessOperations) -> int:
+    return operations.configure_openrouter(
+        expected_revision=_configured(operations),
+        api_key="",
+        model="example/description",
+        task="description_rewrite",
+    ).revision
+
+
 _COMMITTED_COMMANDS: dict[
     str,
     tuple[
@@ -1214,6 +1276,10 @@ _COMMITTED_COMMANDS: dict[
         _configured,
         lambda access, _revision: access.refresh_openrouter(),
     ),
+    "refresh_description": (
+        _description_configured,
+        lambda access, _revision: access.refresh_openrouter("description_rewrite"),
+    ),
 }
 
 
@@ -1241,3 +1307,43 @@ def test_committed_reviewer_change_is_answered_when_the_later_revision_check_loc
 
     document, _key = store.snapshot()
     assert document.revision == view.revision == revision + 1
+
+
+def test_refresh_keeps_saved_description_metadata_when_the_committed_status_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.application import reviewer_access as module
+
+    operations, _auth, calls, _codex = _operations()
+    revision = _description_configured(operations)
+    before = operations.read().description_metadata
+    assert before is not None
+
+    class LaterObservation(_OpenRouter):
+        def probe_description(self):
+            return replace(super().probe_description(), observed_at=2)
+
+    operations._openrouter_factory = lambda key, model: LaterObservation(
+        key, model, calls
+    )
+    real_status = module.ReviewerEngineStatus
+
+    def status_failing_when_usable(**fields: object) -> object:
+        if fields.get("state") == "usable":
+            # A real pydantic refusal, raised only by the post-commit status.
+            return real_status.model_validate({**fields, "engine": "unknown"})
+        return real_status.model_validate(fields)
+
+    monkeypatch.setattr(module, "ReviewerEngineStatus", status_failing_when_usable)
+
+    with pytest.raises(ValidationError):
+        operations.refresh_openrouter("description_rewrite")
+
+    document, key = operations._repository.snapshot()
+    assert key == "secret-key"
+    assert document.revision == revision + 1
+    assert document.description_metadata is not None
+    assert document.description_metadata.observed_at == 2
+    assert document.description_metadata.model == before.model
