@@ -1013,6 +1013,37 @@ def test_overlapping_rechecks_record_the_one_finishing_last(
     assert manager.status() == outer
 
 
+def test_recheck_begun_before_a_clear_never_overwrites_a_later_recheck(
+    tmp_path: Path,
+) -> None:
+    # A success that pauses across a clear and a newer recheck must not
+    # replace the newer "ready" with "usable" once auth.json is gone.
+    manager = _manager(tmp_path)
+    _finish(manager)
+    depth = 0
+
+    def paused_across_clear() -> CodexDeviceAuthState:
+        nonlocal depth
+        depth += 1
+        if depth == 1:
+            assert manager.clear().state == "ready"
+            assert manager.recheck_credential_status().state == "ready"
+            assert manager.status().state == "ready"
+            return CodexDeviceAuthState("usable")
+        return CodexDeviceAuthState("usable")
+
+    with patch.object(
+        manager,
+        "_recheck_configured_credential_status",
+        side_effect=paused_across_clear,
+    ):
+        assert manager.recheck_credential_status() == _USABLE
+    assert depth == 1
+    assert not (tmp_path / "profile" / "auth.json").exists()
+    assert manager.status().state == "ready"
+    assert _lazy_over(manager).passive_status().state == "ready"
+
+
 def test_recheck_failure_during_live_flow_records_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

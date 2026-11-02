@@ -125,6 +125,9 @@ class CodexDeviceAuthManager:
         self._trust_failed = False
         self._quarantined = False
         self._recheck_recorded: CodexDeviceAuthState | None = None
+        # Bumped by every command that moves the state (start, cancel, clear,
+        # recovery), so a recheck never outlives an intervening command.
+        self._transitions = 0
 
     def _require_lease(self) -> None:
         if not self._lease_current():
@@ -138,6 +141,7 @@ class CodexDeviceAuthManager:
             recovered = self._recover_interrupted_staging()
             with self._lock:
                 self._state = recovered
+                self._transitions += 1
                 self._recovered = True
                 self._trust_failed = recovered.state == "failed"
 
@@ -152,6 +156,7 @@ class CodexDeviceAuthManager:
                 return self._state
             self._cancelled = False
             self._state = CodexDeviceAuthState("starting")
+            self._transitions += 1
             thread = Thread(target=self._flow, name="reviewer-device-auth", daemon=True)
             self._thread = thread
         thread.start()
@@ -186,6 +191,7 @@ class CodexDeviceAuthManager:
             process_group = self._process_group
             self._cancelled = True
             self._state = CodexDeviceAuthState("cancelled")
+            self._transitions += 1
         if process is not None or process_group is not None:
             self._release_retained_process_or_quarantine()
         return CodexDeviceAuthState("cancelled")
@@ -226,6 +232,7 @@ class CodexDeviceAuthManager:
                     os.close(directory)
         with self._lock:
             self._state = CodexDeviceAuthState("ready")
+            self._transitions += 1
             return self._state
 
     def current_credential_status(self) -> CodexDeviceAuthState:
@@ -265,24 +272,31 @@ class CodexDeviceAuthManager:
         # The first preparation replaces the state, so snapshot only after it.
         with self._lock:
             observed = self._state
+            transitions = self._transitions
         try:
             outcome = self._recheck_credential_status()
         except Exception:
             self._record_recheck(
                 observed,
+                transitions,
                 CodexDeviceAuthState("failed", failure="permission_or_profile"),
             )
             raise
-        self._record_recheck(observed, outcome)
+        self._record_recheck(observed, transitions, outcome)
         return outcome
 
     def _record_recheck(
-        self, observed: CodexDeviceAuthState, outcome: CodexDeviceAuthState
+        self,
+        observed: CodexDeviceAuthState,
+        transitions: int,
+        outcome: CodexDeviceAuthState,
     ) -> None:
         """Record a recheck unless a flow or another command moved the state.
 
         States are compared by identity: equal values from an intervening
         transition (usable, clear, ready, then usable again) must still win.
+        Overlapping rechecks may replace one another only while no command
+        ran since this one began.
         """
         if outcome.state not in _RECHECK_RECORDED:
             return
@@ -290,6 +304,8 @@ class CodexDeviceAuthManager:
             if self._quarantined or self._trust_failed or self._installing:
                 return
             if self._thread is not None and self._thread.is_alive():
+                return
+            if self._transitions != transitions:
                 return
             current = self._state
             if current is not observed and current is not self._recheck_recorded:
