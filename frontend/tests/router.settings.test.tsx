@@ -1213,6 +1213,67 @@ describe('owner settings route', () => {
     )
   })
 
+  // #1663: Check reads the recorded access before it writes its own result, so
+  // the row never shows the checked failure over the stale usable view first.
+  it.each(['fresh usable', 'Check-cached usable'] as const)(
+    'announces one alert when Check finds the sign-in refused (%s, #1663)',
+    async (shape) => {
+      const unmanaged =
+        'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.'
+      const user = userEvent.setup()
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      let release!: (value: ReviewerAccessView) => void
+      const heldRead = new Promise<ReviewerAccessView>((resolve) => (release = resolve))
+      const reads = vi.fn<ReviewHttp['getReviewerAccess']>().mockResolvedValueOnce(usableAccess)
+      const checks = vi.fn<ReviewHttp['recheckCodex']>()
+      if (shape === 'Check-cached usable') {
+        reads.mockResolvedValueOnce(usableAccess)
+        checks.mockResolvedValueOnce(codexDevice('usable'))
+      }
+      reads.mockImplementation(() => heldRead)
+      checks.mockResolvedValue(codexDevice('failed', 'permission_or_profile'))
+      http.getReviewerAccess = reads
+      http.recheckCodex = checks
+      renderRoute('/settings?group=reviewer', http)
+      const check = await screen.findByRole('button', { name: 'Check existing Codex sign-in' })
+      if (shape === 'Check-cached usable') {
+        await pressCheck(user)
+        await waitFor(() => expect(reads).toHaveBeenCalledTimes(2))
+        await waitFor(() => expect(check).not.toHaveAttribute('aria-disabled'))
+      }
+      const readsBefore = reads.mock.calls.length
+      const recorded: string[] = []
+      const observer = new MutationObserver(() => {
+        for (const alert of window.document.body.querySelectorAll('[role=alert]')) {
+          const text = alert.textContent
+          if (!recorded.includes(text)) recorded.push(text)
+        }
+      })
+      observer.observe(window.document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      })
+      onTestFinished(() => observer.disconnect())
+
+      await pressCheck(user)
+      await waitFor(() => expect(reads.mock.calls.length).toBe(readsBefore + 1))
+      await act(async () => await new Promise((resolve) => setTimeout(resolve, 20)))
+      expect(screen.queryByText(/Replace the sign-in and retry/u)).toBeNull()
+
+      await act(async () => release(reviewerView))
+      expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
+      await waitFor(() => expect(check).not.toHaveAttribute('aria-disabled'))
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(screen.getByRole('alert')).toHaveTextContent(unmanaged)
+      expect(recorded).toEqual([unmanaged])
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
+      )
+    },
+  )
+
   // The second row is a server that skipped recording the check (criterion 4):
   // the reason still follows the shown, checked state.
   it.each([
@@ -2275,9 +2336,12 @@ it('reloads reviewer access and says a description adviser change could not be c
   await user.click(use)
 
   const description = screen.getByRole('region', { name: 'Optional description adviser' })
-  expect(await within(description).findByRole('alert')).toHaveTextContent(
+  const alert = await within(description).findByRole('alert')
+  expect(alert).toHaveTextContent(
     'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
   )
+  // The failure sits under the pressed button (#1663).
+  expect(alert.previousElementSibling).toBe(use)
   await waitFor(() =>
     expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBeGreaterThan(readsBefore),
   )
@@ -2325,9 +2389,12 @@ it.each(['fresh usable', 'Check-cached usable'] as const)(
     await user.keyboard('{Enter}')
 
     const description = screen.getByRole('region', { name: 'Optional description adviser' })
-    expect(await within(description).findByRole('alert')).toHaveTextContent(
+    const alert = await within(description).findByRole('alert')
+    expect(alert).toHaveTextContent(
       'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
     )
+    // The refusal sits under Use Codex, not at the foot of the OpenRouter row (#1663).
+    expect(alert.previousElementSibling).toBe(use)
     expect(within(description).queryByText(/model, key and available pricing/u)).toBeNull()
     expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
     expect(screen.queryByText('Advisory availability: ready to use')).toBeNull()
@@ -2398,18 +2465,21 @@ it('replaces an unconfirmed description adviser change with a later inspection f
   await waitFor(() => expect(use).toBeEnabled())
   await user.click(use)
   const description = screen.getByRole('region', { name: 'Optional description adviser' })
-  expect(await within(description).findByRole('alert')).toHaveTextContent(
-    'The description adviser change could not be confirmed.',
-  )
+  const unconfirmed = await within(description).findByRole('alert')
+  expect(unconfirmed).toHaveTextContent('The description adviser change could not be confirmed.')
+  expect(unconfirmed.previousElementSibling).toBe(use)
 
-  await waitFor(() => expect(inspect).toBeEnabled())
+  // Pending is aria-disabled now, so the native state no longer shows settling (#1663).
+  await waitFor(() => expect(inspect).not.toHaveAttribute('aria-disabled'))
   await user.click(inspect)
   await waitFor(() =>
     expect(within(description).getByRole('alert')).toHaveTextContent(
       'Description adviser setup could not complete.',
     ),
   )
+  expect(within(description).getAllByRole('alert')).toHaveLength(1)
   expect(within(description).getByRole('alert')).not.toHaveTextContent('could not be confirmed')
+  expect(within(description).getByRole('alert').previousElementSibling).toBe(inspect)
   expect(http.describeContainedDescription).toHaveBeenCalledTimes(2)
 })
 
@@ -2434,10 +2504,88 @@ it('keeps the setup copy when a description model test is unreachable', async ()
   await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
 
   const description = screen.getByRole('region', { name: 'Optional description adviser' })
-  expect(await within(description).findByRole('alert')).toHaveTextContent(
-    'Description adviser setup could not complete.',
+  const alert = await within(description).findByRole('alert')
+  expect(alert).toHaveTextContent('Description adviser setup could not complete.')
+  expect(alert.previousElementSibling).toBe(
+    screen.getByRole('button', { name: 'Test description model and prices' }),
   )
   expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBe(readsBefore)
+})
+
+// Description adviser fixtures for #1663: a tested model, a usable contained
+// Codex, and a saved OpenRouter description mapping (which offers Refresh).
+const descriptionModel = {
+  model: 'example/text-b',
+  observed_at: 100,
+  prompt_price: '0.000001',
+  completion_price: '0.000002',
+  request_price: '0',
+  text_input: true as const,
+  text_output: true as const,
+  structured_outputs: true as const,
+}
+const usableCodex: ReviewerAccessView = {
+  ...reviewerView,
+  codex: { ...reviewerView.codex, state: 'usable', reason: null },
+}
+const describedOpenRouter: ReviewerAccessView = {
+  ...reviewerView,
+  openrouter_key_configured: true,
+  description_mapping: { engine: 'openrouter', model: descriptionModel.model },
+}
+const typeDescriptionModel = async (user: ReturnType<typeof userEvent.setup>) => {
+  await pickModel(user, 'Description model', 'Custom model ID')
+  await user.type(
+    screen.getByRole('textbox', { name: 'Description model ID' }),
+    descriptionModel.model,
+  )
+  await user.type(screen.getByLabelText('Shared OpenRouter API key'), 'synthetic-key')
+}
+
+it('shows a failed OpenRouter description selection under its button, above Refresh (#1663)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => describedOpenRouter)
+  http.testDescriptionModel = vi.fn(async () => descriptionModel)
+  http.configureOpenRouter = vi.fn(async () => {
+    throw new ApiError(400, 'invalid_key')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const use = await screen.findByRole('button', {
+    name: 'Use this OpenRouter model for descriptions',
+  })
+  await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+  await waitFor(() => expect(use).toBeEnabled())
+  await user.click(use)
+
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const alert = await within(description).findByRole('alert')
+  expect(within(description).getAllByRole('alert')).toHaveLength(1)
+  expect(alert.previousElementSibling).toBe(use)
+  expect(alert.nextElementSibling).toBe(
+    screen.getByRole('button', { name: 'Refresh description model status and prices' }),
+  )
+})
+
+it('shows a failed description refresh under Refresh (#1663)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => describedOpenRouter)
+  http.refreshOpenRouter = vi.fn(async () => {
+    throw new ApiError(503, 'unreachable')
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const refresh = await screen.findByRole('button', {
+    name: 'Refresh description model status and prices',
+  })
+  await user.click(refresh)
+
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const alert = await within(description).findByRole('alert')
+  expect(within(description).getAllByRole('alert')).toHaveLength(1)
+  expect(alert.previousElementSibling).toBe(refresh)
 })
 
 it.each([false, true])(
@@ -2812,6 +2960,94 @@ it.each<[string, ReviewerAccessView, HeldCommand, readonly string[], boolean]>([
   },
 )
 
+// #1663: the description adviser's commands follow the cover panel (#1584).
+// jsdom has no focus fixup, so not.toBeDisabled() is the proof here that a
+// browser keeps focus; the experience review proves real focus.
+const nothingToPrepare = () => Promise.resolve()
+type HeldDescriptionCommand =
+  | 'selectReviewer'
+  | 'describeContainedDescription'
+  | 'testDescriptionModel'
+  | 'configureOpenRouter'
+  | 'refreshOpenRouter'
+it.each<
+  [
+    string,
+    ReviewerAccessView,
+    HeldDescriptionCommand,
+    (user: ReturnType<typeof userEvent.setup>) => Promise<void>,
+  ]
+>([
+  ['Continue without description advice', describedOpenRouter, 'selectReviewer', nothingToPrepare],
+  [
+    'Inspect contained description model',
+    usableCodex,
+    'describeContainedDescription',
+    nothingToPrepare,
+  ],
+  [
+    'Use Codex for descriptions',
+    usableCodex,
+    'selectReviewer',
+    async (user) => {
+      await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Use Codex for descriptions' })).toBeEnabled(),
+      )
+    },
+  ],
+  ['Test description model and prices', reviewerView, 'testDescriptionModel', typeDescriptionModel],
+  [
+    'Use this OpenRouter model for descriptions',
+    reviewerView,
+    'configureOpenRouter',
+    async (user) => {
+      await typeDescriptionModel(user)
+      await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'Use this OpenRouter model for descriptions' }),
+        ).toBeEnabled(),
+      )
+    },
+  ],
+  [
+    'Refresh description model status and prices',
+    describedOpenRouter,
+    'refreshOpenRouter',
+    nothingToPrepare,
+  ],
+])(
+  'keeps %s focused while its description adviser command is pending (#1663)',
+  async (name, access, command, prepare) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => access)
+    http.describeContainedDescription = vi.fn(async () => ({
+      model: 'contained-model',
+      profile_sha256: 'a'.repeat(64),
+    }))
+    http.testDescriptionModel = vi.fn(async () => descriptionModel)
+    const held = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(http, { [command]: held })
+    renderRoute('/settings?group=reviewer', http)
+    await screen.findByRole('region', { name: 'Optional description adviser' })
+    await prepare(user)
+
+    const button = screen.getByRole('button', { name })
+    button.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(held).toHaveBeenCalledOnce())
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button).toHaveFocus()
+    await user.click(button)
+    fireEvent.click(button)
+    expect(held).toHaveBeenCalledOnce()
+  },
+)
+
 it('moves focus to Cancel sign-in after Confirm replace starts the sign-in (#1607)', async () => {
   const user = userEvent.setup()
   const http = createHttp()
@@ -2893,6 +3129,53 @@ it.each([
     expect(alert).toHaveAttribute('role', 'alert')
     expect(button.nextElementSibling).toBe(alert)
     expect(alert.closest('.settings-field-control')).toBe(button.parentElement)
+  },
+)
+
+it.each([
+  [
+    'success',
+    async () => ({ ...describedOpenRouter, description_mapping: null, revision: 4 }),
+    null,
+  ],
+  [
+    'an unconfirmed failure',
+    async () => {
+      throw new ApiError(503, 'reviewer_access_unavailable')
+    },
+    'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+  ],
+] as const)(
+  'keeps Continue without description advice focused after %s, with its failure under it (#1663)',
+  async (_outcome, select, copy) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(describedOpenRouter)
+      .mockResolvedValue({ ...describedOpenRouter, description_mapping: null, revision: 4 })
+    http.selectReviewer = vi.fn(select)
+    renderRoute('/settings?group=reviewer', http)
+    const button = await screen.findByRole('button', {
+      name: 'Continue without description advice',
+    })
+    await user.click(button)
+    expect(await screen.findByText('No description adviser selected.')).toBeVisible()
+    if (copy !== null) await screen.findByText(copy)
+    // The settled state its own press created keeps the button focusable.
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button).toHaveFocus()
+    await user.click(button)
+    expect(http.selectReviewer).toHaveBeenCalledOnce()
+    if (copy === null) {
+      expect(screen.queryByText(/could not be confirmed/u)).toBeNull()
+      return
+    }
+    const alert = screen.getByText(copy)
+    expect(alert).toHaveAttribute('role', 'alert')
+    expect(button.nextElementSibling).toBe(alert)
   },
 )
 

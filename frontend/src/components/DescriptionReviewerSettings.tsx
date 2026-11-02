@@ -10,8 +10,8 @@ import { reviewerStateLabels } from '../labels'
 import { credentialRefused, failureCopy } from '../reviewerAccess'
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
-// The description adviser's draft, its four commands and the words for the
-// latest failure. Split out of the section under the function-size rule, as
+// The description adviser's draft, its four commands and the latest failure,
+// placed under the command that met it. Split out of the section under the function-size rule, as
 // reviewer access was (#1571, #1617).
 const useDescriptionAdviser = (
   http: ReviewHttp,
@@ -85,6 +85,17 @@ const useDescriptionAdviser = (
               error,
               'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
             )
+  // The command the failure belongs to, so it renders under that button (#1663).
+  const failedAt =
+    latest === 'selection'
+      ? selection.variables === 'codex'
+        ? 'codex'
+        : selection.variables === 'openrouter'
+          ? 'openrouter'
+          : 'without'
+      : latest
+  const failureUnder = (at: typeof failedAt) =>
+    failure !== null && failedAt === at ? <p role="alert">{failure}</p> : null
   const busy = contained.isPending || test.isPending || selection.isPending || refresh.isPending
   return {
     model,
@@ -93,7 +104,7 @@ const useDescriptionAdviser = (
     setKey,
     metadata,
     setMetadata,
-    failure,
+    failureUnder,
     busy,
     test,
     selection,
@@ -114,7 +125,7 @@ export const DescriptionReviewerSettings = ({
   onCodexRefused: () => Promise<void>
 }) => {
   const adviser = useDescriptionAdviser(http, view, onCodexRefused)
-  const { busy, selection, contained } = adviser
+  const { failureUnder, busy, selection, contained } = adviser
   const selected = view.description_mapping
   return (
     <section aria-labelledby="description-reviewer-heading">
@@ -141,9 +152,17 @@ export const DescriptionReviewerSettings = ({
             <a href="/activity">Check current write consent in Activity</a>, including consent that
             needs renewal. Your automatic application preference remains separate.
           </p>
-          <button disabled={busy || selected === null} onClick={() => selection.mutate(null)}>
+          {/* A pending command keeps focus: aria-disabled while it runs, natively
+              disabled only for a state the press did not cause (#1584, #1663). */}
+          <button
+            aria-disabled={busy || selected === null || undefined}
+            onClick={() => {
+              if (!busy && selected !== null) selection.mutate(null)
+            }}
+          >
             Continue without description advice
           </button>
+          {failureUnder('without')}
           {selection.isSuccess ? (
             <p role="status">
               Description adviser selection saved. Automatic application is controlled separately in
@@ -164,11 +183,15 @@ export const DescriptionReviewerSettings = ({
         <div className="settings-field-control">
           <p>Model: {view.codex.model ?? 'Unavailable until provisioning is corrected'}</p>
           <button
-            disabled={busy || view.codex.state === 'not_provisioned'}
-            onClick={() => contained.mutate()}
+            disabled={view.codex.state === 'not_provisioned'}
+            aria-disabled={busy || undefined}
+            onClick={() => {
+              if (!busy) contained.mutate()
+            }}
           >
             Inspect contained description model
           </button>
+          {failureUnder('contained')}
           {contained.data ? (
             <dl className="settings-reviewer-facts" aria-live="polite">
               <div>
@@ -187,11 +210,15 @@ export const DescriptionReviewerSettings = ({
             </dl>
           ) : null}
           <button
-            disabled={busy || !contained.data || !codexUsable}
-            onClick={() => selection.mutate('codex')}
+            disabled={!contained.data || !codexUsable}
+            aria-disabled={busy || undefined}
+            onClick={() => {
+              if (!busy) selection.mutate('codex')
+            }}
           >
             Use Codex for descriptions
           </button>
+          {failureUnder('codex')}
         </div>
       </div>
       <DescriptionOpenRouterRow adviser={adviser} view={view} />
@@ -209,7 +236,7 @@ function DescriptionOpenRouterRow({
   view: ReviewerAccessView
 }) {
   const { model, setModel, key, setKey, metadata, setMetadata } = adviser
-  const { failure, busy, test, selection, refresh } = adviser
+  const { failureUnder, busy, test, selection, refresh } = adviser
   const selected = view.description_mapping
   const disclosure =
     metadata?.model === model
@@ -262,11 +289,15 @@ function DescriptionOpenRouterRow({
           dispatch snapshots.
         </small>
         <button
-          disabled={busy || (!key && !view.openrouter_key_configured) || !model}
-          onClick={() => test.mutate()}
+          disabled={(!key && !view.openrouter_key_configured) || !model}
+          aria-disabled={busy || undefined}
+          onClick={() => {
+            if (!busy) test.mutate()
+          }}
         >
           {test.isPending ? 'Testing description model…' : 'Test description model and prices'}
         </button>
+        {failureUnder('test')}
         {disclosure ? (
           <dl className="settings-reviewer-facts" aria-live="polite">
             <div>
@@ -294,17 +325,26 @@ function DescriptionOpenRouterRow({
           <ReviewerCost view={view} model={model} task="description" />
         </dl>
         <button
-          disabled={busy || metadata?.model !== model}
-          onClick={() => selection.mutate('openrouter')}
+          disabled={metadata?.model !== model}
+          aria-disabled={busy || undefined}
+          onClick={() => {
+            if (!busy) selection.mutate('openrouter')
+          }}
         >
           Use this OpenRouter model for descriptions
         </button>
+        {failureUnder('openrouter')}
         {selected?.engine === 'openrouter' ? (
-          <button disabled={busy} onClick={() => refresh.mutate()}>
+          <button
+            aria-disabled={busy || undefined}
+            onClick={() => {
+              if (!busy) refresh.mutate()
+            }}
+          >
             Refresh description model status and prices
           </button>
         ) : null}
-        {failure !== null ? <p role="alert">{failure}</p> : null}
+        {failureUnder('refresh')}
       </div>
     </div>
   )

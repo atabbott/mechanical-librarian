@@ -135,10 +135,11 @@ export const useReviewerAccess = (http: ReviewHttp) => {
         return null
       }
       if (action.kind === 'codex-recheck') {
-        queryClient.setQueryData(['reviewer-access', 'codex-device'], await http.recheckCodex())
-        // The check records its outcome into access, or meets a flow another
-        // tab started; read it before the button settles (#1617).
+        const checked = await http.recheckCodex()
+        // The check records its outcome into access, or meets a flow another tab
+        // started; read that first, so the row changes once (#1617, #1663).
         await query.refetch({ cancelRefetch: false })
+        queryClient.setQueryData(['reviewer-access', 'codex-device'], checked)
         return null
       }
       if (action.kind === 'codex-cancel') {
