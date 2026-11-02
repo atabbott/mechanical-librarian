@@ -99,7 +99,7 @@ def test_tool_groups_cover_every_native_manager_name(
 
 def test_application_manifests_remain_exact() -> None:
     python = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert python["project"]["requires-python"] == ">=3.13,<3.15"
+    assert python["project"]["requires-python"] == ">=3.13,<3.16"
     for requirement in (
         python["project"]["dependencies"]
         + python["dependency-groups"]["dev"]

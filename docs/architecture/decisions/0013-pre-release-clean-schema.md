@@ -329,3 +329,8 @@ a declared cover that `encryption.xml` lists, before reading it, as
 `unsupported_format`. The report schema is unchanged, but a report carries forward while
 its file and configuration fingerprints are unchanged, so a stored report would
 keep the earlier cover outcome. No adoption is supplied.
+
+Issue #1639 also takes the clean-rebuild branch. The image moves to CPython
+3.15, whose Unicode 17.0.0 data differs from 3.14's 16.0.0, so every earlier
+application database's browse facts are refused before mutation. The report
+schema is unchanged. No adoption is supplied.
