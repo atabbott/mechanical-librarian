@@ -582,7 +582,7 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         with (
             patch.object(composition.time, "time", side_effect=lambda: clock[0]),
             patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
-            patch.object(composition, "_IsolatedEpubInspector", _Inspector),
+            patch.object(composition, "IsolatedEpubInspector", _Inspector),
             patch.object(composition, "google_books_client", return_value=object()),
             patch.object(
                 composition,
@@ -950,7 +950,7 @@ def test_three_work_shared_failure_then_real_f22_cutover(
             ),
             patch.object(composition, "GoogleBooksPacer", return_value=burst_pacer),
             patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
-            patch.object(composition, "_IsolatedEpubInspector", _Inspector),
+            patch.object(composition, "IsolatedEpubInspector", _Inspector),
             patch.object(composition, "google_books_client", return_value=object()),
             patch.object(
                 composition,
@@ -1537,7 +1537,7 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
             )
 
     def unchanged(inspector, *_args):
-        assert isinstance(inspector, composition._IsolatedAudioInspector)
+        assert isinstance(inspector, composition.IsolatedAudioInspector)
         inspections.append(inspector)
         return scenario != "changed"
 
@@ -1550,12 +1550,12 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
     with (
         patch.object(composition.time, "time", return_value=7200),
         patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
-        patch.object(composition, "_IsolatedEpubInspector", _Inspector),
+        patch.object(composition, "IsolatedEpubInspector", _Inspector),
         patch.object(composition, "audnexus_client", return_value=object()) as client,
         patch.object(
             composition, "AudnexusMetadataProvider", side_effect=provider
         ) as factory,
-        patch.object(composition._IsolatedAudioInspector, "unchanged", unchanged),
+        patch.object(composition.IsolatedAudioInspector, "unchanged", unchanged),
     ):
         supervisor = composition.create_review_pipeline(
             configuration,
@@ -2123,7 +2123,7 @@ def test_a_real_first_throttle_names_its_reason_and_remedy(
             patch.object(composition.time, "time", side_effect=lambda: int(clock[0])),
             patch.object(composition, "AudiobookshelfCatalogueReader", Catalogue),
             patch.object(composition, "AudiobookshelfItemReader", Reader),
-            patch.object(composition, "_IsolatedEpubInspector", Inspector),
+            patch.object(composition, "IsolatedEpubInspector", Inspector),
             patch.object(
                 composition,
                 "GoogleBooksPacer",

@@ -64,6 +64,10 @@ dev = [
 
 [tool.mutmut]
 source_paths = [
+  "src/mechanical_librarian/adapters/cover_evidence_observer.py",
+  "src/mechanical_librarian/adapters/evidence_extractors/isolated_audio.py",
+  "src/mechanical_librarian/adapters/evidence_extractors/isolated_epub.py",
+  "src/mechanical_librarian/adapters/evidence_extractors/local_media.py",
   "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
   "src/mechanical_librarian/application/review_web.py",
   "src/mechanical_librarian/bootstrap/composition.py",
