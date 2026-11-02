@@ -792,12 +792,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise AutomaticDecisionError("already_decided")
             outcome = self._connection.execute(
                 "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? "
-                "AND proposal_set_id=? AND resolved_policy_id=?",
+                "AND proposal_set_id=? AND resolved_policy_id=? "
+                "AND json_extract(document,'$.policy_generation')=?",
                 (
                     decision.review_case_id,
                     decision.report_id,
                     decision.proposal_set_id,
                     decision.resolved_policy_id,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if outcome is None:

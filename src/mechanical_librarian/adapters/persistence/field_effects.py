@@ -60,6 +60,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_DEFERRED_SQL,
     _FIELD_EFFECT_READY_STATES_SQL,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -946,14 +947,33 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 preference = "CASE WHEN library_name=? THEN 1 ELSE 0 END,"
                 parameters = (last_library,)
             row = self._connection.execute(
-                "SELECT plan_id,library_name FROM field_effects WHERE state IN "
+                "SELECT plan_id,library_name FROM field_effects effect WHERE state IN "
                 + _FIELD_EFFECT_READY_STATES_SQL
+                + " AND NOT "
+                + _FIELD_EFFECT_DEFERRED_SQL
                 + " ORDER BY "
                 + preference
                 + "updated_at,plan_id LIMIT 1",
                 parameters,
             ).fetchone()
             return None if row is None else (row[0], row[1])
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_deferred(self, plan_id: str) -> bool:
+        """Whether this ready effect waits for its authority to return."""
+        try:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM field_effects effect WHERE plan_id=? AND state IN "
+                    + _FIELD_EFFECT_READY_STATES_SQL
+                    + " AND "
+                    + _FIELD_EFFECT_DEFERRED_SQL,
+                    (plan_id,),
+                ).fetchone()
+                is not None
+            )
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 

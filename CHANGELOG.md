@@ -224,6 +224,11 @@ brackets are GitHub issues.
   already installed from being used: Check, Use Codex and Codex reviews accept
   it again once the cancelled sign-in has stopped, without signing in again,
   clearing the sign-in or restarting Mechanical Librarian (#1622).
+- Switching from Automatic to Preview without changing the policy keeps every
+  work in Attention and Library, and keeps your answers: a decision you had
+  not yet written stays decided and is still written. An automatic decision
+  recorded before the switch, including a cover or description, writes
+  nothing in Preview. No clean rebuild is needed (#1568).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

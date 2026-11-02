@@ -874,14 +874,21 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
                 (decision.proposal_set_id,),
             ).fetchone()
+            # The outcome set of the decision's own generation: leaving
+            # Automatic with the policy unchanged projects the same case again
+            # under a new generation (#1568).
             outcome_row = connection.execute(
                 "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
-                "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+                "AND json_extract(document,'$.policy_generation')=?",
                 (
                     decision.review_case_id,
                     decision.report_id,
                     decision.proposal_set_id,
                     decision.resolved_policy_id,
+                    decision.policy_generation
+                    if type(decision) is AutomaticDecision
+                    else None,
                 ),
             ).fetchone()
             if proposal_row is None or (
@@ -1233,12 +1240,14 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                         (decision.proposal_set_id,),
                     ).fetchone()
                     outcome_row = connection.execute(
-                        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+                        "AND json_extract(document,'$.policy_generation')=?",
                         (
                             decision.review_case_id,
                             decision.report_id,
                             decision.proposal_set_id,
                             decision.resolved_policy_id,
+                            decision.policy_generation,
                         ),
                     ).fetchone()
                     if any(
