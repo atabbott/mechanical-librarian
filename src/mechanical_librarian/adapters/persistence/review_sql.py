@@ -135,9 +135,7 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "ON consideration.consideration_id=current_cover.consideration_id "
     "WHERE current_cover.review_case_id=rc.review_case_id "
     "AND json_extract(consideration.currentness_document,'$.manual_ready')=1) "
-    "AND NOT "
-    + _VERIFIED_CURRENT_COVER_SQL
-    + ") "
+    "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ") "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "
@@ -390,6 +388,7 @@ __all__ = [
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
+    "_VERIFIED_CURRENT_COVER_SQL",
     "_LATEST_PREPARATION_FAILED_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",
