@@ -2512,6 +2512,239 @@ it('keeps the read failure when access cannot be read after a refused Use Codex 
   const alerts = await screen.findAllByRole('alert')
   expect(alerts).toHaveLength(1)
   expect(alerts[0]).not.toHaveTextContent('Codex sign-in is unavailable')
+  // With no control to sit under, the read failure opens the form (#1618).
+  expect(alerts[0]?.parentElement?.firstElementChild).toBe(alerts[0])
+})
+
+it.each([
+  [
+    'access_changed',
+    409,
+    { detail: { error: 'access_changed' } },
+    'Reviewer access changed in another session. Reload before trying again.',
+  ],
+  ['unavailable', 503, { error: 'unavailable' }, 'Setup could not finish that step'],
+])(
+  'shows a failed Use Codex (%s) directly under the button (#1618)',
+  async (_, status, body, message) => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/reviewer/selection') && init?.method === 'POST')
+        return response(body, status)
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('usable'))
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    const use = await screen.findByRole('button', { name: 'Use Codex' })
+    await reviewerStepSettled()
+    use.focus()
+    fireEvent.click(use)
+
+    const alert = await screen.findByRole('alert')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(alert).toHaveTextContent(message)
+    expect(alert.previousElementSibling).toBe(use)
+    expect(use).toBeEnabled()
+    expect(use).toHaveFocus()
+    expect(screen.getByText('Status: ready to use')).toBeVisible()
+  },
+)
+
+it('shows a failed Check existing sign-in between Check and Restart (#1618)', async () => {
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/recheck') && init?.method === 'POST')
+      return response({ error: 'unavailable' }, 503)
+    if (url.endsWith('/reviewer-access'))
+      return response(reviewerAccess('failed', 'permission_or_profile'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const check = await screen.findByRole('button', { name: 'Check existing sign-in' })
+  await reviewerStepSettled()
+  check.focus()
+  fireEvent.click(check)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Setup could not finish that step')
+  expect(alert.previousElementSibling).toBe(check)
+  expect(alert.nextElementSibling).toBe(
+    screen.getByRole('button', { name: 'Restart device sign-in' }),
+  )
+  expect(check).toBeEnabled()
+  expect(check).toHaveFocus()
+})
+
+it('shows a failed Cancel sign-in under the button and above the code (#1618)', async () => {
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device/cancel') && init?.method === 'POST')
+      return response({ error: 'unavailable' }, 503)
+    if (url.endsWith('/device'))
+      return response({
+        state: 'waiting',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-1234',
+      })
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('waiting'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  expect(await screen.findByText('ABCD-1234')).toBeVisible()
+  const cancel = screen.getByRole('button', { name: 'Cancel sign-in' })
+  await reviewerStepSettled()
+  cancel.focus()
+  fireEvent.click(cancel)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Setup could not finish that step')
+  expect(alert.previousElementSibling).toBe(cancel)
+  expect(alert.nextElementSibling).toBe(document.querySelector('[data-device-prompt]'))
+  expect(screen.getByText('ABCD-1234')).toBeVisible()
+  expect(cancel).toBeEnabled()
+  expect(cancel).toHaveFocus()
+})
+
+it('shows a failed device poll under Cancel sign-in without moving focus (#1618)', async () => {
+  let polls = 0
+  const fetch = vi.fn(async (request: RequestInfo | URL) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device')) {
+      polls += 1
+      return polls > 1
+        ? response({ error: 'unavailable' }, 503)
+        : response({
+            state: 'waiting',
+            verification_url: 'https://auth.openai.com/codex/device',
+            user_code: 'ABCD-1234',
+          })
+    }
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('waiting'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  await reviewerStepSettled()
+
+  const alert = await screen.findByRole('alert', {}, { timeout: 3000 })
+  expect(alert).toHaveTextContent('Setup could not finish that step')
+  expect(screen.getAllByRole('alert')).toHaveLength(1)
+  expect(alert.previousElementSibling).toBe(screen.getByRole('button', { name: 'Cancel sign-in' }))
+  expect(screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })).toHaveFocus()
+})
+
+it('clears a failed Start once the next Start succeeds (#1618)', async () => {
+  let starts = 0
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device') && init?.method === 'POST') {
+      starts += 1
+      return starts === 1
+        ? response({ error: 'unavailable' }, 503)
+        : response({ state: 'starting' })
+    }
+    if (url.endsWith('/device'))
+      return response({
+        state: 'waiting',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-1234',
+      })
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await reviewerStepSettled()
+  start.focus()
+  fireEvent.click(start)
+  expect((await screen.findByRole('alert')).previousElementSibling).toBe(start)
+  await waitFor(() => expect(start).toBeEnabled())
+  fireEvent.click(start)
+
+  const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
+  await waitFor(() => expect(cancel).toHaveFocus())
+  expect(await screen.findByText('ABCD-1234')).toBeVisible()
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it.each([
+  ['fails, then succeeds', ['fail', 'succeed'], false],
+  ['succeeds, then fails', ['succeed', 'fail'], true],
+] as const)(
+  'never shows a blocked cancel status beside a contradicting alert when it %s (#1618)',
+  async (_, outcomes, alert) => {
+    let cancels = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device/cancel')) {
+        cancels += 1
+        return outcomes[cancels - 1] === 'fail'
+          ? response({ error: 'unavailable' }, 503)
+          : response({ state: 'cancelled' })
+      }
+      if (url.endsWith('/reviewer-access'))
+        return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+      if (url.endsWith('/device')) throw new Error('blocked recovery must not probe authentication')
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
+    const feedback = cancel.nextElementSibling
+    expect(feedback).toHaveAttribute('role', 'status')
+    await reviewerStepSettled()
+    cancel.focus()
+    fireEvent.click(cancel)
+    await waitFor(() => expect(cancels).toBe(1))
+    await waitFor(() => expect(cancel).not.toHaveAttribute('aria-disabled'))
+    fireEvent.click(cancel)
+    await waitFor(() => expect(cancels).toBe(2))
+    await waitFor(() => expect(cancel).not.toHaveAttribute('aria-disabled'))
+
+    if (alert) {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Setup could not finish that step')
+      expect(feedback?.textContent).toBe('')
+    } else {
+      expect(await screen.findByText('Any active sign-in was cancelled.')).toBeVisible()
+      expect(screen.queryByRole('alert')).toBeNull()
+    }
+    expect(cancel).toHaveFocus()
+  },
+)
+
+it('restores a reviewer step whose form token rotated at the top of the fresh form (#1618)', async () => {
+  let reads = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/recheck') && init?.method === 'POST')
+        return response({ detail: { error: 'csrf' } }, 403)
+      if (url.endsWith('/reviewer-access'))
+        return response(reviewerAccess('failed', 'permission_or_profile'))
+      if (url === '/api/setup/state') reads += 1
+      return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+    }),
+  )
+  runSetup()
+  const check = await screen.findByRole('button', { name: 'Check existing sign-in' })
+  await reviewerStepSettled()
+  check.focus()
+  fireEvent.click(check)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent(
+    'Setup changed in another tab. The latest recorded step has been restored.',
+  )
+  expect(alert.parentElement?.tagName).toBe('FORM')
+  expect(alert.parentElement?.firstElementChild).toBe(alert)
+  expect(check.isConnected).toBe(false)
+  expect(reads).toBe(2)
+  await reviewerStepSettled()
 })
 
 it('keeps an issued code in place across polls and copies exactly the code', async () => {
@@ -2605,8 +2838,15 @@ it.each([
       }),
     )
     runSetup()
-    fireEvent.click(await screen.findByRole('button', { name: 'Start device sign-in' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+    await reviewerStepSettled()
+    start.focus()
+    fireEvent.click(start)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(message)
+    // The alert sits directly under the button that was pressed (#1618).
+    expect(alert.previousElementSibling).toBe(start)
+    expect(start).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
   },
 )
@@ -2658,6 +2898,7 @@ it.each([
     vi.stubGlobal('fetch', fetch)
     runSetup()
     const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
+    const feedback = cancel.nextElementSibling
     const cancels = () =>
       fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device/cancel')).length
     await reviewerStepSettled()
@@ -2671,8 +2912,14 @@ it.each([
     fireEvent.click(cancel)
     expect(cancels()).toBe(1)
     release?.(settle())
-    if (alert) expect(await screen.findByRole('alert')).toHaveTextContent(message)
-    else expect(await screen.findByText(message)).toBeVisible()
+    if (alert) {
+      const node = await screen.findByRole('alert')
+      expect(node).toHaveTextContent(message)
+      // The alert sits between the pressed button and its status line (#1618).
+      expect(node.previousElementSibling).toBe(cancel)
+      expect(node.nextElementSibling).toBe(feedback)
+      expect(feedback).toHaveAttribute('role', 'status')
+    } else expect(await screen.findByText(message)).toBeVisible()
     expect(cancel).not.toHaveAttribute('aria-disabled')
     expect(cancel).toHaveFocus()
     expect(document.activeElement).not.toBe(document.body)

@@ -900,9 +900,10 @@ const renderPreparation=(host,visible)=>{
   const section=card('Choose an optional cover reviewer','Cover observations are advice only. Choose one engine or continue without a reviewer. No choice enables automatic application.');
   const form=document.createElement('form');section.append(form);
   const later=document.createElement('p');later.textContent='Optional description advice is configured separately in Settings → Reviewer after setup.';form.append(later);
-  // `control` is the field the refusal is about and `submitted` the button pressed:
-  // the alert sits just above that button. Without either it opens the form, so it
-  // is scrolled into view rather than left above a phone viewport.
+  // `control` is the field the refusal is about and `submitted` the button pressed.
+  // A field refusal sits just above that button, between the field and it; a
+  // button-only refusal sits directly under the button. Without either it opens the
+  // form, so it is scrolled into view rather than left above a phone viewport.
   const failed=async(e,control,submitted)=>{
     const code=refusal(e);
     // Another tab rotated this form's token; read the state again before saying so.
@@ -913,7 +914,7 @@ const renderPreparation=(host,visible)=>{
       return
     }
     const node=error(form,code,control);
-    if(submitted)submitted.before(node);
+    if(submitted)control?submitted.before(node):submitted.after(node);
     // Bring the button in first, then its alert, so both end up on screen together.
     submitted?.scrollIntoView?.({block:'nearest'});
     node.scrollIntoView?.({block:'nearest'})
@@ -939,28 +940,28 @@ const renderPreparation=(host,visible)=>{
   // Only a press moves focus to Cancel; resuming on page load leaves it.
   const follow=async focus=>{
     const cancel=button('Cancel sign-in');cancel.type='button';
-    cancel.addEventListener('click',async()=>{if(cancel.disabled)return;cancel.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()}catch(e){cancel.disabled=false;failed(e)}});codex.append(cancel);if(focus)cancel.focus();
+    cancel.addEventListener('click',async()=>{if(cancel.disabled)return;cancel.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()}catch(e){cancel.disabled=false;failed(e,null,cancel)}});codex.append(cancel);if(focus)cancel.focus();
     try{let device;do{device=await api('/api/setup/reviewer/codex/device');if(!section.isConnected)return;line.textContent=`Status: ${codexWords[device.state]||device.state.replaceAll('_',' ')}`;
       let prompt=codex.querySelector('[data-device-prompt]');if(device.verification_url&&device.user_code&&prompt?.dataset.code!==device.user_code){if(!prompt){prompt=document.createElement('div');prompt.dataset.devicePrompt='true';codex.append(prompt)}prompt.dataset.code=device.user_code;const lead=document.createElement('p');const link=document.createElement('a');link.href=device.verification_url;link.target='_blank';link.rel='noreferrer';link.textContent='Open the device sign-in page';lead.append(link,document.createTextNode(' in a new tab and enter this code:'));const row=document.createElement('p');row.className='device-code-row';const code=document.createElement('code');code.className='device-code';code.textContent=device.user_code;const copy=document.createElement('button');copy.type='button';copy.textContent='Copy code';const copied=document.createElement('span');copied.setAttribute('role','status');copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(device.user_code);copied.textContent='Copied.'}catch{const range=document.createRange();range.selectNodeContents(code);getSelection()?.removeAllRanges();getSelection()?.addRange(range);copied.textContent='Code selected. Press Ctrl+C or Command+C to copy it.'}});row.append(code,copy,copied);prompt.replaceChildren(lead,row)}
       if(active(device.state))await new Promise(resolve=>setTimeout(resolve,1000));
-    }while(section.isConnected&&active(device.state));if(!section.isConnected)return;codexTerminal=device;await render()}catch(e){if(section.isConnected)failed(e)}
+    }while(section.isConnected&&active(device.state));if(!section.isConnected)return;codexTerminal=device;await render()}catch(e){if(section.isConnected)failed(e,null,cancel)}
   };
   if(active(access.codex.state)){void follow()}
   else if(codexState.state==='usable'||codexState.state==='configured'){
     const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.disabled)return;use.disabled=true;try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){
       // The server recorded the refused sign-in; read it again, then say so above the fresh option's first control (#1617).
       if(refusal(e)==='credential_unavailable'){codexTerminal=null;await render();const fresh=main.querySelector('form');const first=fresh?.querySelector('.option button');if(first)first.before(error(fresh,'credential_unavailable'));return}
-      use.disabled=false;failed(e)}});codex.append(use);
+      use.disabled=false;failed(e,null,use)}});codex.append(use);
   }else{
     const check=button('Check existing sign-in');check.type='button';check.disabled=blocked;
-    check.addEventListener('click',async()=>{if(check.disabled)return;check.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.disabled=blocked;failed(e)}});
+    check.addEventListener('click',async()=>{if(check.disabled)return;check.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.disabled=blocked;failed(e,null,check)}});
     const start=button(['expired','failed','cancelled','interrupted'].includes(codexState.state)?'Restart device sign-in':'Start device sign-in');start.type='button';start.disabled=blocked;
-    start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();await follow(true)}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e)}});codex.append(check,start);
+    start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();codex.querySelector('.error')?.remove();await follow(true)}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e,null,start)}});codex.append(check,start);
   }
   if(blocked){
     const cancel=button('Cancel any active sign-in');cancel.type='button';
     const feedback=document.createElement('p');feedback.setAttribute('role','status');
-    cancel.addEventListener('click',async()=>{if(cancel.getAttribute('aria-disabled')==='true')return;cancel.setAttribute('aria-disabled','true');try{const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});feedback.textContent=result.state==='cancelled'?'Any active sign-in was cancelled.':['ready','usable'].includes(result.state)?'No active sign-in remains.':'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}catch(e){failed(e)}finally{cancel.removeAttribute('aria-disabled')}});
+    cancel.addEventListener('click',async()=>{if(cancel.getAttribute('aria-disabled')==='true')return;cancel.setAttribute('aria-disabled','true');try{const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});feedback.textContent=result.state==='cancelled'?'Any active sign-in was cancelled.':['ready','usable'].includes(result.state)?'No active sign-in remains.':'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.';codex.querySelector('.error')?.remove()}catch(e){feedback.textContent='';failed(e,null,cancel)}finally{cancel.removeAttribute('aria-disabled')}});
     codex.append(cancel,feedback);
   }
   form.append(codex);
