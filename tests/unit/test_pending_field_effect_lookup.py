@@ -1666,6 +1666,25 @@ def test_a_policy_activation_reaches_waiting_effects_by_the_target_index(
     ) in plan
 
 
+@pytest.mark.parametrize("current", ["case", None], ids=["case", "none"])
+def test_the_displaced_case_lookup_uses_the_target_index(
+    store: tuple[sqlite3.Connection, list[str]], current: str | None
+) -> None:
+    """Preparation finds the cases a work's waiting plans were left on by that
+    one work's effects, whether the work keeps a case or has none (#1658)."""
+    connection, _ = store
+    plan = _plan(
+        connection,
+        field_effects._DISPLACED_CASES_SQL,
+        ("primary", "ebooks", "item", current),
+    )
+    assert not _scans_effects(plan)
+    assert (
+        "SEARCH field_effects USING INDEX field_effects_target "
+        "(connection_name=? AND library_name=? AND work_id=?)"
+    ) in plan
+
+
 def test_the_unreturned_case_lookup_uses_its_indexes(
     store: tuple[sqlite3.Connection, list[str]],
 ) -> None:
