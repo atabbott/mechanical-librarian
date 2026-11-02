@@ -868,53 +868,125 @@ describe('shipped first-run setup script', () => {
     expect(endpoint).toHaveValue('http://books.invalid:13378')
   })
 
-  it('runs no client check for Enter in a field while a verification is recorded (#1678)', async () => {
-    let attempts = 0
-    let release!: (value: Response) => void
-    const held = new Promise<Response>((resolve) => {
-      release = resolve
-    })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-        if (requestUrl(request) === '/api/setup/connect' && init?.method === 'POST') {
-          attempts += 1
-          return await held
-        }
-        return response(setupState('connect', { completed_steps: ['claim'], connection: null }))
-      }),
-    )
-    runSetup()
+  it.each([
+    ['connect', 'Connect Audiobookshelf', '/api/setup/connect', 'Verify and continue'],
+    ['providers', 'Choose metadata providers', '/api/setup/providers', 'Continue'],
+    ['libraries', 'Choose libraries', '/api/setup/libraries', 'Continue'],
+    ['mounts', 'Check read-only mounts', '/api/setup/mounts', 'Check mounts'],
+  ] as const)(
+    'runs no %s client check for a repeat submit while the step is recorded (#1678)',
+    async (step, heading, path, name) => {
+      let attempts = 0
+      let release!: (value: Response) => void
+      const held = new Promise<Response>((resolve) => {
+        release = resolve
+      })
+      const shelf = {
+        library_id: 'books-id',
+        media_kind: 'book',
+        name: 'Reading Shelf',
+        service_path: '/discovered/books',
+        service_path_state: 'available',
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+          const url = requestUrl(request)
+          if (url === path && init?.method === 'POST') {
+            attempts += 1
+            return await held
+          }
+          if (url.startsWith('/api/setup/libraries?')) return response({ libraries: [shelf] })
+          if (step === 'connect')
+            return response(setupState('connect', { completed_steps: ['claim'], connection: null }))
+          if (step === 'mounts')
+            return response(
+              setupState('mounts', {
+                completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+                libraries: [
+                  {
+                    connection: 'primary',
+                    display_name: 'Reading Shelf',
+                    library_id: 'books-id',
+                    media_kind: 'book',
+                    name: 'books',
+                    provider_connections: [],
+                  },
+                ],
+                revision: 5,
+              }),
+            )
+          return response(setupState(step))
+        }),
+      )
+      runSetup()
 
-    const endpoint = await screen.findByLabelText('Audiobookshelf address')
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Connect Audiobookshelf' })).toHaveFocus(),
-    )
-    fireEvent.input(endpoint, { target: { value: 'http://books.invalid:13378' } })
-    fireEvent.input(screen.getByLabelText('Audiobookshelf API key'), {
-      target: { value: 'target-key' },
-    })
-    const verify = screen.getByRole('button', { name: 'Verify and continue' })
-    verify.focus()
-    fireEvent.click(verify)
-    await waitFor(() => expect(attempts).toBe(1))
+      const title = await screen.findByRole('heading', { name: heading })
+      await waitFor(() => expect(title).toHaveFocus())
+      await waitFor(() =>
+        expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
+      )
+      // Each row fills the step so the first press passes its client checks, then
+      // edits a field so that a second submit would fail them.
+      let edited: HTMLElement
+      let edit: () => void
+      if (step === 'connect') {
+        const endpoint = screen.getByLabelText('Audiobookshelf address')
+        fireEvent.input(endpoint, { target: { value: 'http://books.invalid:13378' } })
+        fireEvent.input(screen.getByLabelText('Audiobookshelf API key'), {
+          target: { value: 'target-key' },
+        })
+        edited = endpoint
+        edit = () => fireEvent.input(endpoint, { target: { value: 'not-a-url' } })
+      } else if (step === 'providers') {
+        fireEvent.click(screen.getByLabelText('Open Library'))
+        const email = screen.getByLabelText('Open Library contact email')
+        fireEvent.input(email, { target: { value: 'owner@example.org' } })
+        edited = email
+        edit = () => fireEvent.input(email, { target: { value: 'not an email' } })
+      } else if (step === 'libraries') {
+        const books = await screen.findByRole('checkbox', { name: 'Reading Shelf' })
+        fireEvent.click(books)
+        edited = books
+        edit = () => fireEvent.click(books)
+      } else {
+        const typed = screen.getByLabelText('Reading Shelf service path')
+        fireEvent.input(typed, { target: { value: '/owner/typed/books' } })
+        edited = typed
+        edit = () => fireEvent.input(typed, { target: { value: '' } })
+      }
+      const pressed = screen.getByRole('button', { name })
+      pressed.focus()
+      fireEvent.click(pressed)
+      await waitFor(() => expect(attempts).toBe(1))
 
-    // Enter in a field submits the form again; the step is still being recorded.
-    fireEvent.input(endpoint, { target: { value: 'not-a-url' } })
-    const form = endpoint.closest('form')
-    if (!form) throw new Error('connect form missing')
-    fireEvent.submit(form)
-    expect(attempts).toBe(1)
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(endpoint).not.toHaveAttribute('aria-invalid')
-    expect(verify).toHaveFocus()
+      // Enter in a field submits the form again; the step is still being recorded.
+      edit()
+      const form = edited.closest('form')
+      if (!form) throw new Error(`${step} form missing`)
+      fireEvent.submit(form)
+      expect(attempts).toBe(1)
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(edited).not.toHaveAttribute('aria-invalid')
+      expect(pressed).toHaveFocus()
 
-    release(response({ detail: { error: 'unavailable' } }, 500))
-    const alert = await screen.findByRole('alert')
-    await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
-    expect(alert.previousElementSibling).toBe(verify)
-    expect(attempts).toBe(1)
-  })
+      if (step === 'mounts') {
+        // The mount check keeps the draft of the press that is running, so a
+        // restored step shows the path that was sent, not the cleared one.
+        release(response({ detail: { error: 'stale' } }, 409))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Setup changed in another tab.')
+        expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue(
+          '/owner/typed/books',
+        )
+      } else {
+        release(response({ detail: { error: 'unavailable' } }, 500))
+        const alert = await screen.findByRole('alert')
+        await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+        if (step === 'connect') expect(alert.previousElementSibling).toBe(pressed)
+      }
+      expect(attempts).toBe(1)
+    },
+  )
 
   it('names every provider, what it contributes, and its own credential fields', async () => {
     vi.stubGlobal(
