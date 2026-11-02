@@ -2477,6 +2477,10 @@ it.each(['usable access at load', 'a usable Check over failed access'] as const)
     expect(screen.getByRole('alert')).toHaveTextContent(
       'Codex sign-in is unavailable. Test or replace it, then select Codex.',
     )
+    // The refusal sits just above the fresh option's first control.
+    expect(screen.getByRole('alert').nextElementSibling).toBe(
+      screen.getByRole('button', { name: 'Check existing sign-in' }),
+    )
     expect(screen.getByRole('button', { name: 'Check existing sign-in' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull()
@@ -2487,6 +2491,28 @@ it.each(['usable access at load', 'a usable Check over failed access'] as const)
     )
   },
 )
+
+it('keeps the read failure when access cannot be read after a refused Use Codex (#1617)', async () => {
+  let refused = false
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/reviewer/selection') && init?.method === 'POST') {
+      refused = true
+      return response({ detail: { error: 'credential_unavailable' } }, 409)
+    }
+    if (url.endsWith('/reviewer-access'))
+      return refused ? response({ error: 'unavailable' }, 503) : response(reviewerAccess('usable'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  fireEvent.click(await screen.findByRole('button', { name: 'Use Codex' }))
+
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull())
+  const alerts = await screen.findAllByRole('alert')
+  expect(alerts).toHaveLength(1)
+  expect(alerts[0]).not.toHaveTextContent('Codex sign-in is unavailable')
+})
 
 it('keeps an issued code in place across polls and copies exactly the code', async () => {
   const fetch = vi.fn(async (request: RequestInfo | URL) => {

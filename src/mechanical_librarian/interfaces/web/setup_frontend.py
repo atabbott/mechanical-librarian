@@ -949,7 +949,7 @@ const renderPreparation=(host,visible)=>{
   else if(codexState.state==='usable'||codexState.state==='configured'){
     const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.disabled)return;use.disabled=true;try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){
       // The server recorded the refused sign-in; read it again, then say so above the fresh option's first control (#1617).
-      if(refusal(e)==='credential_unavailable'){codexTerminal=null;await render();const fresh=main.querySelector('form');if(fresh){const node=error(fresh,'credential_unavailable');fresh.querySelector('.option button')?.before(node)}return}
+      if(refusal(e)==='credential_unavailable'){codexTerminal=null;await render();const fresh=main.querySelector('form');const first=fresh?.querySelector('.option button');if(first)first.before(error(fresh,'credential_unavailable'));return}
       use.disabled=false;failed(e)}});codex.append(use);
   }else{
     const check=button('Check existing sign-in');check.type='button';check.disabled=blocked;

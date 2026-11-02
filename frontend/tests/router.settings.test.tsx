@@ -1207,7 +1207,7 @@ describe('owner settings route', () => {
     )
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Use Codex for cover observations' })).toBeNull()
-    // The pressed Check remounted in the other branch; focus follows it.
+    // React keeps the pressed Check's node across the branch switch, so focus stays on it.
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
     )
