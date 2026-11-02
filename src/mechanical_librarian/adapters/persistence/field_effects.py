@@ -86,6 +86,19 @@ from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import TargetDestination
 
+# The plans a lost connection left waiting on one work's review case. The
+# target index finds the work's effects; the case and the failure only filter
+# them (#1599). A same-policy reactivation adds `_AUTOMATIC_DECISION_SQL`.
+_RETIRED_CASE_WAITING_SQL = (
+    "SELECT document,state FROM field_effects WHERE connection_name=? "
+    "AND library_name=? AND work_id=? AND state='stale' "
+    "AND json_extract(document,'$.failure')='connection' "
+    "AND json_extract(document,'$.plan.authority.review_case_id')=?"
+)
+_AUTOMATIC_DECISION_SQL = (
+    " AND decision_id IN (SELECT decision_id FROM automatic_decisions)"
+)
+
 
 class SQLiteFieldEffectRepository(ConnectionScoped):
     """Plan, claim, transition, suspend and retire one library's field effects."""
@@ -1680,6 +1693,44 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             )
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
+
+    def _supersede_retired_case_waiting_plans(
+        self,
+        retired: tuple[tuple[str, str, str, str], ...],
+        reactivation: bool,
+        changed_at: int,
+    ) -> int:
+        """Supersede the waiting plans of cases a policy activation retires.
+
+        ``retired`` names each retired case with its work. A changed policy
+        retires a case for good, so every plan waiting on it closes. A
+        same-policy reactivation readmits the same case, so only a plan whose
+        authority is a field automatic decision closes: an earlier generation's
+        decision never authorizes again, while an owner's, a cover selection's
+        or a description's does. The caller's transaction owns the outcome
+        (#1599).
+        """
+        statement = (
+            _RETIRED_CASE_WAITING_SQL
+            + (_AUTOMATIC_DECISION_SQL if reactivation else "")
+            + " ORDER BY rowid"
+        )
+        closed = 0
+        for connection, library, work_id, review_case_id in retired:
+            rows = self._connection.execute(
+                statement, (connection, library, work_id, review_case_id)
+            ).fetchall()
+            for document, state in rows:
+                operation = FieldEffectOperation.from_json(document).transition(
+                    "superseded", at=changed_at, failure="authority_superseded"
+                )
+                self._update_field_effect(operation, state)
+                self._record_field_effect_event(
+                    operation, "superseded", operation.updated_at
+                )
+                self._schedule_field_effect_cleanup(operation, changed_at)
+            closed += len(rows)
+        return closed
 
     @local_operation
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
