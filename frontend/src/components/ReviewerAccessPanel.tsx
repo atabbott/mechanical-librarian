@@ -1,7 +1,9 @@
 import { ReviewerCost } from './ReviewerCost'
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
+import { StaleBuildRead } from './StaleBuildRead'
 import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel, reviewerFailureCopy, reviewerStateLabels } from '../labels'
+import { BuildMismatchError } from '../api/http'
 import type {
   CodexDeviceAuthState,
   ReviewHttp,
@@ -58,6 +60,9 @@ const deviceFailureCopy: Readonly<Record<NonNullable<CodexDeviceAuthState['failu
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
 }
 
+const unmanagedProfileCopy =
+  'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.'
+
 const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   profile_not_provisioned:
     'The contained reviewer profile is missing. A deployment owner must restore the supported image profile or its explicit override. OpenRouter and no reviewer remain available.',
@@ -78,6 +83,48 @@ const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
   not_selected: 'Codex is not selected. Check the sign-in, then select it for cover observations.',
   ...reviewerFailureCopy,
+}
+
+// The device prompt of a sign-in in progress, and the press that cancels it.
+// Its Cancel button is where focus lands after a start (#1607).
+function CodexDeviceFlow({
+  access,
+  view,
+}: {
+  access: ReviewerAccessController
+  view: ReviewerAccessView
+}) {
+  const { deviceQuery, mutation, codexCancelTrigger } = access
+  const device = deviceQuery.data
+  return (
+    <>
+      <p role="status" aria-live="polite">
+        Device sign-in: {reviewerStateLabels[device?.state ?? view.codex.state]}.
+      </p>
+      {device?.verification_url ? (
+        <>
+          <p>
+            Open{' '}
+            <a href={device.verification_url} target="_blank" rel="noreferrer">
+              the device sign-in page
+            </a>{' '}
+            in a new tab{device.user_code ? ' and enter this code:' : '.'}
+          </p>
+          {device.user_code ? <DeviceCode code={device.user_code} /> : null}
+        </>
+      ) : null}
+      <button
+        ref={codexCancelTrigger}
+        type="button"
+        aria-disabled={mutation.isPending || undefined}
+        onClick={() => {
+          if (!mutation.isPending) mutation.mutate({ kind: 'codex-cancel' })
+        }}
+      >
+        Cancel sign-in
+      </button>
+    </>
+  )
 }
 
 function CodexSignIn({
@@ -104,15 +151,20 @@ function CodexSignIn({
     cancelReplace,
     codexClearTrigger,
     codexReplaceTrigger,
+    codexStartTrigger,
   } = access
   const device = deviceQuery.data
   const codexState = hostUnsupported ? view.codex.state : (device?.state ?? view.codex.state)
+  const reasonKey = !hostUnsupported && device?.failure ? device.failure : view.codex.reason
+  // Without a managed sign-in the row offers Restart and Check, not Replace.
   const codexReason =
-    !hostUnsupported && device?.failure
-      ? deviceFailureCopy[device.failure]
-      : view.codex.reason
-        ? codexReasonCopy[view.codex.reason]
-        : null
+    reasonKey === 'permission_or_profile' && !codexManaged
+      ? unmanagedProfileCopy
+      : !hostUnsupported && device?.failure
+        ? deviceFailureCopy[device.failure]
+        : view.codex.reason
+          ? codexReasonCopy[view.codex.reason]
+          : null
   return (
     <div className="settings-field-row">
       <div>
@@ -130,32 +182,7 @@ function CodexSignIn({
       </div>
       <div className="settings-field-control">
         {waiting ? (
-          <>
-            <p role="status" aria-live="polite">
-              Device sign-in: {reviewerStateLabels[device?.state ?? view.codex.state]}.
-            </p>
-            {device?.verification_url ? (
-              <>
-                <p>
-                  Open{' '}
-                  <a href={device.verification_url} target="_blank" rel="noreferrer">
-                    the device sign-in page
-                  </a>{' '}
-                  in a new tab{device.user_code ? ' and enter this code:' : '.'}
-                </p>
-                {device.user_code ? <DeviceCode code={device.user_code} /> : null}
-              </>
-            ) : null}
-            <button
-              type="button"
-              aria-disabled={mutation.isPending || undefined}
-              onClick={() => {
-                if (!mutation.isPending) mutation.mutate({ kind: 'codex-cancel' })
-              }}
-            >
-              Cancel sign-in
-            </button>
-          </>
+          <CodexDeviceFlow access={access} view={view} />
         ) : codexManaged ? (
           <>
             <button
@@ -243,6 +270,7 @@ function CodexSignIn({
               Check existing Codex sign-in
             </button>
             <button
+              ref={codexStartTrigger}
               type="button"
               disabled={hostUnsupported}
               aria-disabled={mutation.isPending || undefined}
@@ -251,7 +279,7 @@ function CodexSignIn({
                   mutation.mutate({ kind: 'codex-start', revision: view.revision })
               }}
             >
-              {['expired', 'failed', 'cancelled', 'interrupted'].includes(view.codex.state)
+              {['expired', 'failed', 'cancelled', 'interrupted'].includes(codexState)
                 ? 'Restart device sign-in'
                 : 'Replace or create Codex sign-in'}
             </button>
@@ -477,6 +505,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const access = useReviewerAccess(http)
   const { query, deviceQuery, mutation, mutationFailure, waiting } = access
   if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
+  if (query.error instanceof BuildMismatchError)
+    return <StaleBuildRead lead="Reviewer access was not loaded." />
   if (query.isError)
     return (
       <div role="alert">

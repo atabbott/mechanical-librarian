@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
+    DeviceAuthStatus,
     OpenRouterAccountStatus,
     OpenRouterPublicFailure,
     OpenRouterReviewerError,
@@ -37,6 +38,22 @@ from mechanical_librarian.domain.reviewer_access import (
 from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
 from mechanical_librarian.domain.validation import credential
 
+# Device-auth flow states that a Codex projection reports verbatim instead of
+# the installed credential's status. The selected and passive branches and
+# ``codex_status`` share this one set.
+_CODEX_FLOW_STATES: frozenset[DeviceAuthStatus] = frozenset(
+    {
+        "starting",
+        "issued",
+        "waiting",
+        "validating",
+        "usable",
+        "expired",
+        "cancelled",
+        "failed",
+        "interrupted",
+    }
+)
 ReviewerAccessFailure = Literal[
     "not_provisioned",
     "not_configured",
@@ -45,6 +62,7 @@ ReviewerAccessFailure = Literal[
     "access_changed",
     OpenRouterPublicFailure,
     "credential_clear_failed",
+    "reviewer_access_invalid",
 ]
 
 
@@ -340,12 +358,6 @@ class ReviewerAccessOperations:
                 self._replace_document(document, document.revision - 1)
                 committed = True
                 self._notify_changed()
-            status = ReviewerEngineStatus(
-                engine="openrouter",
-                state="usable",
-                model=account.model,
-                tier=account.tier,
-            )
         except (OpenRouterReviewerError, ValueError) as error:
             status = (
                 _openrouter_failure_status(selection.model, error)
@@ -368,6 +380,15 @@ class ReviewerAccessOperations:
                 self._replace_document(document, document.revision - 1)
                 committed = True
                 self._notify_changed()
+        else:
+            # Built outside the catch: a failure here follows the commit, so it
+            # must not be recorded as an unavailable model or committed again.
+            status = ReviewerEngineStatus(
+                engine="openrouter",
+                state="usable",
+                model=account.model,
+                tier=account.tier,
+            )
         return self._view(
             document=document,
             configured=configured,
@@ -411,18 +432,7 @@ class ReviewerAccessOperations:
             flow = self._codex_auth.status()
             credential = (
                 flow
-                if flow.state
-                in {
-                    "starting",
-                    "issued",
-                    "waiting",
-                    "validating",
-                    "usable",
-                    "expired",
-                    "cancelled",
-                    "failed",
-                    "interrupted",
-                }
+                if flow.state in _CODEX_FLOW_STATES
                 else self._codex_auth.current_credential_status()
             )
             codex_status = ReviewerEngineStatus(
@@ -434,6 +444,7 @@ class ReviewerAccessOperations:
         else:
             # Generic access reads remain engine-neutral and cannot initialize
             # CODEX_HOME, parse the contained profile, or inspect credentials.
+            # They report only an existing flow's recorded state and failure.
             host = self._codex_host()
             flow = self._codex_auth.passive_status()
             codex_status = ReviewerEngineStatus(
@@ -442,10 +453,16 @@ class ReviewerAccessOperations:
                     "host_unsupported"
                     if not host.available
                     else flow.state
-                    if flow.state in {"starting", "issued", "waiting", "validating"}
+                    if flow.state in _CODEX_FLOW_STATES
                     else "ready"
                 ),
-                reason=None if host.available else host.reason,
+                reason=(
+                    host.reason
+                    if not host.available
+                    else flow.failure
+                    if flow.state in _CODEX_FLOW_STATES
+                    else None
+                ),
                 host_headroom_bytes=host.headroom_bytes,
             )
         if provisioning.available:
@@ -579,7 +596,7 @@ class ReviewerAccessOperations:
         if task == "description_rewrite" and not api_key:
             api_key = saved_key or ""
         if not credential(api_key):
-            raise ValueError("invalid reviewer credential")
+            raise ReviewerAccessApplicationError("reviewer_access_invalid")
         try:
             account = self._probe_openrouter(api_key, model, task)
         except OpenRouterReviewerError as error:
@@ -721,17 +738,7 @@ class ReviewerAccessOperations:
     def codex_status(self) -> CodexDeviceAuthState:
         def status() -> CodexDeviceAuthState:
             flow = self._codex_auth.status()
-            if flow.state in {
-                "starting",
-                "issued",
-                "waiting",
-                "validating",
-                "usable",
-                "expired",
-                "cancelled",
-                "failed",
-                "interrupted",
-            }:
+            if flow.state in _CODEX_FLOW_STATES:
                 return flow
             return self._codex_auth.current_credential_status()
 

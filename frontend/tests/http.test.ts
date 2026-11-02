@@ -24,6 +24,7 @@ import {
   signInLocation,
   ApiError,
   AmbiguousMutationError,
+  BuildMismatchError,
   CsrfRenewedError,
   MEDIA_HEALTH_KINDS,
   PageCsrfTokenStore,
@@ -2090,6 +2091,26 @@ describe('ReviewApiClient', () => {
     })
 
     await expect(client.logout()).rejects.toMatchObject({ code: 'frontend_build_mismatch' })
+    expect(mismatch).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a read whose response names a different build and raises the shell recovery', async () => {
+    const mismatch = vi.fn()
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn(async () =>
+        Response.json(
+          { error: { code: 'unused' } },
+          { status: 200, headers: { 'x-ml-build-identity': 'e'.repeat(64) } },
+        ),
+      ),
+      onBuildMismatch: mismatch,
+    })
+
+    await expect(client.getLibrary({ lens: 'needs_attention' })).rejects.toBeInstanceOf(
+      BuildMismatchError,
+    )
     expect(mismatch).toHaveBeenCalledOnce()
   })
 

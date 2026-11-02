@@ -242,8 +242,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             policy = self.current_resolved_metadata_policy(report.target.library)
             # The same read of the same case: its decisions are proved
             # against the document validated above, not a second read (#1202).
-            decision_documents = self.get_review_case_decisions(
-                review_case_id, case_document
+            decision_documents = self._current_generation_decisions(
+                self.get_review_case_decisions(review_case_id, case_document)
             )
             source_documents = self._automatic_source_outcome_documents(review_case_id)
             snapshot = CurrentReviewCaseSnapshot(
@@ -325,6 +325,35 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ),
             )
         return snapshot
+
+    def _current_generation_decisions(
+        self, decision_documents: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """Leave out field automatic decisions of an earlier policy generation.
+
+        Leaving Automatic with the policy unchanged admits the same case again
+        under a new generation (#1568). A field automatic decision recorded
+        before stays on the case, bound to its own generation's outcome set,
+        and decides nothing now, so the case reads that field as any case of
+        the current generation does.
+        """
+        row = self._connection.execute(
+            "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+        ).fetchone()
+        if row is None:
+            return decision_documents
+        kept = []
+        for document in decision_documents:
+            value = json.loads(document)
+            if (
+                type(value) is dict
+                and value.get("schema_version") == "automatic-decision-v1"
+                and type(value.get("policy_generation")) is int
+                and value["policy_generation"] != row[0]
+            ):
+                continue
+            kept.append(document)
+        return tuple(kept)
 
     def _decision_effect_states(
         self, review_case_id: str

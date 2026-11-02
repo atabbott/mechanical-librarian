@@ -97,3 +97,4 @@ preference; supersede or amend it.
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
 | [0089](0089-unmatched-audiobook-research.md) | accepted | Search an unmatched audiobook again |
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
+| [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |

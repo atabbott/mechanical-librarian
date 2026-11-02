@@ -60,6 +60,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_DEFERRED_SQL,
     _FIELD_EFFECT_READY_STATES_SQL,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -313,6 +314,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             "WHERE consent_id=? AND current=1",
                             (granted_at, revoked, consent.consent_id),
                         )
+                        self._supersede_waiting_consent_plans(
+                            connection, library, consent.consent_id, granted_at
+                        )
                     consent = EffectConsent.create(
                         connection=connection,
                         library=library,
@@ -414,6 +418,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             consent.consent_id,
                         ),
                     )
+                    self._supersede_waiting_consent_plans(
+                        connection, library, consent.consent_id, granted_at
+                    )
                 for destination in destinations:
                     row = self._connection.execute(
                         "SELECT document FROM field_effect_consents WHERE current=1 "
@@ -447,6 +454,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 ),
                                 consent.consent_id,
                             ),
+                        )
+                        self._supersede_waiting_consent_plans(
+                            connection, library, consent.consent_id, granted_at
                         )
                     consent = EffectConsent.create(
                         connection=connection,
@@ -594,6 +604,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "UPDATE field_effect_consents SET current=0,updated_at=?,document=? "
                     "WHERE consent_id=? AND current=1",
                     (changed_at, revoked, consent_id),
+                )
+                self._supersede_waiting_consent_plans(
+                    connection, library, consent_id, changed_at
                 )
             transaction.commit()
             return len(rows)
@@ -934,14 +947,33 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 preference = "CASE WHEN library_name=? THEN 1 ELSE 0 END,"
                 parameters = (last_library,)
             row = self._connection.execute(
-                "SELECT plan_id,library_name FROM field_effects WHERE state IN "
+                "SELECT plan_id,library_name FROM field_effects effect WHERE state IN "
                 + _FIELD_EFFECT_READY_STATES_SQL
+                + " AND NOT "
+                + _FIELD_EFFECT_DEFERRED_SQL
                 + " ORDER BY "
                 + preference
                 + "updated_at,plan_id LIMIT 1",
                 parameters,
             ).fetchone()
             return None if row is None else (row[0], row[1])
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_deferred(self, plan_id: str) -> bool:
+        """Whether this ready effect waits for its authority to return."""
+        try:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM field_effects effect WHERE plan_id=? AND state IN "
+                    + _FIELD_EFFECT_READY_STATES_SQL
+                    + " AND "
+                    + _FIELD_EFFECT_DEFERRED_SQL,
+                    (plan_id,),
+                ).fetchone()
+                is not None
+            )
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
@@ -1551,9 +1583,17 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             ).fetchone()
             if row is None or row[1] != expected_state:
                 raise FieldEffectError("transition_conflict")
-            operation = FieldEffectOperation.from_json(row[0]).transition(
-                state, at=changed_at, failure=failure
-            )
+            current = FieldEffectOperation.from_json(row[0])
+            if (state, failure) == ("stale", "connection") and not all(
+                self._consent_is_current(member.consent)
+                for member in (current.plan, current.plan.subtitle_plan())
+                if member is not None
+            ):
+                # A withdrawn consent outranks a lost connection: the plan
+                # stales through its own code rather than waiting on a consent
+                # that a later grant would replace with another plan (#1543).
+                failure = "consent"
+            operation = current.transition(state, at=changed_at, failure=failure)
             self._update_field_effect(operation, expected_state)
             self._record_field_effect_event(operation, state, operation.updated_at)
             self._retire_stale_cover_consideration(operation, state, changed_at)
@@ -1612,6 +1652,35 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
 
+    def _supersede_waiting_consent_plans(
+        self, connection: str, library: str, consent_id: str, changed_at: int
+    ) -> int:
+        """Supersede the waiting plans of a consent the caller's transaction
+        retires, so a later grant's new plan never stands beside one (#1543)."""
+        rows = self._connection.execute(
+            # A plan a lost connection released waits on this consent,
+            # so it closes with it rather than reading as waiting. The
+            # consent names one library, whose effects the target index
+            # finds without walking every terminal effect (#1402).
+            "SELECT document,state FROM field_effects WHERE connection_name=? "
+            "AND library_name=? AND state='stale' "
+            "AND json_extract(document,'$.failure')='connection' AND "
+            "(json_extract(document,'$.plan.consent.consent_id')=? OR "
+            "json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) "
+            "ORDER BY rowid",
+            (connection, library, consent_id, consent_id),
+        ).fetchall()
+        for document, state in rows:
+            operation = FieldEffectOperation.from_json(document).transition(
+                "superseded", at=changed_at, failure="consent_revoked"
+            )
+            self._update_field_effect(operation, state)
+            self._record_field_effect_event(
+                operation, "superseded", operation.updated_at
+            )
+            self._schedule_field_effect_cleanup(operation, changed_at)
+        return len(rows)
+
     @local_operation
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
         transaction = self._transaction("revoke_field_effect_consent")
@@ -1632,32 +1701,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             )
             # The unary plus lets the planner use field_effects_ready and then
             # sort; a bare rowid order forces a full scan of every effect.
-            rows = (
-                self._connection.execute(
-                    "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
-                    + _FIELD_EFFECT_READY_STATES_SQL
-                    + " ORDER BY +rowid",
-                    (consent_id, consent_id),
-                ).fetchall()
-                + self._connection.execute(
-                    # A plan a lost connection released waits on this consent,
-                    # so it closes with it rather than reading as waiting. The
-                    # consent names one library, whose effects the target index
-                    # finds without walking every terminal effect (#1402).
-                    "SELECT document,state FROM field_effects WHERE connection_name=? "
-                    "AND library_name=? AND state='stale' "
-                    "AND json_extract(document,'$.failure')='connection' AND "
-                    "(json_extract(document,'$.plan.consent.consent_id')=? OR "
-                    "json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) "
-                    "ORDER BY rowid",
-                    (
-                        raw["consent"]["connection"],
-                        raw["consent"]["library"],
-                        consent_id,
-                        consent_id,
-                    ),
-                ).fetchall()
-            )
+            rows = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
+                + _FIELD_EFFECT_READY_STATES_SQL
+                + " ORDER BY +rowid",
+                (consent_id, consent_id),
+            ).fetchall()
             for document, state in rows:
                 operation = FieldEffectOperation.from_json(document).transition(
                     "superseded", at=changed_at, failure="consent_revoked"
@@ -1667,8 +1716,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     operation, "superseded", operation.updated_at
                 )
                 self._schedule_field_effect_cleanup(operation, changed_at)
+            waiting = self._supersede_waiting_consent_plans(
+                raw["consent"]["connection"],
+                raw["consent"]["library"],
+                consent_id,
+                changed_at,
+            )
             transaction.commit()
-            return len(rows)
+            return len(rows) + waiting
         except (
             sqlite3.Error,
             FieldEffectError,

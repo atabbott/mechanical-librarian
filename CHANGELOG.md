@@ -10,6 +10,14 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.36.1 — Persistence health (in progress)
+
+- Stopping writes for a library, or granting them again for a changed set of
+  fields, now closes a change that was waiting for Audiobookshelf to come back,
+  instead of leaving it waiting beside a new one, and a cover's restore point
+  is removed. A change whose write permission was already withdrawn stops when
+  Audiobookshelf cannot be reached, instead of starting to wait (#1543).
+
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
 - **Clean rebuild required.** A source lookup that failed inside Mechanical
@@ -59,6 +67,13 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** An audiobook asks AudioSilo only when neither
+  Audible nor Audnexus has already matched its recording by running time;
+  otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
+  search per audiobook instead of several. Fewer lookups are sent and no match
+  is lost. An Audnexus answer that a recording isn't sold in one region is
+  recorded in the report's diagnostics as a region miss rather than an unknown
+  failure (#1309).
 - **Clean rebuild required.** Hardcover's audio editions are read for every
   matched audiobook work and compared with the file. The report records when
   an edition with a different narrator matches the file and the Audible match
@@ -193,6 +208,42 @@ brackets are GitHub issues.
   audiobooks, instead of "no more specific reason is known" (#1593).
 - Sign out always lands on the sign-in page, instead of sometimes on a
   sign-in page that offers to return to where you were (#1588).
+- Settings' reviewer access no longer fails to load after a Codex sign-in when
+  the Codex auth store cannot be read; a contained profile whose paths contain
+  a NUL character is reported as unreadable (#1597).
+- A tab left open on the previous build after an upgrade now shows the reload
+  notice on its next read, not only on a write, and offers to reload instead
+  of "Try again". Saving a policy snapshot, changing the description adviser,
+  resuming automatic handling and signing out now say a result that cannot be
+  confirmed may have taken effect, and show the current state or ask you to
+  reload it (#1577).
+- Settings and setup no longer show Codex as ready to sign in after its
+  sign-in failed, expired, was cancelled or interrupted, or when its sign-in
+  cannot be read, while Codex is not selected. They show that outcome and
+  offer to restart sign-in, and a completed sign-in can be used without
+  signing in again (#1598).
+- Settings and setup no longer go on showing Codex as ready to use after
+  selecting it, a Codex review or Check finds its sign-in no longer works:
+  the next time reviewer access is read they show the sign-in failed and offer
+  to check it again or sign in again. A check that succeeds shows Codex as
+  ready to use again, including after Mechanical Librarian restarts (#1614).
+- Cancelling a Codex sign-in no longer stops a working sign-in that was
+  already installed from being used: Check, Use Codex and Codex reviews accept
+  it again once the cancelled sign-in has stopped, without signing in again,
+  clearing the sign-in or restarting Mechanical Librarian (#1622).
+- Switching from Automatic to Preview without changing the policy keeps every
+  work in Attention and Library, and keeps your answers: a decision you had
+  not yet written stays decided and is still written. An automatic decision
+  recorded before the switch, including a cover or description, writes
+  nothing in Preview. No clean rebuild is needed (#1568).
+- After you cancel a Codex device sign-in, or it finishes, expires or fails,
+  Settings › Reviewer shows the outcome and offers to check or restart the
+  sign-in, or to use Codex, without a reload, instead of a lone Cancel
+  sign-in. Starting or cancelling a sign-in keeps keyboard focus on the next
+  control, and setup names each sign-in status in words, with its remedy
+  (#1607).
+- In setup, on a host that cannot run Codex, Cancel any active sign-in keeps
+  keyboard focus while it runs and after it reports (#1615).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

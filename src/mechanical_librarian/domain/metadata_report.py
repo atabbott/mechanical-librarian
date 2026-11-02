@@ -96,7 +96,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v66"
+REPORT_SCHEMA = "metadata-report-v67"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -622,6 +622,9 @@ class ProviderStatus(StrEnum):
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
     QUERY_LIMIT_EXCEEDED = "query_limit_exceeded"
+    # AudioSilo is asked only when no Audible or Audnexus answer in the same
+    # pass admitted a recording by stated runtime (#1309, ADR-0061 clause 9).
+    NOT_NEEDED = "not_needed"
 
 
 # A lane that ended in one of these may answer differently when it is asked
@@ -669,6 +672,7 @@ _DISPATCH_OUTCOMES = {
     ProviderStatus.OVERSIZED: DispatchOutcome.UNAVAILABLE,
     ProviderStatus.INSUFFICIENT_INPUT: DispatchOutcome.NOT_DISPATCHED,
     ProviderStatus.DISABLED: DispatchOutcome.NOT_DISPATCHED,
+    ProviderStatus.NOT_NEEDED: DispatchOutcome.NOT_DISPATCHED,
 }
 
 
@@ -2918,6 +2922,15 @@ class ProviderConvergence:
         }
 
 
+# A provider in one of these was never asked, so it claims no inputs.
+_INACTIVE_PROVIDER_STATUSES = frozenset(
+    {
+        ProviderStatus.DISABLED,
+        ProviderStatus.INSUFFICIENT_INPUT,
+        ProviderStatus.NOT_NEEDED,
+    }
+)
+
 _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.ADAPTER_FAULT: FailureStage.EXECUTION,
     FailureCategory.AUTHENTICATION: FailureStage.RESPONSE,
@@ -2933,6 +2946,7 @@ _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.OVERSIZED_RESPONSE: FailureStage.RESPONSE,
     FailureCategory.PROVIDER_DECLARED_ERROR: FailureStage.RESPONSE,
     FailureCategory.QUOTA_RATE_LIMIT: FailureStage.RESPONSE,
+    FailureCategory.REGION_UNAVAILABLE: FailureStage.RESPONSE,
     FailureCategory.SCHEMA_CONSTRUCTION: FailureStage.SCHEMA,
     FailureCategory.TIMEOUT: FailureStage.REQUEST,
     FailureCategory.TRANSPORT: FailureStage.REQUEST,
@@ -3124,10 +3138,7 @@ class ProviderObservation:
             raise ReportValueError(
                 "edition overflow witness references are inconsistent"
             )
-        if (
-            self.status in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT}
-            and self.input_references
-        ):
+        if self.status in _INACTIVE_PROVIDER_STATUSES and self.input_references:
             raise ReportValueError("inactive provider cannot claim inputs")
         if any(
             claim.reference
@@ -3186,8 +3197,7 @@ class ProviderObservation:
             # not its own: a disabled provider's, or one whose every lane had
             # too little to search with (#1498).
             if (
-                self.status
-                not in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT}
+                self.status not in _INACTIVE_PROVIDER_STATUSES
                 and self.input_references != expected_inputs
             ):
                 raise ReportValueError("provider aggregate inputs are inconsistent")
