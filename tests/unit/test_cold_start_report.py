@@ -299,6 +299,18 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             "non_cover_fields": attention,
             "cover_fields_with_owner_actions": 0,
             "works": 1,
+            "per_case": library["attention_per_case"],
+        }
+        # One ebook case holds the one series field (#1310).
+        assert library["attention_per_case"] == {
+            "audiobook": {
+                basis: {"cases": 0, "fields": 0, "fields_per_case": None}
+                for basis in ("with_covers", "without_covers")
+            },
+            "ebook": {
+                basis: {"cases": 1, "fields": 1, "fields_per_case": 1.0}
+                for basis in ("with_covers", "without_covers")
+            },
         }
         fidelity = cast("dict[str, object]", library["scan_fidelity"])
         assert fidelity["mount"] == "books"
@@ -418,7 +430,20 @@ def test_current_cover_pointer_marks_attention_counts_unavailable(
         },
         "cover_fields_with_owner_actions": 1,
         "works": 2,
+        "per_case": {
+            "audiobook": {
+                basis: {"cases": 0, "fields": 0, "fields_per_case": None}
+                for basis in ("with_covers", "without_covers")
+            },
+            # Two cases, one field each; without covers the cover-only case
+            # is no case (#1310).
+            "ebook": {
+                "with_covers": {"cases": 2, "fields": 2, "fields_per_case": 1.0},
+                "without_covers": {"cases": 1, "fields": 1, "fields_per_case": 1.0},
+            },
+        },
     }
+    assert library["attention_per_case"] is None
     assert library["works_without_provider_candidates"] == 0
     assert library["not_matched"] == {
         "total": 0,
@@ -821,8 +846,8 @@ def test_main_rejects_a_malformed_mount_root() -> None:
         )
 
 
-def test_the_schema_is_pinned_at_its_fifth_version() -> None:
-    assert "cold-start-report-v5" == cold_start.COLD_START_REPORT_SCHEMA
+def test_the_schema_is_pinned_at_its_sixth_version() -> None:
+    assert "cold-start-report-v6" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:
