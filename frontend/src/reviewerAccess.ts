@@ -173,19 +173,37 @@ export const useReviewerAccess = (http: ReviewHttp) => {
         ? 1_000
         : false,
   })
-  const { refetch } = query
+  // The query's refetch is rewrapped on every render; read it through a ref so
+  // the effect below reruns only when the flow or the access state changes.
+  const refetchAccess = useRef(query.refetch)
+  refetchAccess.current = query.refetch
+  // The terminal device result already refreshed, so a failed read waits for
+  // an explicit retry instead of repeating on every render (#1607).
+  const refreshedFor = useRef<object | null>(null)
+  const device = deviceQuery.data
   useEffect(() => {
-    const state = deviceQuery.data?.state
-    if (state && !['starting', 'issued', 'waiting', 'validating'].includes(state)) {
-      const task = window.setTimeout(() => {
-        setDeviceActive(false)
-        // A finished flow leaves access in progress until it is read again.
-        if (accessInProgress) void refetch({ cancelRefetch: false })
-      }, 0)
-      return () => window.clearTimeout(task)
+    if (!device || ['starting', 'issued', 'waiting', 'validating'].includes(device.state)) {
+      return undefined
     }
-    return undefined
-  }, [deviceQuery.data?.state, accessInProgress, refetch])
+    const task = window.setTimeout(() => {
+      // Only a shown waiting branch hands focus on; a page that loads with a
+      // finished flow leaves focus where it is.
+      const closing = codexCancelTrigger.current !== null
+      const settle = () => {
+        if (closing) focusIfLost(codexStartTrigger, codexReplaceTrigger)
+      }
+      setDeviceActive(false)
+      // A finished flow leaves access in progress until it is read again; its
+      // Cancel button then unmounts, so focus moves to the outcome's control.
+      if (accessInProgress && refreshedFor.current !== device) {
+        refreshedFor.current = device
+        void refetchAccess.current({ cancelRefetch: false }).then(settle)
+      } else {
+        settle()
+      }
+    }, 0)
+    return () => window.clearTimeout(task)
+  }, [device, accessInProgress])
   const mutationFailure =
     mutation.error instanceof CsrfRenewedError
       ? sessionRefreshedCopy

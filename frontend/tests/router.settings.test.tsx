@@ -1086,11 +1086,20 @@ describe('owner settings route', () => {
 
       await user.click(await screen.findByRole('button', { name: 'Restart device sign-in' }))
       expect(await screen.findByText('ABCD-1234')).toBeVisible()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toHaveFocus())
       await waitFor(
         () => expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull(),
         { timeout: 3000 },
       )
       expect(screen.queryByText('ABCD-1234')).toBeNull()
+      // The focused Cancel unmounts; focus moves to the outcome's control.
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', {
+            name: state === 'usable' ? 'Replace Codex sign-in' : 'Restart device sign-in',
+          }),
+        ).toHaveFocus(),
+      )
       if (state === 'usable') {
         expect(
           await screen.findByRole('button', { name: 'Use Codex for cover observations' }),
@@ -1110,6 +1119,33 @@ describe('owner settings route', () => {
       }
     },
   )
+
+  it('reads access once when a finished sign-in leaves it unavailable (#1607)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(reviewerView)
+      .mockRejectedValue(new ApiError(503, 'unavailable'))
+    http.startCodexDevice = vi.fn(async () => ({
+      access: startedAccess,
+      device: codexDevice('starting'),
+    }))
+    http.getCodexDevice = vi
+      .fn<ReviewHttp['getCodexDevice']>()
+      .mockResolvedValueOnce(codexDevice('waiting'))
+      .mockResolvedValue(codexDevice('usable', null))
+    renderRoute('/settings?group=reviewer', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Restart device sign-in' }))
+    expect(await screen.findByText('ABCD-1234')).toBeVisible()
+    await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(http.getReviewerAccess).toHaveBeenCalledTimes(2)
+  })
 
   it('announces OpenRouter validation before retaining its terminal result', async () => {
     const user = userEvent.setup()
