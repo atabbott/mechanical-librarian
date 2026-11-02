@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import copy
+import functools
 import unittest
+from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,7 +17,23 @@ from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
+    ReportLimits,
     TargetConnectionConfiguration,
+)
+from mechanical_librarian.application.metadata_report import (
+    CredentialError,
+    GenerateMetadataReport,
+    InspectionResult,
+    MetadataReportError,
+    ProviderBinding,
+    TargetFile,
+    TargetSnapshot,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    classify_provider_recovery_failure,
+)
+from mechanical_librarian.application.provider_retry_successor import (
+    ProviderRetrySuccessorError,
 )
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.bootstrap.composition import (
@@ -31,7 +51,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from tests.support.metadata_report_doubles import single_track_audio_facts
+from tests.support.metadata_report_doubles import (
+    FakeInspector,
+    FakeReportRepository,
+    FakeTarget,
+    single_track_audio_facts,
+)
 
 
 def _audiobook_report() -> MetadataReport:
@@ -762,3 +787,270 @@ def test_disabled_inventaire_constructs_no_client_or_pacer():
         assert binding.enabled is False
     pacer.assert_not_called()
     client.assert_not_called()
+
+
+# The two provider constructors -- the foreground report's factory and a
+# provider retry's -- refuse the same configurations, each with its own error.
+# These tests pin each refusal's type and text, the boundary each crosses, and
+# the pacer each path hands its adapter.
+
+_REFUSALS = ("hardcover_without_credential", "open_library_without_email", "unknown")
+_FOREGROUND_REFUSAL = {
+    "hardcover_without_credential": "provider credential unavailable",
+    "open_library_without_email": "provider configuration is invalid",
+    "unknown": "provider configuration is invalid",
+}
+_ADAPTERS = (
+    "google_books",
+    "open_library",
+    "inventaire",
+    "hardcover",
+    "audible_catalog",
+    "audnexus",
+    "audiosilo",
+    "itunes_search",
+)
+_PROVIDER_CLASSES = {
+    "google_books": "GoogleBooksMetadataProvider",
+    "open_library": "OpenLibraryMetadataProvider",
+    "inventaire": "InventaireMetadataProvider",
+    "hardcover": "HardcoverMetadataProvider",
+    "audible_catalog": "AudibleCatalogMetadataProvider",
+    "audnexus": "AudnexusMetadataProvider",
+    "audiosilo": "AudioSiloMetadataProvider",
+    "itunes_search": "ITunesSearchMetadataProvider",
+}
+_PROVIDER_CLIENTS = (
+    "google_books_client",
+    "hardcover_client",
+    "hardcover_client_token",
+    "open_library_client",
+    "inventaire_client",
+    "audible_catalog_client",
+    "audnexus_client",
+    "audiosilo_client",
+    "itunes_search_client",
+)
+
+
+def _provider_for(adapter: str) -> ProviderConnectionConfiguration:
+    """One valid, enabled connection for the adapter, named after it."""
+    name = adapter.replace("_", "-")
+    if adapter == "open_library":
+        return ProviderConnectionConfiguration(
+            name, True, False, None, adapter, "owner@example.org"
+        )
+    if adapter == "audible_catalog":
+        return ProviderConnectionConfiguration(
+            name, True, False, None, adapter, marketplaces=("us",)
+        )
+    return ProviderConnectionConfiguration(name, True, False, None, adapter)
+
+
+def _refused(branch: str) -> ProviderConnectionConfiguration:
+    """A connection both constructors refuse.
+
+    Validated configuration admits a hardcover connection with no credential
+    but refuses the other two outright, so those are stand-ins: a copy of a
+    valid connection with one field changed underneath its validation.
+    """
+    if branch == "hardcover_without_credential":
+        return _provider_for("hardcover")
+    stand_in = copy.copy(_provider_for("open_library"))
+    if branch == "open_library_without_email":
+        object.__setattr__(stand_in, "contact_email", None)
+    else:
+        object.__setattr__(stand_in, "adapter", "unknown")
+    return stand_in
+
+
+def _report_config(
+    providers: tuple[ProviderConnectionConfiguration, ...],
+) -> ApplicationConfiguration:
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "books",
+                "primary",
+                "library",
+                "book",
+                "media",
+                tuple(sorted(value.name for value in providers)),
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        tuple(sorted(providers, key=lambda value: value.name)),
+    )
+
+
+def _foreground_bindings(
+    config: ApplicationConfiguration,
+    credentials: dict[str, str] | None = None,
+    **pacers: object,
+) -> tuple[ProviderBinding, ...]:
+    service = unittest.mock.Mock()
+    service.run.return_value = "report"
+    with (
+        patch.object(composition, "CoverArtifactStore"),
+        patch.object(composition, "AudiobookshelfItemReader"),
+        patch.object(
+            composition, "GenerateMetadataReport", return_value=service
+        ) as generate,
+    ):
+        assert "report" == composition.run_metadata_report_loaded(
+            config,
+            Path("/reports"),
+            Path("/artifacts"),
+            "primary",
+            "books",
+            "item",
+            0,
+            credentials=credentials,
+            **pacers,
+        )
+    return tuple(generate.call_args.kwargs["providers"])
+
+
+def _foreground_factory() -> Callable[..., object]:
+    (binding,) = _foreground_bindings(_report_config((_provider_for("hardcover"),)))
+    return binding.factory
+
+
+@pytest.mark.parametrize("branch", _REFUSALS)
+def test_foreground_factory_refusal_type_and_text(branch):
+    factory = _foreground_factory()
+    with pytest.raises(MetadataReportError) as raised:
+        factory(_refused(branch))
+    assert type(raised.value) is MetadataReportError
+    assert str(raised.value) == _FOREGROUND_REFUSAL[branch]
+
+
+@pytest.mark.parametrize("branch", _REFUSALS)
+def test_foreground_refusal_is_a_construction_failure_at_the_run_boundary(branch):
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    service = GenerateMetadataReport(
+        target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=FakeReportRepository,
+        providers=(
+            ProviderBinding(
+                "catalogue",
+                True,
+                functools.partial(_foreground_factory(), _refused(branch)),
+                authority="hardcover",
+            ),
+        ),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    )
+    with pytest.raises(MetadataReportError) as raised:
+        service.run("item-1", 0)
+    assert not isinstance(raised.value, CredentialError)
+    assert str(raised.value) == "provider construction failed"
+    assert type(raised.value.__cause__) is MetadataReportError
+    assert str(raised.value.__cause__) == _FOREGROUND_REFUSAL[branch]
+    assert classify_provider_recovery_failure(raised.value)[0] != "authentication"
+
+
+@pytest.mark.parametrize("branch", _REFUSALS)
+def test_retry_factory_refusal_type_and_text(branch):
+    with pytest.raises(MetadataReportError) as raised:
+        composition._retry_provider(
+            _refused(branch),
+            _report_config((_provider_for("hardcover"),)),
+            None,
+            ("us",),
+            composition._ProviderPacers.for_providers(()),
+        )
+    assert type(raised.value) is ProviderRetrySuccessorError
+    assert str(raised.value) == "provider retry configuration changed"
+
+
+def test_hardcover_with_an_injected_credential_is_constructed_on_both_paths():
+    provider = _provider_for("hardcover")
+    config = _report_config((provider,))
+    credentials = {"provider:hardcover": "token", "target:primary": "target"}
+    foreground_client, retry_client = object(), object()
+    constructed: list[object] = []
+    with (
+        patch.object(
+            composition,
+            "hardcover_client_token",
+            side_effect=(foreground_client, retry_client),
+        ) as token_client,
+        patch.object(composition, "hardcover_client") as file_client,
+        patch.object(
+            composition,
+            "HardcoverMetadataProvider",
+            side_effect=lambda *args, **kwargs: (
+                constructed.append(args[1]) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+            ),
+        ),
+    ):
+        (binding,) = _foreground_bindings(config, credentials)
+        binding.factory()
+        composition._retry_provider(
+            provider,
+            config,
+            credentials,
+            ("us",),
+            composition._ProviderPacers.for_providers((provider,)),
+        )
+    file_client.assert_not_called()
+    assert [
+        unittest.mock.call("token", 30),
+        unittest.mock.call("token", 30),
+    ] == token_client.call_args_list
+    assert [foreground_client, retry_client] == constructed
+
+
+@pytest.mark.parametrize("adapter", _ADAPTERS)
+def test_each_path_passes_its_own_pacer_for_the_adapter(adapter):
+    provider = _provider_for(adapter)
+    config = _report_config((provider,))
+    credentials = (
+        {"provider:hardcover": "token", "target:primary": "target"}
+        if adapter == "hardcover"
+        else None
+    )
+    foreground = {name: object() for name in _ADAPTERS}
+    retry = {name: object() for name in _ADAPTERS}
+    received: list[object] = []
+    with ExitStack() as stack:
+        for client in _PROVIDER_CLIENTS:
+            stack.enter_context(patch.object(composition, client))
+        for name in _ADAPTERS:
+            stack.enter_context(
+                patch.object(
+                    composition,
+                    _PROVIDER_CLASSES[name],
+                    side_effect=lambda *args, **kwargs: (
+                        received.append(kwargs["pacer"]) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+                    ),
+                )
+            )
+        (binding,) = _foreground_bindings(
+            config,
+            credentials,
+            **{name + "_pacer": value for name, value in foreground.items()},
+        )
+        binding.factory()
+        composition._retry_provider(
+            provider,
+            config,
+            credentials,
+            ("us",),
+            composition._ProviderPacers(*(retry[name] for name in _ADAPTERS)),
+        )
+    assert [foreground[adapter], retry[adapter]] == received
