@@ -130,7 +130,7 @@ def test_an_ebooks_tags_under_off_are_kept_and_still_choosable(
 
 
 def _tags_fact(repository: object, case_id: str) -> int:
-    row = repository._connection.execute(  # type: ignore[attr-defined]
+    row = repository._connection.execute(
         "SELECT unresolved_choice FROM review_case_field_facts "
         "WHERE review_case_id=? AND destination='tags'",
         (case_id,),
