@@ -89,6 +89,10 @@ brackets are GitHub issues.
   and an "About the book" header line no longer counts as a difference.
   Marketing lines are never chosen as subtitles, and genres or synopses from a
   store in another language wait for your choice (#1317).
+- **Clean rebuild required.** A subtitle that only repeats the series, such as
+  "A <Series> Novel" or "<Series>, Book 3", is never written for you and stays
+  your choice. A title cleanup that would drop such a label after an underscore
+  ("Title_ A <Series> Novel") now asks you first (#1616).
 - **Clean rebuild required.** Every language is written as one display name,
   such as "English"; a current `en` or `eng` is offered for review, never
   rewritten. The `preserve` language option is gone (#1314).

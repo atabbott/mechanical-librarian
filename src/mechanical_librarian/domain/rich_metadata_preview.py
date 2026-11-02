@@ -69,11 +69,13 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalResult,
     ProposalSet,
     ProposalValueKind,
+    case_series_names,
     ordinary_provider_description_source_is_safe,
     provider_candidate_represents_target_series_work,
     provider_candidate_represents_target_work,
     segment_corroboration,
     series_name_equivalence_key,
+    subtitle_restates_series,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -650,6 +652,16 @@ def _project(
             return _abstain(field, option, target, current, reason)
     if field == "subtitle" and destination == "automatic":
         reason = _automatic_subtitle_abstention(report, candidate)
+        # A value that only restates the series is never written for the
+        # owner, filled or replaced; it stays a choice (#1616).
+        if (
+            reason is None
+            and candidate is not None
+            and subtitle_restates_series(
+                candidate.value.value, case_series_names(report, proposal)
+            )
+        ):
+            reason = "subtitle_restates_series"
         if reason is not None:
             return _abstain(field, option, target, current, reason)
     if candidate is None:
@@ -869,8 +881,8 @@ def _descriptive_audiobook_subtitle(result: ProposalResult, report: MetadataRepo
     retained = _retained_claims(report)
     candidates = [candidate for candidate in result.alternatives
                   if candidate.value.kind is ProposalValueKind.TEXT
-                  # Marketing copy is never a subtitle (#1317); #1310's
-                  # series-restating guard belongs beside it.
+                  # Marketing copy is never a subtitle (#1317); a series
+                  # restatement is withheld later, in `_project` (#1616).
                   and not marketing_copy(candidate.value.value)
                   and any((held := retained.get(reference)) is not None
                           and type(held.claim) is ProviderClaim

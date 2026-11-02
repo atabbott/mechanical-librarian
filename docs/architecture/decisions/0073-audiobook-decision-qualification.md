@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-10
-- Issues: #967, #1047, #1166
+- Issues: #967, #1047, #1166, #1616
 
 ## Context
 
@@ -134,6 +134,24 @@ does under that routing is still decided by the ebook envelope, which leaves
 This supersedes ADR-0069's statement that nothing automatic is ever offered a
 recording. Everything else ADR-0069 records -- the case, the terminals, and the
 owner's authority over an unqualified field -- is unchanged.
+
+## Series-restating subtitles and the underscore segment (#1616)
+
+An automatic subtitle fill or replacement, on either medium, is withheld as
+`subtitle_restates_series` when the whole value reads as a series label by the
+closed series grammar, or names one of the case's series once a closed frame
+is removed. The case's series are those its populated series field, its
+sources' series and its series alternatives state; another subtitle
+alternative never names one, so one subtitle cannot withhold another. The
+frame is a leading position ("Book 3 of"), a leading article and ordinal
+only with a trailing "Novel", "Novella", "Novelette", "Story" or "Book", and a
+trailing position. No other wording is inferred. The guard only withholds:
+the value stays a choice, no decision identity changes and the F46 digest does
+not rotate. A corroborated split is untouched, because it moves text already in
+the title. The title strip guard (#1252), and the announcement check that
+shares its parts, split text at an underscore and a space too; the strip guard
+alone also counts as a case series the name a subtitle alternative's label
+states ("Saga" from "Saga, Book 4").
 
 ## Compact current records
 
