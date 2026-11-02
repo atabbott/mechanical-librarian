@@ -26,6 +26,9 @@ brackets are GitHub issues.
   prepared again after leaving Automatic now closes at the next policy
   activation, and a cover's restore point is removed, instead of waiting for
   good (#1657).
+- A change waiting for Audiobookshelf to come back now closes when a rescan
+  replaces or retires its review case, or the work leaves the library, instead
+  of waiting for good, and a cover's restore point is removed (#1658).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

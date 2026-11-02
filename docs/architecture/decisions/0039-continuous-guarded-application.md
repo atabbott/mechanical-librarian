@@ -9,7 +9,8 @@ Issue #1370 amends consent across an owner's policy activation: see
 Issue #1402 amends recovery: a stranded claim returns unsent, and a plan a lost
 connection staled is planned again within a bound. Issue #1415 extends that to
 cover plans.
-Issues #1599 and #1657 amend policy activation for waiting plans.
+Issues #1599 and #1657 amend policy activation for waiting plans, and #1658
+amends preparation.
 
 ## Context
 
@@ -158,6 +159,9 @@ library's write permission and the product then showed writes as calm.
    again (#1599). A later activation closes the same way, whatever its origin,
    a plan still waiting on a case an earlier activation retired and preparation
    never readmitted, since that case can return only as a new episode (#1657).
+   Preparation closes the same way, in the transaction that admits or retires
+   a work, every plan of that work still waiting on a case other than its
+   current one, since such a case can return only as a new episode (#1658).
    A waiting plan whose case returns as itself keeps waiting and is planned
    again into the same plan.
 
