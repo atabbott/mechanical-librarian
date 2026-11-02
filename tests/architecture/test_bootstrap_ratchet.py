@@ -77,24 +77,42 @@ REVIEWED_NCNC = 3197
 REVIEW_BAND = 300
 REVIEWED_MODULE = "composition.py"
 _C = "composition.py::"
-# Outermost keys carry their span; keys nested inside another key carry None
-# (their growth shows in the outermost span).
+# The residual the composition-root refactor left (stage 6, #1682 and
+# earlier). Each key stays in bootstrap for the reason beside it; a later
+# change that moves one out deletes its key. Outermost keys carry their span;
+# keys nested inside another key carry None (their growth shows in the
+# outermost span).
 RESIDUAL: dict[str, int | None] = {
+    # Swaps whole setup and store runtime generations at a cutover, which only
+    # the composition root can build.
     _C + "_StoreRuntimeActivation": 118,
+    # Constructs one Audiobookshelf instance's adapters for each library.
     _C + "compose_continuous_guarded_application": 84,
+    # CLI report entry: binds providers and stores for one validated snapshot.
     _C + "run_metadata_report_loaded": 179,
+    # Chooses an adapter class per provider configuration; needs the adapters.
     _C + "_metadata_provider": 98,
+    # Wires the stage callbacks into ReviewPipelineStages (split in stage 4).
     _C + "create_review_pipeline": 194,
+    # Wires recovery to the built pipeline; catches an adapter error type.
     _C + "_provider_recovery_wiring": 95,
+    # CLI entry projections over the composed application.
     _C + "run_catalogue": 70,
     _C + "run_batch": 125,
+    _C + "run_cover_review": 104,
+    # Build the store and setup runtime generations; a state-layer split is
+    # refactor C, deferred by the owner.
     _C + "compose_store_runtime_generation": 237,
     _C + "_compose_setup_runtime_generation": 145,
+    # Server entry: chooses the setup or store generation and serves it.
     _C + "run_review_server": 350,
+    # Constructs the Codex device-auth manager, which tests replace on
+    # composition, and the reviewer access around it.
     _C + "_compose_reviewer_access": 167,
+    # Wires the cover consideration stores and observers.
     _C + "_compose_cover_considerations": 74,
+    # Fail-closed session store for offline compositions (kept by A-U4).
     _C + "_OfflineSessionStore": 40,
-    _C + "run_cover_review": 104,
 }
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
