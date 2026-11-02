@@ -248,16 +248,39 @@ def test_model_free_manual_path_is_persisted_before_exact_selection(
         )
 
 
-def test_incumbent_only_cover_remains_an_explicit_owner_choice() -> None:
-    assert _needs_attention(
-        {
-            "destination": "cover",
-            "manual_required": False,
-            "result": {
-                "outcome": "keep",
-                "reasons": ["current_cover_verified"],
-            },
-        }
+@pytest.mark.parametrize(
+    "outcome,reasons,asks",
+    (
+        ("keep", ["current_cover_verified"], False),
+        (
+            "unresolved_choice",
+            ["current_cover_verified", "owner_cover_choice_required"],
+            False,
+        ),
+        (
+            "unresolved_choice",
+            [
+                "current_cover_unavailable",
+                "current_cover_unverified",
+                "owner_cover_choice_required",
+            ],
+            True,
+        ),
+    ),
+)
+def test_a_verified_current_cover_is_kept_without_asking(
+    outcome: str, reasons: list[str], asks: bool
+) -> None:
+    """A readable current cover stays choosable but never asks (#1310)."""
+    assert (
+        _needs_attention(
+            {
+                "destination": "cover",
+                "manual_required": False,
+                "result": {"outcome": outcome, "reasons": reasons},
+            }
+        )
+        is asks
     )
 
 
