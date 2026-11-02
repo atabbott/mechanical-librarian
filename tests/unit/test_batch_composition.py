@@ -1054,3 +1054,30 @@ def test_each_path_passes_its_own_pacer_for_the_adapter(adapter):
             composition._ProviderPacers(*(retry[name] for name in _ADAPTERS)),
         )
     assert [foreground[adapter], retry[adapter]] == received
+
+
+_PACER_CLASSES = {
+    "google_books": "GoogleBooksPacer",
+    "open_library": "OpenLibraryPacer",
+    "inventaire": "InventairePacer",
+    "hardcover": "HardcoverPacer",
+    "audible_catalog": "AudibleCatalogPacer",
+    "audnexus": "AudnexusPacer",
+    "audiosilo": "AudioSiloPacer",
+    "itunes_search": "ITunesSearchPacer",
+}
+
+
+@pytest.mark.parametrize("adapter", _ADAPTERS)
+def test_a_pipeline_paces_each_enabled_adapter_alone(adapter):
+    enabled = _provider_for(adapter)
+    disabled = ProviderConnectionConfiguration("disabled", False, False, None, adapter)
+    pacers = composition._ProviderPacers.for_providers((enabled,))
+    for name in _ADAPTERS:
+        pacer = getattr(pacers, name)
+        if name == adapter:
+            assert type(pacer) is getattr(composition, _PACER_CLASSES[name])
+        else:
+            assert pacer is None
+    unpaced = composition._ProviderPacers.for_providers((disabled,))
+    assert all(getattr(unpaced, name) is None for name in _ADAPTERS)
