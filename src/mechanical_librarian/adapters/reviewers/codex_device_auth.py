@@ -533,7 +533,9 @@ class CodexDeviceAuthManager:
                 self._spawning = False
                 self._process = process
                 self._process_group = process_group
-                cancelled = self._cancelled
+                # Cancellation stops only the cancelled flow's own children;
+                # rechecks are already refused while any flow thread lives.
+                cancelled = flow_owned and self._cancelled
         if cancelled:
             self._release_retained_process_or_quarantine()
             raise CodexDeviceAuthError("cancelled")

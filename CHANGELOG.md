@@ -220,6 +220,10 @@ brackets are GitHub issues.
   the next time reviewer access is read they show the sign-in failed and offer
   to check it again or sign in again. A check that succeeds shows Codex as
   ready to use again, including after Mechanical Librarian restarts (#1614).
+- Cancelling a Codex sign-in no longer stops a working sign-in that was
+  already installed from being used: Check, Use Codex and Codex reviews accept
+  it again once the cancelled sign-in has stopped, without signing in again,
+  clearing the sign-in or restarting Mechanical Librarian (#1622).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
