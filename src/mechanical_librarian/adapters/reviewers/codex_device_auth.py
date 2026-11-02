@@ -125,8 +125,9 @@ class CodexDeviceAuthManager:
         self._trust_failed = False
         self._quarantined = False
         self._recheck_recorded: CodexDeviceAuthState | None = None
-        # Bumped by every command that moves the state (start, cancel, clear,
-        # recovery), so a recheck never outlives an intervening command.
+        # Bumped by every state write other than a recorded recheck (commands,
+        # recovery and the flow), so a recheck never outlives an intervening
+        # transition.
         self._transitions = 0
 
     def _require_lease(self) -> None:
@@ -173,6 +174,7 @@ class CodexDeviceAuthManager:
                     user_code=current.user_code,
                     expires_in_seconds=current.expires_in_seconds,
                 )
+                self._transitions += 1
             return current
 
     def cancel(self) -> CodexDeviceAuthState:
@@ -298,7 +300,8 @@ class CodexDeviceAuthManager:
         Overlapping rechecks may replace one another only while no command
         ran since this one began.
         """
-        if outcome.state not in _RECHECK_RECORDED:
+        if outcome.state not in _RECHECK_RECORDED or outcome is observed:
+            # A passthrough of the observed state proved nothing new.
             return
         with self._lock:
             if self._quarantined or self._trust_failed or self._installing:
@@ -454,6 +457,7 @@ class CodexDeviceAuthManager:
                     self._require_lease()
                     with self._lock:
                         self._state = CodexDeviceAuthState("usable")
+                        self._transitions += 1
                 finally:
                     with self._lock:
                         self._installing = False
@@ -463,6 +467,7 @@ class CodexDeviceAuthManager:
                     self._state = CodexDeviceAuthState(
                         "failed", failure="protocol_or_process"
                     )
+                    self._transitions += 1
         finally:
             if prepared is not None:
                 prepared.close()
@@ -475,6 +480,7 @@ class CodexDeviceAuthManager:
                         self._state = CodexDeviceAuthState(
                             "failed", failure="protocol_or_process"
                         )
+                        self._transitions += 1
 
     def _spawn(
         self, prepared: CodexAuthCommand, *, flow_owned: bool
@@ -593,6 +599,7 @@ class CodexDeviceAuthManager:
         with self._lock:
             self._quarantined = True
             self._state = CodexDeviceAuthState("failed", failure="protocol_or_process")
+            self._transitions += 1
         self._quarantine_activity()
 
     def _stop_owned_process(
@@ -621,6 +628,7 @@ class CodexDeviceAuthManager:
             with self._lock:
                 if not self._cancelled:
                     self._state = issued
+                    self._transitions += 1
 
     def _recover_interrupted_staging(self) -> CodexDeviceAuthState:
         parent = self._auth_store.parent
@@ -662,6 +670,7 @@ class CodexDeviceAuthManager:
         with self._lock:
             if not self._cancelled:
                 self._state = state
+                self._transitions += 1
 
 
 def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:

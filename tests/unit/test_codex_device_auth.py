@@ -1044,6 +1044,80 @@ def test_recheck_begun_before_a_clear_never_overwrites_a_later_recheck(
     assert _lazy_over(manager).passive_status().state == "ready"
 
 
+def test_passthrough_from_a_live_flow_never_overwrites_a_later_recheck(
+    tmp_path: Path,
+) -> None:
+    # A recheck during a live flow only passes the flow's state through; if it
+    # pauses while the flow ends and a newer recheck records a refusal, the
+    # passthrough must not put the flow's usable back.
+    manager = _manager(tmp_path)
+    _finish(manager)
+    assert manager.status() == _USABLE
+    alive = Mock()
+    alive.is_alive.return_value = True
+    manager._thread = alive
+    record_recheck = manager._record_recheck
+    calls = 0
+
+    def paused_record(
+        observed: CodexDeviceAuthState,
+        transitions: int,
+        outcome: CodexDeviceAuthState,
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            alive.is_alive.return_value = False
+            manager._popen = _status_popen(b"Not logged in\n")  # type: ignore[assignment]
+            assert manager.recheck_credential_status() == _REFUSED
+            assert manager.status() == _REFUSED
+        record_recheck(observed, transitions, outcome)
+
+    with patch.object(manager, "_record_recheck", side_effect=paused_record):
+        assert manager.recheck_credential_status() == _USABLE
+    assert manager.status() == _REFUSED
+
+
+def test_flow_write_during_recheck_wins_over_it_after_a_later_recheck(
+    tmp_path: Path,
+) -> None:
+    # The flow's terminal write lands while a recheck runs and the flow ends;
+    # a newer recheck then records a refusal that the older one must not undo.
+    manager = _manager(tmp_path)
+    _finish(manager)
+    alive = Mock()
+    alive.is_alive.return_value = True
+    manager._thread = alive
+    manager._set_state(CodexDeviceAuthState("validating"))
+    recheck = manager._recheck_credential_status
+    record_recheck = manager._record_recheck
+    calls = 0
+
+    def flow_ends_during_check() -> CodexDeviceAuthState:
+        manager._set_state(CodexDeviceAuthState("usable"))
+        alive.is_alive.return_value = False
+        manager._recheck_credential_status = recheck  # type: ignore[method-assign]
+        return recheck()
+
+    def paused_record(
+        observed: CodexDeviceAuthState,
+        transitions: int,
+        outcome: CodexDeviceAuthState,
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            manager._popen = _status_popen(b"Not logged in\n")  # type: ignore[assignment]
+            assert manager.recheck_credential_status() == _REFUSED
+            assert manager.status() == _REFUSED
+        record_recheck(observed, transitions, outcome)
+
+    manager._recheck_credential_status = flow_ends_during_check  # type: ignore[method-assign]
+    with patch.object(manager, "_record_recheck", side_effect=paused_record):
+        assert manager.recheck_credential_status() == _USABLE
+    assert manager.status() == _REFUSED
+
+
 def test_recheck_failure_during_live_flow_records_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
