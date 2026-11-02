@@ -110,7 +110,8 @@ AI.
   description that is a plain synopsis with no markup, cut-off or placeholder
   (on an ebook too), or a genre list that is not format-only, passes the floor
   and carries
-  `populated_value_meets_floor` beside `populated_subjective_field`. While the
+  `populated_value_meets_floor` beside `populated_subjective_field` (one
+  alternative) or `competing_evidence` (several). While the
   library's option for that field only fills empty fields (genres `fill_empty`;
   description `safe_plain_text` or `google_visible_text`), the choice stays the
   owner's but is not queued, and reads as kept by the setting; an explicit Ask

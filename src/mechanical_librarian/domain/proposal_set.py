@@ -363,6 +363,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("competing_evidence", WORK_ALTERNATIVE_IMMATERIAL_REASON),
             ("populated_subjective_field", WORK_ALTERNATIVE_IMMATERIAL_REASON),
             ("populated_subjective_field", POPULATED_VALUE_MEETS_FLOOR_REASON),
+            ("competing_evidence", POPULATED_VALUE_MEETS_FLOOR_REASON),
         }
     ),
     ProposalOutcome.KEEP: frozenset(
@@ -1691,14 +1692,17 @@ def _populated_value_meets_floor(
     """Mark a populated subjective value that passes the floor (#1310).
 
     A description passes when it is plain text with no markup, visible cut-off
-    or placeholder; a genre list when it is not format-only. Below the floor
+    or placeholder; a genre list when it is not format-only. One alternative or
+    several competing ones make no difference: a fill-only option never
+    replaces a populated value either way. Below the floor
     every alternative stays material, as ADR-0069 reads it. The field stays the
     owner's to choose; the attention facts decide, from the policy option,
     whether it is queued.
     """
     if (
         result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
-        or result.reasons != ("populated_subjective_field",)
+        or result.reasons
+        not in {("competing_evidence",), ("populated_subjective_field",)}
         or target.state is not TargetFieldState.VALUE
     ):
         return result

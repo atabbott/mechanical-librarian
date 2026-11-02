@@ -390,24 +390,38 @@ def test_an_immaterial_work_description_is_choosable_without_asking(
         assert attention["total"] == sum(f["needs_attention"] for f in detail["fields"])
 
 
+_MATERIAL = "An explorer crosses the sea and discovers an ancient city."
+_SECOND_MATERIAL = "A sailor charts a storm and finds a buried kingdom."
+
+
 @pytest.mark.parametrize(
-    ("incumbent", "option", "counted"),
+    ("incumbent", "option", "candidates", "counted"),
     (
-        (_INCUMBENT, "safe_plain_text", False),
-        (_INCUMBENT, "replace_safe_plain_text", True),
+        (_INCUMBENT, "safe_plain_text", (_MATERIAL,), False),
+        # Competing sources leave a populated value just as kept (#1310).
+        (_INCUMBENT, "safe_plain_text", (_MATERIAL, _SECOND_MATERIAL), False),
+        (_INCUMBENT, "replace_safe_plain_text", (_MATERIAL,), True),
+        (_INCUMBENT, "replace_safe_plain_text", (_MATERIAL, _SECOND_MATERIAL), True),
         # A visibly cut-off description is below the floor, so every
         # alternative stays material under any option (ADR-0069).
-        ("A voyage reveals a hidden city. The crew must...", "safe_plain_text", True),
+        (
+            "A voyage reveals a hidden city. The crew must...",
+            "safe_plain_text",
+            (_MATERIAL,),
+            True,
+        ),
     ),
 )
 def test_only_a_fill_only_option_keeps_a_description_that_passes_the_floor(
-    tmp_path: Path, incumbent: str, option: str, counted: bool
+    tmp_path: Path,
+    incumbent: str,
+    option: str,
+    candidates: tuple[str, ...],
+    counted: bool,
 ) -> None:
     """A material alternative asks unless the option only fills and the value
     passes the floor (#1310); the case page, the queue and the facts agree."""
-    report = synopsis_report(
-        incumbent, ("An explorer crosses the sea and discovers an ancient city.",)
-    )
+    report = synopsis_report(incumbent, candidates)
     assert audiobook_review_scope(report) == "work"
     database = tmp_path / "application.sqlite3"
     with closing(open_repository(database)) as repository:

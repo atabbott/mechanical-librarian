@@ -735,28 +735,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 + _CURRENT_REVIEW_FROM_SQL
                 + " WHERE 1 ORDER BY c.connection_name,c.library_name,c.item_id"
             ).fetchall()
-            parsed_resolutions: list[tuple[str, str, str]] = []
-            for library, resolved_id, document in resolutions:
-                resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
-                if (
-                    resolved.profile_id != policy_id
-                    or resolved.library != library
-                    or resolved.resolved_id != resolved_id
-                    or resolved.canonical_json != document
-                    or (
-                        any(value == "automatic" for _, value in resolved.destinations)
-                        and (
-                            state[2] not in {"preview", "automatic"}
-                            or not {
-                                f"{category}:{dict(resolved.options)[category]}"
-                                for category, destination in resolved.destinations
-                                if destination == "automatic"
-                            }.issubset(cover_aware_qualified_policy_options())
-                        )
-                    )
-                ):
-                    raise MetadataReportError("metadata policy resolution is invalid")
-                parsed_resolutions.append((library, resolved_id, document))
+            parsed_resolutions = _parsed_activation_resolutions(
+                policy_id, state[2], resolutions
+            )
             configured = {library for library, _, _ in parsed_resolutions}
             if any(row[1] not in configured for row in cohort):
                 raise MetadataReportError("metadata policy resolution scope changed")
@@ -789,110 +770,8 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             )
             for resolved_id in sorted(first_rows):
                 refresh_policy_settled_field_facts(self._connection, resolved_id)
-            for (
-                connection,
-                library,
-                item,
-                proposal_id,
-                report_id,
-                case_id,
-                checkpoint,
-            ) in cohort:
-                transition = ReviewTransition(
-                    connection,
-                    library,
-                    item,
-                    checkpoint + 1,
-                    proposal_id,
-                    report_id,
-                    "retired",
-                    case_id,
-                    None,
-                    "policy_changed",
-                    "policy-activation-v1",
-                )
-                self._connection.execute(
-                    "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        transition.transition_id,
-                        connection,
-                        library,
-                        item,
-                        checkpoint + 1,
-                        transition.actor,
-                        case_id,
-                        None,
-                        proposal_id,
-                        report_id,
-                        "retired",
-                        "policy_changed",
-                    ),
-                )
-                updated = self._connection.execute(
-                    "UPDATE current_review_case_lineages SET review_case_id=NULL,transition_id=?,checkpoint=?,outcome='retired' "
-                    "WHERE connection_name=? AND library_name=? AND item_id=? AND review_case_id=? AND checkpoint=?",
-                    (
-                        transition.transition_id,
-                        checkpoint + 1,
-                        connection,
-                        library,
-                        item,
-                        case_id,
-                        checkpoint,
-                    ),
-                ).rowcount
-                # The current-review join reads the package, so an item that
-                # fails reconciliation must not keep its old-policy case there
-                # (#1369).
-                retired = self._connection.execute(
-                    "UPDATE current_review_packages SET review_case_id=NULL,checkpoint=?,outcome='retired' "
-                    "WHERE connection_name=? AND library_name=? AND item_id=? AND review_case_id=? AND checkpoint=?",
-                    (checkpoint + 1, connection, library, item, case_id, checkpoint),
-                ).rowcount
-                if updated != 1 or retired != 1:
-                    raise MetadataReportError("metadata policy cohort changed")
-                work = self._connection.execute(
-                    "SELECT work_id,scan_id,stage,state,report_id FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=?",
-                    (connection, library, item),
-                ).fetchone()
-                item_state = "failed" if work is None else "pending"
-                failure = "pipeline_unavailable" if work is None else None
-                work_id = None if work is None else work[0]
-                if work is not None:
-                    if work[2] == "provider" and work[4] != report_id:
-                        item_state = "failed"
-                        failure = "stale"
-                    elif work[2] not in {"extraction", "provider"} or work[3] in {
-                        "failed",
-                        "stale",
-                    }:
-                        if work[4] != report_id and not (
-                            work[2] == "extraction" and work[4] is None
-                        ):
-                            raise MetadataReportError(
-                                "metadata policy cohort evidence changed"
-                            )
-                        self._restart_metadata_policy_work(
-                            work[0], work[2], report_id, activated_at
-                        )
-                    self._connection.execute(
-                        "UPDATE review_preparation_scans SET state='processing',updated_at=? WHERE scan_id=?",
-                        (activated_at, work[1]),
-                    )
-                self._connection.execute(
-                    "INSERT INTO metadata_policy_transition_items(transition_id,connection_name,library_name,item_id,report_id,work_id,state,failure_code,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        transition_id,
-                        connection,
-                        library,
-                        item,
-                        report_id,
-                        work_id,
-                        item_state,
-                        failure,
-                        activated_at,
-                    ),
-                )
+            for row in cohort:
+                self._retire_for_policy_transition(transition_id, row, activated_at)
             # Before the state moves, so each library's outgoing resolution is
             # still the active one: the owner's write permission follows the
             # policy they activate, and nothing else carries it (#1370).
@@ -932,6 +811,108 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             raise MetadataReportError(
                 "metadata policy activation is unavailable"
             ) from error
+
+    def _retire_for_policy_transition(
+        self,
+        transition_id: str,
+        row: tuple[str, str, str, str, str, str, int],
+        activated_at: int,
+    ) -> None:
+        """Retire one current case for an activation and queue its re-review."""
+        connection, library, item, proposal_id, report_id, case_id, checkpoint = row
+        transition = ReviewTransition(
+            connection,
+            library,
+            item,
+            checkpoint + 1,
+            proposal_id,
+            report_id,
+            "retired",
+            case_id,
+            None,
+            "policy_changed",
+            "policy-activation-v1",
+        )
+        self._connection.execute(
+            "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                transition.transition_id,
+                connection,
+                library,
+                item,
+                checkpoint + 1,
+                transition.actor,
+                case_id,
+                None,
+                proposal_id,
+                report_id,
+                "retired",
+                "policy_changed",
+            ),
+        )
+        updated = self._connection.execute(
+            "UPDATE current_review_case_lineages SET review_case_id=NULL,transition_id=?,checkpoint=?,outcome='retired' "
+            "WHERE connection_name=? AND library_name=? AND item_id=? AND review_case_id=? AND checkpoint=?",
+            (
+                transition.transition_id,
+                checkpoint + 1,
+                connection,
+                library,
+                item,
+                case_id,
+                checkpoint,
+            ),
+        ).rowcount
+        # The current-review join reads the package, so an item that
+        # fails reconciliation must not keep its old-policy case there
+        # (#1369).
+        retired = self._connection.execute(
+            "UPDATE current_review_packages SET review_case_id=NULL,checkpoint=?,outcome='retired' "
+            "WHERE connection_name=? AND library_name=? AND item_id=? AND review_case_id=? AND checkpoint=?",
+            (checkpoint + 1, connection, library, item, case_id, checkpoint),
+        ).rowcount
+        if updated != 1 or retired != 1:
+            raise MetadataReportError("metadata policy cohort changed")
+        work = self._connection.execute(
+            "SELECT work_id,scan_id,stage,state,report_id FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=?",
+            (connection, library, item),
+        ).fetchone()
+        item_state = "failed" if work is None else "pending"
+        failure = "pipeline_unavailable" if work is None else None
+        work_id = None if work is None else work[0]
+        if work is not None:
+            if work[2] == "provider" and work[4] != report_id:
+                item_state = "failed"
+                failure = "stale"
+            elif work[2] not in {"extraction", "provider"} or work[3] in {
+                "failed",
+                "stale",
+            }:
+                if work[4] != report_id and not (
+                    work[2] == "extraction" and work[4] is None
+                ):
+                    raise MetadataReportError("metadata policy cohort evidence changed")
+                self._restart_metadata_policy_work(
+                    work[0], work[2], report_id, activated_at
+                )
+            self._connection.execute(
+                "UPDATE review_preparation_scans SET state='processing',updated_at=? WHERE scan_id=?",
+                (activated_at, work[1]),
+            )
+        self._connection.execute(
+            "INSERT INTO metadata_policy_transition_items(transition_id,connection_name,library_name,item_id,report_id,work_id,state,failure_code,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                transition_id,
+                connection,
+                library,
+                item,
+                report_id,
+                work_id,
+                item_state,
+                failure,
+                activated_at,
+            ),
+        )
 
     def _refresh_metadata_policy_transition(
         self, transition_id: str, updated_at: int
@@ -1193,6 +1174,35 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
 
 
 __all__ = ["SQLiteMetadataPolicyRepository"]
+
+
+def _parsed_activation_resolutions(
+    policy_id: str, posture: str, resolutions: tuple[tuple[str, str, str], ...]
+) -> list[tuple[str, str, str]]:
+    """Check each library's resolution belongs to the activated profile."""
+    parsed_resolutions: list[tuple[str, str, str]] = []
+    for library, resolved_id, document in resolutions:
+        resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
+        if (
+            resolved.profile_id != policy_id
+            or resolved.library != library
+            or resolved.resolved_id != resolved_id
+            or resolved.canonical_json != document
+            or (
+                any(value == "automatic" for _, value in resolved.destinations)
+                and (
+                    posture not in {"preview", "automatic"}
+                    or not {
+                        f"{category}:{dict(resolved.options)[category]}"
+                        for category, destination in resolved.destinations
+                        if destination == "automatic"
+                    }.issubset(cover_aware_qualified_policy_options())
+                )
+            )
+        ):
+            raise MetadataReportError("metadata policy resolution is invalid")
+        parsed_resolutions.append((library, resolved_id, document))
+    return parsed_resolutions
 
 
 def _policy_resolution_stored(
