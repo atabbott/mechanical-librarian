@@ -219,10 +219,9 @@ exists for an automatic decision to be minted from.
 
 - Audiobook cover election stays withheld; the field is locked behind provider
   recovery regardless of media.
-- Subtitle is withheld for a recording and never forms: a manifestation claim
-  needs an `ebook`-typed applicability no audiobook authority states, and the
-  subtitle an audiobook store carries is retail copy rather than a typed
-  bibliographic subtitle. Deciding one waits on typed audiobook subtitles.
+- Audiobook subtitles are decided under ADR-0073: a work-scoped provider
+  subtitle may fill or replace one automatically, never marketing copy (#1317)
+  and never a value that only restates the series (#1616).
 - Duration and chapter structure remain evidence and never become destinations.
 - The narrators destination is not write-capable on either medium. A cast is
   decided and recorded, and the field is withheld from the guarded-effect

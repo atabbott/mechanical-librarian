@@ -2807,13 +2807,15 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
 
     from PIL import Image
 
+    from mechanical_librarian.adapters.cover_evidence_observer import (
+        CoverEvidenceObserver,
+    )
     from mechanical_librarian.adapters.persistence.cover_artifacts import (
         CoverArtifactStore,
     )
     from mechanical_librarian.application.configuration import (
         ProviderConnectionConfiguration,
     )
-    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
     from mechanical_librarian.domain.cover_evidence import (
         CoverDesignation,
         CoverProvenance,
@@ -2873,7 +2875,7 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
 
     target = Target([snapshot, snapshot])
     repository = FakeReportRepository()
-    observer = _CoverEvidenceObserver(
+    observer = CoverEvidenceObserver(
         target,
         CoverArtifactStore(tmp_path / "artifacts"),
         (ProviderConnectionConfiguration("catalogue", True, True, None),),
@@ -2899,7 +2901,7 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
         cover_observer=observer,
     )
     with patch(
-        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover"
     ) as fetch:
         report = MetadataReport.from_json(service.run("item-1", 0))
     fetch.assert_not_called()
@@ -3211,6 +3213,9 @@ def test_cover_fetches_start_within_the_aggregate_after_a_slow_provider(
     """A slow provider leaves the alternative cover its own attempt window."""
     from unittest.mock import patch
 
+    from mechanical_librarian.adapters.cover_evidence_observer import (
+        CoverEvidenceObserver,
+    )
     from mechanical_librarian.adapters.persistence.cover_artifacts import (
         CoverArtifactStore,
     )
@@ -3218,7 +3223,6 @@ def test_cover_fetches_start_within_the_aggregate_after_a_slow_provider(
         CoverDeadline,
         RemoteCoverTimeout,
     )
-    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
     from mechanical_librarian.domain.cover_evidence import (
         CoverDesignation,
         CoverProvenance,
@@ -3262,14 +3266,14 @@ def test_cover_fetches_start_within_the_aggregate_after_a_slow_provider(
 
     snapshot = _share_snapshot(media)
     target = FakeTarget([snapshot, snapshot])
-    observer = _CoverEvidenceObserver(
+    observer = CoverEvidenceObserver(
         target,
         CoverArtifactStore(tmp_path / "artifacts"),
         (ProviderConnectionConfiguration("catalogue", True, True, None),),
     )
     repository = FakeReportRepository()
     with patch(
-        "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
         side_effect=fetch,
     ):
         report = MetadataReport.from_json(

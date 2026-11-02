@@ -223,11 +223,13 @@ def author_report(
     root, scenario: str = "supported", *, rear: bool = True, recovered: bool = False
 ):
     """Real isolated extraction and canonical report for durable/UI consumers."""
+    from mechanical_librarian.adapters.evidence_extractors.isolated_epub import (
+        IsolatedEpubInspector,
+    )
     from mechanical_librarian.adapters.persistence.cover_artifacts import (
         CoverArtifactStore,
     )
     from mechanical_librarian.application.configuration import MediaMountConfiguration
-    from mechanical_librarian.bootstrap.composition import _IsolatedEpubInspector
     from mechanical_librarian.domain.metadata_report import (
         ClaimKind,
         ClaimScope,
@@ -269,7 +271,7 @@ def author_report(
     payload = author_epub(body, rear=rear, recovered=recovered)
     root.mkdir(parents=True, exist_ok=True)
     (root / "book.epub").write_bytes(payload)
-    inspection = _IsolatedEpubInspector(CoverArtifactStore(root / "artifacts")).inspect(
+    inspection = IsolatedEpubInspector(CoverArtifactStore(root / "artifacts")).inspect(
         MediaMountConfiguration("books", str(root), "/library", True),
         "book.epub",
         len(payload) + 1,

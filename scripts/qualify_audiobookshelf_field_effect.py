@@ -62,6 +62,7 @@ from PIL import Image
 from tests.support.audio_containers import Mp4Fixture, mp4_audiobook
 
 import mechanical_librarian.bootstrap.composition as composition
+from mechanical_librarian.adapters import cover_evidence_observer
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeDependencyCurrentness,
@@ -1777,7 +1778,9 @@ def _installed_continuous_qualification(
         return type("QualificationRemoteCover", (), {"content": _png(32, 96, 160)})()
 
     provider_patch = patch.object(composition, "hardcover_client", provider_client)
-    cover_patch = patch.object(composition, "fetch_remote_cover", provider_cover)
+    cover_patch = patch.object(
+        cover_evidence_observer, "fetch_remote_cover", provider_cover
+    )
     provider_patch.start()
     cover_patch.start()
     try:
@@ -2603,7 +2606,7 @@ def _installed_continuous_qualification(
         composition, "hardcover_client", provider_client
     )
     restart_cover_patch = patch.object(
-        composition, "fetch_remote_cover", provider_cover
+        cover_evidence_observer, "fetch_remote_cover", provider_cover
     )
     restart_provider_patch.start()
     restart_cover_patch.start()

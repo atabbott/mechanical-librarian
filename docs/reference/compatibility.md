@@ -53,7 +53,7 @@ owner runs it offline, and the changelog says when one ships.
 | --- | --- |
 | Runtime | The single non-root container built from this repository's `Dockerfile` and `compose.yaml`, as described in [Deployment](../operations/deployment.md). There is no published image. |
 | Container engine | Docker Engine 25 or newer with Compose v2.20 or newer. |
-| Python | 3.13 or 3.14. The image ships Python 3.14. |
+| Python | 3.13, 3.14 or 3.15. The image ships Python 3.15. |
 | Audiobookshelf | 2.26.0 or later, with no upper-version promise. Writes are qualified against pinned 2.26.0, 2.36.0, 2.37.1 and 2.37.2 images. Each write destination is checked for capability on the running server; a version number alone is not proof. |
 | Libraries | Explicitly configured Audiobookshelf book libraries holding ebooks (EPUB) or audiobooks. Media is read through read-only mounts and never written. |
 | Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for corroboration. |
@@ -90,8 +90,8 @@ refused.
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v9` | The deterministic decision packet |
-| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v26` |
-| `deterministic-shadow-decision-policy-v26` | The shadow decision policy |
+| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v27` |
+| `deterministic-shadow-decision-policy-v27` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v11` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
 

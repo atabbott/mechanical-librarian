@@ -71,6 +71,9 @@ brackets are GitHub issues.
   even when a better cover is recommended or an earlier cover choice went
   stale. Other sources' covers stay choosable on the work's page, which offers
   to prepare a comparison when none is current (#1310).
+- **Clean rebuild required.** The image now runs Python 3.15, and Python 3.13
+  to 3.15 are supported. Python 3.15's newer Unicode data means an existing
+  application database is refused at startup until it is rebuilt (#1639).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
@@ -93,6 +96,10 @@ brackets are GitHub issues.
   and an "About the book" header line no longer counts as a difference.
   Marketing lines are never chosen as subtitles, and genres or synopses from a
   store in another language wait for your choice (#1317).
+- **Clean rebuild required.** A subtitle that only repeats the series, such as
+  "A <Series> Novel" or "<Series>, Book 3", is never written for you and stays
+  your choice. A title cleanup that would drop such a label after an underscore
+  ("Title_ A <Series> Novel") now asks you first (#1616).
 - **Clean rebuild required.** Every language is written as one display name,
   such as "English"; a current `en` or `eng` is offered for review, never
   rewritten. The `preserve` language option is gone (#1314).
@@ -246,6 +253,8 @@ brackets are GitHub issues.
   sign-in. Starting or cancelling a sign-in keeps keyboard focus on the next
   control, and setup names each sign-in status in words, with its remedy
   (#1607).
+- In setup, on a host that cannot run Codex, Cancel any active sign-in keeps
+  keyboard focus while it runs and after it reports (#1615).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

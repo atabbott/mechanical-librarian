@@ -1478,6 +1478,9 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
     from contextlib import closing
     from unittest.mock import Mock, patch
 
+    from mechanical_librarian.adapters.cover_evidence_observer import (
+        CoverEvidenceObserver,
+    )
     from mechanical_librarian.adapters.persistence.cover_artifacts import (
         CoverArtifactStore,
     )
@@ -1489,7 +1492,6 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
     )
     from mechanical_librarian.application.metadata_report import TargetSnapshot
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
-    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
     from mechanical_librarian.domain.cover_evidence import CoverSourceState
     from mechanical_librarian.domain.proposal_set import evaluate_report
     from tests.support.audiobook_reports import publish_audiobook_preview
@@ -1542,9 +1544,9 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
         assert descriptor.provenance.work_identity == candidate.work_identity
     target = Mock()
     with patch(
-        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover"
     ) as fetch:
-        observer = _CoverEvidenceObserver(
+        observer = CoverEvidenceObserver(
             target,
             CoverArtifactStore(tmp_path / "artifacts"),
             (ProviderConnectionConfiguration("inventaire", True, True, None),),

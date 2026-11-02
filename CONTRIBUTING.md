@@ -27,7 +27,7 @@ src/mechanical_librarian/
 ├── domain/          # values and rules; no I/O
 ├── application/     # orchestration and the ports adapters implement
 ├── adapters/        # Audiobookshelf, providers, evidence extractors, reviewers, SQLite
-├── infrastructure/  # configuration, first boot, local media, security
+├── infrastructure/  # configuration, first boot, security
 ├── interfaces/      # CLI and the authenticated web workspace
 └── bootstrap/       # composition and entry points
 frontend/            # the React owner workspace
@@ -37,7 +37,7 @@ tests/               # unit, integration, architecture, installed, browser and s
 
 ## Your first pull request
 
-You need Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/); Node and npm
+You need Python 3.13, 3.14 or 3.15 and [uv](https://docs.astral.sh/uv/); Node and npm
 only for frontend work. Run the formatting, lint, type and fast test commands
 below, open a pull request that closes an issue, and CI does the rest. The
 slice and tracker rules in the process documents govern maintainer delivery;

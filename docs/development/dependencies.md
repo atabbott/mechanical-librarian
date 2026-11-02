@@ -263,11 +263,14 @@ The Mend-hosted Renovate GitHub App proposes updates within
 - **Limits.** At most five open branches and pull requests, and two new pull
   requests per hour. Renovate opens each pull request at once so the gate runs;
   opening it never authorises a merge.
-- **Groups.** Each of Node, Python, uv and npm has one group across all its
-  declarations, and parity tests refuse a partial update.
+- **Groups.** Minor and patch updates share one pull request per manager:
+  Python packages, npm packages and GitHub Actions. One pull request per
+  package overran the hourly limit in the weekly window. Each of Node, Python,
+  uv and npm keeps its own group across all its declarations, and parity tests
+  refuse a partial update.
 - **Auto-merge.** Every managed update class, including lockfile maintenance,
-  requests squash auto-merge, except a new Node major, a new Python minor or
-  major, or a replacement. Those need Dependency Dashboard approval and do not
+  requests squash auto-merge, except any major update, a new Python minor, or
+  a replacement. Those need Dependency Dashboard approval and do not
   auto-merge.
 
 [Delivery and merging](slice-delivery.md#renovate-platform-auto-merge-exception)
