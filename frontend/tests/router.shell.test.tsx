@@ -11,7 +11,7 @@ import {
   CsrfRenewedError,
   SessionExpiredError,
 } from '../src/api/http'
-import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
+import type { LibraryView, PreparationView, ReviewHttp, ScanState } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { RoutePending, createApplicationRouter, preparationQuery } from '../src/router'
@@ -336,7 +336,7 @@ describe('Application shell', () => {
     const library = (
       name: string,
       scanId: string | null,
-      state: string,
+      state: ScanState,
       [ready, recorded, blocked, notMatched = 0]: readonly [number, number, number, number?],
     ) => ({
       blocked,
@@ -1330,7 +1330,7 @@ describe('Application shell', () => {
   })
 
   describe('idle preparation masthead (#1282)', () => {
-    const library = (state: string) => ({
+    const library = (state: ScanState) => ({
       blocked: 0,
       recorded: 0,
       not_matched: 0,
@@ -1344,7 +1344,7 @@ describe('Application shell', () => {
       state,
       total: 3,
     })
-    const view = (state: string, overrides: Partial<PreparationView> = {}): PreparationView => ({
+    const view = (state: ScanState, overrides: Partial<PreparationView> = {}): PreparationView => ({
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: state !== 'completed',

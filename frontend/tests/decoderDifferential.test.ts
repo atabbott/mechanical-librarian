@@ -215,7 +215,7 @@ accepted(
   get(casePath(identifierCase)),
   () => identifierDetail,
 )
-const evidence = accepted(
+accepted(
   'server',
   'CaseDetail',
   'capture:identifierEvidenceFixture.evidence',
@@ -250,14 +250,14 @@ const decisionBase = builder(
   post(casePath('case-1', '/decisions')),
   decisionAcknowledgement,
 )
-const scanBase = builder(
+builder(
   'Preparation',
   'scanProgress',
   post('/api/v1/review-preparation/primary/Books/scan', 202),
   scanProgress,
 )
 const preparationBase = builder('Preparation', 'preparation', PREPARATION, preparation)
-const libraryBase = builder('Library', 'library', LIBRARY, library)
+builder('Library', 'library', LIBRARY, library)
 builder('Activity', 'activityResponse', ACTIVITY, activityResponse)
 builder('Attention', 'attention', get('/api/v1/attention'), attention)
 builder('Policy', 'policyProfile', post('/api/v1/metadata-policy/validate'), policyProfile)
@@ -555,7 +555,7 @@ deletion('reject:policy-state.schema_version', policyState, '/schema_version')
 // ---- X/S rows: the mapper-stricter checks the suite exercises ---------------
 
 // Accept bases for the checks that no case above reaches.
-const capability = builder('Activity', 'activity.capability-and-suspension', ACTIVITY, () =>
+builder('Activity', 'activity.capability-and-suspension', ACTIVITY, () =>
   activityResponse({
     capabilities: [
       {
@@ -602,7 +602,7 @@ const coveredWork = builder('Library', 'library.cover-and-failure', LIBRARY, () 
     ],
   }),
 )
-const reportEvidence = builder('Library', 'reportDetail.evidence', REPORT, () =>
+builder('Library', 'reportDetail.evidence', REPORT, () =>
   reportDetail({
     embedded_cover: { present: true, surface: 'mp4_ilst' },
     evidence: [
@@ -658,7 +658,7 @@ const consideration = () =>
 const covered = builder('CaseDetail', 'coverConsideration.candidate', COVER, consideration)
 // One item of each kind mapHistory reads: transition, preview, two owner
 // decisions (text and authors, then series) and a cover consideration.
-const historyItems = builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
+builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
   caseHistory({
     items: [
       { checkpoint: 1, kind: 'admitted', reason: 'actionable', transition_id: 'transition-1' },
@@ -970,254 +970,6 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string])[]
 // in application/reviewer_access.py say why they are not.
 const PENDING_SERVER: readonly (readonly [string, Case, string, unknown, string, string])[] = [
   [
-    'check:activityCapabilities.destination-state',
-    capability,
-    '/capabilities/0/destinations/0/state',
-    'writable',
-    'activityCapabilities http.ts:2936-2940: DESTINATION_STATES',
-    'interfaces/web/app.py _ActivityDestination.state',
-  ],
-  [
-    'check:activityCapabilities.state',
-    capability,
-    '/capabilities/0/state',
-    'partial',
-    'activityCapabilities http.ts:2926: CAPABILITY_STATES',
-    'interfaces/web/app.py _ActivityCapability.state',
-  ],
-  [
-    'check:activitySuspensions.reason',
-    capability,
-    '/suspensions/0/reason',
-    'recovery',
-    'activitySuspensions http.ts:2895: SUSPENSION_REASONS',
-    'interfaces/web/app.py _ActivitySuspension.reason',
-  ],
-  [
-    'check:mapActivity.dispatch-reasons-unique',
-    activityItems,
-    '/provider_recovery/0/dispatch_reasons',
-    ['blanket_scan', 'blanket_scan'],
-    'mapActivity http.ts:3099: dispatch_reasons are unique',
-    'interfaces/web/app.py _ProviderRecoveryActivity.dispatch_reasons',
-  ],
-  [
-    'check:mapActivity.failure-reasons-unique',
-    activityItems,
-    '/provider_recovery/0/failure_reasons',
-    ['transient', 'transient'],
-    'mapActivity http.ts:3075: failure_reasons are unique',
-    'interfaces/web/app.py _ProviderRecoveryActivity.failure_reasons',
-  ],
-  [
-    'check:mapLibrary.lens',
-    libraryBase,
-    '/lens',
-    'unmatched',
-    "mapLibrary http.ts:3415: 'all' or an attention state",
-    'interfaces/web/app.py _LibraryResponse.lens',
-  ],
-  [
-    'check:mapLibrary.media-kind',
-    libraryWithWork,
-    '/items/0/media_kind',
-    'ebook',
-    'mapLibrary http.ts:3509: MEDIA_KINDS',
-    'interfaces/web/app.py _LibraryWork.media_kind',
-  ],
-  [
-    'check:mapLibrary.preparation-stage',
-    coveredWork,
-    '/items/0/preparation/stage',
-    'reading',
-    'mapLibrary http.ts:3457-3461: PREPARATION_FAILURE_STAGES',
-    'interfaces/web/app.py _PreparationFailure.stage',
-  ],
-  [
-    'check:mapLibrary.preparation-status',
-    coveredWork,
-    '/items/0/preparation/status',
-    'broken',
-    'mapLibrary http.ts:3462-3466: PREPARATION_FAILURE_STATUSES',
-    'interfaces/web/app.py _PreparationFailure.status',
-  ],
-  [
-    'check:mapRecordingIdentityBasis.control-characters',
-    recordingBasis,
-    '/recording_identity_basis/provider',
-    'bad\nsource',
-    'mapRecordingIdentityBasis http.ts:3314-3320: no blank value or control character',
-    'interfaces/web/app.py _RecordingIdentityBasis.provider',
-  ],
-  [
-    'check:mapReportDetail.cover-surface',
-    reportEvidence,
-    '/embedded_cover/surface',
-    'apic',
-    'mapReportDetail http.ts:3359: AUDIO_SURFACES',
-    'interfaces/web/app.py _ReportEmbeddedCover.surface',
-  ],
-  [
-    'check:mapReportDetail.evidence-basis',
-    reportEvidence,
-    '/evidence/0/basis',
-    'filename',
-    'mapReportDetail http.ts:3363: CLAIM_BASES',
-    'interfaces/web/app.py _ReportEvidence.basis',
-  ],
-  [
-    'check:mapReportDetail.evidence-kind',
-    reportEvidence,
-    '/evidence/0/kind',
-    'narrator',
-    'mapReportDetail http.ts:3365: CLAIM_KINDS',
-    'interfaces/web/app.py _ReportEvidence.kind',
-  ],
-  [
-    'check:mapReportDetail.evidence-state',
-    reportEvidence,
-    '/evidence/0/state',
-    'broken',
-    'mapReportDetail http.ts:3367: FIELD_STATES',
-    'interfaces/web/app.py _ReportEvidence.state',
-  ],
-  [
-    'check:mapCaseDetail.decision-actions',
-    caseBase,
-    '/fields/0/decision_actions',
-    ['accept'],
-    "mapCaseDetail http.ts:3838-3846: exactly [] or ['keep_current', 'accept']",
-    'interfaces/web/app.py _ReviewField.decision_actions',
-  ],
-  [
-    'check:mapCaseDetail.current-state',
-    caseBase,
-    '/fields/0/current/state',
-    'absent',
-    'mapCaseDetail http.ts:3869: TARGET_FIELD_STATES',
-    'interfaces/web/app.py _TargetField.state',
-  ],
-  [
-    'check:mapCaseDetail.destination',
-    caseBase,
-    '/fields/0/destination',
-    'publication_date',
-    'mapCaseDetail http.ts:3850: TARGET_DESTINATIONS',
-    'interfaces/web/app.py _ReviewField.destination',
-  ],
-  [
-    'check:mapCaseDetail.disposition',
-    caseBase,
-    '/fields/0/deterministic_disposition',
-    'review',
-    'mapCaseDetail http.ts:3852-3856: PROPOSAL_OUTCOMES',
-    'interfaces/web/app.py _ReviewField.deterministic_disposition',
-  ],
-  [
-    'check:mapCaseDetail.effect-capability',
-    caseBase,
-    '/fields/0/effect_capability',
-    'manual',
-    'mapCaseDetail http.ts:3858-3862: EFFECT_CAPABILITIES',
-    'interfaces/web/app.py _ReviewField.effect_capability',
-  ],
-  [
-    'check:mapCaseDetail.target-media-kind',
-    caseBase,
-    '/target/media_kind',
-    'ebook',
-    'mapCaseDetail http.ts:3802: MEDIA_KINDS',
-    'interfaces/web/app.py _TargetIdentity.media_kind',
-  ],
-  [
-    'check:mapEvidence.destinations-unique',
-    evidence,
-    '/items/0/destinations',
-    ['asin', 'asin'],
-    'mapEvidence http.ts:4035-4036: destinations are unique',
-    'interfaces/web/app.py _EvidenceItem.destinations',
-  ],
-  [
-    'check:mapProviderOutcome.lane-kind',
-    evidence,
-    '/source_ledger/0/lane_kind',
-    'identity',
-    'mapProviderOutcome http.ts:2495-2499: PROVIDER_QUERY_KINDS',
-    'interfaces/web/app.py _ProviderOutcome.lane_kind',
-  ],
-  [
-    'check:mapHistory.transition-kind',
-    historyItems,
-    '/items/0/kind',
-    'invented',
-    'mapHistory http.ts:4289-4293: TRANSITION_OUTCOMES',
-    'interfaces/web/app.py _HistoryTransitionItem.kind',
-  ],
-  [
-    'check:mapHistory.disposition-name',
-    historyItems,
-    '/items/1/dispositions',
-    { approve: 1 },
-    'mapHistory http.ts:4169-4173: each disposition is named from SHADOW_DISPOSITIONS',
-    'interfaces/web/app.py _HistoryShadowItem.dispositions',
-  ],
-  [
-    'check:mapHistoryValue.text-length',
-    historyItems,
-    '/items/2/previous_value/value',
-    'x'.repeat(16_385),
-    'mapHistoryValue http.ts:4064: a text value is at most 16384 code points',
-    'interfaces/web/app.py _ProposedValue.value',
-  ],
-  [
-    'check:mapHistoryValue.list-item-length',
-    historyItems,
-    '/items/2/selected_value/value/0',
-    'x'.repeat(513),
-    'mapHistoryValue http.ts:4070: a list item is at most 512 code points',
-    'interfaces/web/app.py _ProposedValue.value',
-  ],
-  [
-    'check:mapHistoryValue.series-name-length',
-    historyItems,
-    '/items/3/selected_value/value/0/name',
-    'x'.repeat(513),
-    'mapHistoryValue http.ts:4077: a series name is at most 512 code points',
-    'interfaces/web/app.py _SeriesValue.name',
-  ],
-  [
-    'check:mapHistoryValue.series-sequence-length',
-    historyItems,
-    '/items/3/selected_value/value/0/sequence',
-    'x'.repeat(513),
-    'mapHistoryValue http.ts:4080: a series sequence is at most 512 code points',
-    'interfaces/web/app.py _SeriesValue.sequence',
-  ],
-  [
-    'check:mapHistory.reviewer-status',
-    historyItems,
-    '/items/4/consideration/reviewer_status',
-    'invented',
-    "mapHistory http.ts:4230-4234: 'completed', 'failed' or 'unavailable'",
-    'interfaces/web/app.py _CoverConsiderationResponse.reviewer_status',
-  ],
-  [
-    'check:mapHistory.policy-reasons',
-    historyItems,
-    '/items/4/consideration/policy/reasons',
-    ['x'.repeat(129)],
-    'mapHistory http.ts:4225-4229: at most 32 reasons of at most 128 code points',
-    'interfaces/web/app.py _CoverPolicyReport.reasons',
-  ],
-  [
-    'check:preparationProgress.state',
-    scanBase,
-    '/state',
-    'paused',
-    'preparationProgress http.ts:2617: SCAN_STATES',
-    'interfaces/web/app.py _PreparationProgress.state',
-  ],
-  [
     'check:mapReviewerAccess.recommendation',
     codexCleared,
     '/recommendations/0',
@@ -1226,44 +978,12 @@ const PENDING_SERVER: readonly (readonly [string, Case, string, unknown, string,
     'application/reviewer_access.py ReviewerAccessView.recommendations; built per read by ReviewerAccessApplication._view and never stored (adapters/persistence/reviewer_access.py stores only ReviewerAccessDocument)',
   ],
   [
-    'check:mapCodexDevice.user-code',
-    issued,
-    '/device/user_code',
-    'ABC-1234',
-    'mapCodexDevice http.ts:2317-2320: a user code matches ^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$',
-    'interfaces/web/app.py _CodexDeviceAuthResponse.user_code',
-  ],
-  [
-    'check:mapCoverConsideration.candidate-state',
-    covered,
-    '/candidates/0/state',
-    'incumbent',
-    "mapCoverConsideration http.ts:4514-4521: 'acceptable', 'available', 'excluded' or 'recommended'; the derived-state check (:4720-4733) also refuses it",
-    'interfaces/web/app.py _CoverCandidate.state',
-  ],
-  [
-    'check:mapCoverConsideration.source-kind',
-    covered,
-    '/candidates/0/source_kinds',
-    ['scraped'],
-    'mapCoverConsideration http.ts:4606-4608: COVER_SOURCE_KINDS',
-    'interfaces/web/app.py _CoverCandidate.source_kinds',
-  ],
-  [
     'check:mapCoverConsideration.unavailable-reason',
     coverBase,
     '/reviewer_unavailable_reason',
     '/private/profile token=secret',
     'mapCoverConsideration http.ts:4669-4677: one of the two fixed profile-contract reasons',
     'interfaces/web/app.py _CoverConsiderationResponse.reviewer_unavailable_reason',
-  ],
-  [
-    'check:mapCoverConsideration.acceptable-unique',
-    covered,
-    '/policy/acceptable_candidate_references',
-    ['candidate-1', 'candidate-1'],
-    'mapCoverConsideration http.ts:4696: acceptable references are unique; the ranking check (:4704-4719) also refuses it',
-    'interfaces/web/app.py _CoverPolicyReport.acceptable_candidate_references',
   ],
 ]
 for (const [id, from, pointer, value] of [...CROSS_FIELD, ...PENDING_SERVER])
