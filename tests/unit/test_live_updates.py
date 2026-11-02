@@ -139,12 +139,16 @@ def test_closing_the_channel_ends_every_open_reader() -> None:
     channel = LiveUpdateChannel()
     first = channel.subscribe(0)
     second = channel.subscribe(0)
+    channel.publish("library", "other")
 
     channel.close()
 
     assert first.closed and second.closed
     assert channel.subscribers == 0
-    assert channel.publish("preparation") == 0
+    # A closed channel publishes nothing, so it names no position: neither 0
+    # nor the last real one, which would alias a frame this publish never made.
+    assert channel.publish("preparation") is None
+    assert channel.sequence == 1
     assert channel.subscribe(0).closed
 
 

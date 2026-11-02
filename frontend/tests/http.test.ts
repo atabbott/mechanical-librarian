@@ -3235,6 +3235,73 @@ it('validates the closed decision confirmation and maps its case exactly once', 
   expect(result.confirmation.case.current).toBe(false)
 })
 
+// A write committed while the live channel is closed publishes nothing, so its
+// acknowledgement names no position: the browser accepts the empty list, and
+// keeps refusing 0, which no frame ever carries (#1674).
+it.each(['decisions', 'description-advice/selection'])(
+  'accepts an acknowledgement naming no position and refuses position 0 from %s',
+  async (route) => {
+    const { default: payload } = await import('./descriptionAdviceFixture.json')
+    const field = mapCaseDetail(payload).fields.find((item) => item.destination === 'description')
+    if (!field?.descriptionAdvice?.candidate)
+      throw new Error('description fixture requires its candidate')
+    const authored = route === 'description-advice/selection'
+    const command = {
+      destination: 'description',
+      outcome: 'accept' as const,
+      proposalId: field.proposalId,
+      targetFingerprint: field.targetFingerprint,
+      selectedValue: {
+        kind: 'text' as const,
+        value: field.descriptionAdvice.candidate.output.description,
+      },
+      idempotencyKey: 'closed-channel-idempotency',
+      ...(authored
+        ? {
+            authoredDescription: {
+              candidateId: field.descriptionAdvice.candidate.candidate_id,
+              binding: field.descriptionAdvice.binding,
+            },
+          }
+        : {}),
+    }
+    const casePayload = { ...payload, review_case_id: 'case-1' }
+    const acknowledgement = (invalidation_sequences: number[]) =>
+      authored
+        ? {
+            schema_version: 'description-selection-ack-v1',
+            confirmation: { status: 'confirmed', case: casePayload },
+            decision_id: 'human_decision_' + 'a'.repeat(64),
+            advised: true,
+            invalidation_sequences,
+          }
+        : decisionAcknowledgement({
+            confirmation: { status: 'confirmed', case: casePayload },
+            invalidation_sequences,
+          })
+    const client = (invalidation_sequences: number[]) => {
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        Response.json(acknowledgement(invalidation_sequences)),
+      )
+      return {
+        fetchMock,
+        api: new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) }),
+      }
+    }
+    const accepted = client([])
+    const result = await accepted.api.recordDecision('case-1', command)
+    expect(accepted.fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/review-cases/case-1/${route}`)
+    expect(result.invalidation_sequences).toEqual([])
+    expect(result.confirmation.status).toBe('confirmed')
+    for (const sequences of [[0], [1, 0]]) {
+      const refused = client(sequences)
+      const failure = await refused.api.recordDecision('case-1', command).catch((e: unknown) => e)
+      expect(failure).toBeInstanceOf(ApiError)
+      expect(failure).toMatchObject({ status: 502, code: 'invalid_decision_confirmation' })
+    }
+  },
+)
+
 it('sends the actual read scheduling hint while ordinary reads remain foreground', async () => {
   const { default: payload } = await import('./descriptionAdviceFixture.json')
   const fetchMock = vi.fn<typeof fetch>(async () => Response.json(payload))

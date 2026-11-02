@@ -279,6 +279,9 @@ brackets are GitHub issues.
   that button instead of at the top of the form, and it clears once the next
   sign-in step succeeds. A refused Codex sign-in on Use Codex still shows
   above the refreshed option, as in #1617 (#1618).
+- A decision or chosen description recorded while Mechanical Librarian is
+  shutting down or applying changed settings now shows as recorded, instead
+  of failing in the browser although it was saved (#1674).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
