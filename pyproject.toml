@@ -7,7 +7,7 @@ name = "mechanical-librarian"
 dynamic = ["version"]
 description = "Evidence-driven ebook and audiobook metadata curation"
 readme = "README.md"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.13,<3.16"
 license = "AGPL-3.0-or-later AND OFL-1.1"
 license-files = ["LICENSE", "LICENSES/Inter-OFL-1.1.txt"]
 classifiers = [
@@ -17,6 +17,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
@@ -25,7 +26,7 @@ dependencies = [
   "httpcore==1.0.9",
   "httpx==0.28.1",
   "pillow==13.0.0",
-  "pydantic==2.13.5",
+  "pydantic==2.14.2",
   # `interfaces/web/app.py` imports `starlette.types` directly, so Starlette is
   # a direct dependency and is pinned here rather than floating under FastAPI's
   # open `starlette>=0.46.0`. The floor is what clears the last advisory

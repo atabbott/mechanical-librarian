@@ -53,7 +53,7 @@ owner runs it offline, and the changelog says when one ships.
 | --- | --- |
 | Runtime | The single non-root container built from this repository's `Dockerfile` and `compose.yaml`, as described in [Deployment](../operations/deployment.md). There is no published image. |
 | Container engine | Docker Engine 25 or newer with Compose v2.20 or newer. |
-| Python | 3.13 or 3.14. The image ships Python 3.14. |
+| Python | 3.13, 3.14 or 3.15. The image ships Python 3.15. |
 | Audiobookshelf | 2.26.0 or later, with no upper-version promise. Writes are qualified against pinned 2.26.0, 2.36.0, 2.37.1 and 2.37.2 images. Each write destination is checked for capability on the running server; a version number alone is not proof. |
 | Libraries | Explicitly configured Audiobookshelf book libraries holding ebooks (EPUB) or audiobooks. Media is read through read-only mounts and never written. |
 | Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for corroboration. |

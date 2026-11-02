@@ -67,6 +67,9 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** The image now runs Python 3.15, and Python 3.13
+  to 3.15 are supported. Python 3.15's newer Unicode data means an existing
+  application database is refused at startup until it is rebuilt (#1639).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
