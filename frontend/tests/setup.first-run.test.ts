@@ -839,10 +839,18 @@ describe('shipped first-run setup script', () => {
       target: { value: 'target-key' },
     })
     const verify = screen.getByRole('button', { name: 'Verify and continue' })
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Connect Audiobookshelf' })).toHaveFocus(),
+    )
+    verify.focus()
     fireEvent.click(verify)
     fireEvent.click(verify)
 
-    await waitFor(() => expect(verify).toBeDisabled())
+    // jsdom has no focus fixup, so focus alone cannot fail here; a browser drops
+    // focus to the page when the focused button becomes natively disabled (#1678).
+    await waitFor(() => expect(verify).toHaveAttribute('aria-disabled', 'true'))
+    expect(verify).not.toBeDisabled()
+    expect(verify).toHaveFocus()
     expect(attempts).toBe(1)
     expect(document.querySelector('#setup-main')).toHaveAttribute('aria-busy', 'true')
     // The reveal control is not a mutation, so it stays usable while waiting.
@@ -853,9 +861,132 @@ describe('shipped first-run setup script', () => {
       'http://books.invalid:13378 did not answer in time.',
     )
     expect(verify).toBeEnabled()
+    expect(verify).not.toHaveAttribute('aria-disabled')
+    // A reach failure is about the address, so its refusal focuses that field.
+    expect(endpoint).toHaveFocus()
     expect(attempts).toBe(1)
     expect(endpoint).toHaveValue('http://books.invalid:13378')
   })
+
+  it.each([
+    ['connect', 'Connect Audiobookshelf', '/api/setup/connect', 'Verify and continue'],
+    ['providers', 'Choose metadata providers', '/api/setup/providers', 'Continue'],
+    ['libraries', 'Choose libraries', '/api/setup/libraries', 'Continue'],
+    ['mounts', 'Check read-only mounts', '/api/setup/mounts', 'Check mounts'],
+  ] as const)(
+    'runs no %s client check for a repeat submit while the step is recorded (#1678)',
+    async (step, heading, path, name) => {
+      let attempts = 0
+      let release!: (value: Response) => void
+      const held = new Promise<Response>((resolve) => {
+        release = resolve
+      })
+      const shelf = {
+        library_id: 'books-id',
+        media_kind: 'book',
+        name: 'Reading Shelf',
+        service_path: '/discovered/books',
+        service_path_state: 'available',
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+          const url = requestUrl(request)
+          if (url === path && init?.method === 'POST') {
+            attempts += 1
+            return await held
+          }
+          if (url.startsWith('/api/setup/libraries?')) return response({ libraries: [shelf] })
+          if (step === 'connect')
+            return response(setupState('connect', { completed_steps: ['claim'], connection: null }))
+          if (step === 'mounts')
+            return response(
+              setupState('mounts', {
+                completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+                libraries: [
+                  {
+                    connection: 'primary',
+                    display_name: 'Reading Shelf',
+                    library_id: 'books-id',
+                    media_kind: 'book',
+                    name: 'books',
+                    provider_connections: [],
+                  },
+                ],
+                revision: 5,
+              }),
+            )
+          return response(setupState(step))
+        }),
+      )
+      runSetup()
+
+      const title = await screen.findByRole('heading', { name: heading })
+      await waitFor(() => expect(title).toHaveFocus())
+      await waitFor(() =>
+        expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
+      )
+      // Each row fills the step so the first press passes its client checks, then
+      // edits a field so that a second submit would fail them.
+      let edited: HTMLElement
+      let edit: () => void
+      if (step === 'connect') {
+        const endpoint = screen.getByLabelText('Audiobookshelf address')
+        fireEvent.input(endpoint, { target: { value: 'http://books.invalid:13378' } })
+        fireEvent.input(screen.getByLabelText('Audiobookshelf API key'), {
+          target: { value: 'target-key' },
+        })
+        edited = endpoint
+        edit = () => fireEvent.input(endpoint, { target: { value: 'not-a-url' } })
+      } else if (step === 'providers') {
+        fireEvent.click(screen.getByLabelText('Open Library'))
+        const email = screen.getByLabelText('Open Library contact email')
+        fireEvent.input(email, { target: { value: 'owner@example.org' } })
+        edited = email
+        edit = () => fireEvent.input(email, { target: { value: 'not an email' } })
+      } else if (step === 'libraries') {
+        const books = await screen.findByRole('checkbox', { name: 'Reading Shelf' })
+        fireEvent.click(books)
+        edited = books
+        edit = () => fireEvent.click(books)
+      } else {
+        const typed = screen.getByLabelText('Reading Shelf service path')
+        fireEvent.input(typed, { target: { value: '/owner/typed/books' } })
+        edited = typed
+        edit = () => fireEvent.input(typed, { target: { value: '' } })
+      }
+      const pressed = screen.getByRole('button', { name })
+      pressed.focus()
+      fireEvent.click(pressed)
+      await waitFor(() => expect(attempts).toBe(1))
+
+      // Enter in a field submits the form again; the step is still being recorded.
+      edit()
+      const form = edited.closest('form')
+      if (!form) throw new Error(`${step} form missing`)
+      fireEvent.submit(form)
+      expect(attempts).toBe(1)
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(edited).not.toHaveAttribute('aria-invalid')
+      expect(pressed).toHaveFocus()
+
+      if (step === 'mounts') {
+        // The mount check keeps the draft of the press that is running, so a
+        // restored step shows the path that was sent, not the cleared one.
+        release(response({ detail: { error: 'stale' } }, 409))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Setup changed in another tab.')
+        expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue(
+          '/owner/typed/books',
+        )
+      } else {
+        release(response({ detail: { error: 'unavailable' } }, 500))
+        const alert = await screen.findByRole('alert')
+        await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+        if (step === 'connect') expect(alert.previousElementSibling).toBe(pressed)
+      }
+      expect(attempts).toBe(1)
+    },
+  )
 
   it('names every provider, what it contributes, and its own credential fields', async () => {
     vi.stubGlobal(
@@ -2811,7 +2942,7 @@ it('clears a failed Start once the next Start succeeds (#1618)', async () => {
   start.focus()
   fireEvent.click(start)
   expect((await screen.findByRole('alert')).previousElementSibling).toBe(start)
-  await waitFor(() => expect(start).toBeEnabled())
+  await waitFor(() => expect(start).not.toHaveAttribute('aria-disabled'))
   fireEvent.click(start)
 
   const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
@@ -2944,9 +3075,12 @@ it('prevents duplicate starts and preserves the reviewer step after session expi
   vi.stubGlobal('fetch', fetch)
   runSetup()
   const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await reviewerStepSettled()
+  start.focus()
   fireEvent.click(start)
   fireEvent.click(start)
-  expect(start).toBeDisabled()
+  expect(start).not.toBeDisabled()
+  expect(start).toHaveAttribute('aria-disabled', 'true')
   expect(
     fetch.mock.calls.filter(
       ([request, init]) => requestUrl(request).endsWith('/device') && init?.method === 'POST',
@@ -3186,6 +3320,238 @@ it.each([
     expect(cancel).not.toHaveAttribute('aria-disabled')
     expect(cancel).toHaveFocus()
     expect(document.activeElement).not.toBe(document.body)
+  },
+)
+
+// jsdom has no focus fixup, so focus alone cannot fail in these tests; a browser
+// drops focus to the page when the focused button becomes natively disabled. The
+// mechanism is proved instead: the pressed button stays enabled, is marked
+// aria-disabled, and a repeat press sends nothing (#1678).
+it.each([
+  ['Use Codex', 'usable', null, '/api/setup/reviewer/selection'],
+  [
+    'Check existing sign-in',
+    'failed',
+    'permission_or_profile',
+    '/api/setup/reviewer/codex/recheck',
+  ],
+  ['Start device sign-in', 'ready', null, '/api/setup/reviewer/codex/device'],
+  ['Cancel sign-in', 'waiting', null, '/api/setup/reviewer/codex/device/cancel'],
+  [
+    'Validate and use OpenRouter',
+    'not_provisioned',
+    'profile_not_provisioned',
+    '/api/setup/reviewer/openrouter',
+  ],
+] as const)('keeps %s focused while it runs (#1678)', async (name, state, reason, path) => {
+  let release: ((value: Response) => void) | undefined
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url === path && init?.method === 'POST')
+      return new Promise<Response>((resolve) => {
+        release = resolve
+      })
+    if (url === '/api/setup/reviewer/codex/device')
+      return response({
+        state: 'waiting',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-1234',
+      })
+    if (url === '/api/setup/reviewer-access') return response(reviewerAccess(state, reason))
+    return response(setupState('reviewer'))
+  })
+  const posts = () =>
+    fetch.mock.calls.filter(
+      ([request, init]) => requestUrl(request) === path && init?.method === 'POST',
+    ).length
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const pressed = await screen.findByRole('button', { name })
+  await reviewerStepSettled()
+  const openRouter = name === 'Validate and use OpenRouter'
+  if (openRouter) {
+    fireEvent.input(screen.getByRole('textbox', { name: 'Model ID' }), {
+      target: { value: 'provider/model' },
+    })
+    fireEvent.input(screen.getByLabelText('API key (write-only)'), {
+      target: { value: 'synthetic-key' },
+    })
+  }
+  // Start disables Check while it runs; nothing focuses Check, so that stays native.
+  const check =
+    name === 'Start device sign-in'
+      ? screen.getByRole('button', { name: 'Check existing sign-in' })
+      : null
+  pressed.focus()
+  fireEvent.click(pressed)
+
+  expect(pressed).not.toBeDisabled()
+  expect(pressed).toHaveAttribute('aria-disabled', 'true')
+  expect(pressed).toHaveFocus()
+  if (check) expect(check).toBeDisabled()
+  fireEvent.click(pressed)
+  expect(posts()).toBe(1)
+
+  if (openRouter) {
+    release?.(response({ detail: { error: 'invalid_key' } }, 400))
+    const alert = await screen.findByRole('alert')
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(
+        'OpenRouter rejected this key. Replace it and validate again.',
+      ),
+    )
+    // A field refusal still focuses its field (#1618).
+    const key = screen.getByLabelText('API key (write-only)')
+    expect(key).toHaveFocus()
+    expect(key).toHaveAttribute('aria-invalid', 'true')
+    expect(alert.nextElementSibling).toBe(pressed)
+  } else {
+    release?.(response({ detail: { error: 'unavailable' } }, 503))
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+    expect(pressed.nextElementSibling).toBe(alert)
+    expect(pressed).toHaveFocus()
+  }
+  expect(pressed).not.toHaveAttribute('aria-disabled')
+  expect(pressed).toBeEnabled()
+  if (check) expect(check).toBeEnabled()
+  expect(posts()).toBe(1)
+})
+
+const discoveredShelf = {
+  library_id: 'books-id',
+  media_kind: 'book',
+  name: 'Reading Shelf',
+  service_path: '/discovered/books',
+  service_path_state: 'available',
+}
+const recordedShelf = {
+  connection: 'primary',
+  display_name: 'Reading Shelf',
+  library_id: 'books-id',
+  media_kind: 'book',
+  name: 'books',
+  provider_connections: [],
+}
+
+it.each([
+  [
+    'Continue',
+    'providers',
+    'Choose metadata providers',
+    '/api/setup/providers',
+    422,
+    'invalid_providers',
+    'Skip providers',
+  ],
+  [
+    'Skip providers',
+    'providers',
+    'Choose metadata providers',
+    '/api/setup/providers',
+    503,
+    'unavailable',
+    'Continue',
+  ],
+  [
+    'Continue',
+    'libraries',
+    'Choose libraries',
+    '/api/setup/libraries',
+    502,
+    'unavailable',
+    'Change name of Reading Shelf',
+  ],
+  [
+    'Check mounts',
+    'mounts',
+    'Check read-only mounts',
+    '/api/setup/mounts',
+    422,
+    'invalid_mounts',
+    null,
+  ],
+  [
+    'Continue without a reviewer',
+    'reviewer',
+    'Choose an optional cover reviewer',
+    '/api/setup/reviewer',
+    503,
+    'unavailable',
+    'Start device sign-in',
+  ],
+  [
+    'Continue with this reviewer',
+    'reviewer',
+    'Choose an optional cover reviewer',
+    '/api/setup/reviewer',
+    409,
+    'reviewer_unconfigured',
+    'Start device sign-in',
+  ],
+] as const)(
+  'keeps %s focused while the %s step is recorded (#1678)',
+  async (name, step, heading, path, status, code, siblingName) => {
+    let release: ((value: Response) => void) | undefined
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === path && init?.method === 'POST')
+        return new Promise<Response>((resolve) => {
+          release = resolve
+        })
+      if (url.startsWith('/api/setup/libraries?')) return response({ libraries: [discoveredShelf] })
+      if (url === '/api/setup/reviewer-access')
+        return response({
+          ...reviewerAccess('ready'),
+          mapping:
+            name === 'Continue with this reviewer'
+              ? { engine: 'openrouter', model: 'openai/gpt-6-luna' }
+              : null,
+        })
+      return response(
+        step === 'mounts'
+          ? setupState('mounts', {
+              completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+              libraries: [recordedShelf],
+              revision: 5,
+            })
+          : setupState(step),
+      )
+    })
+    const posts = () =>
+      fetch.mock.calls.filter(
+        ([request, init]) => requestUrl(request) === path && init?.method === 'POST',
+      ).length
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    const title = await screen.findByRole('heading', { name: heading })
+    await waitFor(() => expect(title).toHaveFocus())
+    await waitFor(() =>
+      expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
+    )
+    if (step === 'libraries')
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Reading Shelf' }))
+    const pressed = await screen.findByRole('button', { name })
+    const sibling = siblingName ? screen.getByRole('button', { name: siblingName }) : null
+    pressed.focus()
+    fireEvent.click(pressed)
+
+    expect(pressed).not.toBeDisabled()
+    expect(pressed).toHaveAttribute('aria-disabled', 'true')
+    expect(pressed).toHaveFocus()
+    // Every other button of the form stays natively disabled while the step is recorded.
+    if (sibling) expect(sibling).toBeDisabled()
+    fireEvent.click(pressed)
+    expect(posts()).toBe(1)
+
+    release?.(response({ detail: { error: code } }, status))
+    expect(await screen.findByRole('alert')).toBeVisible()
+    await waitFor(() => expect(pressed).not.toHaveAttribute('aria-disabled'))
+    expect(pressed).toBeEnabled()
+    expect(pressed).toHaveFocus()
+    if (sibling) expect(sibling).toBeEnabled()
+    expect(posts()).toBe(1)
   },
 )
 
