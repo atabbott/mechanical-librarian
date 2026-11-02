@@ -1703,12 +1703,15 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         """Supersede the waiting plans of cases a policy activation retires.
 
         ``retired`` names each retired case with its work. A changed policy
-        retires a case for good, so every plan waiting on it closes. A
-        same-policy reactivation readmits the same case, so only a plan whose
-        authority is a field automatic decision closes: an earlier generation's
-        decision never authorizes again, while an owner's, a cover selection's
-        or a description's does. The caller's transaction owns the outcome
-        (#1599).
+        retires a case for good, so every plan waiting on it closes.
+        ``reactivation`` means these cases return as themselves in their
+        episode, as a same-policy reactivation's cohort does, so only a plan
+        whose authority is a field automatic decision closes: an earlier
+        generation's decision never authorizes again, while an owner's, a cover
+        selection's or a description's does. A case an earlier activation
+        retired and preparation never readmitted returns only as a new episode,
+        so it passes without ``reactivation`` (#1657). The caller's transaction
+        owns the outcome (#1599).
         """
         statement = (
             _RETIRED_CASE_WAITING_SQL

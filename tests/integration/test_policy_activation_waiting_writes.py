@@ -9,7 +9,9 @@ but an automatic field decision of the earlier generation never authorizes
 again (#1596). Either way the waiting write would wait for good, so the
 activation closes it in its own transaction, with a cover's cleanup. A waiting
 write whose authority returns with its case keeps waiting and is still written
-once.
+once. A later activation closes, whatever its origin, a write still waiting on a
+case an earlier activation retired and preparation never readmitted, since that
+case can return only as a new episode (#1657).
 
 The field cases drive the real preparation harness of
 `test_leaving_automatic_posture.py`; the cover cases drive the real owner cover
@@ -49,6 +51,7 @@ from mechanical_librarian.application.field_effects import (
     TargetEffectResult,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     FieldEffectPlan,
@@ -328,6 +331,58 @@ def test_a_policy_change_leaves_a_ready_field_write_to_its_claim(
     _reopen_fields(library, tmp_path)
 
 
+def _retired_by_activation(repository: SQLiteMetadataReportRepository) -> list[object]:
+    return repository._connection.execute(
+        "SELECT lineage.review_case_id,lineage.outcome,retirement.actor "
+        "FROM current_review_case_lineages lineage JOIN review_case_transitions "
+        "retirement ON retirement.transition_id=lineage.transition_id"
+    ).fetchall()
+
+
+def test_a_policy_change_closes_a_field_write_whose_case_did_not_return(
+    library: _Library, tmp_path: Path
+) -> None:
+    """Leaving Automatic keeps the owner's write, but preparation fails to
+    bring its case back; the next activation closes it (#1657)."""
+    decision_id = _owner_decision_id(library)
+    lane = _FieldLane(library, tmp_path)
+    library.now[0] = 13
+    waiting_id = lane.wait(library, decision_id)
+    propose = library.pipeline._propose
+
+    def fail(*_: object) -> str:
+        raise ReviewPipelineError("internal_failure")
+
+    library.pipeline._propose = fail
+    assert library.root.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    library.now[0] = 21
+    library.drain()
+    library.pipeline._propose = propose
+    transition = library.root.metadata_policy_transition()
+    assert transition is not None
+    assert (transition.state, transition.failed) == ("completed_with_failures", 1)
+    assert _retired_by_activation(library.root) == [
+        (None, "retired", "policy-activation-v1")
+    ]
+    assert _decision_plans(library.root, decision_id) == [
+        (waiting_id, "stale", "connection")
+    ]
+
+    _changed_policy(library, 25)
+
+    assert _decision_plans(library.root, decision_id) == [(waiting_id, *_CLOSED)]
+    assert library.root.pending_field_effect_decision_counts() == ()
+    assert all(kind != "automatic_recovery" for kind, _ in _signals(library.root))
+    assert (waiting_id, "superseded") in lane.waiting_rows()
+    assert (waiting_id, "stale") not in lane.waiting_rows()
+    library.now[0] = 30
+    library.drain()
+    lane.reconnect()
+    assert _decision_plans(library.root, decision_id) == [(waiting_id, *_CLOSED)]
+    assert lane.sent == []
+    _reopen_fields(library, tmp_path)
+
+
 def _cover_lane(cover: _CoverLane) -> ContinuousGuardedApplication:
     key = (cover.connection, cover.library)
     return ContinuousGuardedApplication(
@@ -346,14 +401,17 @@ def _activate_cover_policy(
 ) -> None:
     repository = cover.repository
     resolved = resolve_policy(profile, cover.library)
+    active, generation = repository._connection.execute(
+        "SELECT active_policy_id,generation FROM metadata_policy_state"
+    ).fetchone()
     if not reconcile:
         repository.create_metadata_policy_draft(profile.canonical_json)
     repository.activate_metadata_policy(
         profile.policy_id,
-        MetadataPolicyProfile.builtin().policy_id,
+        active,
         ((cover.library, resolved.resolved_id, resolved.canonical_json),),
-        200,
-        expected_active_generation=1,
+        199 + generation,
+        expected_active_generation=generation,
         reconcile_current=reconcile,
     )
 
@@ -437,6 +495,36 @@ def test_leaving_automatic_keeps_a_waiting_owner_cover(
         assert (written.state, written.failure) == ("verified", None)
         assert _cleanup(cover.repository, waiting_id) == [("completed",)]
         assert not cover.recovery.exists(waiting_id)
+    cover.reopen()
+
+
+@pytest.mark.parametrize("same_policy", [False, True], ids=["changed", "same_policy"])
+def test_a_later_activation_closes_a_cover_whose_case_did_not_return(
+    cover: _CoverLane, same_policy: bool
+) -> None:
+    """The case an earlier activation retired is never readmitted, so it can
+    return only as a new episode; the next activation closes its cover (#1657)."""
+    waiting_id = _waiting_cover(cover)
+    _activate_cover_policy(cover, MetadataPolicyProfile.builtin(), reconcile=True)
+    left = cover.repository.get_field_effect(waiting_id)
+    assert (left.state, left.failure) == ("stale", "connection")
+
+    if same_policy:
+        _activate_cover_policy(cover, MetadataPolicyProfile.builtin(), reconcile=True)
+    else:
+        _activate_cover_policy(cover, _all_ask(), reconcile=False)
+
+    left = cover.repository.get_field_effect(waiting_id)
+    assert (left.state, left.failure) == _CLOSED
+    assert _cleanup(cover.repository, waiting_id) == [("pending",)]
+    lane = _cover_lane(cover)
+    cover.capabilities.category = "allowed"
+    for _ in range(4):
+        lane.wake()
+        lane._run_until_idle()
+    assert _cleanup(cover.repository, waiting_id) == [("completed",)]
+    assert not cover.recovery.exists(waiting_id)
+    assert all(kind != "automatic_recovery" for kind, _ in _signals(cover.repository))
     cover.reopen()
 
 

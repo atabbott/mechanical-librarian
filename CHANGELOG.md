@@ -22,6 +22,10 @@ brackets are GitHub issues.
   cover's restore point is removed; leaving Automatic does the same for an
   automatic field change, while an owner's waiting change still writes once
   Audiobookshelf can be reached (#1599).
+- A change waiting for Audiobookshelf to come back on a work that could not be
+  prepared again after leaving Automatic now closes at the next policy
+  activation, and a cover's restore point is removed, instead of waiting for
+  good (#1657).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
