@@ -1645,3 +1645,22 @@ def test_example_keeps_rowid_order_without_an_order_by(
     )
     (other,) = connection.execute(bare).fetchall()
     assert json.loads(other[0])["decision_id"] == later[0]
+
+
+@pytest.mark.parametrize("reactivation", [False, True])
+def test_a_policy_activation_reaches_waiting_effects_by_the_target_index(
+    store: tuple[sqlite3.Connection, list[str]], reactivation: bool
+) -> None:
+    """Closing a retired case's waiting plans reads one work's effects (#1599)."""
+    connection, _ = store
+    statement = (
+        field_effects._RETIRED_CASE_WAITING_SQL
+        + (field_effects._AUTOMATIC_DECISION_SQL if reactivation else "")
+        + " ORDER BY rowid"
+    )
+    plan = _plan(connection, statement, ("primary", "ebooks", "item", "case"))
+    assert not _scans_effects(plan)
+    assert (
+        "SEARCH field_effects USING INDEX field_effects_target "
+        "(connection_name=? AND library_name=? AND work_id=?)"
+    ) in plan
