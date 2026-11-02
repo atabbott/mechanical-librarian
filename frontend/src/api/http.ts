@@ -24,7 +24,9 @@ export const lits =
         : { missing_members: Exclude<T, V[number]> }),
   ) =>
     values
-type LibraryDto = Schema<'_LibraryResponse'>
+type LibraryDto = ResponseSchema<'_LibraryResponse'>
+type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
+type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
 type AttentionDto = Schema<'_AttentionResponse'>
 type CaseDetailDto = Schema<'_CaseDetailResponse'>
 export type SettingsView = Schema<'SettingsView'>
@@ -1390,6 +1392,8 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'POST /api/v1/review-preparation/{connection}/check-connection',
   'POST /api/v1/review-preparation/{connection}/{library_name}/retry',
   'POST /api/v1/review-preparation/{connection}/{library_name}/scan',
+  'GET /api/v1/library',
+  'GET /api/v1/library/report',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1472,17 +1476,29 @@ export class ReviewApiClient implements ReviewHttp {
     const p = new URLSearchParams({ lens: search.lens })
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
-    return mapLibrary(await this.read(`/api/v1/library?${p}`, signal, workClass))
+    return mapLibrary((await this.read(`/api/v1/library?${p}`, signal, workClass)) as LibraryDto)
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
-  // server that escaped it knows how.
+  // server that escaped it knows how. It is followed only when it is the report
+  // route on this origin, so the body is decoded as a report before it is
+  // mapped as one; any other address fails closed without a request (#1686).
   async getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ) {
-    return mapReportDetail(await this.read(detailUrl, signal, workClass))
+    if (
+      new URL(detailUrl, 'http://local').origin !== 'http://local' ||
+      matchOperation('GET', detailUrl) !== 'GET /api/v1/library/report'
+    )
+      throw new ResponseDecodeError({
+        operation: 'GET /api/v1/library/report',
+        responseStatus: 0,
+        at: '',
+        reason: 'unexpected_operation',
+      })
+    return mapReportDetail((await this.read(detailUrl, signal, workClass)) as ReportDetailDto)
   }
   async getSettings(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapSettings(await this.read('/api/v1/settings', signal, workClass))
@@ -3248,230 +3264,128 @@ const mapRecordingIdentityBasis = (value: unknown): RecordingIdentityBasisView |
   return { basis: 'chapter_runtime_and_structure', provider, candidate }
 }
 
-export const mapReportDetail = (value: unknown): ReportDetailView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-report-detail-v5' ||
-    !record(value.embedded_cover) ||
-    !Array.isArray(value.chapters) ||
-    !Array.isArray(value.evidence) ||
-    !Array.isArray(value.provider_sources) ||
-    !Array.isArray(value.provider_evidence)
-  )
-    throw new ApiError(502, 'invalid_report_detail_response')
-  const cover = value.embedded_cover
-  if (typeof cover.present !== 'boolean' || typeof value.chapters_truncated !== 'boolean')
-    throw new ApiError(502, 'invalid_report_detail_response')
-  if (
-    typeof value.evidence_truncated !== 'boolean' ||
-    typeof value.provider_evidence_truncated !== 'boolean'
-  )
-    throw new ApiError(502, 'invalid_report_detail_response')
-  return {
-    chapters: (value.chapters as unknown[]).map((chapter, index) => {
-      if (!record(chapter)) throw new ApiError(502, `invalid_report_chapter_${String(index)}`)
-      return {
-        endMilliseconds: integerValue(chapter.end_milliseconds, 'report_chapter_end'),
-        ordinal: integerValue(chapter.ordinal, 'report_chapter_ordinal'),
-        startMilliseconds: integerValue(chapter.start_milliseconds, 'report_chapter_start'),
-        title: chapter.title == null ? null : stringValue(chapter.title, 'report_chapter_title'),
-      }
-    }),
-    chaptersTruncated: value.chapters_truncated,
-    coverPresent: cover.present,
-    coverSurface:
-      cover.surface == null
-        ? null
-        : coverObservationValue(cover.surface, 'report_cover_surface', AUDIO_SURFACES),
-    evidence: (value.evidence as unknown[]).map((claim, index) => {
-      if (!record(claim)) throw new ApiError(502, `invalid_report_evidence_${String(index)}`)
-      return {
-        basis: coverObservationValue(claim.basis, 'report_evidence_basis', CLAIM_BASES),
-        excerpt: stringValue(claim.excerpt, 'report_evidence_excerpt'),
-        kind: coverObservationValue(claim.kind, 'report_evidence_kind', CLAIM_KINDS),
-        role: claim.role == null ? null : stringValue(claim.role, 'report_evidence_role'),
-        state: coverObservationValue(claim.state, 'report_evidence_state', FIELD_STATES),
-        value: stringValue(claim.value, 'report_evidence_value'),
-      }
-    }),
-    evidenceTruncated: value.evidence_truncated,
-    item: stringValue(value.item, 'report_item'),
-    library: stringValue(value.library, 'report_library'),
-    libraryDisplayName:
-      optionalString(value.library_display_name, 'report_library_display_name') ??
-      stringValue(value.library, 'report_library'),
-    mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
-    recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
-    audiobookReviewScope: mapAudiobookReviewScope(
-      value.audiobook_review_scope,
-      value.media_kind,
-      value.recording_identity_basis,
-    ),
-    mediaKind: coverObservationValue(value.media_kind, 'report_media_kind', MEDIA_KINDS),
-    providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
-    providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
-      if (!record(claim)) throw new ApiError(502, `invalid_report_provider_${String(index)}`)
-      return {
-        candidate: stringValue(claim.candidate, 'report_provider_candidate'),
-        kind: stringValue(claim.kind, 'report_provider_kind'),
-        provider: stringValue(claim.provider, 'report_provider_name'),
-        role: claim.role == null ? null : stringValue(claim.role, 'report_provider_role'),
-        state: stringValue(claim.state, 'report_provider_state'),
-        value: claim.value == null ? null : stringValue(claim.value, 'report_provider_value'),
-      }
-    }),
-    providerEvidenceTruncated: value.provider_evidence_truncated,
-    reportId: stringValue(value.report_id, 'report_id'),
-    title: stringValue(value.title, 'report_title'),
-  }
-}
+// The report detail and the works list are decoded centrally (#1686). Their
+// mappers only rename; the media-health, provider-outcome, recording-basis and
+// audiobook-scope helpers they share with the case detail keep their checks
+// until the case detail is decoded too.
+export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
+  chapters: value.chapters.map((chapter) => ({
+    endMilliseconds: chapter.end_milliseconds,
+    ordinal: chapter.ordinal,
+    startMilliseconds: chapter.start_milliseconds,
+    title: chapter.title,
+  })),
+  chaptersTruncated: value.chapters_truncated,
+  coverPresent: value.embedded_cover.present,
+  coverSurface: value.embedded_cover.surface,
+  evidence: value.evidence.map((claim) => ({
+    basis: claim.basis,
+    excerpt: claim.excerpt,
+    kind: claim.kind,
+    role: claim.role,
+    state: claim.state,
+    value: claim.value,
+  })),
+  evidenceTruncated: value.evidence_truncated,
+  item: value.item,
+  library: value.library,
+  libraryDisplayName: value.library_display_name ?? value.library,
+  mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
+  recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
+  audiobookReviewScope: mapAudiobookReviewScope(
+    value.audiobook_review_scope,
+    value.media_kind,
+    value.recording_identity_basis,
+  ),
+  mediaKind: value.media_kind,
+  providerSources: value.provider_sources.map(mapProviderOutcome),
+  providerEvidence: value.provider_evidence.map((claim) => ({
+    candidate: claim.candidate,
+    kind: claim.kind,
+    provider: claim.provider,
+    role: claim.role,
+    state: claim.state,
+    value: claim.value,
+  })),
+  providerEvidenceTruncated: value.provider_evidence_truncated,
+  reportId: value.report_id,
+  title: value.title,
+})
 
-export const mapLibrary = (value: unknown): LibraryView => {
-  // The one token this build's library document is served under. Reading any
-  // token the server happens to send would let a version the client was never
-  // written against render as though it were understood, which is the failure
-  // the sibling mappers already refuse; the library is held to the same rule.
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-library-v4' ||
-    !record(value.counts) ||
-    !Array.isArray(value.items)
-  )
-    throw new ApiError(502, 'invalid_library_response')
-  const lens = coverObservationValue(value.lens, 'library_lens', ['all', ...attentionStates])
-  // Validated at each read: this cast names the DTO's fields, and every one the
-  // view model consumes passes through the validators below before it is used.
-  const dto = value as unknown as LibraryDto
-  const query = optionalString(dto.query, 'library_query')
-  const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
-  const previousCursor = optionalString(dto.previous_cursor, 'library_previous_cursor')
-  return {
-    lens,
-    ...(query ? { query } : {}),
-    ...(nextCursor ? { nextCursor } : {}),
-    ...(previousCursor ? { previousCursor } : {}),
-    page: integerValue(dto.page, 'library_page'),
-    counts: {
-      attention: integerValue(dto.counts.needs_attention, 'attention_count'),
-      all: integerValue(dto.counts.all, 'all_count'),
-      clear: integerValue(dto.counts.no_attention_needed, 'clear_count'),
-      notMatched: integerValue(dto.counts.not_matched, 'not_matched_count'),
-      failed: integerValue(dto.counts.preparation_failed, 'preparation_failed_count'),
-    },
-    works: dto.items.map((item) => {
-      const reviewCaseId = optionalString(item.review_case_id, 'review_case_id')
-      const preparation =
-        item.preparation == null
+export const mapLibrary = (value: LibraryDto): LibraryView => ({
+  lens: value.lens,
+  ...(value.query ? { query: value.query } : {}),
+  ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
+  ...(value.previous_cursor ? { previousCursor: value.previous_cursor } : {}),
+  page: value.page,
+  counts: {
+    attention: value.counts.needs_attention,
+    all: value.counts.all,
+    clear: value.counts.no_attention_needed,
+    notMatched: value.counts.not_matched,
+    failed: value.counts.preparation_failed,
+  },
+  works: value.items.map((item) => {
+    const preparation = item.preparation
+    const summary = item.summary
+    return {
+      id: item.review_case_id ?? item.work_id,
+      ...(item.review_case_id ? { reviewCaseId: item.review_case_id } : {}),
+      workId: item.work_id,
+      title: item.title,
+      authors: item.authors,
+      library: item.library,
+      libraryDisplayName: item.library_display_name ?? item.library,
+      mediaKind: item.media_kind,
+      attentionCount: item.attention_count,
+      attention: item.attention_state,
+      detailUrl: item.detail_url,
+      detailKind: item.detail_kind,
+      preparation:
+        preparation === null
           ? null
           : {
-              attempt: integerValue(item.preparation.attempt, 'preparation_attempt'),
-              diagnosticReference: stringValue(
-                item.preparation.diagnostic_reference,
-                'preparation_diagnostic_reference',
-              ),
-              mediaHealth: mapMediaHealth(
-                item.preparation.media_health,
-                'preparation_media_health',
-              ),
-              provider: stringValue(item.preparation.provider, 'preparation_provider'),
-              reason: stringValue(item.preparation.reason, 'preparation_reason'),
-              recovery: stringValue(item.preparation.recovery, 'preparation_recovery'),
-              recoveryAttempt: integerValue(
-                item.preparation.recovery_attempt,
-                'preparation_recovery_attempt',
-              ),
-              stage: coverObservationValue(
-                item.preparation.stage,
-                'preparation_stage',
-                PREPARATION_FAILURE_STAGES,
-              ),
-              status: coverObservationValue(
-                item.preparation.status,
-                'preparation_status',
-                PREPARATION_FAILURE_STATUSES,
-              ),
-            }
-      if (!Array.isArray(item.preparation_outcomes))
-        throw new ApiError(502, 'invalid_preparation_outcomes')
-      const preparationOutcomes = (item.preparation_outcomes as unknown[]).map(mapProviderOutcome)
-      const workId = stringValue(item.work_id, 'work_id')
-      const cover = item.cover == null ? undefined : mapLibraryCover(item.cover)
-      const summary =
-        item.summary == null
+              attempt: preparation.attempt,
+              diagnosticReference: preparation.diagnostic_reference,
+              mediaHealth: mapMediaHealth(preparation.media_health, 'preparation_media_health'),
+              provider: preparation.provider,
+              reason: preparation.reason,
+              recovery: preparation.recovery,
+              recoveryAttempt: preparation.recovery_attempt,
+              stage: preparation.stage,
+              status: preparation.status,
+            },
+      preparationOutcomes: item.preparation_outcomes.map(mapProviderOutcome),
+      summary:
+        summary === null
           ? null
           : {
-              fields: (Array.isArray(item.summary.fields) ? item.summary.fields : []).map(
-                (field, index) => {
-                  if (!record(field)) throw new ApiError(502, `invalid_summary_${String(index)}`)
-                  const state = coverObservationValue(
-                    field.state,
-                    `summary_${String(index)}_state`,
-                    TARGET_FIELD_STATES,
-                  )
-                  return {
-                    destination: coverObservationValue(
-                      field.destination,
-                      `summary_${String(index)}_destination`,
-                      TARGET_DESTINATIONS,
-                    ),
-                    state,
-                    value: targetValueText(state, field.value),
-                  }
-                },
-              ),
-              reason: stringValue(item.summary.reason, 'summary_reason'),
-              state: coverObservationValue(item.summary.state, 'summary_state', workSummaryStates),
-            }
-      return {
-        id: reviewCaseId ?? workId,
-        ...(reviewCaseId ? { reviewCaseId } : {}),
-        workId,
-        title: stringValue(item.title, 'title'),
-        authors: stringArray(item.authors, 'authors'),
-        library: stringValue(item.library, 'library'),
-        libraryDisplayName:
-          optionalString(item.library_display_name, 'library_display_name') ??
-          stringValue(item.library, 'library'),
-        mediaKind: coverObservationValue(item.media_kind, 'media_kind', MEDIA_KINDS),
-        attentionCount: integerValue(item.attention_count, 'attention_count'),
-        attention: coverObservationValue(item.attention_state, 'attention_state', attentionStates),
-        detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
-        detailKind: (() => {
-          // Read back through `unknown`, as `lens` above is: the DTO type says
-          // what the server promises, and this is the check that it kept it.
-          const kind: unknown = item.detail_kind
-          if (kind === null) return null
-          const named = stringValue(kind, 'detail_kind')
-          if (named !== 'case' && named !== 'report') throw new ApiError(502, 'invalid_detail_kind')
-          return named
-        })(),
-        preparation,
-        preparationOutcomes,
-        summary,
-        ...(cover ? { cover } : {}),
-      }
-    }),
-  }
-}
+              fields: summary.fields.map((field) => ({
+                destination: field.destination,
+                state: field.state,
+                value: targetValueText(field.state, field.value),
+              })),
+              reason: summary.reason,
+              state: summary.state,
+            },
+      ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
+    }
+  }),
+})
 
 // A cover is shown only from the route that serves the preview its report
 // binds, named by that same digest, so a row cannot point the image elsewhere.
-const mapLibraryCover = (value: unknown): LibraryCoverView => {
-  if (!record(value)) throw new ApiError(502, 'invalid_library_cover')
-  const previewSha256 = stringValue(value.preview_sha256, 'library_cover_preview')
-  const width = integerValue(value.width, 'library_cover_width')
-  const height = integerValue(value.height, 'library_cover_height')
-  const url = stringValue(value.url, 'library_cover_url')
+// The decoder holds the digest's form and the route prefix; this binds the two.
+const mapLibraryCover = (value: LibraryCoverDto): LibraryCoverView => {
   const prefix = '/api/v1/library/cover?'
-  if (
-    !/^[0-9a-f]{64}$/u.test(previewSha256) ||
-    width < 1 ||
-    height < 1 ||
-    !url.startsWith(prefix) ||
-    new URLSearchParams(url.slice(prefix.length)).get('preview') !== previewSha256
-  )
+  if (new URLSearchParams(value.url.slice(prefix.length)).get('preview') !== value.preview_sha256)
     throw new ApiError(502, 'invalid_library_cover')
-  return { previewSha256, width, height, url }
+  return {
+    previewSha256: value.preview_sha256,
+    width: value.width,
+    height: value.height,
+    url: value.url,
+  }
 }
 
 export const mapAttention = (value: unknown): AttentionView => {

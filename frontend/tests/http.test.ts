@@ -52,14 +52,12 @@ import {
   refusalCopy,
   PRE_CALL_SERVER_CODES,
   uncertainWriteOutcome,
-  mapLibrary,
   mapEvidence,
   mapHistory,
   ResponseDecodeError,
   UncertainMutationError,
   mapCoverConsideration,
   mapCodexDevice,
-  mapReportDetail,
   mapReviewerAccess,
   mapSettings,
 } from '../src/api/http'
@@ -80,6 +78,17 @@ const readPreparation = (document: unknown) =>
     csrf,
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getPreparation()
+// The library family is decoded centrally too (#1686).
+const readLibrary = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getLibrary({ lens: 'all' })
+const readReport = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getReportDetail('/api/v1/library/report?item=item-9')
 // The decoder's `reason@at` for a refused read, with the route-safe message.
 const refused = (failure: string) => {
   const [reason, at] = failure.split('@')
@@ -2667,7 +2676,9 @@ describe('ReviewApiClient', () => {
       status: 503,
       code: 'busy',
     })
-    expect(() => mapLibrary(library({ lens: '__proto__' }))).toThrow(ApiError)
+    await expect(readLibrary(library({ lens: '__proto__' }))).rejects.toMatchObject(
+      refused('enum@/lens'),
+    )
     const work = libraryWork({ media_kind: 'm4b', detail_kind: 'reports' })
     const page = library({
       items: [work],
@@ -2679,11 +2690,11 @@ describe('ReviewApiClient', () => {
         preparation_failed: 0,
       },
     })
-    expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_detail_kind'))
+    await expect(readLibrary(page)).rejects.toMatchObject(refused('enum@/items/0/detail_kind'))
     // `ebook` is not a format the server reports (#1286).
-    expect(() =>
-      mapLibrary({ ...page, items: [{ ...work, media_kind: 'ebook', detail_kind: 'case' }] }),
-    ).toThrow(new ApiError(502, 'invalid_media_kind'))
+    await expect(
+      readLibrary({ ...page, items: [{ ...work, media_kind: 'ebook', detail_kind: 'case' }] }),
+    ).rejects.toMatchObject(refused('enum@/items/0/media_kind'))
     // A stopped preparation names its stage and status from closed sets, and
     // a code outside either is refused rather than shown raw (#1286 C6).
     const stopped = (preparation: Record<string, unknown>) => ({
@@ -2707,33 +2718,35 @@ describe('ReviewApiClient', () => {
         },
       ],
     })
-    expect(mapLibrary(stopped({})).works[0]?.preparation).toMatchObject({
+    expect((await readLibrary(stopped({}))).works[0]?.preparation).toMatchObject({
       stage: 'extraction',
       status: 'unreadable_media',
     })
-    expect(() => mapLibrary(stopped({ stage: 'reading' }))).toThrow(
-      new ApiError(502, 'invalid_preparation_stage'),
+    await expect(readLibrary(stopped({ stage: 'reading' }))).rejects.toMatchObject(
+      refused('enum@/items/0/preparation/stage'),
     )
-    expect(() => mapLibrary(stopped({ status: 'broken' }))).toThrow(
-      new ApiError(502, 'invalid_preparation_status'),
+    await expect(readLibrary(stopped({ status: 'broken' }))).rejects.toMatchObject(
+      refused('enum@/items/0/preparation/status'),
     )
   })
 
-  it('refuses a library document served under any token but its own', () => {
+  it('refuses a library document served under any token but its own', async () => {
     // The library gained a required media-health member and moved to v2. A
     // client that reads whatever token arrives would render a v1 document as
     // though the member were simply absent, which is the reading the server
     // moved the token to prevent.
     const page = library({ schema_version: 'review-library-v1' })
-    expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_library_response'))
+    await expect(readLibrary(page)).rejects.toMatchObject(refused('const@/schema_version'))
     // v3 added the Not matched count and lens (#1407); a v2 document lacks both.
-    expect(() => mapLibrary({ ...page, schema_version: 'review-library-v2' })).toThrow(
-      new ApiError(502, 'invalid_library_response'),
-    )
-    expect(() => mapLibrary({ ...page, schema_version: 'review-library-v4' })).not.toThrow()
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v2' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v4' }),
+    ).resolves.toBeDefined()
   })
 
-  it('maps a library work cover and refuses a malformed one', () => {
+  it('maps a library work cover and refuses a malformed one', async () => {
     const preview = 'a'.repeat(64)
     const cover = {
       height: 452,
@@ -2747,7 +2760,7 @@ describe('ReviewApiClient', () => {
         detail_url: '/api/v1/library/report?item=item%2F1',
         cover: value,
       })
-      // The mapper reads an absent cover as none; the absent case removes it.
+      // The absent case removes the member.
       if (value === undefined) delete work.cover
       return library({
         items: [work],
@@ -2760,30 +2773,41 @@ describe('ReviewApiClient', () => {
         },
       })
     }
-    expect(mapLibrary(page(cover)).works[0]?.cover).toEqual({
+    expect((await readLibrary(page(cover))).works[0]?.cover).toEqual({
       previewSha256: preview,
       width: 302,
       height: 452,
       url: cover.url,
     })
-    // The member is optional: a server that names no cover, or says none,
-    // leaves the work its spine mark.
-    expect(mapLibrary(page(undefined)).works[0]).not.toHaveProperty('cover')
-    expect(mapLibrary(page(null)).works[0]).not.toHaveProperty('cover')
-    for (const malformed of [
-      'cover',
-      { ...cover, preview_sha256: 'A'.repeat(64) },
-      { ...cover, width: 0 },
-      { ...cover, height: 1.5 },
+    // A server that says no cover leaves the work its spine mark; the member
+    // itself is required, so its absence is a document this client refuses.
+    expect((await readLibrary(page(null))).works[0]).not.toHaveProperty('cover')
+    await expect(readLibrary(page(undefined))).rejects.toMatchObject(
+      refused('required@/items/0/cover'),
+    )
+    for (const [malformed, failure] of [
+      ['cover', 'type@/items/0/cover'],
+      [{ ...cover, preview_sha256: 'A'.repeat(64) }, 'pattern@/items/0/cover/preview_sha256'],
+      [{ ...cover, width: 0 }, 'min@/items/0/cover/width'],
+      [{ ...cover, height: 1.5 }, 'type@/items/0/cover/height'],
       // The address must be the cover route, naming this preview.
-      { ...cover, url: `/api/v1/review-cases/x/images/${preview}` },
-      { ...cover, url: `https://elsewhere.test/api/v1/library/cover?preview=${preview}` },
-      { ...cover, url: `/api/v1/library/cover?preview=${'b'.repeat(64)}` },
-    ])
-      expect(() => mapLibrary(page(malformed)), JSON.stringify(malformed)).toThrow(ApiError)
+      [{ ...cover, url: `/api/v1/review-cases/x/images/${preview}` }, 'pattern@/items/0/cover/url'],
+      [
+        { ...cover, url: `https://elsewhere.test/api/v1/library/cover?preview=${preview}` },
+        'pattern@/items/0/cover/url',
+      ],
+    ] as const)
+      await expect(readLibrary(page(malformed)), JSON.stringify(malformed)).rejects.toMatchObject(
+        refused(failure),
+      )
+    // The decoder holds the route; the binding to this preview is the mapper's
+    // own named check, which a read reports under its own code.
+    await expect(
+      readLibrary(page({ ...cover, url: `/api/v1/library/cover?preview=${'b'.repeat(64)}` })),
+    ).rejects.toThrow(new ApiError(502, 'invalid_library_cover'))
   })
 
-  it('reads the Not matched lens, its count and a closed reason state (#1407)', () => {
+  it('reads the Not matched lens, its count and a closed reason state (#1407)', async () => {
     const work = (state: string) =>
       libraryWork({
         title: 'Unmatched work',
@@ -2803,25 +2827,25 @@ describe('ReviewApiClient', () => {
         },
         lens: 'not_matched',
       })
-    const mapped = mapLibrary(page('not_matched_unavailable_scheduled'))
+    const mapped = await readLibrary(page('not_matched_unavailable_scheduled'))
     expect(mapped.lens).toBe('not_matched')
     expect(mapped.counts).toEqual({ attention: 0, all: 3, clear: 1, notMatched: 2, failed: 0 })
     expect(mapped.works[0]?.summary?.state).toBe('not_matched_unavailable_scheduled')
-    expect(() => mapLibrary(page('not_matched_somehow'))).toThrow(
-      new ApiError(502, 'invalid_summary_state'),
+    await expect(readLibrary(page('not_matched_somehow'))).rejects.toMatchObject(
+      refused('enum@/items/0/summary/state'),
     )
     const stray = {
       ...page('not_matched_refused'),
       items: [{ ...work('not_matched_refused'), attention_state: 'unmatched' }],
     }
-    expect(() => mapLibrary(stray)).toThrow(new ApiError(502, 'invalid_attention_state'))
-    expect(() => mapLibrary({ ...page('not_matched_refused'), lens: 'unmatched' })).toThrow(
-      new ApiError(502, 'invalid_library_lens'),
-    )
+    await expect(readLibrary(stray)).rejects.toMatchObject(refused('enum@/items/0/attention_state'))
+    await expect(
+      readLibrary({ ...page('not_matched_refused'), lens: 'unmatched' }),
+    ).rejects.toMatchObject(refused('enum@/lens'))
     const counts: Record<string, number> = { ...page('not_matched_refused').counts }
     delete counts.not_matched
-    expect(() => mapLibrary({ ...page('not_matched_refused'), counts })).toThrow(
-      new ApiError(502, 'invalid_not_matched_count'),
+    await expect(readLibrary({ ...page('not_matched_refused'), counts })).rejects.toMatchObject(
+      refused('required@/counts/not_matched'),
     )
   })
 })
@@ -2829,7 +2853,7 @@ describe('ReviewApiClient', () => {
 describe('mapReportDetail', () => {
   const detail = reportDetail
 
-  it('refuses an evidence kind, basis or state, or a cover surface, outside its closed set (#1286 C6)', () => {
+  it('refuses an evidence kind, basis or state, or a cover surface, outside its closed set (#1286 C6)', async () => {
     const claim = {
       basis: 'sidecar',
       excerpt: 'Recorded Narrator',
@@ -2838,63 +2862,80 @@ describe('mapReportDetail', () => {
       state: 'valid',
       value: 'Recorded Narrator',
     }
-    const mapped = mapReportDetail(
+    const mapped = await readReport(
       detail({ evidence: [claim], embedded_cover: { present: true, surface: 'mp4_ilst' } }),
     )
     expect(mapped.evidence[0]).toMatchObject({ kind: 'contributor', basis: 'sidecar' })
-    for (const [override, code] of [
-      [{ kind: 'narrator' }, 'invalid_report_evidence_kind'],
-      [{ basis: 'filename' }, 'invalid_report_evidence_basis'],
-      [{ state: 'broken' }, 'invalid_report_evidence_state'],
+    for (const [override, failure] of [
+      [{ kind: 'narrator' }, 'enum@/evidence/0/kind'],
+      [{ basis: 'filename' }, 'enum@/evidence/0/basis'],
+      [{ state: 'broken' }, 'enum@/evidence/0/state'],
     ] as const)
-      expect(() => mapReportDetail(detail({ evidence: [{ ...claim, ...override }] }))).toThrow(
-        new ApiError(502, code),
-      )
-    expect(() =>
-      mapReportDetail(detail({ embedded_cover: { present: true, surface: 'apic' } })),
-    ).toThrow(new ApiError(502, 'invalid_report_cover_surface'))
+      await expect(
+        readReport(detail({ evidence: [{ ...claim, ...override }] })),
+      ).rejects.toMatchObject(refused(failure))
+    await expect(
+      readReport(detail({ embedded_cover: { present: true, surface: 'apic' } })),
+    ).rejects.toMatchObject(refused('enum@/embedded_cover/surface'))
   })
 
-  it('requires a closed nullable recording basis and maps its attribution', () => {
+  it('requires a closed nullable recording basis and maps its attribution', async () => {
     const basis = {
       basis: 'chapter_runtime_and_structure',
       provider: 'Audnexus',
       candidate: 'recording-1',
     }
     expect(
-      mapReportDetail(
-        detail({ recording_identity_basis: basis, audiobook_review_scope: 'recording' }),
+      (
+        await readReport(
+          detail({ recording_identity_basis: basis, audiobook_review_scope: 'recording' }),
+        )
       ).recordingIdentityBasis,
     ).toEqual(basis)
-    expect(mapReportDetail(detail()).recordingIdentityBasis).toBeNull()
-    for (const value of [
-      undefined,
-      {},
-      { ...basis, basis: 'runtime' },
-      { ...basis, extra: true },
-      { ...basis, provider: '' },
-      { ...basis, candidate: 'x'.repeat(129) },
-      { ...basis, provider: 'bad\nsource' },
-    ]) {
-      expect(() => mapReportDetail(detail({ recording_identity_basis: value }))).toThrow(ApiError)
+    expect((await readReport(detail())).recordingIdentityBasis).toBeNull()
+    for (const [value, failure] of [
+      [undefined, 'required@/recording_identity_basis'],
+      [{}, 'required@/recording_identity_basis/basis'],
+      [{ ...basis, basis: 'runtime' }, 'const@/recording_identity_basis/basis'],
+      [{ ...basis, extra: true }, 'unknown_key@/recording_identity_basis/extra'],
+      [{ ...basis, provider: '' }, 'min_length@/recording_identity_basis/provider'],
+      [{ ...basis, candidate: 'x'.repeat(129) }, 'max_length@/recording_identity_basis/candidate'],
+      [{ ...basis, provider: 'bad\nsource' }, 'pattern@/recording_identity_basis/provider'],
+    ] as const) {
+      const document = detail({ recording_identity_basis: value })
+      await expect(readReport(document), JSON.stringify(value)).rejects.toMatchObject(
+        refused(failure),
+      )
     }
   })
 
-  it('requires a consistent closed audiobook review scope', () => {
-    expect(mapReportDetail(detail({ audiobook_review_scope: 'work' })).audiobookReviewScope).toBe(
-      'work',
-    )
+  it('requires a consistent closed audiobook review scope', async () => {
     expect(
-      mapReportDetail(detail({ audiobook_review_scope: 'recording' })).audiobookReviewScope,
+      (await readReport(detail({ audiobook_review_scope: 'work' }))).audiobookReviewScope,
+    ).toBe('work')
+    expect(
+      (await readReport(detail({ audiobook_review_scope: 'recording' }))).audiobookReviewScope,
     ).toBe('recording')
-    for (const value of [undefined, '', 'edition', {}, true]) {
-      expect(() => mapReportDetail(detail({ audiobook_review_scope: value }))).toThrow(ApiError)
+    for (const [value, failure] of [
+      [undefined, 'required@/audiobook_review_scope'],
+      ['', 'enum@/audiobook_review_scope'],
+      ['edition', 'enum@/audiobook_review_scope'],
+      [{}, 'type@/audiobook_review_scope'],
+      [true, 'type@/audiobook_review_scope'],
+    ] as const) {
+      const document = detail({ audiobook_review_scope: value })
+      await expect(readReport(document), JSON.stringify(value)).rejects.toMatchObject(
+        refused(failure),
+      )
     }
-    expect(() =>
-      mapReportDetail(detail({ media_kind: 'epub', audiobook_review_scope: 'work' })),
-    ).toThrow(ApiError)
-    expect(() =>
-      mapReportDetail(
+    // The scope against the media kind and the recording basis are the
+    // helper's own named checks, which a read reports under their own code.
+    const inconsistent = new ApiError(502, 'inconsistent_audiobook_review_scope')
+    await expect(
+      readReport(detail({ media_kind: 'epub', audiobook_review_scope: 'work' })),
+    ).rejects.toThrow(inconsistent)
+    await expect(
+      readReport(
         detail({
           audiobook_review_scope: 'work',
           recording_identity_basis: {
@@ -2904,11 +2945,11 @@ describe('mapReportDetail', () => {
           },
         }),
       ),
-    ).toThrow(ApiError)
+    ).rejects.toThrow(inconsistent)
   })
 
-  it('maps the media-health section and refuses an older report detail', () => {
-    const mapped = mapReportDetail(detail())
+  it('maps the media-health section and refuses an older report detail', async () => {
+    const mapped = await readReport(detail())
 
     expect(mapped.mediaHealth).toEqual([
       {
@@ -2922,32 +2963,32 @@ describe('mapReportDetail', () => {
     ])
     // A v2 document has no media-health section at all, so accepting one would
     // draw an empty section the server never stated anything about.
-    expect(() => mapReportDetail(detail({ schema_version: 'review-report-detail-v2' }))).toThrow(
-      new ApiError(502, 'invalid_report_detail_response'),
-    )
+    await expect(
+      readReport(detail({ schema_version: 'review-report-detail-v2' })),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
   })
 
-  it('refuses a media-health observation that is not the closed shape', () => {
-    expect(() => mapReportDetail(detail({ media_health: {} }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health'),
+  it('refuses a media-health observation that is not the closed shape', async () => {
+    await expect(readReport(detail({ media_health: {} }))).rejects.toMatchObject(
+      refused('type@/media_health'),
     )
-    expect(() => mapReportDetail(detail({ media_health: ['gap'] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0'),
+    await expect(readReport(detail({ media_health: ['gap'] }))).rejects.toMatchObject(
+      refused('type@/media_health/0'),
     )
     const unbounded = { ...detail().media_health[0], bound: 'x'.repeat(257) }
-    expect(() => mapReportDetail(detail({ media_health: [unbounded] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0_bound'),
+    await expect(readReport(detail({ media_health: [unbounded] }))).rejects.toMatchObject(
+      refused('max_length@/media_health/0/bound'),
     )
     const untyped = { ...detail().media_health[0], tracks: ['1'] }
-    expect(() => mapReportDetail(detail({ media_health: [untyped] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0_track_0'),
+    await expect(readReport(detail({ media_health: [untyped] }))).rejects.toMatchObject(
+      refused('type@/media_health/0/tracks/0'),
     )
   })
 
-  it('accepts every media-health kind and refuses one outside the vocabulary', () => {
+  it('accepts every media-health kind and refuses one outside the vocabulary', async () => {
     expect(MEDIA_HEALTH_KINDS).toHaveLength(13)
     for (const kind of MEDIA_HEALTH_KINDS) {
-      const mapped = mapReportDetail(
+      const mapped = await readReport(
         detail({ media_health: [{ ...detail().media_health[0], kind }] }),
       )
       expect(mapped.mediaHealth[0]?.kind).toBe(kind)
@@ -2955,12 +2996,12 @@ describe('mapReportDetail', () => {
     // A kind this build cannot render is a server it does not understand, not
     // a row to draw blank.
     const widened = { ...detail().media_health[0], kind: 'media_shredded' }
-    expect(() => mapReportDetail(detail({ media_health: [widened] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0_kind'),
+    await expect(readReport(detail({ media_health: [widened] }))).rejects.toMatchObject(
+      refused('enum@/media_health/0/kind'),
     )
   })
 
-  it('refuses a media-health observation with no track list', () => {
+  it('refuses a media-health observation with no track list', async () => {
     // `tracks` is required by the schema, so coercing an absent one to no
     // tracks would print an item-wide statement the server never made.
     const absent = {
@@ -2970,22 +3011,22 @@ describe('mapReportDetail', () => {
       kind: 'track_sequence_gap',
       observed: null,
     }
-    expect(() => mapReportDetail(detail({ media_health: [absent] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0_tracks'),
+    await expect(readReport(detail({ media_health: [absent] }))).rejects.toMatchObject(
+      refused('required@/media_health/0/tracks'),
     )
     const untracked = { ...detail().media_health[0], tracks: 2 }
-    expect(() => mapReportDetail(detail({ media_health: [untracked] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0_tracks'),
+    await expect(readReport(detail({ media_health: [untracked] }))).rejects.toMatchObject(
+      refused('type@/media_health/0/tracks'),
     )
   })
 
-  it('refuses a media-health observation that cites nothing', () => {
+  it('refuses a media-health observation that cites nothing', async () => {
     // Every observation names the evidence it read; an empty citation list is
     // a claim with nothing behind it, so the wire refuses it as the domain
     // type does.
     const uncited = { ...detail().media_health[0], cited: [] }
-    expect(() => mapReportDetail(detail({ media_health: [uncited] }))).toThrow(
-      new ApiError(502, 'invalid_report_media_health_0_cited'),
+    await expect(readReport(detail({ media_health: [uncited] }))).rejects.toMatchObject(
+      refused('min_items@/media_health/0/cited'),
     )
   })
 })
@@ -3699,6 +3740,59 @@ describe('central response decoding (#1685)', () => {
     })
     expect((failure as Error).message).not.toContain('/')
     expect(uncertainWriteOutcome(failure)).toBe(true)
+  })
+
+  it.each([
+    [
+      'GET /api/v1/library',
+      (client: ReviewApiClient) => client.getLibrary({ lens: 'all' }),
+      library({ items: [libraryWork({ cover: undefined })] }),
+      '/items/0/cover',
+    ],
+    [
+      'GET /api/v1/library/report',
+      (client: ReviewApiClient) =>
+        client.getReportDetail('/api/v1/library/report?connection=primary&item=item-9'),
+      reportDetail({ chapters_truncated: undefined }),
+      '/chapters_truncated',
+    ],
+  ] as const)(
+    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686)',
+    async (operation, read, document, at) => {
+      const failure = await read(answering(document)).catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(ResponseDecodeError)
+      expect(failure).not.toBeInstanceOf(AmbiguousMutationError)
+      expect(failure).toMatchObject({
+        status: 502,
+        code: 'invalid_response',
+        operation,
+        responseStatus: 200,
+        reason: 'required',
+        at,
+      })
+      expect((failure as Error).message).not.toContain('/')
+    },
+  )
+
+  it.each([
+    '/api/v1/library?lens=all',
+    '/api/v1/settings',
+    '/review/case-1',
+    'https://elsewhere.test/api/v1/library/report?item=item-9',
+  ])('follows no report address but the report route (%s) (#1686)', async (address) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(reportDetail()))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock })
+    const failure = await client.getReportDetail(address).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ResponseDecodeError)
+    expect(failure).toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+      operation: 'GET /api/v1/library/report',
+      reason: 'unexpected_operation',
+      at: '',
+    })
+    expect((failure as Error).message).not.toContain('/')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   type Answer = readonly [path: string, body: unknown, status: number, reason: string, at: string]

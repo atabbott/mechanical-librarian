@@ -64,12 +64,13 @@ def _work(
     cover: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
-        **({} if cover is None else {"cover": cover}),
+        "cover": cover,
         "work_id": f"library_work_{number:064d}",
         "review_case_id": case,
         "title": title,
         "authors": authors,
         "library": library,
+        "library_display_name": None,
         "media_kind": media_kind,
         "item": f"synthetic-item-{number}",
         "attention_count": attention,
