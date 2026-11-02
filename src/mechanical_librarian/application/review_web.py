@@ -136,6 +136,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "series_conflicting_membership": "The sources disagree about the series.",
     "series_provider_evidence_required": "No metadata source confirms this series.",
     "subtitle_local_corroboration_required": "No other source confirms this subtitle.",
+    "subtitle_restates_series": "The proposed subtitle only repeats the series, so it is never written for you.",
     "subtitle_segment_provider_dissent": "The sources disagree with splitting the title this way.",
     "subtitle_segment_decorated_consensus": "The sources do not support splitting this text into a subtitle.",
     "atomic_bundle_unavailable": "A linked field this choice depends on is unavailable.",

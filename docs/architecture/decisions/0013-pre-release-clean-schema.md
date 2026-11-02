@@ -337,3 +337,10 @@ by stated runtime. It also adds the `region_unavailable` provider diagnostic
 for an Audnexus marketplace miss. A v66 report cannot state either, so every
 earlier application database is rejected before mutation and needs a clean
 rebuild; no adoption is supplied.
+
+Issue #1616 also takes the clean-rebuild branch. An automatic subtitle that
+only restates the case's series is withheld, and a title strip reads an
+underscore segment and a series named only by a subtitle label (ADR-0073), so
+the decision policy moves to `deterministic-shadow-decision-policy-v27`: an
+outcome minted under v26 could state a write v27 refuses. The proposal policy
+and report schema are unchanged; no adoption is supplied.
