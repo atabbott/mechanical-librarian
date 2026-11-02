@@ -957,7 +957,7 @@ const renderPreparation=(host,visible)=>{
   if(blocked){
     const cancel=button('Cancel any active sign-in');cancel.type='button';
     const feedback=document.createElement('p');feedback.setAttribute('role','status');
-    cancel.addEventListener('click',async()=>{if(cancel.disabled)return;cancel.disabled=true;try{const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});feedback.textContent=result.state==='cancelled'?'Any active sign-in was cancelled.':['ready','usable'].includes(result.state)?'No active sign-in remains.':'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}catch(e){failed(e)}finally{cancel.disabled=false}});
+    cancel.addEventListener('click',async()=>{if(cancel.getAttribute('aria-disabled')==='true')return;cancel.setAttribute('aria-disabled','true');try{const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});feedback.textContent=result.state==='cancelled'?'Any active sign-in was cancelled.':['ready','usable'].includes(result.state)?'No active sign-in remains.':'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}catch(e){failed(e)}finally{cancel.removeAttribute('aria-disabled')}});
     codex.append(cancel,feedback);
   }
   form.append(codex);

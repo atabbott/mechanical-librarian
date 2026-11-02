@@ -2555,6 +2555,52 @@ it.each([
   expect(screen.getByText('Status: not set up on this host')).toBeVisible()
 })
 
+it.each([
+  ['succeeds', () => response({ state: 'cancelled' }), false, 'Any active sign-in was cancelled.'],
+  [
+    'fails',
+    () => response({ error: 'unavailable' }, 503),
+    true,
+    'Setup could not finish that step',
+  ],
+])(
+  'keeps focus on the blocked cancel while it runs and after it %s',
+  async (_, settle, alert, message) => {
+    let release: ((value: Response) => void) | undefined
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device/cancel'))
+        return new Promise<Response>((resolve) => {
+          release = resolve
+        })
+      if (url.endsWith('/reviewer-access'))
+        return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+      if (url.endsWith('/device')) throw new Error('blocked recovery must not probe authentication')
+      return response(setupState('reviewer'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
+    const cancels = () =>
+      fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device/cancel')).length
+    cancel.focus()
+    fireEvent.click(cancel)
+    // jsdom has no focus fixup, so focus alone cannot fail here; a browser drops
+    // focus to the page when the focused button becomes natively disabled.
+    expect(cancel).not.toBeDisabled()
+    expect(cancel).toHaveAttribute('aria-disabled', 'true')
+    expect(cancel).toHaveFocus()
+    fireEvent.click(cancel)
+    expect(cancels()).toBe(1)
+    release?.(settle())
+    if (alert) expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    else expect(await screen.findByText(message)).toBeVisible()
+    expect(cancel).not.toHaveAttribute('aria-disabled')
+    expect(cancel).toHaveFocus()
+    expect(document.activeElement).not.toBe(document.body)
+  },
+)
+
 it('keeps validated reviewer prices visible before Continue and on reopen', async () => {
   let saved = false
   let advanced = false
