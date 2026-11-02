@@ -274,8 +274,8 @@ brackets are GitHub issues.
   to use", and a check that meets a sign-in running in another tab shows its
   code. Keyboard focus moves to the next control (#1617).
 - A decision or chosen description recorded while Mechanical Librarian is
-  shutting down now shows as recorded, instead of failing in the browser
-  although it was saved (#1674).
+  shutting down or applying changed settings now shows as recorded, instead
+  of failing in the browser although it was saved (#1674).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
