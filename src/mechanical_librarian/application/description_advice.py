@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Callable
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewerError,
@@ -14,6 +15,9 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.application.reviewer_contracts import OpenRouterReviewerError
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.description_advice import (
     DESCRIPTION_INSTRUCTION,
     DESCRIPTION_OUTPUT_SCHEMA,
@@ -26,6 +30,14 @@ from mechanical_librarian.domain.description_advice import (
     description_document,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.review_case import ReviewCase
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.application.review_pipeline import (
+        PipelineAction,
+        ReviewPipelineRepository,
+    )
 
 
 class DescriptionAdviceRepository(Protocol):
@@ -62,6 +74,41 @@ class DescriptionAdviceRepository(Protocol):
     ) -> bool: ...
 
     def consume_pending_if_unconfigured(self, review_case_id: str) -> None: ...
+
+
+class DescriptionAdviceStore(DescriptionAdviceRepository, Protocol):
+    """The advice store as the pipeline's description stages use it."""
+
+    def bind_settings(self, settings: DescriptionAdviceSettings) -> None: ...
+
+    def current_settings(self) -> DescriptionAdviceSettings: ...
+
+    def read(self, review_case_id: str) -> dict[str, object] | None: ...
+
+    def admit(
+        self,
+        candidate_id: str,
+        expected_binding: DescriptionAdviceBinding,
+        origin: str,
+        idempotency_digest: str,
+        now: int,
+    ) -> object: ...
+
+
+class DescriptionPreparationRepository(Protocol):
+    """The review pipeline's repository, as its description stages read it.
+
+    The pipeline hands each stage callback back exactly the repository the
+    composition root created, so this names capabilities that object carries.
+    """
+
+    def get(self, report_id: str) -> str: ...
+
+    def read_staged_description_preparation(
+        self, action: PipelineAction
+    ) -> tuple[str, str]: ...
+
+    def description_advice_store(self) -> DescriptionAdviceStore: ...
 
 
 class DescriptionAdviceService:
@@ -203,3 +250,102 @@ class DescriptionAdviceService:
             attempt_id, candidate, self._clock(), case_current, failure=failure
         )
         return candidate if admitted else None
+
+
+def prepare_staged_description(
+    pipeline_repository: ReviewPipelineRepository,
+    action: PipelineAction,
+    *,
+    reviewer_access: ReviewerAccessOperations,
+    review: ReviewWebConfiguration,
+) -> None:
+    """Prepare a staged review case's description advice, if it needs one."""
+    if action.review_case_id is None:
+        return
+    repository = cast("DescriptionPreparationRepository", pipeline_repository)
+    if action.report_id is not None:
+        bound_report = MetadataReport.from_json(repository.get(action.report_id))
+        if bound_report.audio is not None and not admitted_audiobook_identity(
+            bound_report
+        ):
+            return
+    identity = reviewer_access.current_description_rewrite_identity()
+    if identity is None:
+        repository.description_advice_store().consume_pending_if_unconfigured(
+            action.review_case_id
+        )
+        return
+    snapshot = repository.read_staged_description_preparation(action)
+    case = ReviewCase.from_json(snapshot[0])
+    report = MetadataReport.from_json(snapshot[1])
+    settings = DescriptionAdviceSettings(
+        remove_marketing=review.description_remove_marketing,
+        remove_sales_boasts=review.description_remove_sales_boasts,
+        remove_praise=review.description_remove_praise,
+        automatic_application=review.description_automatic_application,
+    )
+    binding = DescriptionAdviceBinding(
+        review_case_id=case.review_case_id,
+        report_id=case.report_id,
+        proposal_set_id=case.proposal_set_id,
+        target_fingerprint=case.target_fingerprint,
+        policy_generation=action.policy_generation or 1,
+        access_revision=identity[0],
+        preferences_digest=description_digest(settings.model_dump()),
+    )
+
+    def current() -> bool:
+        try:
+            return repository.read_staged_description_preparation(action) == snapshot
+        except (ValueError, RuntimeError):
+            return False
+
+    repository.description_advice_store().bind_settings(settings)
+    DescriptionAdviceService(
+        repository.description_advice_store(),
+        reviewer_access,
+        repository.description_advice_store().current_settings,
+        lambda: int(time.time()),
+    ).prepare(
+        report,
+        binding,
+        current,
+    )
+
+
+def admit_staged_description(
+    pipeline_repository: ReviewPipelineRepository, action: PipelineAction
+) -> None:
+    """Admit a staged review case's description candidate by automatic policy."""
+    if action.review_case_id is None:
+        return
+    repository = cast("DescriptionPreparationRepository", pipeline_repository)
+    if action.report_id is not None:
+        bound_report = MetadataReport.from_json(repository.get(action.report_id))
+        if bound_report.audio is not None and not admitted_audiobook_identity(
+            bound_report
+        ):
+            return
+    store = repository.description_advice_store()
+    advice = store.read(action.review_case_id)
+    if advice is None or advice["candidate"] is None:
+        return
+    candidate = cast("dict[str, object]", advice["candidate"])
+    binding = DescriptionAdviceBinding.model_validate(advice["binding"])
+    try:
+        store.admit(
+            str(candidate["candidate_id"]),
+            binding,
+            "automatic_policy",
+            description_digest(
+                {
+                    "candidate": candidate["candidate_id"],
+                    "binding": binding.digest,
+                    "origin": "automatic_policy",
+                }
+            ),
+            int(time.time()),
+        )
+    except ValueError:
+        # Parked, owner-final and stale results retain their immutable text.
+        return
