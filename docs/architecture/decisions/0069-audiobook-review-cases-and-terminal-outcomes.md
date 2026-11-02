@@ -186,6 +186,9 @@ exists for an automatic decision to be minted from.
 > attention queue. A recording joins the queue under exactly an ebook's
 > conditions, so a settled fill no record decided asks for nothing there,
 > though it stays choosable in its case, as an optional, uncounted choice.
+> Under #1310 a cover choice over a verified current cover is the same kind of
+> optional choice, on either medium: it sets no `unresolved_choice` fact and
+> reads as `owner_choosable` unless its policy explicitly asks.
 
 ## Consequences
 

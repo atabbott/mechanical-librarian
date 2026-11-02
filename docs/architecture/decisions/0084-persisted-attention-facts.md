@@ -73,6 +73,11 @@ reduced to the stored part.
   definition, and with it the refresh trigger's text, changed; ADR-0013's exact
   schema comparison refuses a store built before it, which needs a clean
   rebuild. EPUB facts are unchanged.
+- **Kept covers.** A cover whose result carries `current_cover_verified` sets
+  no `unresolved_choice` fact, and the cover branch's current-consideration
+  readiness excludes it, reading the case's `review_cases.document` (#1310).
+  Both change the definition and the refresh trigger's text, so a store built
+  before them needs a clean rebuild under ADR-0013.
 
 ## Consequences
 

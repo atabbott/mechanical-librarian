@@ -1113,7 +1113,9 @@ def _assert_manual_cover_surface(
     assert reviewer_status == consideration["reviewer_status"]
     assert any(candidate["selectable"] for candidate in consideration["candidates"])
     assert cover["editable"]
-    assert cover["needs_attention"]
+    # The fixture's readable current cover is kept without asking; its choice
+    # stays editable on the work's page (#1310).
+    assert cover["needs_attention"] is False
     assert cover["human_decision"] is None
 
 
@@ -4950,7 +4952,8 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
         )
-        report, _qualified = _qualified_cover_report(root)
+        # The current cover is unread, so the cover asks (#1310).
+        report, _qualified = _qualified_cover_report(root, readable_current=False)
         proposal = evaluate_report(report)
         repository.enter_shadow_preview(1, ())
         repository.publish(report, lambda: True)

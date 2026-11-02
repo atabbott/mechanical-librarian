@@ -930,6 +930,7 @@ class InspectCurrentReviewCase:
                         and cover_is_current
                         and current_cover_consideration is not None
                         and current_cover_consideration["ready"] is True
+                        and not _kept_cover(proposal)
                     )
                 ),
                 automatic_outcome=(
@@ -974,10 +975,11 @@ class InspectCurrentReviewCase:
                 proposed_values=tuple(
                     alternative["value"] for alternative in alternatives
                 ),
-                # A recording's undecided fill stays the owner's to choose in
-                # its case without joining the queue (#1249).
+                # A recording's undecided fill, and a kept readable cover,
+                # stay the owner's to choose in their case without joining
+                # the queue (#1249, #1310).
                 owner_choosable=cover_admits
-                and case.media_kind == "audiobook"
+                and (case.media_kind == "audiobook" or _kept_cover(proposal))
                 and automatic_decision is None
                 and bool(actions),
                 changeable=bool(actions) or owner_entry,
@@ -3020,6 +3022,20 @@ def _report_facts(report_document: str) -> LibraryReportFacts:
         raise ReviewWebError("unavailable") from error
 
 
+def _kept_cover(proposal: dict[str, object]) -> bool:
+    """A readable current cover is kept without asking (#1310).
+
+    Its alternatives stay choosable on the work's page; neither its choice nor
+    its consideration puts it in the queue, as `_VERIFIED_CURRENT_COVER_SQL`
+    reads it.
+    """
+    result = proposal["result"]
+    assert type(result) is dict
+    reasons = result["reasons"]
+    assert type(reasons) is list
+    return proposal["destination"] == "cover" and "current_cover_verified" in reasons
+
+
 def _needs_attention(
     proposal: dict[str, object],
     automatic_attention_destinations: tuple[str, ...] = (),
@@ -3046,10 +3062,7 @@ def _needs_attention(
         or (
             result["outcome"] == "unresolved_choice"
             and "work_alternative_immaterial" not in reasons
-            and not (
-                proposal["destination"] == "cover"
-                and "current_cover_verified" in reasons
-            )
+            and not _kept_cover(proposal)
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons

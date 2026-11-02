@@ -939,7 +939,9 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         )
         assert stale_cover["human_decision"] is None
         assert stale_cover["cover_consideration"] is None
-        assert stale_cover["needs_attention"]
+        # The current cover is still the readable one, so it is kept without
+        # asking; the choice stays on the work's page (#1310).
+        assert not stale_cover["needs_attention"]
 
         consideration_now[0] = 103
         successor = consideration_service.ensure(

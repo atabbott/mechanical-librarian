@@ -32,6 +32,9 @@ superseded once.
 
 Owner readiness requires at least one manually eligible non-incumbent retained
 candidate and no exact persisted provider/report lane actively fetching (#1078).
+Readiness makes the choice available, not queued: over a verified current
+cover the choice stays on the work's page and joins Attention only when its
+policy explicitly asks (#1310).
 The original confirmed-only readiness remains the automatic policy fact. Automatic choice is a
 separate result. A known-empty target may use the first ranked candidate; a
 confirmed target may use one only when its complete seven-part rank is strictly
