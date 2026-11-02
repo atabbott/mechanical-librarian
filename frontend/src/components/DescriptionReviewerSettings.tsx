@@ -114,15 +114,8 @@ export const DescriptionReviewerSettings = ({
   onCodexRefused: () => Promise<void>
 }) => {
   const adviser = useDescriptionAdviser(http, view, onCodexRefused)
-  const { model, setModel, key, setKey, metadata, setMetadata } = adviser
-  const { failure, busy, test, selection, refresh, contained } = adviser
+  const { busy, selection, contained } = adviser
   const selected = view.description_mapping
-  const disclosure =
-    metadata?.model === model
-      ? metadata
-      : view.description_metadata?.model === model
-        ? view.description_metadata
-        : null
   return (
     <section aria-labelledby="description-reviewer-heading">
       <div className="settings-field-row">
@@ -201,95 +194,118 @@ export const DescriptionReviewerSettings = ({
           </button>
         </div>
       </div>
-      <div className="settings-field-row">
-        <div>
-          <h4>OpenRouter</h4>
-          <p>
-            Destination: OpenRouter (https://openrouter.ai/api/v1). The exact model below is used
-            with provider fallback disabled. Upstream retention and training practices vary and are
-            not verified by this application.
-          </p>
-        </div>
-        <div className="settings-field-control">
-          <ModelPicker
-            id="description-openrouter-model"
-            label="Description model"
-            value={model}
-            disabled={busy}
-            models={view.cost_evidence.models
-              .filter((row) => row.task === 'description')
-              .map((row) => ({ model: row.model, note: 'Measured for description advice.' }))}
-            onChange={(next) => {
-              setModel(next)
-              setMetadata(null)
-              test.reset()
-            }}
-          />
-          <label htmlFor="description-openrouter-key">Shared OpenRouter API key</label>
-          <input
-            id="description-openrouter-key"
-            type="password"
-            value={key}
-            disabled={busy}
-            aria-describedby="description-openrouter-key-help"
-            onChange={(event) => {
-              setKey(event.target.value)
-              setMetadata(null)
-              test.reset()
-            }}
-            autoComplete="new-password"
-          />
-          <small id="description-openrouter-key-help">
-            Leave the key blank to use the saved credential. Cover and description models share this
-            credential. Saving a replacement key preserves both model selections and invalidates
-            prior dispatch snapshots.
-          </small>
-          <button
-            disabled={busy || (!key && !view.openrouter_key_configured) || !model}
-            onClick={() => test.mutate()}
-          >
-            {test.isPending ? 'Testing description model…' : 'Test description model and prices'}
-          </button>
-          {disclosure ? (
-            <dl className="settings-reviewer-facts" aria-live="polite">
-              <div>
-                <dt>Model</dt>
-                <dd>{disclosure.model}</dd>
-              </div>
-              <div>
-                <dt>Capabilities</dt>
-                <dd>Text input, text output and structured output supported.</dd>
-              </div>
-              <div>
-                <dt>Prices in USD</dt>
-                <dd>
-                  {disclosure.prompt_price} per input token, {disclosure.completion_price} per
-                  output token, {disclosure.request_price ?? 'Unavailable'} per request.
-                </dd>
-              </div>
-            </dl>
-          ) : (
-            <p>
-              Price and text capability metadata must be available before this task can be selected.
-            </p>
-          )}
-          <dl className="settings-reviewer-facts" aria-live="polite">
-            <ReviewerCost view={view} model={model} task="description" />
-          </dl>
-          <button
-            disabled={busy || metadata?.model !== model}
-            onClick={() => selection.mutate('openrouter')}
-          >
-            Use this OpenRouter model for descriptions
-          </button>
-          {selected?.engine === 'openrouter' ? (
-            <button disabled={busy} onClick={() => refresh.mutate()}>
-              Refresh description model status and prices
-            </button>
-          ) : null}
-          {failure !== null ? <p role="alert">{failure}</p> : null}
-        </div>
-      </div>
+      <DescriptionOpenRouterRow adviser={adviser} view={view} />
     </section>
+  )
+}
+
+// The OpenRouter row: model, shared key, test, disclosure and selection. Split
+// out of the section under the function-size rule, as the hook was (#1663).
+function DescriptionOpenRouterRow({
+  adviser,
+  view,
+}: {
+  adviser: ReturnType<typeof useDescriptionAdviser>
+  view: ReviewerAccessView
+}) {
+  const { model, setModel, key, setKey, metadata, setMetadata } = adviser
+  const { failure, busy, test, selection, refresh } = adviser
+  const selected = view.description_mapping
+  const disclosure =
+    metadata?.model === model
+      ? metadata
+      : view.description_metadata?.model === model
+        ? view.description_metadata
+        : null
+  return (
+    <div className="settings-field-row">
+      <div>
+        <h4>OpenRouter</h4>
+        <p>
+          Destination: OpenRouter (https://openrouter.ai/api/v1). The exact model below is used with
+          provider fallback disabled. Upstream retention and training practices vary and are not
+          verified by this application.
+        </p>
+      </div>
+      <div className="settings-field-control">
+        <ModelPicker
+          id="description-openrouter-model"
+          label="Description model"
+          value={model}
+          disabled={busy}
+          models={view.cost_evidence.models
+            .filter((row) => row.task === 'description')
+            .map((row) => ({ model: row.model, note: 'Measured for description advice.' }))}
+          onChange={(next) => {
+            setModel(next)
+            setMetadata(null)
+            test.reset()
+          }}
+        />
+        <label htmlFor="description-openrouter-key">Shared OpenRouter API key</label>
+        <input
+          id="description-openrouter-key"
+          type="password"
+          value={key}
+          disabled={busy}
+          aria-describedby="description-openrouter-key-help"
+          onChange={(event) => {
+            setKey(event.target.value)
+            setMetadata(null)
+            test.reset()
+          }}
+          autoComplete="new-password"
+        />
+        <small id="description-openrouter-key-help">
+          Leave the key blank to use the saved credential. Cover and description models share this
+          credential. Saving a replacement key preserves both model selections and invalidates prior
+          dispatch snapshots.
+        </small>
+        <button
+          disabled={busy || (!key && !view.openrouter_key_configured) || !model}
+          onClick={() => test.mutate()}
+        >
+          {test.isPending ? 'Testing description model…' : 'Test description model and prices'}
+        </button>
+        {disclosure ? (
+          <dl className="settings-reviewer-facts" aria-live="polite">
+            <div>
+              <dt>Model</dt>
+              <dd>{disclosure.model}</dd>
+            </div>
+            <div>
+              <dt>Capabilities</dt>
+              <dd>Text input, text output and structured output supported.</dd>
+            </div>
+            <div>
+              <dt>Prices in USD</dt>
+              <dd>
+                {disclosure.prompt_price} per input token, {disclosure.completion_price} per output
+                token, {disclosure.request_price ?? 'Unavailable'} per request.
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p>
+            Price and text capability metadata must be available before this task can be selected.
+          </p>
+        )}
+        <dl className="settings-reviewer-facts" aria-live="polite">
+          <ReviewerCost view={view} model={model} task="description" />
+        </dl>
+        <button
+          disabled={busy || metadata?.model !== model}
+          onClick={() => selection.mutate('openrouter')}
+        >
+          Use this OpenRouter model for descriptions
+        </button>
+        {selected?.engine === 'openrouter' ? (
+          <button disabled={busy} onClick={() => refresh.mutate()}>
+            Refresh description model status and prices
+          </button>
+        ) : null}
+        {failure !== null ? <p role="alert">{failure}</p> : null}
+      </div>
+    </div>
   )
 }
