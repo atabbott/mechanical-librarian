@@ -44,7 +44,7 @@ dev = [
   # keeps them out of a tier run even though `coverage` ships a `.pth`. That
   # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which no
   # documented command does.
-  "coverage==7.15.4",
+  "coverage==7.17.0",
   "hypothesis==6.165.10",
   # `starlette.testclient` prefers `httpx2` and warns on the
   # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
