@@ -219,6 +219,22 @@ def test_an_immaterial_optional_choice_says_why_no_review_is_needed() -> None:
         plain.navigation_role,
         plain.preservation_only,
     )
+    kept = classify_review_field(
+        **_BASE_INPUTS,
+        current_value="cover",
+        proposed_values=("other",),
+        owner_choosable=True,
+        kept_cover=True,
+    )
+    assert kept.reason == (
+        "Your current cover is kept, so no review is needed. You can still "
+        "choose another cover."
+    )
+    assert (kept.state, kept.needs_attention, kept.editable) == (
+        plain.state,
+        False,
+        True,
+    )
     # Every state that decides first keeps its own reason.
     assert (
         classify_review_field(

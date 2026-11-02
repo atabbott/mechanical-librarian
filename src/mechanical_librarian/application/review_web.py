@@ -977,16 +977,27 @@ class InspectCurrentReviewCase:
                 ),
                 # A recording's undecided fill, and a kept readable cover,
                 # stay the owner's to choose in their case without joining
-                # the queue (#1249, #1310).
+                # the queue (#1249, #1310). A kept cover with no current
+                # comparison is still choosable: the owner can prepare one.
                 owner_choosable=cover_admits
-                and (case.media_kind == "audiobook" or _kept_cover(proposal))
                 and automatic_decision is None
-                and bool(actions),
+                and (
+                    (case.media_kind == "audiobook" and bool(actions))
+                    or (
+                        _kept_cover(proposal)
+                        and (
+                            bool(actions)
+                            or current_cover_consideration is None
+                            or current_cover_consideration["current"] is not True
+                        )
+                    )
+                ),
                 changeable=bool(actions) or owner_entry,
                 # With no alternative to list, an unsupported field is a
                 # contextual row, which offers no controls (below).
                 owner_entry=owner_entry and bool(alternatives),
                 immaterial_alternatives="work_alternative_immaterial" in reasons,
+                kept_cover=_kept_cover(proposal),
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty

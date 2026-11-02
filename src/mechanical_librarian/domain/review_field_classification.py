@@ -62,6 +62,7 @@ def classify_review_field(
     changeable: bool = True,
     owner_entry: bool = False,
     immaterial_alternatives: bool = False,
+    kept_cover: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -72,7 +73,9 @@ def classify_review_field(
     owner may type a value or choose genres; each changes only the reason
     (ADR-0085). `immaterial_alternatives` says an optional choice is optional
     because its alternatives only trim or extend the current value (#1253), so
-    its one statement says why no review is needed (#1450).
+    its one statement says why no review is needed (#1450). `kept_cover` says
+    the optional choice is a cover kept as it is, so its statement speaks of
+    covers rather than values (#1310).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -170,6 +173,9 @@ def classify_review_field(
                 "no review is needed. You can still keep the current value or "
                 "choose a proposed one."
                 if immaterial_alternatives
+                else "Your current cover is kept, so no review is needed. You can "
+                "still choose another cover."
+                if kept_cover
                 else "No review is needed. You can still keep the current value or "
                 "choose a proposed one."
             ),
