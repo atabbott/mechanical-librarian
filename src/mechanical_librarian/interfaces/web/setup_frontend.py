@@ -738,7 +738,11 @@ const renderLibraries=async()=>{
       if(mutating)return;
       const selected=[...form.querySelectorAll('.option')].filter(row=>row.querySelector('input[type=checkbox]').checked);
       if(!selected.length){
-        error(form,'invalid_libraries');
+        // Under Continue, where the server's refusal of the same press sits too.
+        const node=error(form,'invalid_libraries');
+        next.after(node);
+        next.scrollIntoView?.({block:'nearest'});
+        node.scrollIntoView?.({block:'nearest'});
         return
       }
       const invalid=selected.map(row=>row.querySelector('input[name^=display-]')).find(control=>{
@@ -746,8 +750,10 @@ const renderLibraries=async()=>{
         return Array.from(value).length<1||Array.from(value).length>256||value.includes('\0')||value.trim()!==value
       });
       if(invalid){
-        invalid.focus();
-        error(form,'invalid_library_display_name');
+        // A name Audiobookshelf supplied may be refused before the owner opened it.
+        invalid.closest('.field').hidden=false;
+        invalid.closest('.option').querySelector('button').hidden=true;
+        error(form,'invalid_library_display_name',invalid);
         return
       }
       // One library carries one name everywhere: two may not share one, in any case.
@@ -1059,8 +1065,9 @@ const renderKickoff=async()=>{
   form.append(notice,submit);
   form.addEventListener('submit',async event=>{
     event.preventDefault();
-    if(submit.disabled)return;
-    submit.disabled=true;
+    // Marked rather than natively disabled, so the pressed button keeps focus.
+    if(submit.getAttribute('aria-disabled')==='true')return;
+    submit.setAttribute('aria-disabled','true');
     try{
       const result=await api('/api/setup/kick-off',{method:'POST',body:JSON.stringify({expected_revision:state.revision}),mutation:true});
       section.replaceChildren();
@@ -1184,14 +1191,18 @@ const renderKickoff=async()=>{
       }finally{if(!stopped)timer=setTimeout(poll,pollDelay)}};
       timer=setTimeout(poll,1500)
     }catch(e){
-      submit.disabled=false;
-      if(e.status===403&&e.message==='csrf'){
+      submit.removeAttribute('aria-disabled');
+      if(refusal(e)==='stale'){
         await load();
         const fresh=main.querySelector('form');
         if(fresh)error(fresh,'stale');
         return
       }
-      error(form,refusal(e))
+      // No kickoff failure is about a field, so it sits under the button.
+      const node=error(form,refusal(e));
+      submit.after(node);
+      submit.scrollIntoView?.({block:'nearest'});
+      node.scrollIntoView?.({block:'nearest'})
     }
   });
   section.append(form)

@@ -1610,7 +1610,11 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "'Change the Audiobookshelf address'" in SETUP_JS
     assert "'Change the cover reviewer'" in SETUP_JS
     assert "summary.className='summary'" in SETUP_JS
-    assert "if(submit.disabled)return;submit.disabled=true" in SETUP_JS
+    # Kickoff stays focusable while it runs: marked, not natively disabled.
+    assert (
+        "if(submit.getAttribute('aria-disabled')==='true')return;"
+        "submit.setAttribute('aria-disabled','true')" in SETUP_JS
+    )
     assert "if(mutating)return;mutating=true" in SETUP_JS
     assert "already=(await api('/api/setup/claim')).claimed" in SETUP_JS
     # One refusal listener at a time, and no draft discarded for a change the
@@ -1632,8 +1636,11 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "{once:true,signal:refusalGuard.signal}" in SETUP_JS
     assert "mutation:true});mountDraft=null;confirmation=null;await load()" in SETUP_JS
     assert "for(const action of actions)action.disabled=true" in SETUP_JS
-    assert "submit.disabled=false;if(e.status===403&&e.message==='csrf')" in SETUP_JS
-    assert "error(form,refusal(e))" in SETUP_JS
+    assert (
+        "submit.removeAttribute('aria-disabled');if(refusal(e)==='stale')" in SETUP_JS
+    )
+    assert "const node=error(form,refusal(e));submit.after(node)" in SETUP_JS
+    assert "submit.disabled" not in SETUP_JS
 
 
 def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() -> None:
