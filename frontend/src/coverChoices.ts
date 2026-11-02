@@ -9,26 +9,27 @@ export interface CoverPrepareFailure {
   action: CoverPrepareAction
   error: Error
 }
-export type RecordCoverPrepareFailure = (
-  reviewCaseId: string,
-  failure: CoverPrepareFailure | null,
-) => void
+export type RecordCoverPrepareFailure = (failure: CoverPrepareFailure | null) => void
 
 // The last failed Prepare or Retry press on the selected case. It lives with
 // the page that owns case selection, above the consideration remount key and
 // the detail error branch, so a reload that brings a new consideration (or
 // fails and then recovers) still shows what happened to the press (#1595). It
-// is cleared on the next press, on success, and when the selected case changes;
-// a press that settles after its case was left is dropped.
+// is cleared on the next press, on success, and when the selected case changes.
+// Each selection of a case is its own visit, and `record` is bound to the visit
+// it was read in, so a press that settles after its visit ended (even when the
+// owner has since come back to the same case) is dropped.
 export function useCoverPrepareFailure(reviewCaseId: string) {
   const [state, setState] = useState<{
-    owner: string
+    visit: { readonly caseId: string }
     failure: CoverPrepareFailure | null
-  }>({ owner: reviewCaseId, failure: null })
-  if (state.owner !== reviewCaseId) setState({ owner: reviewCaseId, failure: null })
-  const record: RecordCoverPrepareFailure = (caseId, failure) =>
-    setState((current) => (current.owner === caseId ? { owner: caseId, failure } : current))
-  return { failure: state.owner === reviewCaseId ? state.failure : null, record }
+  }>(() => ({ visit: { caseId: reviewCaseId }, failure: null }))
+  if (state.visit.caseId !== reviewCaseId)
+    setState({ visit: { caseId: reviewCaseId }, failure: null })
+  const { visit } = state
+  const record: RecordCoverPrepareFailure = (failure) =>
+    setState((current) => (current.visit === visit ? { visit, failure } : current))
+  return { failure: visit.caseId === reviewCaseId ? state.failure : null, record }
 }
 
 // Everything a cover layout needs that is not layout: where a candidate's
@@ -41,18 +42,20 @@ export function useCoverChoiceData(reviewCaseId: string, record: RecordCoverPrep
   const queryClient = useQueryClient()
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
   return {
-    prepare: useMutation<unknown, Error, CoverPrepareAction>({
+    // The press keeps the `record` of the visit it started in (#1595).
+    prepare: useMutation<unknown, Error, CoverPrepareAction, RecordCoverPrepareFailure>({
       mutationFn: () => http.retryCoverConsideration(reviewCaseId),
       retry: false,
       onMutate: () => {
-        record(reviewCaseId, null)
+        record(null)
+        return record
       },
-      onSuccess: async () => {
-        record(reviewCaseId, null)
+      onSuccess: async (_data, _action, recordVisit) => {
+        recordVisit(null)
         await invalidateForegroundQueries(queryClient, { queryKey: ['review-case', reviewCaseId] })
       },
-      onError: (error, action) => {
-        record(reviewCaseId, { action, error })
+      onError: (error, action, recordVisit) => {
+        recordVisit?.({ action, error })
         void invalidateForegroundQueries(queryClient, { queryKey: ['review-case', reviewCaseId] })
       },
     }),

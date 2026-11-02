@@ -5911,7 +5911,7 @@ describe('Library route', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it.each(['before', 'after'] as const)(
+  it.each(['before', 'after', 'returned'] as const)(
     'clears a cover retry alert that settles %s the owner moves to another work and back',
     async (settles) => {
       const user = userEvent.setup()
@@ -5965,6 +5965,11 @@ describe('Library route', () => {
       await user.click(screen.getByRole('button', { name: /^Work A\./u }))
       expect(await screen.findByText('Cover for case-1.')).toBeInTheDocument()
       expect(await screen.findByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+      if (settles === 'returned')
+        await act(async () => {
+          reject?.()
+          await Promise.resolve()
+        })
       expect(screen.queryByRole('alert')).toBeNull()
       expect(http.retryCoverConsideration).toHaveBeenCalledOnce()
       expect(http.recordDecision).not.toHaveBeenCalled()
