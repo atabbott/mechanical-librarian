@@ -20,8 +20,6 @@ import {
   mapCoverConsideration,
   mapEvidence,
   mapHistory,
-  mapLibrary,
-  mapReportDetail,
   mapReviewerAccess,
   mapSettings,
 } from '../src/api/http'
@@ -621,12 +619,6 @@ const TOLERANCES = [
     'mapCoverConsideration http.ts:4679 reads an absent reviewer_failure_code as null (?? null)',
   ],
   [
-    'T4',
-    libraryWithWork,
-    '/items/0/cover',
-    'mapLibrary http.ts:3472 reads an absent work cover as none (item.cover == null)',
-  ],
-  [
     'T6',
     activityItems,
     '/provider_recovery/0/failure_reasons',
@@ -635,8 +627,11 @@ const TOLERANCES = [
 ] as const
 for (const [row, instance, pointer] of TOLERANCES) deletion(`tolerance:${row}`, instance, pointer)
 // Tolerances whose family is decoded: the absence is now refused on both sides,
-// so the case agrees and keeps no row (#1685 drained T5).
-const DRAINED = [['T5', preparationBase, '/provider_throttling']] as const
+// so the case agrees and keeps no row (#1685 drained T5, #1686 drained T4).
+const DRAINED = [
+  ['T4', libraryWithWork, '/items/0/cover'],
+  ['T5', preparationBase, '/provider_throttling'],
+] as const
 for (const [row, instance, pointer] of DRAINED) deletion(`tolerance:${row}`, instance, pointer)
 
 // ---- B4 reject rows for the two families with no `exactKeys` site -----------
@@ -787,21 +782,24 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     coveredWork,
     '/items/0/cover/url',
     `/api/v1/library/cover?connection=primary&library=books&item=item-1&preview=${'b'.repeat(64)}`,
-    'mapLibraryCover http.ts:3545: the cover url names its own preview_sha256; cross-field',
+    'mapLibraryCover http.ts:3369: the cover url names its own preview_sha256; cross-field',
+    'reject:invalid_library_cover',
   ],
   [
     'check:mapAudiobookReviewScope.media-kind',
     recordingBasis,
     '/media_kind',
     'epub',
-    'mapAudiobookReviewScope http.ts:3297: a scope needs an audio media_kind; cross-field',
+    'mapAudiobookReviewScope http.ts:3227: a scope needs an audio media_kind; cross-field',
+    'reject:inconsistent_audiobook_review_scope',
   ],
   [
     'check:mapAudiobookReviewScope.basis',
     recordingBasis,
     '/audiobook_review_scope',
     'work',
-    'mapAudiobookReviewScope http.ts:3298: a recording basis needs the recording scope; cross-field',
+    'mapAudiobookReviewScope http.ts:3228: a recording basis needs the recording scope; cross-field',
+    'reject:inconsistent_audiobook_review_scope',
   ],
   [
     'check:mapDescriptionAdvice.outcome-needs-selection',
@@ -1131,8 +1129,8 @@ const authored = { ...decision, authoredDescription: { candidateId: 'c', binding
 const policy = (c: Case) => client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length))
 const reviewerAccess = (c: Case) => mapReviewerAccess(c.doc())
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
-  'GET /api/v1/library': (c) => mapLibrary(c.doc()),
-  'GET /api/v1/library/report': (c) => mapReportDetail(c.doc()),
+  'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
+  'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
   'GET /api/v1/settings': (c) => mapSettings(c.doc()),
   'PUT /api/v1/reviewer-access/openrouter': reviewerAccess,
   'DELETE /api/v1/reviewer-access/openrouter': reviewerAccess,
