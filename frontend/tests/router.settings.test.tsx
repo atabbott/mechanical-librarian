@@ -1271,6 +1271,8 @@ describe('owner settings route', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
       )
+      // One Check reads access once, even after the held read settles.
+      expect(reads.mock.calls.length).toBe(readsBefore + 1)
     },
   )
 
