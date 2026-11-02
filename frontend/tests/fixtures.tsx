@@ -14,7 +14,6 @@ import type {
   AppearanceView,
   CaseDetailView,
   DecisionAcknowledgementView,
-  DecisionOutcome,
   LibraryView,
   PolicyStateView,
   PreparationView,
@@ -42,7 +41,7 @@ export const recordedAcknowledgement = (
               needsAttention: false,
               humanDecision: {
                 ...acknowledgement,
-                outcome: acknowledgement.outcome as DecisionOutcome,
+                outcome: acknowledgement.outcome,
               },
             }
           : field,

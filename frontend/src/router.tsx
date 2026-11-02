@@ -36,7 +36,6 @@ import {
 } from './api/http'
 import type {
   ActivitySearch,
-  ScanState,
   AutomaticSafetyView,
   DetailSearch,
   LibraryLens,
@@ -895,10 +894,7 @@ export const PreparationActivity = () => {
             <article key={`${item.connection}:${item.library}`}>
               <strong>{names.name(item.library)}</strong>
               <span>
-                {data.recovery_required
-                  ? 'Last saved progress'
-                  : // The progress mapper refuses a state outside the closed set.
-                    scanStateLabels[item.state as ScanState]}
+                {data.recovery_required ? 'Last saved progress' : scanStateLabels[item.state]}
                 {/*
                  * The run line sums only the libraries its run enrolled, so a
                  * library outside it is the one way the two totals differ.

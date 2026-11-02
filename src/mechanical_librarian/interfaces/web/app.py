@@ -40,6 +40,7 @@ from fastapi.responses import (
 )
 from fastapi.security import APIKeyCookie
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -230,6 +231,61 @@ class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+# Closed vocabularies the response models below state, so the generated
+# browser decoders refuse what `http.ts` refuses (#1670). Each restates its
+# producer's set rather than importing it: these models validate strictly,
+# which would demand enum members where the projections hand strings.
+# `tests/unit/test_response_schema_tightening.py` pins each to its producer.
+_TargetDestination: TypeAlias = Literal[
+    "title",
+    "subtitle",
+    "authors",
+    "narrators",
+    "series",
+    "genres",
+    "publishedYear",
+    "publishedDate",
+    "publisher",
+    "description",
+    "isbn",
+    "asin",
+    "language",
+    "explicit",
+    "tags",
+    "cover",
+]
+_MediaKind: TypeAlias = Literal["epub", "m4b", "m4a", "mp3", "audio", "unknown"]
+_SuspensionReason: TypeAlias = Literal[
+    "connection_unavailable",
+    "insufficient_permission",
+    "field_unavailable",
+    "unexpected_effect_behavior",
+]
+_Count: TypeAlias = Annotated[int, Field(ge=0)]
+# A history instant, bounded as the browser bounds a date (8.64e12 ms).
+_Instant: TypeAlias = Annotated[int, Field(ge=0, le=8_640_000_000_000)]
+_Item = TypeVar("_Item")
+
+
+def _distinct(values: list[_Item]) -> list[_Item]:
+    """Refuse a repeated value where the schema states `uniqueItems`."""
+    if len(set(values)) != len(values):
+        raise ValueError("response list repeats a value")
+    return values
+
+
+# A recording reference is not blank and holds no C0 control or DEL. Explicit
+# classes, not `\s` or lookaround, so the rust-regex validator here and the
+# browser's `u` RegExp read it alike; the second class excludes what JavaScript
+# `trim` removes.
+_RECORDING_REFERENCE = (
+    r"^[^\x00-\x1f\x7f]*"
+    r"[^\x00-\x20\x7f"
+    "\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+    r"][^\x00-\x1f\x7f]*$"
+)
+
+
 class _SettingsWriteRequest(_ClosedModel):
     expected_revision: StrictInt = Field(ge=1)
     document: OwnerSettingsDocument
@@ -261,9 +317,11 @@ class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
 
 class _CodexDeviceAuthResponse(_ClosedModel):
     state: DeviceAuthStatus
-    verification_url: StrictStr | None = None
-    user_code: StrictStr | None = None
-    expires_in_seconds: StrictInt | None = None
+    verification_url: Literal["https://auth.openai.com/codex/device"] | None = None
+    user_code: StrictStr | None = Field(
+        default=None, pattern=r"^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$"
+    )
+    expires_in_seconds: Literal[900] | None = None
     failure: DeviceAuthFailure | None = None
 
 
@@ -273,19 +331,26 @@ class _CodexDeviceStartResponse(_ClosedModel):
 
 
 class _SeriesValue(_ClosedModel):
-    name: str
-    sequence: str | None
+    name: str = Field(max_length=512)
+    sequence: str | None = Field(max_length=512)
 
 
 class _TargetField(_ClosedModel):
-    destination: str
-    state: str
+    destination: _TargetDestination
+    state: Literal[
+        "value", "missing", "null", "empty", "unloaded", "malformed", "oversized"
+    ]
     value: str | bool | list[str] | list[_SeriesValue] | None
 
 
 class _ProposedValue(_ClosedModel):
-    kind: str
-    value: str | bool | list[str] | list[_SeriesValue]
+    kind: str = Field(max_length=64)
+    value: (
+        Annotated[str, Field(max_length=16_384)]
+        | bool
+        | Annotated[list[Annotated[str, Field(max_length=512)]], Field(max_length=128)]
+        | Annotated[list[_SeriesValue], Field(max_length=128)]
+    )
 
 
 class _DecisionProjection(_ClosedModel):
@@ -295,7 +360,7 @@ class _DecisionProjection(_ClosedModel):
     decision_id: str
     destination: str
     occurred_at: int
-    outcome: str
+    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
     proposal_id: str
     review_case_id: str
     selected_value: _ProposedValue | None
@@ -332,6 +397,7 @@ class _AutomaticDecisionProjection(_AutomaticDecisionProjectionBase):
         "explicit",
         "tags",
     ]
+    outcome: Literal["candidate", "keep_current", "ignore"]
 
 
 class _CoverAutomaticDecisionProjection(_AutomaticDecisionProjectionBase):
@@ -366,7 +432,13 @@ class _ActivityConsentRequest(_ClosedModel):
 class _CoverIdentity(_ClosedModel):
     candidate_reference: str
     evidence_references: list[str]
-    outcome: str
+    outcome: Literal[
+        "verified_manifestation_match",
+        "verified_work_match",
+        "plausible_match",
+        "unknown",
+        "conflict",
+    ]
     preview_reference: str
     reasons: list[str]
 
@@ -394,23 +466,33 @@ class _CoverObservation(_ClosedModel):
 class _CoverCandidate(_ClosedModel):
     artifact_id: str
     deterministic_citations: list[str]
-    deterministic_rank: int | None
-    deterministic_rank_key: list[int | str] | None
-    height: int
+    deterministic_rank: int | None = Field(ge=0)
+    deterministic_rank_key: list[int | str] | None = Field(min_length=7, max_length=7)
+    height: _Count
     identity: _CoverIdentity
     incumbent: bool
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     observation: _CoverObservation | None
     original_sha256: str
-    ordinal: int
+    ordinal: _Count
     preview_sha256: str
     reference: str
     selectable: bool
     manual_eligible: bool
-    source_kinds: list[str]
-    state: str
+    source_kinds: list[
+        Literal[
+            "abs",
+            "epub",
+            "hardcover",
+            "open_library",
+            "inventaire",
+            "audible_catalog",
+            "itunes_search",
+        ]
+    ]
+    state: Literal["acceptable", "available", "excluded", "recommended"]
     transport_sha256: str
-    width: int
+    width: _Count
 
 
 class _CoverOmission(_ClosedModel):
@@ -434,7 +516,11 @@ class _CoverPolicyPreferences(_ClosedModel):
 
 
 class _CoverPolicyReport(_ClosedModel):
-    acceptable_candidate_references: list[str]
+    acceptable_candidate_references: Annotated[
+        list[str],
+        Field(json_schema_extra={"uniqueItems": True}),
+        AfterValidator(_distinct),
+    ]
     actual_target_state: Literal["known_empty", "confirmed", "unknown"]
     cover_packet_reference: str
     identity_classifier_reference: str
@@ -443,7 +529,7 @@ class _CoverPolicyReport(_ClosedModel):
     observation_taxonomy_reference: str
     owner_ready: bool
     policy_reference: str
-    reasons: list[str]
+    reasons: list[Annotated[str, Field(max_length=128)]] = Field(max_length=32)
     recommended_candidate_reference: str | None
     schema_version: Literal["cover-policy-report-v2"]
     status: Literal["recommended", "abstained"]
@@ -462,10 +548,10 @@ class _CoverConsiderationResponse(_ClosedModel):
     provider_fetching: bool
     ready: bool
     reviewer_engine: Literal["codex", "openrouter"] | None
-    reviewer_model: str | None
-    reviewer_access_revision: StrictInt | None
+    reviewer_model: str | None = Field(max_length=256)
+    reviewer_access_revision: StrictInt | None = Field(ge=0)
     reviewer_failure_code: OpenRouterPublicFailure | None = None
-    reviewer_status: str
+    reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: str | None
     schema_version: Literal["cover-consideration-v4"]
     supersedes_id: str | None
@@ -482,8 +568,8 @@ class _DescriptionAdviceResponse(_ClosedModel):
     state: Literal["requested", "running", "succeeded", "failed", "interrupted"]
     failure: Literal["unavailable", "invalid_output", "interrupted"] | None
     engine: Literal["codex", "openrouter"]
-    model: str
-    attempt_id: str
+    model: str = Field(max_length=256)
+    attempt_id: str = Field(pattern=r"^description_attempt_[0-9a-f]{32}$")
     current: bool
     candidate: DescriptionAdviceCandidate | None
     binding: DescriptionAdviceBinding
@@ -559,11 +645,26 @@ class _ReviewField(_ClosedModel):
     classification: ReviewFieldState
     classification_reason: str
     current: _TargetField
-    deterministic_disposition: str
-    destination: str
-    decision_actions: list[Literal["accept", "keep_current"]]
+    deterministic_disposition: Literal[
+        "propose_change",
+        "acceptable_choice",
+        "unresolved_choice",
+        "keep",
+        "reject",
+        "defer",
+        "ineligible",
+    ]
+    destination: _TargetDestination
+    # Exactly none or both, in this order. Each tuple validates leniently so
+    # the projection's list is read as one; the model is strict otherwise.
+    decision_actions: (
+        Annotated[tuple[()], Field(strict=False)]
+        | Annotated[
+            tuple[Literal["keep_current"], Literal["accept"]], Field(strict=False)
+        ]
+    )
     editable: bool
-    effect_capability: str
+    effect_capability: Literal["allowed", "unavailable", _SuspensionReason]
     human_decision: _DecisionProjection | None
     inventory_role: Literal["primary", "contextual"]
     automatic_decision: (
@@ -613,14 +714,18 @@ class _TargetIdentity(_ClosedModel):
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
     library_display_name: str | None = Field(default=None, max_length=512)
-    media_kind: str = Field(max_length=64)
+    media_kind: _MediaKind
     title: str = Field(max_length=512)
 
 
 class _RecordingIdentityBasis(_ClosedModel):
     basis: Literal["chapter_runtime_and_structure"]
-    provider: StrictStr = Field(min_length=1, max_length=128)
-    candidate: StrictStr = Field(min_length=1, max_length=128)
+    provider: StrictStr = Field(
+        min_length=1, max_length=128, pattern=_RECORDING_REFERENCE
+    )
+    candidate: StrictStr = Field(
+        min_length=1, max_length=128, pattern=_RECORDING_REFERENCE
+    )
 
     @model_validator(mode="after")
     def canonical_references(self) -> Self:
@@ -692,9 +797,11 @@ class _CaseSuccessorResponse(_ClosedModel):
 
 
 class _EvidenceItem(_ClosedModel):
-    destinations: list[Annotated[StrictStr, Field(max_length=64)]] = Field(
-        min_length=1, max_length=16
-    )
+    destinations: Annotated[
+        list[_TargetDestination],
+        Field(min_length=1, max_length=16, json_schema_extra={"uniqueItems": True}),
+        AfterValidator(_distinct),
+    ]
     observation: str = Field(max_length=1024)
     role: Literal["external_corroboration", "external_observation", "local_presence"]
     source: str = Field(max_length=128)
@@ -711,7 +818,7 @@ class _EvidenceResponse(_ClosedModel):
 
 class _HistoryTransitionItem(_ClosedModel):
     checkpoint: int = Field(ge=0)
-    kind: str = Field(max_length=64)
+    kind: Literal["admitted", "superseded", "no_case", "retired", "tombstoned"]
     reason: str = Field(max_length=512)
     transition_id: str = Field(max_length=128)
 
@@ -721,10 +828,10 @@ class _HistoryDecisionItem(_ClosedModel):
     application: Literal["apply", "recorded_only"] | None
     application_reason: str | None = Field(default=None, max_length=256)
     decision_id: str
-    destination: str
+    destination: _TargetDestination
     event_id: str
     kind: Literal["human_decision_recorded"]
-    occurred_at: int
+    occurred_at: _Instant
     outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
     previous_value: _ProposedValue | None
     review_case_id: str
@@ -734,9 +841,20 @@ class _HistoryDecisionItem(_ClosedModel):
 
 class _HistoryShadowItem(_ClosedModel):
     authority: Literal["none"]
-    dispositions: dict[str, int] = Field(max_length=32)
+    dispositions: dict[
+        Literal[
+            "abstention",
+            "candidate",
+            "conflict",
+            "ignore",
+            "keep_current",
+            "manual",
+            "unsupported",
+        ],
+        _Count,
+    ] = Field(max_length=32)
     kind: Literal["shadow_preview_recorded"]
-    occurred_at: int
+    occurred_at: _Instant
     origin: Literal["policy_preview"]
     outcome_set_id: str
     review_case_id: str
@@ -745,9 +863,9 @@ class _HistoryShadowItem(_ClosedModel):
 
 class _HistoryAutomaticItem(_ClosedModel):
     decision_id: str
-    destination: str
+    destination: _TargetDestination
     kind: Literal["automatic_decision_recorded"]
-    occurred_at: int
+    occurred_at: _Instant
     origin: Literal["automatic_policy"]
     outcome: Literal["candidate", "keep_current", "ignore"]
     previous_value: _ProposedValue | None
@@ -770,7 +888,7 @@ class _HistoryCoverItem(_ClosedModel):
         "no_action",
         "stale",
     ]
-    occurred_at: int
+    occurred_at: _Instant
     review_case_id: str
     schema_version: Literal["cover-consideration-event-v1"]
 
@@ -780,7 +898,7 @@ class _HistoryDescriptionItem(_ClosedModel):
     kind: Literal[
         "description_advice_recorded", "description_selected", "description_application"
     ]
-    occurred_at: int
+    occurred_at: _Instant
     review_case_id: str
     state: Literal[
         "requested",
@@ -800,7 +918,7 @@ class _HistoryDescriptionItem(_ClosedModel):
         "no_change_required",
     ]
     engine: Literal["codex", "openrouter"]
-    model: str
+    model: str = Field(max_length=256)
     candidate: DescriptionAdviceCandidate | None
     decision: AuthoredDescriptionDecision | None
 
@@ -837,11 +955,11 @@ class _ErrorResponse(_ClosedModel):
 
 
 class _ReviewCounts(_ClosedModel):
-    all: int
-    needs_attention: int
-    no_attention_needed: int
-    not_matched: int
-    preparation_failed: int
+    all: _Count
+    needs_attention: _Count
+    no_attention_needed: _Count
+    not_matched: _Count
+    preparation_failed: _Count
 
 
 class _MediaHealthObservation(_ClosedModel):
@@ -881,27 +999,63 @@ class _MediaHealthObservation(_ClosedModel):
         "media_unreadable",
     ]
     observed: str | None = Field(default=None, max_length=256)
-    tracks: list[int] = Field(max_length=512)
+    tracks: list[_Count] = Field(max_length=512)
 
 
 class _PreparationFailure(_ClosedModel):
-    attempt: int
+    attempt: _Count
     diagnostic_reference: str
     media_health: list[_MediaHealthObservation] = Field(max_length=512)
     provider: str
     reason: str
     recovery: str
-    recovery_attempt: int
-    stage: str
-    status: str
+    recovery_attempt: _Count
+    stage: Literal[
+        "extraction", "provider", "proposal", "admission", "projection", "complete"
+    ]
+    status: Literal[
+        "provider",
+        "configuration",
+        "authentication",
+        "stale",
+        "transient",
+        "projection",
+        "failed",
+        "currentness",
+        "persistence",
+        "unsupported_media",
+        "unreadable_media",
+        "parser_refused",
+        "multi_file_budget_exceeded",
+        "missing_required_input",
+        "malformed_retained_data",
+        "internal_failure",
+        "unknown",
+    ]
 
 
 class _ProviderOutcome(_ClosedModel):
     provider_requests: int = Field(ge=0)
-    lane_kind: str = Field(max_length=64)
+    lane_kind: Literal["isbn", "work", "asin", "discovery", "none"]
     provider: str = Field(max_length=128)
     reason: str = Field(max_length=512)
-    status: str = Field(max_length=64)
+    status: Literal[
+        "disabled",
+        "insufficient_input",
+        "candidates",
+        "no_match",
+        "authentication",
+        "authorization",
+        "rate_limited",
+        "unavailable",
+        "incomplete",
+        "malformed",
+        "oversized",
+        "candidate_limit_exceeded",
+        "query_limit_exceeded",
+        "not_needed",
+        "adapter_fault",
+    ]
 
 
 class _LibraryWorkSummary(_ClosedModel):
@@ -931,7 +1085,7 @@ class _LibraryCover(_ClosedModel):
 
 class _LibraryWork(_ClosedModel):
     authors: list[str]
-    attention_count: int
+    attention_count: _Count
     attention_state: Literal[
         "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
     ]
@@ -945,7 +1099,7 @@ class _LibraryWork(_ClosedModel):
     item: str
     library: str
     library_display_name: str | None = Field(default=None, max_length=512)
-    media_kind: str
+    media_kind: _MediaKind
     review_case_id: str | None
     summary: _LibraryWorkSummary | None = None
     title: str
@@ -963,15 +1117,71 @@ class _ReportChapter(_ClosedModel):
 
 class _ReportEmbeddedCover(_ClosedModel):
     present: bool
-    surface: str | None = Field(default=None, max_length=64)
+    surface: (
+        Literal[
+            "container_format",
+            "container_stream",
+            "mp4_ilst",
+            "mp4_freeform",
+            "mp4_freeform_tone",
+            "id3_frame",
+            "id3_user_text",
+            "sidecar_audiobookshelf",
+            "sidecar_libation",
+            "sidecar_opf",
+            "sidecar_nfo",
+            "sidecar_cue",
+            "path_folder",
+            "path_file",
+        ]
+        | None
+    ) = None
 
 
 class _ReportEvidence(_ClosedModel):
-    basis: str = Field(max_length=64)
+    basis: Literal[
+        "opening_matter",
+        "package_metadata",
+        "target_metadata",
+        "embedded_tag",
+        "sidecar",
+        "path",
+        "prior_admission",
+    ]
     excerpt: str = Field(max_length=1024)
-    kind: str = Field(max_length=64)
+    kind: Literal[
+        "title",
+        "subtitle",
+        "creator",
+        "contributor",
+        "series",
+        "series_sequence",
+        "isbn",
+        "asin",
+        "publication_date",
+        "date_event",
+        "contextual_credit",
+        "publisher",
+        "description",
+        "language",
+        "subject",
+        "imprint",
+        "genre",
+        "tag",
+        "duration",
+        "performance_type",
+        "adult_product",
+    ]
     role: str | None = Field(default=None, max_length=64)
-    state: str = Field(max_length=32)
+    state: Literal[
+        "valid",
+        "absent",
+        "malformed",
+        "oversized",
+        "unsupported",
+        "untyped",
+        "inapplicable",
+    ]
     value: str = Field(max_length=1024)
 
 
@@ -999,7 +1209,7 @@ class _ReportDetailResponse(_ClosedModel):
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
     library_display_name: str | None = Field(default=None, max_length=512)
-    media_kind: str = Field(max_length=32)
+    media_kind: _MediaKind
     # What is wrong with the media, separate from what the evidence says about
     # the work. Bounded by the domain's own ceiling of one observation per kind
     # per track.
@@ -1032,9 +1242,15 @@ class _ReportDetailResponse(_ClosedModel):
 class _LibraryResponse(_ClosedModel):
     counts: _ReviewCounts
     items: list[_LibraryWork]
-    lens: str
+    lens: Literal[
+        "all",
+        "needs_attention",
+        "no_attention_needed",
+        "not_matched",
+        "preparation_failed",
+    ]
     next_cursor: str | None
-    page: int
+    page: _Count
     previous_cursor: str | None
     query: str | None
     # Closed, like every other read model's discriminator. A bounded string let
@@ -1048,31 +1264,31 @@ class _LibraryResponse(_ClosedModel):
 class _AttentionItem(_ClosedModel):
     authors: list[str]
     classification_reason: str
-    destination: str
+    destination: _TargetDestination
     detail_url: str
     item: str
     library: str
     library_display_name: str | None = Field(default=None, max_length=512)
-    media_kind: str
+    media_kind: _MediaKind
     notices: list[str]
     provenance: list[str]
     review_case_id: str
     title: str
-    work_attention_count: int
+    work_attention_count: _Count
 
 
 class _AttentionResponse(_ClosedModel):
     items: list[_AttentionItem]
     next_cursor: str | None
     query: str | None
-    schema_version: str
-    total: int
+    schema_version: Literal["review-attention-v1"]
+    total: _Count
 
 
 class _ActivityPrepared(_ClosedModel):
-    automatic: int
-    human: int
-    total: int
+    automatic: _Count
+    human: _Count
+    total: _Count
 
 
 class _ActivityLibrary(_ClosedModel):
@@ -1083,16 +1299,18 @@ class _ActivityLibrary(_ClosedModel):
 
 class _ActivityDestination(_ClosedModel):
     consented: bool
-    destination: str
+    destination: _TargetDestination
     prepared: int = Field(default=0, ge=0)
-    state: str
+    state: Literal["allowed", "not_ready", _SuspensionReason]
 
 
 class _ActivityCapability(_ClosedModel):
     connection: str
     destinations: list[_ActivityDestination]
     library: str
-    state: str
+    state: Literal[
+        "allowed", "partially_allowed", "connection_unavailable", "not_ready"
+    ]
 
 
 class _ActivityEvidence(_ClosedModel):
@@ -1128,7 +1346,7 @@ class _ActivityEvent(_ClosedModel):
     destination: str = Field(max_length=512)
     diagnostic: _ActivityDiagnostic | None = None
     event_id: str = Field(default="recorded-event", max_length=128)
-    event_type: str = Field(default="unknown", max_length=32)
+    event_type: Literal["review", "policy", "metadata", "safety", "unknown"] = "unknown"
     evidence: list[_ActivityEvidence] = Field(default_factory=list, max_length=8)
     failure: str | None = Field(default=None, max_length=512)
     field_label: str = Field(default="Recorded field", max_length=64)
@@ -1138,7 +1356,7 @@ class _ActivityEvent(_ClosedModel):
         default_factory=list, max_length=32
     )
     library: str = Field(max_length=512)
-    occurred_at: int | None = None
+    occurred_at: int | None = Field(default=None, ge=0)
     origin: str = Field(max_length=512)
     state: str = Field(max_length=512)
     transition_id: str | None = Field(default=None, max_length=128)
@@ -1162,15 +1380,15 @@ class _ActivityTransitions(_ClosedModel):
 class _ActivitySuspension(_ClosedModel):
     connection: str
     destination: str | None
-    reason: str
+    reason: _SuspensionReason
     scope: str
-    updated_at: int
+    updated_at: _Count
 
 
 class _ActivityExample(_ClosedModel):
     after: object
     before: object
-    destination: str
+    destination: _TargetDestination
     library: str
     work_id: str
 
@@ -1194,7 +1412,7 @@ class _ActivityWaitingReasons(_ClosedModel):
 
 
 class _ActivityWaiting(_ClosedModel):
-    destination: str = Field(max_length=512)
+    destination: _TargetDestination
     library: str = Field(max_length=512)
     state: str = Field(max_length=512)
     work_id: str = Field(max_length=512)
@@ -1202,26 +1420,36 @@ class _ActivityWaiting(_ClosedModel):
 
 
 class _ProviderRecoveryActivity(_ClosedModel):
-    failure_reasons: list[
-        Literal[
-            "authentication",
-            "authorization",
-            "configuration",
-            "rate_limited",
-            "burst_throttled",
-            "quota_exhausted",
-            "transient",
-        ]
-    ] = Field(default_factory=list, max_length=7)
+    failure_reasons: Annotated[
+        list[
+            Literal[
+                "authentication",
+                "authorization",
+                "configuration",
+                "rate_limited",
+                "burst_throttled",
+                "quota_exhausted",
+                "transient",
+            ]
+        ],
+        AfterValidator(_distinct),
+    ] = Field(
+        default_factory=list, max_length=7, json_schema_extra={"uniqueItems": True}
+    )
     affected_count: int = Field(ge=1, le=1_000_000)
-    dispatch_reasons: list[
-        Literal[
-            "missing_corroboration",
-            "zero_provider_evidence",
-            "settleable_disagreement",
-            "blanket_scan",
-        ]
-    ] = Field(default_factory=list, max_length=4)
+    dispatch_reasons: Annotated[
+        list[
+            Literal[
+                "missing_corroboration",
+                "zero_provider_evidence",
+                "settleable_disagreement",
+                "blanket_scan",
+            ]
+        ],
+        AfterValidator(_distinct),
+    ] = Field(
+        default_factory=list, max_length=4, json_schema_extra={"uniqueItems": True}
+    )
     next_eligible_at: int | None = Field(default=None, ge=0, le=8_640_000_000_000)
     state: Literal["waiting", "checking", "dormant", "recovered", "fanout", "exhausted"]
 
@@ -1255,7 +1483,7 @@ class _ActivityResponse(_ClosedModel):
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
     consented_libraries: list[_ActivityLibrary]
-    counts: dict[str, int]
+    counts: dict[str, _Count]
     enabled_libraries: list[_ActivityLibrary]
     events: list[_ActivityEvent]
     example: None
@@ -1296,13 +1524,20 @@ class _PreparationProgress(_ClosedModel):
     connection: str
     library: str
     library_id: str
-    state: str
-    checked: int
-    total: int
-    ready: int
-    blocked: int
-    recorded: int
-    not_matched: int
+    state: Literal[
+        "idle",
+        "queued",
+        "discovering",
+        "processing",
+        "completed",
+        "completed_with_failures",
+    ]
+    checked: _Count
+    total: _Count
+    ready: _Count
+    blocked: _Count
+    recorded: _Count
+    not_matched: _Count
     rescan_requested: bool
     stages: list[_PreparationStage] = Field(default_factory=list, max_length=10)
 
@@ -1333,7 +1568,7 @@ class _PreparationPassage(_ClosedModel):
 
 class _PreparationActiveBook(_ClosedModel):
     name: StrictStr = Field(min_length=1, max_length=2048)
-    stage: str
+    stage: str = Field(max_length=64)
 
 
 class _PreparationCompletion(_ClosedModel):
@@ -2745,12 +2980,8 @@ def _register_reviewer_access_routes(
             )
             return _CodexDeviceStartResponse(
                 access=access,
-                device=_CodexDeviceAuthResponse(
-                    state=device.state,
-                    verification_url=device.verification_url,
-                    user_code=device.user_code,
-                    expires_in_seconds=device.expires_in_seconds,
-                    failure=device.failure,
+                device=_CodexDeviceAuthResponse.model_validate(
+                    device, from_attributes=True
                 ),
             )
         except _REVIEWER_FAILURES as error:
