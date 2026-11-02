@@ -4,7 +4,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError, CsrfRenewedError, EMPTY_TARGET_TEXT, UncertainMutationError, mapCaseDetail } from '../src/api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  EMPTY_TARGET_TEXT,
+  UncertainMutationError,
+  mapCaseDetail,
+} from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { ownerChoiceCount } from '../src/reviewChoiceCounts'
