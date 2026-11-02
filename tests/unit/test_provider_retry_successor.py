@@ -20,8 +20,12 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchMetadataProvider,
 )
 from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    LibraryConfiguration,
     MediaMountConfiguration,
+    ProviderConnectionConfiguration,
     ReportLimits,
+    TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.failure_diagnostics import (
     provider_result_diagnostics,
@@ -63,6 +67,7 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetryResolver,
     ProviderRetrySharedFailure,
     ProviderRetrySuccessorError,
+    resolve_configured_retry,
 )
 from mechanical_librarian.bootstrap.composition import (
     _classify_provider_recovery_failure,
@@ -3414,3 +3419,101 @@ def test_a_recovery_retry_names_only_its_adapters_own_fault(
     else:
         (event,) = events
         assert ("recovery", fault_class) == (event["phase"], event["fault_class"])
+
+
+# -- resolving a recorded retry against the configuration ----------------------
+
+
+def _resolver_configuration() -> ApplicationConfiguration:
+    """An audiobook library whose declared German moves Audible.de first.
+
+    The owner states ``us, uk, de``; the library's ``de`` makes the order a
+    retry must walk ``de, us, uk``, which neither the stated order nor the
+    ``us`` default produces.
+    """
+    providers = (
+        ProviderConnectionConfiguration(
+            "audible",
+            True,
+            False,
+            None,
+            "audible_catalog",
+            marketplaces=("us", "uk", "de"),
+        ),
+        ProviderConnectionConfiguration("audnexus", True, False, None, "audnexus"),
+        ProviderConnectionConfiguration("google", True, False, None, "google_books"),
+    )
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "audiobooks",
+                "primary",
+                "library",
+                "audiobook",
+                "media",
+                ("audible", "audnexus", "google"),
+                languages=("de",),
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        providers,
+    )
+
+
+def _resolve(
+    name: str,
+    adapter: str,
+    google_burst_remaining: Callable[[], int | None] | None,
+) -> tuple[ConfiguredProviderRetry, list[tuple[object, tuple[str, ...]]]]:
+    built: list[tuple[object, tuple[str, ...]]] = []
+
+    def retry_provider(
+        value: ProviderConnectionConfiguration, marketplaces: tuple[str, ...]
+    ) -> Any:
+        built.append((value, marketplaces))
+        return object()
+
+    resolved = resolve_configured_retry(
+        _resolver_configuration(),
+        "primary",
+        "audiobooks",
+        name,
+        adapter,
+        1,
+        retry_provider=retry_provider,
+        google_burst_remaining=google_burst_remaining,
+    )
+    assert resolved is not None
+    return resolved, built
+
+
+@pytest.mark.parametrize(
+    ("name", "adapter"), (("audible", "audible_catalog"), ("audnexus", "audnexus"))
+)
+def test_a_retry_constructs_its_provider_with_the_librarys_marketplace_order(
+    name: str, adapter: str
+) -> None:
+    configuration = _resolver_configuration()
+    resolved, built = _resolve(name, adapter, None)
+    assert [] == built
+    resolved.binding.factory()
+    (provider,) = (value for value in configuration.providers if value.name == name)
+    assert [(provider, ("de", "us", "uk"))] == built
+
+
+def test_only_a_google_books_retry_draws_on_the_google_burst_budget() -> None:
+    def remaining() -> int | None:
+        return 3
+
+    google, _ = _resolve("google", "google_books", remaining)
+    assert google.google_burst_remaining is remaining
+    for name, adapter in (("audible", "audible_catalog"), ("audnexus", "audnexus")):
+        other, _ = _resolve(name, adapter, remaining)
+        assert other.google_burst_remaining is None
+    unpaced, _ = _resolve("google", "google_books", None)
+    assert unpaced.google_burst_remaining is None
