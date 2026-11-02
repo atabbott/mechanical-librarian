@@ -39,10 +39,13 @@ from mechanical_librarian.domain.field_outcomes import (
     publisher_statement_valid,
 )
 from mechanical_librarian.domain.field_value_comparison import (
+    audiobook_format_only_genres,
     canonical_text,
     creator_list_reordered,
     description_alternative_immaterial,
     genre_alternative_immaterial,
+    plain_audiobook_synopsis,
+    recognized_synopsis_placeholder,
     title_article_key,
     title_has_leading_article,
     title_identity_key,
@@ -122,7 +125,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v43"
+POLICY_VERSION = "fixed-conservative-v44"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -303,6 +306,10 @@ VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 RECORDING_ASSOCIATED_ISBN_REASON = "recording_associated_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
 WORK_ALTERNATIVE_IMMATERIAL_REASON = "work_alternative_immaterial"
+# A populated description or genre list that passes the floor. Under a policy
+# option that only fills empty fields it stays choosable but is not queued; the
+# attention facts read the option (#1310).
+POPULATED_VALUE_MEETS_FLOOR_REASON = "populated_value_meets_floor"
 # A current language one class's display name only spells differently (#1314).
 LANGUAGE_DISPLAY_NAME_REASON = "language_display_name"
 
@@ -355,6 +362,8 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("work_publication_cannot_replace",),
             ("competing_evidence", WORK_ALTERNATIVE_IMMATERIAL_REASON),
             ("populated_subjective_field", WORK_ALTERNATIVE_IMMATERIAL_REASON),
+            ("populated_subjective_field", POPULATED_VALUE_MEETS_FLOOR_REASON),
+            ("competing_evidence", POPULATED_VALUE_MEETS_FLOOR_REASON),
         }
     ),
     ProposalOutcome.KEEP: frozenset(
@@ -1417,115 +1426,12 @@ def evaluate_report(
             result = _resolve_series_subset(
                 result, targets[destination], observations, report
             )
-        if (
-            destination is TargetDestination.ISBN
-            and not observations
-            and result.outcome is ProposalOutcome.INELIGIBLE
-            and result.reasons == ("no_supported_evidence",)
-            and (reason := _isbn_rejection_reason(report.identifier_evidence))
-            is not None
-        ):
-            result = ProposalResult(
-                destination,
-                (
-                    ProposalOutcome.DEFER
-                    if reason == "identifier_applicability_unresolved"
-                    else ProposalOutcome.INELIGIBLE
-                ),
-                (),
-                None,
-                (reason,),
-                _dependencies(destination),
+        if destination is TargetDestination.ISBN:
+            result = _isbn_result(report, targets[destination], observations, result)
+        if destination is TargetDestination.SUBTITLE:
+            result = _subtitle_result(
+                report, targets[destination], observations, result
             )
-        if (
-            destination is TargetDestination.SUBTITLE
-            and not observations
-            and result.outcome is ProposalOutcome.INELIGIBLE
-            and result.reasons == ("no_supported_evidence",)
-            and _has_generic_provider_subtitle(report)
-        ):
-            result = ProposalResult(
-                destination,
-                ProposalOutcome.INELIGIBLE,
-                (),
-                None,
-                ("generic_provider_subtitle",),
-                _dependencies(destination),
-            )
-        if (
-            destination is TargetDestination.SUBTITLE
-            and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-            and result.reasons == ("competing_evidence",)
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and (elected := _segment_corroborated_subtitle(report, result.alternatives))
-            != (None, None)
-        ):
-            attested, elected_reason = elected
-            result = (
-                ProposalResult(
-                    destination,
-                    ProposalOutcome.PROPOSE_CHANGE,
-                    (attested,),
-                    attested.alternative_id,
-                    (cast(str, elected_reason),),
-                    _dependencies(destination),
-                )
-                if attested is not None
-                # A withheld corroboration states its own guard on the same
-                # seam the uncorroborated diagnostic uses.
-                else _unresolved(result, cast(str, elected_reason))
-            )
-        elif (
-            destination is TargetDestination.SUBTITLE
-            and (
-                result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-                and result.reasons == ("competing_evidence",)
-                or result.outcome is ProposalOutcome.INELIGIBLE
-                and result.reasons == ("no_supported_evidence",)
-            )
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and _has_uncorroborated_subtitle_segment(report, result.alternatives)
-        ):
-            result = ProposalResult(
-                destination,
-                result.outcome,
-                result.alternatives,
-                None,
-                tuple(
-                    sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})
-                ),
-                result.dependencies,
-            )
-        if (
-            destination is TargetDestination.ISBN
-            and (
-                report.audio is not None
-                or targets[destination].state
-                in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-            and result.alternatives
-        ):
-            result = _verified_manifestation_isbn_election(report, result)
         if destination is TargetDestination.TITLE:
             result = _evidence_led_title_election(report, result)
         if (
@@ -1632,6 +1538,10 @@ def evaluate_report(
         if result.alternatives and result.reasons != (EVIDENCE_LED_TITLE_REASON,):
             results[destination] = _bibliographic_unresolved(result)
     combinations = _withhold_unoffered_title(report, targets, results, combinations)
+    for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES):
+        results[destination] = _populated_value_meets_floor(
+            results[destination], targets[destination]
+        )
     ordered = tuple(results[value] for value in TargetDestination)
     if resolved_policy_id is None:
         # The production default is a real resolved built-in profile for this
@@ -1653,6 +1563,164 @@ def evaluate_report(
         media_kind=(
             "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
         ),
+    )
+
+
+def _isbn_result(
+    report: MetadataReport,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Refine an ISBN outcome by identifier rejection and manifestation proof."""
+    destination = TargetDestination.ISBN
+    if (
+        not observations
+        and result.outcome is ProposalOutcome.INELIGIBLE
+        and result.reasons == ("no_supported_evidence",)
+        and (reason := _isbn_rejection_reason(report.identifier_evidence)) is not None
+    ):
+        result = ProposalResult(
+            destination,
+            (
+                ProposalOutcome.DEFER
+                if reason == "identifier_applicability_unresolved"
+                else ProposalOutcome.INELIGIBLE
+            ),
+            (),
+            None,
+            (reason,),
+            _dependencies(destination),
+        )
+    if (
+        report.audio is not None
+        or target.state
+        in {
+            TargetFieldState.MISSING,
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+        }
+    ) and result.alternatives:
+        result = _verified_manifestation_isbn_election(report, result)
+    return result
+
+
+def _subtitle_result(
+    report: MetadataReport,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    result: ProposalResult,
+) -> ProposalResult:
+    """Refine a subtitle outcome by provider genericity and segment corroboration."""
+    destination = TargetDestination.SUBTITLE
+    if (
+        not observations
+        and result.outcome is ProposalOutcome.INELIGIBLE
+        and result.reasons == ("no_supported_evidence",)
+        and _has_generic_provider_subtitle(report)
+    ):
+        result = ProposalResult(
+            destination,
+            ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            ("generic_provider_subtitle",),
+            _dependencies(destination),
+        )
+    if (
+        result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("competing_evidence",)
+        and (
+            report.audio is not None
+            or target.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        )
+        and (elected := _segment_corroborated_subtitle(report, result.alternatives))
+        != (None, None)
+    ):
+        attested, elected_reason = elected
+        result = (
+            ProposalResult(
+                destination,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (attested,),
+                attested.alternative_id,
+                (cast(str, elected_reason),),
+                _dependencies(destination),
+            )
+            if attested is not None
+            # A withheld corroboration states its own guard on the same
+            # seam the uncorroborated diagnostic uses.
+            else _unresolved(result, cast(str, elected_reason))
+        )
+    elif (
+        (
+            result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            and result.reasons == ("competing_evidence",)
+            or result.outcome is ProposalOutcome.INELIGIBLE
+            and result.reasons == ("no_supported_evidence",)
+        )
+        and (
+            report.audio is not None
+            or target.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        )
+        and _has_uncorroborated_subtitle_segment(report, result.alternatives)
+    ):
+        result = ProposalResult(
+            destination,
+            result.outcome,
+            result.alternatives,
+            None,
+            tuple(sorted({*result.reasons, SUBTITLE_SEGMENT_UNCORROBORATED_REASON})),
+            result.dependencies,
+        )
+    return result
+
+
+def _populated_value_meets_floor(
+    result: ProposalResult, target: TargetField
+) -> ProposalResult:
+    """Mark a populated subjective value that passes the floor (#1310).
+
+    A description passes when it is plain text with no markup, visible cut-off
+    or placeholder; a genre list when it is not format-only. One alternative or
+    several competing ones make no difference: a fill-only option never
+    replaces a populated value either way. Below the floor
+    every alternative stays material, as ADR-0069 reads it. The field stays the
+    owner's to choose; the attention facts decide, from the policy option,
+    whether it is queued.
+    """
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or result.reasons
+        not in {("competing_evidence",), ("populated_subjective_field",)}
+        or target.state is not TargetFieldState.VALUE
+    ):
+        return result
+    current = target.value
+    if result.destination is TargetDestination.DESCRIPTION:
+        if not plain_audiobook_synopsis(current) or recognized_synopsis_placeholder(
+            current
+        ):
+            return result
+    elif audiobook_format_only_genres(current):
+        return result
+    return ProposalResult(
+        result.destination,
+        result.outcome,
+        result.alternatives,
+        result.selected_alternative_id,
+        (*result.reasons, POPULATED_VALUE_MEETS_FLOOR_REASON),
+        result.dependencies,
     )
 
 

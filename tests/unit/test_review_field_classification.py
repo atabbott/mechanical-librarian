@@ -249,6 +249,38 @@ def test_an_immaterial_optional_choice_says_why_no_review_is_needed() -> None:
 
 
 @pytest.mark.parametrize(
+    ("flag", "reason"),
+    (
+        (
+            "kept_by_fill_policy",
+            "Your setting only fills empty fields, so the current value is kept "
+            "and no review is needed. You can still choose a proposed one.",
+        ),
+        (
+            "kept_by_tags_off",
+            "Tags are off in your settings, so your tags are left as they are "
+            "and no review is needed. You can still choose proposed tags.",
+        ),
+    ),
+)
+def test_a_choice_the_policy_settles_says_the_value_is_kept(
+    flag: str, reason: str
+) -> None:
+    """The setting that keeps the current value is named only when optional (#1310)."""
+    optional = classify_review_field(
+        **_BASE_INPUTS,
+        current_value="Title",
+        proposed_values=("Other",),
+        owner_choosable=True,
+        **{flag: True},
+    )
+    assert optional.state == "owner_choosable"
+    assert optional.needs_attention is False
+    assert optional.reason == reason
+    assert not re.search(r"verified|confirmed", optional.reason, re.IGNORECASE)
+
+
+@pytest.mark.parametrize(
     ("cause", "guidance"),
     (
         (

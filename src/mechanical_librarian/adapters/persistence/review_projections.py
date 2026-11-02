@@ -270,6 +270,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 policy_attention_destinations=self._policy_attention_destinations(
                     review_case_id
                 ),
+                settled_choice_destinations=self._settled_choice_destinations(
+                    review_case_id
+                ),
                 automatic_attention_destinations=self._automatic_attention_destinations(
                     review_case_id
                 ),
@@ -716,6 +719,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 (review_case_id,),
             )
         )
+
+    def _settled_choice_destinations(self, review_case_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT destination FROM review_case_field_facts "
+            "WHERE review_case_id=? AND unresolved_choice=0 ORDER BY destination",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
 
     def _automatic_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
         rows = self._connection.execute(

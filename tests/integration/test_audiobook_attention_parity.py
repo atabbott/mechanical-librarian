@@ -308,28 +308,44 @@ def test_a_recordings_narrators_ask_only_under_authors_and_narrators_ask(
 
 
 _INCUMBENT = "A voyage reveals a hidden city. The crew must choose who returns home."
+_IMMATERIAL = (
+    "The proposed values only shorten or extend the current one, so no review is "
+    "needed. You can still keep the current value or choose a proposed one."
+)
+_KEPT_BY_FILL_POLICY = (
+    "Your setting only fills empty fields, so the current value is kept and no "
+    "review is needed. You can still choose a proposed one."
+)
 
 
 @pytest.mark.parametrize(
-    ("summary", "destination", "counted"),
+    ("summary", "destination", "counted", "reason"),
     (
-        ("A voyage reveals a hidden city.", "automatic", False),
-        ("A voyage reveals a hidden city.", "ask", True),
+        ("A voyage reveals a hidden city.", "automatic", False, _IMMATERIAL),
+        ("A voyage reveals a hidden city.", "ask", True, None),
         (
             "An explorer crosses the sea and discovers an ancient city.",
             "automatic",
+            False,
+            _KEPT_BY_FILL_POLICY,
+        ),
+        (
+            "An explorer crosses the sea and discovers an ancient city.",
+            "ask",
             True,
+            None,
         ),
     ),
 )
 def test_an_immaterial_work_description_is_choosable_without_asking(
-    tmp_path: Path, summary: str, destination: str, counted: bool
+    tmp_path: Path, summary: str, destination: str, counted: bool, reason: str | None
 ) -> None:
-    """Only a trimmed or extended description leaves the queue (#1253).
+    """A trimmed or extended description leaves the queue (#1253), and so does
+    any alternative to a current description that passes the floor while the
+    description option only fills empty fields (#1310).
 
-    It stays a choice the owner may make, an explicit Ask still asks about it,
-    and an alternative that says something else still needs review. The case
-    page, the queue and the facts a fresh open derives all agree.
+    It stays a choice the owner may make, and an explicit Ask still asks about
+    it. The case page, the queue and the facts a fresh open derives all agree.
     """
     report = synopsis_report(_INCUMBENT, (summary,))
     assert audiobook_review_scope(report) == "work"
@@ -353,12 +369,13 @@ def test_an_immaterial_work_description_is_choosable_without_asking(
         )
         # The optional choice's one statement says why no review is needed,
         # beside conditions that would otherwise ask the owner (#1450).
-        assert (
-            field["classification_reason"]
-            == "The proposed values only shorten or extend the current one, so "
-            "no review is needed. You can still keep the current value or choose "
-            "a proposed one."
-        ) is not counted
+        if reason is not None:
+            assert field["classification_reason"] == reason
+        else:
+            assert field["classification_reason"] not in {
+                _IMMATERIAL,
+                _KEPT_BY_FILL_POLICY,
+            }
         attention = BrowseReviewLibrary(repository).attention(
             search=None, limit=50, cursor=None
         )
@@ -371,3 +388,64 @@ def test_an_immaterial_work_description_is_choosable_without_asking(
         ) is (counted)
         assert attention["total"] == repository.count_current_attention_fields(None)
         assert attention["total"] == sum(f["needs_attention"] for f in detail["fields"])
+
+
+_MATERIAL = "An explorer crosses the sea and discovers an ancient city."
+_SECOND_MATERIAL = "A sailor charts a storm and finds a buried kingdom."
+
+
+@pytest.mark.parametrize(
+    ("incumbent", "option", "candidates", "counted"),
+    (
+        (_INCUMBENT, "safe_plain_text", (_MATERIAL,), False),
+        # Competing sources leave a populated value just as kept (#1310).
+        (_INCUMBENT, "safe_plain_text", (_MATERIAL, _SECOND_MATERIAL), False),
+        (_INCUMBENT, "replace_safe_plain_text", (_MATERIAL,), True),
+        (_INCUMBENT, "replace_safe_plain_text", (_MATERIAL, _SECOND_MATERIAL), True),
+        # A visibly cut-off description is below the floor, so every
+        # alternative stays material under any option (ADR-0069).
+        (
+            "A voyage reveals a hidden city. The crew must...",
+            "safe_plain_text",
+            (_MATERIAL,),
+            True,
+        ),
+    ),
+)
+def test_only_a_fill_only_option_keeps_a_description_that_passes_the_floor(
+    tmp_path: Path,
+    incumbent: str,
+    option: str,
+    candidates: tuple[str, ...],
+    counted: bool,
+) -> None:
+    """A material alternative asks unless the option only fills and the value
+    passes the floor (#1310); the case page, the queue and the facts agree."""
+    report = synopsis_report(incumbent, candidates)
+    assert audiobook_review_scope(report) == "work"
+    database = tmp_path / "application.sqlite3"
+    with closing(open_repository(database)) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("isbn_form",),
+            selected_options={"description_fill": option},
+            selected_destinations={"description_fill": "automatic"},
+        )
+    with closing(open_repository(database, create=False)) as repository:
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        field = next(f for f in detail["fields"] if f["destination"] == "description")
+        assert field["deterministic_disposition"] == "unresolved_choice"
+        assert field["decision_actions"]
+        assert field["needs_attention"] is counted
+        assert (field["classification_reason"] == _KEPT_BY_FILL_POLICY) is not counted
+        queued = {
+            item["destination"]
+            for item in BrowseReviewLibrary(repository).attention(
+                search=None, limit=50, cursor=None
+            )["items"]
+        }
+        assert ("description" in queued) is counted
+        assert (
+            "description" in {row[4] for row in _facts(repository._connection)}
+        ) is counted
