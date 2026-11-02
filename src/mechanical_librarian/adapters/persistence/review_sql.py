@@ -118,6 +118,15 @@ _STORED_COVER_ATTENTION_AUTHORITY_SQL = (
 # authority below admits it, and nothing in `_REVIEW_FIELD_ATTENTION_CLEAR_SQL`
 # has already settled or suspended it. No reason is medium-specific: a
 # recording joins the queue under exactly an ebook's conditions (#1249).
+# A verified current cover is kept without asking (#1310): its alternatives
+# stay choosable on the work's page, but neither its field fact nor its
+# consideration puts it in the queue.
+_VERIFIED_CURRENT_COVER_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') cover_result,"
+    "json_each(cover_result.value,'$.reasons') cover_reason "
+    "WHERE json_extract(cover_result.value,'$.destination')='cover' "
+    "AND cover_reason.value='current_cover_verified')"
+)
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
     "OR (result.destination='cover' AND EXISTS (SELECT 1 "
@@ -125,7 +134,10 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=current_cover.consideration_id "
     "WHERE current_cover.review_case_id=rc.review_case_id "
-    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1)) "
+    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1) "
+    "AND NOT "
+    + _VERIFIED_CURRENT_COVER_SQL
+    + ") "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "

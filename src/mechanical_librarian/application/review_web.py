@@ -3033,7 +3033,8 @@ def _needs_attention(
     the case detail hold no medium-specific reason (#1249). The action list
     beside this decides whether a choice exists at all (#967). A work-route
     choice whose alternatives only trim or extend the current value stays
-    choosable without asking, as the persisted field facts read it (#1253).
+    choosable without asking, as the persisted field facts read it (#1253),
+    and so does a cover choice over a verified current cover (#1310).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -3042,10 +3043,13 @@ def _needs_attention(
     return (
         proposal["destination"] in policy_attention_destinations
         or proposal["destination"] in automatic_attention_destinations
-        or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or (
             result["outcome"] == "unresolved_choice"
             and "work_alternative_immaterial" not in reasons
+            and not (
+                proposal["destination"] == "cover"
+                and "current_cover_verified" in reasons
+            )
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
