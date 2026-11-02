@@ -4,7 +4,8 @@
 - Date: 2026-11-01
 - Owners: project maintainers
 - Issues: #1577 (stage 1), #1571 (client half of uncertain outcomes), #1669
-  (stage 2b, the schema states every single-field check)
+  (stage 2b, the schema states every single-field check), #1684 (stage 3, the
+  decoders replace the hand-written checks)
 - Amends: ADR-0043 (HTTP module and drift), ADR-0044 (build identity delivery)
 - Supersedes: none
 - Superseded by: none
@@ -28,7 +29,11 @@ told:
 1. **Generated decoders.** An in-repository generator emits response decoders
    from the OpenAPI document, with no runtime dependency, and the HTTP module
    decodes every JSON response through them. Generated files are not
-   committed. Delivered in later stages of the same project.
+   committed. Delivered in later stages of the same project, one response
+   family at a time (#1684). A read whose 2xx body fails decoding is a
+   `ResponseDecodeError`: a 502 `invalid_response` that carries the
+   operation, the status, and the decoder's reason and pointer as properties,
+   never in its message.
 2. **Required properties.** Every response property is required except a
    pinned list of omissions. Delivered with the decoders.
 3. **The HTTP module keeps** transport, view mapping, and the checks a schema
@@ -37,7 +42,15 @@ told:
    know is reported as possibly applied, never as refused, and the caller
    reloads the authoritative state. The browser half is #1571's
    `uncertainWriteOutcome` and `PRE_CALL_SERVER_CODES`: a lost
-   acknowledgement, or a 5xx not proven to be raised before the handler ran.
+   acknowledgement, a 5xx not proven to be raised before the handler ran, or
+   a 2xx that fails decoding or a named check. That last is an
+   `UncertainMutationError`, a kind of lost acknowledgement that keeps the
+   decoder's reason and pointer, or `invariant` and the check's code. Only a
+   command marked as writing nothing is a `ResponseDecodeError` instead; a
+   command that is merely safe to resend after a CSRF renewal still writes,
+   so it stays uncertain. A 204, or another undocumented 2xx status, to a
+   decoded operation fails the same way. Only a lost network call is a plain
+   lost acknowledgement; a defect in a decoder or mapper is not converted.
    The server half is that no failure after a committed write is answered
    with a 4xx. `tests/unit/test_unsafe_outcome_inventory.py` pins, for every
    unsafe `/api/v1` route, each error status and code and the latest point it
@@ -69,7 +82,7 @@ documents (identity), a check whose only owner is persisted (persisted), or one
 that shares the persisted Decimal price grammar no regex states (shared
 grammar). Each line gives the check, its owner and why. The first 40 are the
 `mapper_cross_field` rows of `frontend/tests/decoderDifferential.test.ts`; X40
-to X53 are checks that suite does not exercise.
+to X54 are checks that suite does not exercise.
 
 - `check:mapActivity.failure-reasons-order`: failure reasons ascend.
   `_ProviderRecoveryActivity.failure_reasons`. Positional.
@@ -194,6 +207,8 @@ to X53 are checks that suite does not exercise.
 - X53: a cover history decision is accept, keep_current, reject or candidate.
   `_HistoryCoverItem.decision`, the shared `_DecisionProjection.outcome`,
   which admits five. Cross-field (a subset that depends on the item kind).
+- X54: each passage count is at most the run's `total`.
+  `_PreparationPresentation.passage`. Cross-field.
 
 ## Alternatives rejected
 

@@ -26,7 +26,7 @@ import type {
   SettingsWrite,
 } from '../src/api/http'
 import { coverReviewerLabel } from '../src/labels'
-import { createHttp, renderRoute } from './fixtures'
+import { createHttp, idlePreparation, renderRoute } from './fixtures'
 import { document, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
@@ -3431,6 +3431,7 @@ describe('library languages in Settings (#1466)', () => {
 
 describe('settings provider throttling (#1282)', () => {
   const throttled = (retry: 'available' | 'managed_by_file' = 'available'): PreparationView => ({
+    ...idlePreparation,
     schema_version: 'review-preparation-v2',
     recovery_required: false,
     active: false,

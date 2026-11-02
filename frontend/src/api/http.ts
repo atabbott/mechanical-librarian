@@ -1,9 +1,17 @@
 export type ReadWorkClass = 'foreground' | 'background'
 
 import type { components } from '../generated/review-api'
+import type { components as responseComponents } from '../generated/review-api-response'
+import type { D, OperationKey } from '../generated/review-decoders'
+import { DecodeFailure, matchOperation, responseDecoders } from '../generated/review-decoders'
 import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 
+// Request bodies keep the document's own types; a decoded response has the
+// response-truth type, where every property but the pinned omissions is
+// required (ADR-0091 decision 2).
 type Schema<Name extends keyof components['schemas']> = components['schemas'][Name]
+type ResponseSchema<Name extends keyof responseComponents['schemas']> =
+  responseComponents['schemas'][Name]
 // Holds a literal tuple to exactly the members of a generated enum: an extra
 // member fails the element type, and a missing one fails the parameter type,
 // which names the missing members (#1576).
@@ -16,7 +24,9 @@ export const lits =
         : { missing_members: Exclude<T, V[number]> }),
   ) =>
     values
-type LibraryDto = Schema<'_LibraryResponse'>
+type LibraryDto = ResponseSchema<'_LibraryResponse'>
+type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
+type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
 type AttentionDto = Schema<'_AttentionResponse'>
 type CaseDetailDto = Schema<'_CaseDetailResponse'>
 export type SettingsView = Schema<'SettingsView'>
@@ -881,14 +891,9 @@ export interface HistoryView {
   items: readonly HistoryItemView[]
   nextCursor?: string
 }
-type PreparationSchema = Schema<'_PreparationResponse'>
-export type PreparationView = Omit<
-  PreparationSchema,
-  'first_boot' | 'first_boot_complete' | 'first_boot_works'
-> &
-  Partial<Pick<PreparationSchema, 'first_boot' | 'first_boot_complete' | 'first_boot_works'>>
-export type PreparationProgress = Schema<'_PreparationProgress'>
-export type ProviderThrottlingView = Schema<'_PreparationThrottling'>
+export type PreparationView = ResponseSchema<'_PreparationResponse'>
+export type PreparationProgress = ResponseSchema<'_PreparationProgress'>
+export type ProviderThrottlingView = ResponseSchema<'_PreparationThrottling'>
 export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
 export type PolicyStateView = Schema<'_PolicyProfileResponse'>
 export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
@@ -1335,6 +1340,64 @@ export class AmbiguousMutationError extends ApiError {
     this.name = 'AmbiguousMutationError'
   }
 }
+// Where a 2xx response failed: the decoder's `reason@at`, or for a named check
+// on an unsafe answer `invariant@<its code>`. The message stays the ApiError
+// one, so no pointer reaches the page.
+export interface ResponseFailure {
+  readonly operation: string
+  readonly responseStatus: number
+  readonly at: string
+  readonly reason: string
+}
+// A read, or a side-effect-free command, whose 2xx body the decoder refused.
+export class ResponseDecodeError extends ApiError implements ResponseFailure {
+  readonly operation: string
+  readonly responseStatus: number
+  readonly at: string
+  readonly reason: string
+  constructor({ operation, responseStatus, at, reason }: ResponseFailure) {
+    super(502, 'invalid_response')
+    this.name = 'ResponseDecodeError'
+    this.operation = operation
+    this.responseStatus = responseStatus
+    this.at = at
+    this.reason = reason
+  }
+}
+// An unsafe request answered 2xx with a body the browser cannot read: the write
+// may have committed, so it is reported as uncertain like a lost answer.
+export class UncertainMutationError extends AmbiguousMutationError implements ResponseFailure {
+  readonly operation: string
+  readonly responseStatus: number
+  readonly at: string
+  readonly reason: string
+  constructor({ operation, responseStatus, at, reason }: ResponseFailure) {
+    super()
+    this.name = 'UncertainMutationError'
+    this.operation = operation
+    this.responseStatus = responseStatus
+    this.at = at
+    this.reason = reason
+  }
+}
+// The operations whose 2xx JSON body `request()` decodes with its generated
+// decoder. Each stage-3 family adds its keys; stage 4 removes the gate and
+// decodes every operation (#1684).
+export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
+  'GET /api/v1/review-preparation',
+  'POST /api/v1/review-preparation/dismiss',
+  'POST /api/v1/review-preparation/first-boot/acknowledge',
+  'POST /api/v1/review-preparation/pause',
+  'POST /api/v1/review-preparation/resume',
+  'POST /api/v1/review-preparation/{connection}/check-connection',
+  'POST /api/v1/review-preparation/{connection}/{library_name}/retry',
+  'POST /api/v1/review-preparation/{connection}/{library_name}/scan',
+  'GET /api/v1/library',
+  'GET /api/v1/library/report',
+])
+const decoders = responseDecoders as Readonly<
+  Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
+>
 // Server codes proven to be raised before any handler body runs, so an unsafe
 // request answered with one of them changed nothing. The sole member comes from
 // the session dependency; tests pin that proof on both sides.
@@ -1413,17 +1476,29 @@ export class ReviewApiClient implements ReviewHttp {
     const p = new URLSearchParams({ lens: search.lens })
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
-    return mapLibrary(await this.read(`/api/v1/library?${p}`, signal, workClass))
+    return mapLibrary((await this.read(`/api/v1/library?${p}`, signal, workClass)) as LibraryDto)
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
-  // server that escaped it knows how.
+  // server that escaped it knows how. It is followed only when it is the report
+  // route on this origin, so the body is decoded as a report before it is
+  // mapped as one; any other address fails closed without a request (#1686).
   async getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ) {
-    return mapReportDetail(await this.read(detailUrl, signal, workClass))
+    if (
+      new URL(detailUrl, 'http://local').origin !== 'http://local' ||
+      matchOperation('GET', detailUrl) !== 'GET /api/v1/library/report'
+    )
+      throw new ResponseDecodeError({
+        operation: 'GET /api/v1/library/report',
+        responseStatus: 0,
+        at: '',
+        reason: 'unexpected_operation',
+      })
+    return mapReportDetail((await this.read(detailUrl, signal, workClass)) as ReportDetailDto)
   }
   async getSettings(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapSettings(await this.read('/api/v1/settings', signal, workClass))
@@ -1610,15 +1685,31 @@ export class ReviewApiClient implements ReviewHttp {
     return value
   }
   async getPreparation(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return mapPreparation(await this.read('/api/v1/review-preparation', signal, workClass))
+    return mapPreparation(
+      (await this.read('/api/v1/review-preparation', signal, workClass)) as PreparationDto,
+    )
   }
-  async preparationAction(path: string, signal?: AbortSignal) {
-    const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
-    if (/(?:^|\/)(?:scan|retry)$/.test(path)) return preparationProgress(value)
-    return mapPreparation(value)
+  // Scan and retry answer the library's progress; every other control answers
+  // the whole preparation view.
+  async preparationAction(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<PreparationProgress | PreparationView> {
+    const progress = /(?:^|\/)(?:scan|retry)$/.test(path)
+    return this.mutate(
+      `/api/v1/review-preparation/${path}`,
+      undefined,
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value) =>
+        progress ? (value as PreparationProgress) : mapPreparation(value as PreparationDto),
+    )
   }
   // The expected generation makes a resend a refusal, never a second raise, so
-  // a CSRF-renewed press is sent once more (#1018).
+  // a CSRF-renewed press is sent once more (#1018). The command still writes.
   async retryProviderRecovery(expectedGeneration: number, signal?: AbortSignal) {
     return mapSettings(
       await this.mutate(
@@ -1628,12 +1719,20 @@ export class ReviewApiClient implements ReviewHttp {
         undefined,
         'POST',
         true,
+        false,
       ),
     )
   }
   async dismissPreparation(runId: string, signal?: AbortSignal) {
-    return mapPreparation(
-      await this.mutate('/api/v1/review-preparation/dismiss', { run_id: runId }, signal),
+    return this.mutate(
+      '/api/v1/review-preparation/dismiss',
+      { run_id: runId },
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value) => mapPreparation(value as PreparationDto),
     )
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
@@ -1727,13 +1826,15 @@ export class ReviewApiClient implements ReviewHttp {
       : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
   }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
+    const writesNothing = path === 'validate' || path === 'preview'
     const value = await this.mutate(
       `/api/v1/metadata-policy/${path}`,
       body,
       signal,
       undefined,
       'POST',
-      path === 'validate' || path === 'preview',
+      writesNothing,
+      writesNothing,
     )
     if (!record(value)) throw new ApiError(502, 'invalid_policy_response')
     return value as T
@@ -1833,17 +1934,21 @@ export class ReviewApiClient implements ReviewHttp {
     return this.request(
       path,
       { headers: { 'X-ML-Work-Class': workClass }, ...(signal ? { signal } : {}) },
-      false,
+      { unsafe: false },
     )
   }
-  private async mutate(
+  // `map` runs on the decoded answer of a migrated operation. A named check it
+  // fails on a request that may have written is uncertain, never a refusal.
+  private async mutate<T = unknown>(
     path: string,
     body?: unknown,
     signal?: AbortSignal,
     extraHeaders?: HeadersInit,
     method = 'POST',
     sideEffectFree = false,
-  ) {
+    writesNothing = false,
+    map?: (value: unknown) => T,
+  ): Promise<T> {
     if (!this.buildIdentity) {
       this.onBuildMismatch()
       throw new BuildMismatchError()
@@ -1851,22 +1956,24 @@ export class ReviewApiClient implements ReviewHttp {
     const headers = new Headers(extraHeaders)
     headers.set('x-ml-build-identity', this.buildIdentity)
     if (body !== undefined) headers.set('content-type', 'application/json')
-    try {
-      return await this.request(
-        path,
-        {
-          method,
-          headers,
-          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-          ...(signal ? { signal } : {}),
-        },
-        true,
-        sideEffectFree || headers.has('idempotency-key'),
-      )
-    } catch (error) {
-      if (error instanceof TypeError) throw new AmbiguousMutationError()
-      throw error
-    }
+    // `sideEffectFree` only lets a CSRF-renewed request be sent again;
+    // `writesNothing` says the command changes nothing, so an answer that fails
+    // decoding or a named check is a 502 rather than an uncertain write (#1685).
+    return (await this.request(
+      path,
+      {
+        method,
+        headers,
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(signal ? { signal } : {}),
+      },
+      {
+        unsafe: true,
+        resend: sideEffectFree || headers.has('idempotency-key'),
+        uncertain: !writesNothing,
+        ...(map ? { map } : {}),
+      },
+    )) as T
   }
   // A 403 `csrf` challenge renews the page token once. Only a request that is
   // safe to repeat -- idempotency-keyed or side-effect free -- is then sent
@@ -1875,19 +1982,41 @@ export class ReviewApiClient implements ReviewHttp {
   private async request(
     path: string,
     init: RequestInit,
-    unsafe: boolean,
-    resend = false,
+    {
+      unsafe,
+      resend = false,
+      uncertain = false,
+      map,
+    }: {
+      unsafe: boolean
+      resend?: boolean
+      uncertain?: boolean
+      map?: (value: unknown) => unknown
+    },
   ): Promise<unknown> {
-    const send = async (token?: string) => {
+    // A write the network lost may have landed. Only the network calls make
+    // that ambiguous: a TypeError from decoding or `map` is a defect and
+    // propagates unchanged (#1685).
+    const network = async <R>(call: () => Promise<R>) => {
+      try {
+        return await call()
+      } catch (error) {
+        if (unsafe && error instanceof TypeError) throw new AmbiguousMutationError()
+        throw error
+      }
+    }
+    const send = (token?: string) => {
       const headers = new Headers(init.headers)
       if (token) headers.set('x-csrf-token', token)
-      return this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' })
+      return network(() =>
+        this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' }),
+      )
     }
     let response = await send(unsafe ? this.options.csrf.current() : undefined)
     if (unsafe && response.status === 403 && (await challengeCode(response)) === 'csrf') {
       let token: string
       try {
-        token = await this.options.csrf.renew(init.signal ?? undefined)
+        token = await network(() => this.options.csrf.renew(init.signal ?? undefined))
       } catch (error) {
         if (error instanceof SessionExpiredError) this.reportSessionExpiry()
         throw error
@@ -1918,12 +2047,44 @@ export class ReviewApiClient implements ReviewHttp {
       }
       throw error
     }
-    if (response.status === 204) return undefined
+    const method = init.method ?? 'GET'
+    const operation = matchOperation(method, path)
+    const gated = operation !== undefined && DECODED.has(operation)
+    const failed = (at: string, reason: string) => {
+      const failure = {
+        operation: operation ?? `${method} ${path}`,
+        responseStatus: response.status,
+        at,
+        reason,
+      }
+      return uncertain ? new UncertainMutationError(failure) : new ResponseDecodeError(failure)
+    }
+    // A 204 carries no body, so only an operation outside the gate may answer
+    // one; a gated operation documents no 204 and fails closed below.
+    if (response.status === 204 && !gated) return undefined
+    const decoder = gated ? decoders[operation][String(response.status)] : undefined
+    if (gated && decoder === undefined) throw failed('', 'no_decoder')
+    let value: unknown
     try {
-      return (await response.json()) as unknown
+      value = (await response.json()) as unknown
     } catch {
       if (unsafe) throw new AmbiguousMutationError()
       throw new ApiError(502, 'invalid_json_response')
+    }
+    if (decoder !== undefined) {
+      try {
+        value = decoder(value, '')
+      } catch (error) {
+        if (error instanceof DecodeFailure) throw failed(error.at, error.reason)
+        throw error
+      }
+    }
+    if (!map) return value
+    try {
+      return map(value)
+    } catch (error) {
+      if (uncertain && error instanceof ApiError) throw failed(error.code, 'invariant')
+      throw error
     }
   }
 
@@ -2609,254 +2770,35 @@ const mapDecisionAcknowledgement = (
   return { ...wire, confirmation: mapped }
 }
 
-const preparationProgress = (value: unknown): PreparationProgress => {
-  if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
-  if (value.scan_id !== null) stringValue(value.scan_id, 'preparation_scan_id')
-  for (const field of ['connection', 'library', 'library_id'])
-    stringValue(value[field], `preparation_${field}`)
-  coverObservationValue(value.state, 'preparation_state', SCAN_STATES)
-  for (const field of ['checked', 'total', 'ready', 'blocked', 'recorded', 'not_matched'])
-    integerValue(value[field], `preparation_${field}`)
-  if (typeof value.rescan_requested !== 'boolean')
-    throw new ApiError(502, 'invalid_preparation_rescan_requested')
-  // Validated: every field of the progress DTO is checked above, so the cast
-  // only re-attaches the generated type to an already-verified document.
-  return value as unknown as PreparationProgress
-}
-const preparationPresentation = (value: unknown) => {
-  if (!record(value)) throw new ApiError(502, 'invalid_preparation_presentation')
-  const runId = stringValue(value.run_id, 'preparation_run_id')
-  if (!/^preparation_run_[0-9a-f]{64}$/u.test(runId))
-    throw new ApiError(502, 'invalid_preparation_run_id')
-  const state = stringValue(value.state, 'preparation_state')
-  const terminal = ['completed_clean', 'completed_with_failures', 'dismissed'].includes(state)
+type PreparationDto = ResponseSchema<'_PreparationResponse'>
+// The checks the preparation schema cannot state (ADR-0091): the decoder has
+// already enforced every field.
+const preparationPresentation = (value: NonNullable<PreparationDto['presentation']>) => {
+  const { passage, total } = value
   if (
-    ![
-      'starting',
-      'running',
-      'blocked',
-      'completed_clean',
-      'completed_with_failures',
-      'dismissed',
-    ].includes(state) ||
-    !record(value.passage) ||
-    !Array.isArray(value.triggers) ||
-    !Array.isArray(value.active_books) ||
-    value.active_books.length > 5 ||
-    !Array.isArray(value.recent_completions) ||
-    value.recent_completions.length > 8 ||
-    typeof value.dismissible !== 'boolean' ||
-    typeof value.throughput_per_minute !== 'number' ||
-    !Number.isFinite(value.throughput_per_minute) ||
-    value.throughput_per_minute < 0
-  )
-    throw new ApiError(502, 'invalid_preparation_presentation')
-  const rawPassage = value.passage
-  const passage = {
-    read: integerValue(rawPassage.read, 'preparation_passage_read'),
-    searchesFinished: integerValue(
-      rawPassage.searches_finished,
-      'preparation_passage_searches_finished',
-    ),
-    compared: integerValue(rawPassage.compared, 'preparation_passage_compared'),
-    checked: integerValue(rawPassage.checked, 'preparation_passage_checked'),
-    ready: integerValue(rawPassage.ready, 'preparation_passage_ready'),
-    failed: integerValue(rawPassage.failed, 'preparation_passage_failed'),
-  }
-  if (
-    passage.searchesFinished > passage.read ||
-    passage.compared > passage.searchesFinished ||
+    passage.searches_finished > passage.read ||
+    passage.compared > passage.searches_finished ||
     passage.checked > passage.compared ||
     passage.ready > passage.checked
   )
     throw new ApiError(502, 'invalid_preparation_passage_order')
-  if (value.triggers.length < 1 || value.triggers.length > 4)
+  if (new Set(value.triggers.map(({ trigger }) => trigger)).size !== value.triggers.length)
     throw new ApiError(502, 'invalid_preparation_trigger')
-  const triggerFamilies = new Set<string>()
-  for (const trigger of value.triggers) {
-    if (!record(trigger)) throw new ApiError(502, 'invalid_preparation_trigger')
-    if (
-      !['initial_setup', 'manual_scan', 'library_added', 'title_recovery'].includes(
-        stringValue(trigger.trigger, 'preparation_trigger'),
-      )
-    )
-      throw new ApiError(502, 'invalid_preparation_trigger')
-    const family = stringValue(trigger.trigger, 'preparation_trigger')
-    if (triggerFamilies.has(family)) throw new ApiError(502, 'invalid_preparation_trigger')
-    triggerFamilies.add(family)
-    const acceptedCount = integerValue(trigger.accepted_count, 'preparation_trigger_accepted_count')
-    const firstAccepted = integerValue(
-      trigger.first_accepted_at,
-      'preparation_trigger_first_accepted_at',
-    )
-    const lastAccepted = integerValue(
-      trigger.last_accepted_at,
-      'preparation_trigger_last_accepted_at',
-    )
-    if (acceptedCount < 1 || lastAccepted < firstAccepted)
-      throw new ApiError(502, 'invalid_preparation_trigger')
-  }
-  const total = integerValue(value.total, 'preparation_total')
-  const activeOverflow = integerValue(value.active_overflow, 'preparation_active_overflow')
-  const startedAt = integerValue(value.started_at, 'preparation_started_at')
-  const updatedAt = integerValue(value.updated_at, 'preparation_updated_at')
-  const completedAt =
-    value.completed_at === null
-      ? null
-      : integerValue(value.completed_at, 'preparation_completed_at')
+  if (value.triggers.some((trigger) => trigger.last_accepted_at < trigger.first_accepted_at))
+    throw new ApiError(502, 'invalid_preparation_trigger')
+  const terminal = ['completed_clean', 'completed_with_failures', 'dismissed'].includes(value.state)
   if (
     Object.values(passage).some((count) => count > total) ||
-    value.active_books.length + activeOverflow > total ||
-    updatedAt < startedAt ||
-    (terminal && (completedAt === null || completedAt < startedAt)) ||
-    (!terminal && completedAt !== null)
+    value.active_books.length + value.active_overflow > total ||
+    value.updated_at < value.started_at ||
+    (terminal && (value.completed_at === null || value.completed_at < value.started_at)) ||
+    (!terminal && value.completed_at !== null)
   )
     throw new ApiError(502, 'invalid_preparation_passage_total')
-  for (const active of value.active_books) {
-    if (!record(active)) throw new ApiError(502, 'invalid_preparation_active_book')
-    boundedStringValue(active.name, 'preparation_active_name', 2048)
-    boundedStringValue(active.stage, 'preparation_active_stage', 64)
-  }
-  for (const completion of value.recent_completions) {
-    if (!record(completion)) throw new ApiError(502, 'invalid_preparation_completion')
-    boundedStringValue(completion.name, 'preparation_completion_name', 2048)
-    if (
-      !['ready', 'failed'].includes(
-        stringValue(completion.outcome, 'preparation_completion_outcome'),
-      )
-    )
-      throw new ApiError(502, 'invalid_preparation_completion')
-    integerValue(completion.completed_at, 'preparation_completion_completed_at')
-  }
-  // The run's works as they stand now; absent or null means not yet known.
-  const now = value.now
-  if (now === undefined || now === null) return
-  if (
-    !record(now) ||
-    !exactKeys(now, ['ready', 'recorded', 'not_matched', 'failed', 'in_progress', 'scan_ids'])
-  )
-    throw new ApiError(502, 'invalid_preparation_now')
-  for (const field of ['ready', 'recorded', 'not_matched', 'failed', 'in_progress'])
-    integerValue(now[field], `preparation_now_${field}`)
-  if (stringArray(now.scan_ids, 'preparation_now_scan_ids').length > 128)
-    throw new ApiError(502, 'invalid_preparation_now_scan_ids')
 }
-const throttleAdapters = Object.keys(settingsVocabulary.provider_labels)
-const throttleReasons = [
-  'authentication',
-  'authorization',
-  'configuration',
-  'rate_limited',
-  'burst_throttled',
-  'quota_exhausted',
-  'transient',
-] as const
-const throttleEntryKeys = [
-  'library',
-  'adapter',
-  'state',
-  'reasons',
-  'deferred',
-  'next_retry_at',
-  'remedy',
-] as const
-const providerThrottling = (value: unknown): ProviderThrottlingView | null => {
-  if (value === null || value === undefined) return null
-  if (
-    !record(value) ||
-    !exactKeys(value, ['generation', 'retry', 'entries']) ||
-    !Array.isArray(value.entries) ||
-    value.entries.length > 256 ||
-    integerValue(value.generation, 'provider_throttling_generation') < 1
-  )
-    throw new ApiError(502, 'invalid_provider_throttling')
-  coverObservationValue(value.retry, 'provider_throttling_retry', [
-    'available',
-    'managed_by_file',
-    'unavailable',
-  ])
-  for (const entry of value.entries) {
-    if (
-      !record(entry) ||
-      !exactKeys(entry, throttleEntryKeys) ||
-      !Array.isArray(entry.reasons) ||
-      entry.reasons.length > throttleReasons.length ||
-      boundedStringValue(entry.library, 'provider_throttling_library', 64).length === 0
-    )
-      throw new ApiError(502, 'invalid_provider_throttling_entry')
-    coverObservationValue(entry.adapter, 'provider_throttling_adapter', throttleAdapters)
-    coverObservationValue(entry.state, 'provider_throttling_state', [
-      'waiting',
-      'dormant',
-      'checking',
-      'exhausted',
-    ])
-    for (const reason of entry.reasons)
-      coverObservationValue(reason, 'provider_throttling_reason', throttleReasons)
-    integerValue(entry.deferred, 'provider_throttling_deferred')
-    if (entry.next_retry_at !== null)
-      integerValue(entry.next_retry_at, 'provider_throttling_next_retry_at')
-    if (entry.remedy !== null)
-      coverObservationValue(entry.remedy, 'provider_throttling_remedy', [
-        'add_api_key',
-        'check_api_key',
-      ])
-  }
-  // Validated: the envelope and every member of every entry are checked above.
-  return value as unknown as ProviderThrottlingView
-}
-export const mapPreparation = (value: unknown): PreparationView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-preparation-v2' ||
-    !Array.isArray(value.libraries) ||
-    !Array.isArray(value.connections) ||
-    typeof value.paused !== 'boolean' ||
-    typeof value.active !== 'boolean' ||
-    typeof value.actionable !== 'boolean' ||
-    typeof value.recovery_required !== 'boolean' ||
-    (value.first_boot !== undefined && typeof value.first_boot !== 'boolean') ||
-    (value.first_boot_complete !== undefined && typeof value.first_boot_complete !== 'boolean') ||
-    (value.presentation !== null &&
-      value.presentation !== undefined &&
-      !record(value.presentation)) ||
-    (value.first_boot_works !== undefined &&
-      value.first_boot_works !== null &&
-      (typeof value.first_boot_works !== 'number' ||
-        !Number.isInteger(value.first_boot_works) ||
-        value.first_boot_works < 0))
-  )
-    throw new ApiError(502, 'invalid_preparation_response')
-  if (value.presentation !== null && value.presentation !== undefined)
-    preparationPresentation(value.presentation)
-  value.libraries.forEach((item, index) => {
-    if (!record(item)) throw new ApiError(502, `invalid_preparation_library_${String(index)}`)
-    preparationProgress(item)
-  })
-  value.connections.forEach((item, index) => {
-    if (!record(item)) throw new ApiError(502, `invalid_preparation_connection_${String(index)}`)
-    stringValue(item.connection, 'preparation_connection')
-    if (
-      !['tls', 'authentication', 'authorization', 'unavailable'].includes(
-        stringValue(item.code, 'preparation_connection_code'),
-      ) ||
-      !['paused', 'checking', 'recovered'].includes(
-        stringValue(item.state, 'preparation_connection_state'),
-      )
-    )
-      throw new ApiError(502, `invalid_preparation_connection_${String(index)}`)
-    integerValue(item.affected, 'preparation_connection_affected')
-    integerValue(item.updated_at, 'preparation_connection_updated_at')
-  })
-  // Validated: the envelope, both collections, and every field inside them are
-  // checked above, so the cast only re-attaches the generated type.
-  return {
-    ...value,
-    first_boot: value.first_boot ?? false,
-    first_boot_complete: value.first_boot_complete ?? false,
-    first_boot_works: value.first_boot_works ?? null,
-    provider_throttling: providerThrottling(value.provider_throttling),
-  } as unknown as PreparationView
+export const mapPreparation = (value: PreparationDto): PreparationView => {
+  if (value.presentation !== null) preparationPresentation(value.presentation)
+  return value
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
   if (!record(value)) throw new ApiError(502, `invalid_${field}`)
@@ -3322,230 +3264,128 @@ const mapRecordingIdentityBasis = (value: unknown): RecordingIdentityBasisView |
   return { basis: 'chapter_runtime_and_structure', provider, candidate }
 }
 
-export const mapReportDetail = (value: unknown): ReportDetailView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-report-detail-v5' ||
-    !record(value.embedded_cover) ||
-    !Array.isArray(value.chapters) ||
-    !Array.isArray(value.evidence) ||
-    !Array.isArray(value.provider_sources) ||
-    !Array.isArray(value.provider_evidence)
-  )
-    throw new ApiError(502, 'invalid_report_detail_response')
-  const cover = value.embedded_cover
-  if (typeof cover.present !== 'boolean' || typeof value.chapters_truncated !== 'boolean')
-    throw new ApiError(502, 'invalid_report_detail_response')
-  if (
-    typeof value.evidence_truncated !== 'boolean' ||
-    typeof value.provider_evidence_truncated !== 'boolean'
-  )
-    throw new ApiError(502, 'invalid_report_detail_response')
-  return {
-    chapters: (value.chapters as unknown[]).map((chapter, index) => {
-      if (!record(chapter)) throw new ApiError(502, `invalid_report_chapter_${String(index)}`)
-      return {
-        endMilliseconds: integerValue(chapter.end_milliseconds, 'report_chapter_end'),
-        ordinal: integerValue(chapter.ordinal, 'report_chapter_ordinal'),
-        startMilliseconds: integerValue(chapter.start_milliseconds, 'report_chapter_start'),
-        title: chapter.title == null ? null : stringValue(chapter.title, 'report_chapter_title'),
-      }
-    }),
-    chaptersTruncated: value.chapters_truncated,
-    coverPresent: cover.present,
-    coverSurface:
-      cover.surface == null
-        ? null
-        : coverObservationValue(cover.surface, 'report_cover_surface', AUDIO_SURFACES),
-    evidence: (value.evidence as unknown[]).map((claim, index) => {
-      if (!record(claim)) throw new ApiError(502, `invalid_report_evidence_${String(index)}`)
-      return {
-        basis: coverObservationValue(claim.basis, 'report_evidence_basis', CLAIM_BASES),
-        excerpt: stringValue(claim.excerpt, 'report_evidence_excerpt'),
-        kind: coverObservationValue(claim.kind, 'report_evidence_kind', CLAIM_KINDS),
-        role: claim.role == null ? null : stringValue(claim.role, 'report_evidence_role'),
-        state: coverObservationValue(claim.state, 'report_evidence_state', FIELD_STATES),
-        value: stringValue(claim.value, 'report_evidence_value'),
-      }
-    }),
-    evidenceTruncated: value.evidence_truncated,
-    item: stringValue(value.item, 'report_item'),
-    library: stringValue(value.library, 'report_library'),
-    libraryDisplayName:
-      optionalString(value.library_display_name, 'report_library_display_name') ??
-      stringValue(value.library, 'report_library'),
-    mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
-    recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
-    audiobookReviewScope: mapAudiobookReviewScope(
-      value.audiobook_review_scope,
-      value.media_kind,
-      value.recording_identity_basis,
-    ),
-    mediaKind: coverObservationValue(value.media_kind, 'report_media_kind', MEDIA_KINDS),
-    providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
-    providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
-      if (!record(claim)) throw new ApiError(502, `invalid_report_provider_${String(index)}`)
-      return {
-        candidate: stringValue(claim.candidate, 'report_provider_candidate'),
-        kind: stringValue(claim.kind, 'report_provider_kind'),
-        provider: stringValue(claim.provider, 'report_provider_name'),
-        role: claim.role == null ? null : stringValue(claim.role, 'report_provider_role'),
-        state: stringValue(claim.state, 'report_provider_state'),
-        value: claim.value == null ? null : stringValue(claim.value, 'report_provider_value'),
-      }
-    }),
-    providerEvidenceTruncated: value.provider_evidence_truncated,
-    reportId: stringValue(value.report_id, 'report_id'),
-    title: stringValue(value.title, 'report_title'),
-  }
-}
+// The report detail and the works list are decoded centrally (#1686). Their
+// mappers only rename; the media-health, provider-outcome, recording-basis and
+// audiobook-scope helpers they share with the case detail keep their checks
+// until the case detail is decoded too.
+export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
+  chapters: value.chapters.map((chapter) => ({
+    endMilliseconds: chapter.end_milliseconds,
+    ordinal: chapter.ordinal,
+    startMilliseconds: chapter.start_milliseconds,
+    title: chapter.title,
+  })),
+  chaptersTruncated: value.chapters_truncated,
+  coverPresent: value.embedded_cover.present,
+  coverSurface: value.embedded_cover.surface,
+  evidence: value.evidence.map((claim) => ({
+    basis: claim.basis,
+    excerpt: claim.excerpt,
+    kind: claim.kind,
+    role: claim.role,
+    state: claim.state,
+    value: claim.value,
+  })),
+  evidenceTruncated: value.evidence_truncated,
+  item: value.item,
+  library: value.library,
+  libraryDisplayName: value.library_display_name ?? value.library,
+  mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
+  recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
+  audiobookReviewScope: mapAudiobookReviewScope(
+    value.audiobook_review_scope,
+    value.media_kind,
+    value.recording_identity_basis,
+  ),
+  mediaKind: value.media_kind,
+  providerSources: value.provider_sources.map(mapProviderOutcome),
+  providerEvidence: value.provider_evidence.map((claim) => ({
+    candidate: claim.candidate,
+    kind: claim.kind,
+    provider: claim.provider,
+    role: claim.role,
+    state: claim.state,
+    value: claim.value,
+  })),
+  providerEvidenceTruncated: value.provider_evidence_truncated,
+  reportId: value.report_id,
+  title: value.title,
+})
 
-export const mapLibrary = (value: unknown): LibraryView => {
-  // The one token this build's library document is served under. Reading any
-  // token the server happens to send would let a version the client was never
-  // written against render as though it were understood, which is the failure
-  // the sibling mappers already refuse; the library is held to the same rule.
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-library-v4' ||
-    !record(value.counts) ||
-    !Array.isArray(value.items)
-  )
-    throw new ApiError(502, 'invalid_library_response')
-  const lens = coverObservationValue(value.lens, 'library_lens', ['all', ...attentionStates])
-  // Validated at each read: this cast names the DTO's fields, and every one the
-  // view model consumes passes through the validators below before it is used.
-  const dto = value as unknown as LibraryDto
-  const query = optionalString(dto.query, 'library_query')
-  const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
-  const previousCursor = optionalString(dto.previous_cursor, 'library_previous_cursor')
-  return {
-    lens,
-    ...(query ? { query } : {}),
-    ...(nextCursor ? { nextCursor } : {}),
-    ...(previousCursor ? { previousCursor } : {}),
-    page: integerValue(dto.page, 'library_page'),
-    counts: {
-      attention: integerValue(dto.counts.needs_attention, 'attention_count'),
-      all: integerValue(dto.counts.all, 'all_count'),
-      clear: integerValue(dto.counts.no_attention_needed, 'clear_count'),
-      notMatched: integerValue(dto.counts.not_matched, 'not_matched_count'),
-      failed: integerValue(dto.counts.preparation_failed, 'preparation_failed_count'),
-    },
-    works: dto.items.map((item) => {
-      const reviewCaseId = optionalString(item.review_case_id, 'review_case_id')
-      const preparation =
-        item.preparation == null
+export const mapLibrary = (value: LibraryDto): LibraryView => ({
+  lens: value.lens,
+  ...(value.query ? { query: value.query } : {}),
+  ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
+  ...(value.previous_cursor ? { previousCursor: value.previous_cursor } : {}),
+  page: value.page,
+  counts: {
+    attention: value.counts.needs_attention,
+    all: value.counts.all,
+    clear: value.counts.no_attention_needed,
+    notMatched: value.counts.not_matched,
+    failed: value.counts.preparation_failed,
+  },
+  works: value.items.map((item) => {
+    const preparation = item.preparation
+    const summary = item.summary
+    return {
+      id: item.review_case_id ?? item.work_id,
+      ...(item.review_case_id ? { reviewCaseId: item.review_case_id } : {}),
+      workId: item.work_id,
+      title: item.title,
+      authors: item.authors,
+      library: item.library,
+      libraryDisplayName: item.library_display_name ?? item.library,
+      mediaKind: item.media_kind,
+      attentionCount: item.attention_count,
+      attention: item.attention_state,
+      detailUrl: item.detail_url,
+      detailKind: item.detail_kind,
+      preparation:
+        preparation === null
           ? null
           : {
-              attempt: integerValue(item.preparation.attempt, 'preparation_attempt'),
-              diagnosticReference: stringValue(
-                item.preparation.diagnostic_reference,
-                'preparation_diagnostic_reference',
-              ),
-              mediaHealth: mapMediaHealth(
-                item.preparation.media_health,
-                'preparation_media_health',
-              ),
-              provider: stringValue(item.preparation.provider, 'preparation_provider'),
-              reason: stringValue(item.preparation.reason, 'preparation_reason'),
-              recovery: stringValue(item.preparation.recovery, 'preparation_recovery'),
-              recoveryAttempt: integerValue(
-                item.preparation.recovery_attempt,
-                'preparation_recovery_attempt',
-              ),
-              stage: coverObservationValue(
-                item.preparation.stage,
-                'preparation_stage',
-                PREPARATION_FAILURE_STAGES,
-              ),
-              status: coverObservationValue(
-                item.preparation.status,
-                'preparation_status',
-                PREPARATION_FAILURE_STATUSES,
-              ),
-            }
-      if (!Array.isArray(item.preparation_outcomes))
-        throw new ApiError(502, 'invalid_preparation_outcomes')
-      const preparationOutcomes = (item.preparation_outcomes as unknown[]).map(mapProviderOutcome)
-      const workId = stringValue(item.work_id, 'work_id')
-      const cover = item.cover == null ? undefined : mapLibraryCover(item.cover)
-      const summary =
-        item.summary == null
+              attempt: preparation.attempt,
+              diagnosticReference: preparation.diagnostic_reference,
+              mediaHealth: mapMediaHealth(preparation.media_health, 'preparation_media_health'),
+              provider: preparation.provider,
+              reason: preparation.reason,
+              recovery: preparation.recovery,
+              recoveryAttempt: preparation.recovery_attempt,
+              stage: preparation.stage,
+              status: preparation.status,
+            },
+      preparationOutcomes: item.preparation_outcomes.map(mapProviderOutcome),
+      summary:
+        summary === null
           ? null
           : {
-              fields: (Array.isArray(item.summary.fields) ? item.summary.fields : []).map(
-                (field, index) => {
-                  if (!record(field)) throw new ApiError(502, `invalid_summary_${String(index)}`)
-                  const state = coverObservationValue(
-                    field.state,
-                    `summary_${String(index)}_state`,
-                    TARGET_FIELD_STATES,
-                  )
-                  return {
-                    destination: coverObservationValue(
-                      field.destination,
-                      `summary_${String(index)}_destination`,
-                      TARGET_DESTINATIONS,
-                    ),
-                    state,
-                    value: targetValueText(state, field.value),
-                  }
-                },
-              ),
-              reason: stringValue(item.summary.reason, 'summary_reason'),
-              state: coverObservationValue(item.summary.state, 'summary_state', workSummaryStates),
-            }
-      return {
-        id: reviewCaseId ?? workId,
-        ...(reviewCaseId ? { reviewCaseId } : {}),
-        workId,
-        title: stringValue(item.title, 'title'),
-        authors: stringArray(item.authors, 'authors'),
-        library: stringValue(item.library, 'library'),
-        libraryDisplayName:
-          optionalString(item.library_display_name, 'library_display_name') ??
-          stringValue(item.library, 'library'),
-        mediaKind: coverObservationValue(item.media_kind, 'media_kind', MEDIA_KINDS),
-        attentionCount: integerValue(item.attention_count, 'attention_count'),
-        attention: coverObservationValue(item.attention_state, 'attention_state', attentionStates),
-        detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
-        detailKind: (() => {
-          // Read back through `unknown`, as `lens` above is: the DTO type says
-          // what the server promises, and this is the check that it kept it.
-          const kind: unknown = item.detail_kind
-          if (kind === null) return null
-          const named = stringValue(kind, 'detail_kind')
-          if (named !== 'case' && named !== 'report') throw new ApiError(502, 'invalid_detail_kind')
-          return named
-        })(),
-        preparation,
-        preparationOutcomes,
-        summary,
-        ...(cover ? { cover } : {}),
-      }
-    }),
-  }
-}
+              fields: summary.fields.map((field) => ({
+                destination: field.destination,
+                state: field.state,
+                value: targetValueText(field.state, field.value),
+              })),
+              reason: summary.reason,
+              state: summary.state,
+            },
+      ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
+    }
+  }),
+})
 
 // A cover is shown only from the route that serves the preview its report
 // binds, named by that same digest, so a row cannot point the image elsewhere.
-const mapLibraryCover = (value: unknown): LibraryCoverView => {
-  if (!record(value)) throw new ApiError(502, 'invalid_library_cover')
-  const previewSha256 = stringValue(value.preview_sha256, 'library_cover_preview')
-  const width = integerValue(value.width, 'library_cover_width')
-  const height = integerValue(value.height, 'library_cover_height')
-  const url = stringValue(value.url, 'library_cover_url')
+// The decoder holds the digest's form and the route prefix; this binds the two.
+const mapLibraryCover = (value: LibraryCoverDto): LibraryCoverView => {
   const prefix = '/api/v1/library/cover?'
-  if (
-    !/^[0-9a-f]{64}$/u.test(previewSha256) ||
-    width < 1 ||
-    height < 1 ||
-    !url.startsWith(prefix) ||
-    new URLSearchParams(url.slice(prefix.length)).get('preview') !== previewSha256
-  )
+  if (new URLSearchParams(value.url.slice(prefix.length)).get('preview') !== value.preview_sha256)
     throw new ApiError(502, 'invalid_library_cover')
-  return { previewSha256, width, height, url }
+  return {
+    previewSha256: value.preview_sha256,
+    width: value.width,
+    height: value.height,
+    url: value.url,
+  }
 }
 
 export const mapAttention = (value: unknown): AttentionView => {

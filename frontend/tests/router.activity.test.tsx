@@ -27,6 +27,7 @@ import {
   consentOf,
   createHttp,
   createLiveStream,
+  idlePreparation,
   openActivityAuthority,
   permissionReadiness,
   renderRoute,
@@ -3172,6 +3173,7 @@ it('keeps history usable during checking and discards a late result after close 
 })
 
 const pausedConnection = (state: 'paused' | 'recovered'): PreparationView => ({
+  ...idlePreparation,
   schema_version: 'review-preparation-v2',
   recovery_required: false,
   active: false,
@@ -4624,6 +4626,7 @@ describe('owner language in Activity (#1286)', () => {
       ...createHttp(),
       getActivity: vi.fn(async () => activity()),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        ...idlePreparation,
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: false,

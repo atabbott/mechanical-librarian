@@ -1336,43 +1336,114 @@ describe('shipped first-run setup script', () => {
     expect(document.querySelector('.summary')).toBeNull()
   })
 
-  it('posts one kickoff for two clicks and re-enables the control when activation fails', async () => {
-    let kickoffs = 0
-    let release!: (value: Response) => void
-    const held = new Promise<Response>((resolve) => {
-      release = resolve
-    })
-    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(request)
-      if (url === '/api/setup/reviewer-access')
-        return response({ revision: 7, mapping: null, codex: { state: 'host_unsupported' } })
-      if (url === '/api/setup/kick-off' && init?.method === 'POST') {
-        kickoffs += 1
-        return await held
-      }
-      return response(
-        setupState('kick_off', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
-        }),
+  it.each([
+    [503, 'activation_failed', 'Preparation could not be started, so nothing changed.'],
+    [401, 'session_expired', 'Your setup sign-in expired, so nothing was recorded.'],
+    [
+      422,
+      'mounts_unready',
+      'Every selected book library needs one matching read-only mount before kickoff.',
+    ],
+  ] as const)(
+    'posts one kickoff for two presses and places a %s %s failure under the button (#1677)',
+    async (status, code, copy) => {
+      let kickoffs = 0
+      let release!: (value: Response) => void
+      const held = new Promise<Response>((resolve) => {
+        release = resolve
+      })
+      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/reviewer-access')
+          return response({ revision: 7, mapping: null, codex: { state: 'host_unsupported' } })
+        if (url === '/api/setup/kick-off' && init?.method === 'POST') {
+          kickoffs += 1
+          return await held
+        }
+        return response(
+          setupState('kick_off', {
+            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          }),
+        )
+      })
+      vi.stubGlobal('fetch', fetch)
+      runSetup()
+
+      const heading = await screen.findByRole('heading', { name: 'Kick off preparation' })
+      await waitFor(() => expect(heading).toHaveFocus())
+      const submit = await screen.findByRole('button', { name: 'Kick off preparation' })
+      const form = submit.closest('form')
+      if (!form) throw new Error('kickoff form missing')
+      submit.focus()
+      fireEvent.click(submit)
+      fireEvent.click(submit)
+      // Natively disabling the focused button would drop focus to the page in a browser.
+      expect(submit).not.toBeDisabled()
+      expect(submit).toHaveAttribute('aria-disabled', 'true')
+      expect(submit).toHaveFocus()
+      expect(kickoffs).toBe(1)
+
+      release(response({ detail: { error: code } }, status))
+      const alert = await screen.findByRole('alert')
+      await waitFor(() => expect(alert).toHaveTextContent(copy))
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(alert.previousElementSibling).toBe(submit)
+      expect(alert.nextElementSibling).toBeNull()
+      expect(form.firstElementChild).toHaveClass('notice')
+      expect(submit).not.toHaveAttribute('aria-disabled')
+      expect(submit).toBeEnabled()
+      expect(submit).toHaveFocus()
+      expect(screen.getByRole('heading', { name: 'Kick off preparation' })).toBeVisible()
+      expect(kickoffs).toBe(1)
+    },
+  )
+
+  it.each([
+    [403, 'csrf'],
+    [409, 'stale'],
+  ] as const)(
+    'reloads the kickoff step when it is refused with %s %s (#1677)',
+    async (status, code) => {
+      let reads = 0
+      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/reviewer-access')
+          return response({ revision: 7, mapping: null, codex: { state: 'host_unsupported' } })
+        if (url === '/api/setup/kick-off' && init?.method === 'POST')
+          return response({ detail: { error: code } }, status)
+        if (url === '/api/setup/state') reads += 1
+        return response(
+          setupState('kick_off', {
+            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          }),
+        )
+      })
+      vi.stubGlobal('fetch', fetch)
+      runSetup()
+
+      const heading = await screen.findByRole('heading', { name: 'Kick off preparation' })
+      await waitFor(() => expect(heading).toHaveFocus())
+      const submit = screen.getByRole('button', { name: 'Kick off preparation' })
+      submit.focus()
+      fireEvent.click(submit)
+
+      await waitFor(() => expect(reads).toBe(2))
+      const alert = await screen.findByRole('alert')
+      await waitFor(() =>
+        expect(alert).toHaveTextContent(
+          'Setup changed in another tab. The latest recorded step has been restored.',
+        ),
       )
-    })
-    vi.stubGlobal('fetch', fetch)
-    runSetup()
-
-    const submit = await screen.findByRole('button', { name: 'Kick off preparation' })
-    fireEvent.click(submit)
-    fireEvent.click(submit)
-    await waitFor(() => expect(submit).toBeDisabled())
-    expect(kickoffs).toBe(1)
-
-    release(response({ detail: { error: 'activation_failed' } }, 503))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Preparation could not be started, so nothing changed.',
-    )
-    expect(submit).toBeEnabled()
-    expect(kickoffs).toBe(1)
-    expect(screen.getByRole('heading', { name: 'Kick off preparation' })).toBeVisible()
-  })
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      const fresh = screen.getByRole('button', { name: 'Kick off preparation' })
+      expect(fresh).not.toBe(submit)
+      expect(alert.closest('form')?.firstElementChild).toBe(alert)
+      expect(fresh).not.toHaveAttribute('aria-disabled')
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: 'Kick off preparation' })).toHaveFocus(),
+      )
+    },
+  )
 
   it('removes unchecked provider credentials from the visual and accessibility trees', async () => {
     vi.stubGlobal(
@@ -1488,6 +1559,11 @@ describe('shipped first-run setup script', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Select at least one supported book library.',
     )
+    // It is about no one field, so it sits under Continue, as the server's
+    // refusal of the same press does (#1677).
+    expect(screen.getByRole('alert').previousElementSibling).toBe(
+      screen.getByRole('button', { name: 'Continue' }),
+    )
     // Each library's controls are named for that library (#1287).
     expect(
       screen
@@ -1512,6 +1588,10 @@ describe('shipped first-run setup script', () => {
       ),
     )
     expect(displayName).toHaveFocus()
+    // The refusal is bound to the name it describes (#1677).
+    expect(screen.getByRole('alert').previousElementSibling).toBe(displayName.closest('.field'))
+    expect(displayName).toHaveAttribute('aria-invalid', 'true')
+    expect(displayName.getAttribute('aria-describedby')).toContain('setup-error')
     expect(libraryMutations).toBe(0)
 
     // Two libraries may not share a name, whatever its case: the refusal is on
@@ -1587,6 +1667,50 @@ describe('shipped first-run setup script', () => {
     expect(books).toBeChecked()
     expect(next).toBeEnabled()
     expect(next).toHaveFocus()
+  })
+
+  it('opens and binds an invalid library name the owner never opened (#1677)', async () => {
+    let libraryMutations = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url.startsWith('/api/setup/libraries?'))
+          return response({
+            libraries: [{ library_id: 'books', media_kind: 'book', name: 'Books ' }],
+          })
+        if (url === '/api/setup/libraries' && init?.method === 'POST') {
+          libraryMutations += 1
+          return response({})
+        }
+        return response(setupState('libraries'))
+      }),
+    )
+    runSetup()
+
+    const heading = await screen.findByRole('heading', { name: 'Choose libraries' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Books' }))
+    const changeName = screen.getByRole('button', { name: 'Change name of Books' })
+    const next = screen.getByRole('button', { name: 'Continue' })
+    next.focus()
+    fireEvent.click(next)
+
+    const alert = await screen.findByRole('alert')
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(
+        'Use a library name from 1 to 256 characters without leading or trailing spaces.',
+      ),
+    )
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    const displayName = document.querySelector<HTMLInputElement>('input[name="display-books"]')
+    if (!displayName) throw new Error('library name field missing')
+    expect(displayName).toBeVisible()
+    expect(displayName).toHaveFocus()
+    expect(displayName).toHaveAttribute('aria-invalid', 'true')
+    expect(alert.previousElementSibling).toBe(displayName.closest('.field'))
+    expect(changeName).not.toBeVisible()
+    expect(libraryMutations).toBe(0)
   })
 
   it.each([
@@ -3488,6 +3612,15 @@ it.each([
     409,
     'reviewer_unconfigured',
     'Start device sign-in',
+  ],
+  [
+    'Kick off preparation',
+    'kick_off',
+    'Kick off preparation',
+    '/api/setup/kick-off',
+    503,
+    'activation_failed',
+    null,
   ],
 ] as const)(
   'keeps %s focused while the %s step is recorded (#1678)',

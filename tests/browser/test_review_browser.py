@@ -6512,9 +6512,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "active": False,
                                 "actionable": False,
                                 "paused": False,
+                                "first_boot": False,
+                                "first_boot_complete": False,
+                                "first_boot_works": None,
                                 "libraries": [],
                                 "connections": [],
                                 "presentation": None,
+                                "provider_throttling": None,
                             }
                         )
                         return
@@ -6530,8 +6534,12 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                             "active": not terminal,
                             "actionable": terminal,
                             "paused": state == "blocked",
+                            "first_boot": False,
+                            "first_boot_complete": False,
+                            "first_boot_works": None,
                             "libraries": [],
                             "connections": [],
+                            "provider_throttling": None,
                             "presentation": {
                                 "run_id": expected_run_id,
                                 "state": state,
@@ -10404,7 +10412,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                         "recorded": 2,
                         "not_matched": 0,
                         "rescan_requested": False,
-                        "stages": [{"stage": "extraction", "count": 2}],
+                        "stages": [{"stage": "extracting", "count": 2}],
                     }
                 ]
                 route.fulfill(status=200, json=document)
