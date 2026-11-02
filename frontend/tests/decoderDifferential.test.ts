@@ -79,11 +79,10 @@ interface Case {
   readonly mutates?: string
   readonly provenance: 'server' | 'builder' | 'mutation'
 }
-type Divergence = 'decoder_stricter' | 'mapper_cross_field' | 'pending_server'
+type Divergence = 'decoder_stricter' | 'mapper_cross_field'
 interface Expected {
   readonly class: Divergence
   readonly check: string
-  readonly owner?: string
 }
 
 // ---- Documents ---------------------------------------------------------------
@@ -963,30 +962,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string])[]
   ],
 ]
 
-// [case id, accept case, pointer, replacement, the http.ts check (lines at
-// 6f660c8), owner]. A single-field constraint JSON Schema can state and the
-// schema lacks; stage 2b tightens the owner and removes the row. Every owner in
-// interfaces/web/app.py is an API response model, not persisted (Q8); the two
-// in application/reviewer_access.py say why they are not.
-const PENDING_SERVER: readonly (readonly [string, Case, string, unknown, string, string])[] = [
-  [
-    'check:mapReviewerAccess.recommendation',
-    codexCleared,
-    '/recommendations/0',
-    'provider/model\nBearer secret',
-    'mapReviewerAccess http.ts:2202: each recommendation matches openRouterModel (:2015)',
-    'application/reviewer_access.py ReviewerAccessView.recommendations; built per read by ReviewerAccessApplication._view and never stored (adapters/persistence/reviewer_access.py stores only ReviewerAccessDocument)',
-  ],
-  [
-    'check:mapCoverConsideration.unavailable-reason',
-    coverBase,
-    '/reviewer_unavailable_reason',
-    '/private/profile token=secret',
-    'mapCoverConsideration http.ts:4669-4677: one of the two fixed profile-contract reasons',
-    'interfaces/web/app.py _CoverConsiderationResponse.reviewer_unavailable_reason',
-  ],
-]
-for (const [id, from, pointer, value] of [...CROSS_FIELD, ...PENDING_SERVER])
+for (const [id, from, pointer, value] of CROSS_FIELD)
   add({
     ...from,
     id,
@@ -1013,12 +989,6 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     CROSS_FIELD.map(([id, , , , check]): [string, Expected] => [
       id,
       { class: 'mapper_cross_field', check },
-    ]),
-  ),
-  ...Object.fromEntries(
-    PENDING_SERVER.map(([id, , , , check, owner]): [string, Expected] => [
-      id,
-      { class: 'pending_server', check, owner },
     ]),
   ),
 }
@@ -1131,7 +1101,7 @@ const classify = (c: Case, decoder: string, mapper: string): Observed => {
   if (decoder === 'ok') {
     if (mapper === 'accept') return 'agree'
     const row = EXPECTED[c.id]?.class
-    return row === 'mapper_cross_field' || row === 'pending_server' ? row : 'unclassified'
+    return row === 'mapper_cross_field' ? row : 'unclassified'
   }
   if (mapper === 'accept') return 'decoder_stricter'
   const at = decoder.slice(decoder.indexOf('@') + 1)
@@ -1204,14 +1174,6 @@ describe('bars', () => {
   it('decodes every captured document', () => {
     const rejected = cases.filter((c) => c.provenance === 'server' && seen(c.id).decoder !== 'ok')
     expect(rejected.map(({ id }) => id)).toEqual([])
-  })
-  // B3: a pending-server row names the server field that 2b tightens; no other
-  // row has an owner, so a class flip without its owner edit fails.
-  it('names an owner for exactly the pending-server rows', () => {
-    const wrong = Object.entries(EXPECTED).filter(
-      ([, row]) => (row.class === 'pending_server') !== Boolean(row.owner),
-    )
-    expect(wrong.map(([id]) => id)).toEqual([])
   })
   // The accept is a capture where the family has one, otherwise a decode-tested
   // base (Q4).
