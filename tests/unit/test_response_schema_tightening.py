@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, get_args, get_type_hints
+from typing import Annotated, Any, get_args, get_type_hints
 
 import pytest
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
-from typing_extensions import Annotated
 
 from mechanical_librarian.adapters.reviewers import codex_device_auth
 from mechanical_librarian.application import cover_identity, review_web
@@ -499,6 +498,12 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
         ["blanket_scan", "blanket_scan"],
         "value_error",
     ),
+    (
+        app._ProviderRecoveryActivity,
+        "failure_reasons",
+        ["authentication", "authentication"],
+        "value_error",
+    ),
     (app._LibraryResponse, "lens", "unmatched", "literal_error"),
     (app._ReviewCounts, "all", -1, "greater_than_equal"),
     (app._LibraryWork, "media_kind", "ebook", "literal_error"),
@@ -533,6 +538,12 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._SeriesValue, "name", "n" * 513, "string_too_long"),
     (app._CoverConsiderationResponse, "reviewer_status", "invented", "literal_error"),
     (app._CoverPolicyReport, "reasons", ["r" * 129], "string_too_long"),
+    (
+        app._CoverPolicyReport,
+        "acceptable_candidate_references",
+        ["candidate-1", "candidate-1"],
+        "value_error",
+    ),
     (app._CoverCandidate, "deterministic_rank_key", [1, 2], "too_short"),
     (app._CoverIdentity, "outcome", "match", "literal_error"),
     (app._PreparationProgress, "state", "paused", "literal_error"),
