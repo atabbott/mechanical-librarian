@@ -1109,6 +1109,8 @@ const Shell = () => {
   const [mismatch, setMismatch] = useState(false)
   const [retaining, setRetaining] = useState(false)
   const [shellError, setShellError] = useState('')
+  // An unconfirmed sign-out is a warning, not a failure: it may have worked.
+  const [shellUncertain, setShellUncertain] = useState(false)
   useEffect(() => {
     const listener = () => setMismatch(true)
     addEventListener('ml:build-mismatch', listener)
@@ -1173,11 +1175,19 @@ const Shell = () => {
   }, [navigation.status, path, title])
   const signOut = async () => {
     setShellError('')
+    setShellUncertain(false)
     const failure = await http.logout().catch((error: unknown) => error)
     // A session already gone is signed out too (#1588).
     if (!failure || failure instanceof SessionExpiredError) window.location.assign('/login')
-    else if (!(failure instanceof BuildMismatchError))
-      setShellError(refusalCopy(failure, 'Sign out failed. Try again.'))
+    else if (!(failure instanceof BuildMismatchError)) {
+      const uncertain = uncertainWriteOutcome(failure)
+      setShellUncertain(uncertain)
+      setShellError(
+        uncertain
+          ? 'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.'
+          : refusalCopy(failure, 'Sign out failed. Try again.'),
+      )
+    }
   }
   return (
     <div className="app-shell">
@@ -1244,7 +1254,7 @@ const Shell = () => {
         {navigation.status === 'idle' && !retaining ? `${title} loaded` : `Loading ${title}`}
       </p>
       {shellError ? (
-        <p className="shell-error" role="alert">
+        <p className={shellUncertain ? 'shell-error is-uncertain' : 'shell-error'} role="alert">
           {shellError}
         </p>
       ) : null}
@@ -1282,7 +1292,17 @@ const RouteFailure = ({
   title?: string
 }) => {
   const router = useRouter()
-  return error instanceof ChunkRecoveryError && error.exhausted ? (
+  // A different build cannot be fixed by loading the route again: only a
+  // reload brings this tab onto the build the server is running.
+  return error instanceof BuildMismatchError ? (
+    <section className="route-state">
+      <p className="eyebrow">Application updated</p>
+      <h1>{title} was not loaded.</h1>
+      {/* The shell's build notice is the alert; this only names the route. */}
+      <p>This tab is running an earlier build. Reload to open it in the current application.</p>
+      <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
+    </section>
+  ) : error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
       <p className="eyebrow">Application update unavailable</p>
       <h1>The current workspace assets could not be loaded.</h1>

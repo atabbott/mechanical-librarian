@@ -11,6 +11,7 @@ import stat
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from contextvars import ContextVar
 from ipaddress import IPv6Address, IPv6Network, ip_address
 from pathlib import Path
 from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
@@ -106,6 +107,7 @@ from mechanical_librarian.domain.reviewer_access import (
 )
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
+    ReactAssetBundle,
     ReactAssetError,
     ReactAssetLoader,
     ReactAssetRecovery,
@@ -138,6 +140,13 @@ def _sign_in_location(request: Request) -> str:
 
 
 _COOKIE_NAME = "ml_session"
+# Per request, `trust_boundary` installs a fresh cell and `_require_session`
+# marks it once the request has authenticated an owner session. The cell is
+# mutable because sync handlers and dependencies run in a copied context, where
+# setting the variable itself would never reach the middleware (ADR-0091).
+_OWNER_SESSION_AUTHENTICATED: ContextVar[list[bool] | None] = ContextVar(
+    "owner_session_authenticated", default=None
+)
 _IMMUTABLE_CACHE = "private, max-age=31536000, immutable"
 _REACT_ASSET_MEDIA_TYPES = {
     "script": "text/javascript",
@@ -2259,16 +2268,53 @@ def create_review_app(
                 return _secured_error(403, "origin", hsts=origin.scheme == "https")
         # This hint changes scheduling only. Route authentication and CSRF still
         # run before application admission; mutations always remain foreground.
-        with application.classify_request(
-            "background"
-            if request.method == "GET"
-            and request.scope["path"].startswith("/api/v1/")
-            and request.headers.get("x-ml-work-class") == "background"
-            else "foreground"
-        ):
-            response = await call_next(request)
+        authenticated = [False]
+        marker = _OWNER_SESSION_AUTHENTICATED.set(authenticated)
+        try:
+            with application.classify_request(
+                "background"
+                if request.method == "GET"
+                and request.scope["path"].startswith("/api/v1/")
+                and request.headers.get("x-ml-work-class") == "background"
+                else "foreground"
+            ):
+                response = await call_next(request)
+        finally:
+            _OWNER_SESSION_AUTHENTICATED.reset(marker)
+        if await _answers_an_owner_session(request, response, authenticated[0]):
+            bundle = assets.load()
+            if isinstance(bundle, ReactAssetBundle):
+                response.headers["x-ml-build-identity"] = bundle.build_identity
         _set_security_headers(response, hsts=origin.scheme == "https")
         return response
+
+    async def _answers_an_owner_session(
+        request: Request, response: Response, authenticated: bool
+    ) -> bool:
+        """Disclose the build identity only to a request with a valid session.
+
+        A handled route has authenticated through `_require_session` by the
+        time it answers anything but a 401. No route answers an unmatched path's
+        404, so only there is the cookie read here: one session lookup, no
+        write. A body-limit 413 answers before routing and stays unmarked.
+        """
+        path = request.scope["path"]
+        if (
+            not path.startswith("/api/v1/")
+            or path == "/api/v1/session/login"
+            or response.status_code == 401
+        ):
+            return False
+        if authenticated:
+            return True
+        token = request.cookies.get(_COOKIE_NAME)
+        if response.status_code != 404 or "endpoint" in request.scope or not token:
+            return False
+        try:
+            await run_in_threadpool(application.authenticate, token)
+        except ReviewWebError:
+            return False
+        return True
 
     @app.get("/health/live", include_in_schema=False)
     def liveness() -> PlainTextResponse:
@@ -2626,7 +2672,10 @@ def _register_reviewer_access_routes(
                 model=request.model,
                 task=request.task,
             )
-        except (ValueError, *_REVIEWER_FAILURES) as error:
+        except _REVIEWER_FAILURES as error:
+            # No plain `ValueError` here: the only refusal raises before the
+            # commit as a typed failure, so anything else may follow the saved
+            # key and must be an uncertain 500, never a refusal.
             raise problem(error) from None
 
     @app.delete(
@@ -4615,11 +4664,18 @@ def _require_session(
 ) -> str:
     if session_token is None:
         raise HTTPException(401, detail={"code": "unauthorized"})
+    authenticated = _OWNER_SESSION_AUTHENTICATED.get()
     try:
-        return sessions.authenticate(session_token, csrf_token)
+        actor = sessions.authenticate(session_token, csrf_token)
     except ReviewWebError as error:
         status = 403 if error.code == "csrf" else 401
+        if error.code == "csrf" and authenticated is not None:
+            # `csrf` is raised only after the session itself authenticated.
+            authenticated[0] = True
         raise HTTPException(status, detail={"code": error.code}) from None
+    if authenticated is not None:
+        authenticated[0] = True
+    return actor
 
 
 def _require_case_id(value: str) -> None:

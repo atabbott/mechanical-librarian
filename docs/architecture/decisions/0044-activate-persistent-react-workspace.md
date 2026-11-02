@@ -23,7 +23,11 @@ shell. Keep `/login` as the only server-rendered page. FastAPI authenticates
 every direct document entry, rotates one CSRF token into the private/no-store
 shell, validates the exact packaged build, and serves only manifest-admitted
 hashed assets. The client removes the CSRF token and build identity from the
-DOM at startup and retains them only in memory.
+DOM at startup and retains them only in memory. Amended 2026-11-01 (#1577,
+ADR-0091): the server also sends the build identity as the
+`x-ml-build-identity` response header on `/api/v1` responses to requests that
+authenticated an owner session, and the client compares it on every response;
+it still never enters the DOM.
 
 TanStack Router owns canonical route and durable search state. TanStack Query
 owns server-state freshness, cancellation, polling, invalidation, and teardown.

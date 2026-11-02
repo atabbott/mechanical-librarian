@@ -45,6 +45,7 @@ ReviewerAccessFailure = Literal[
     "access_changed",
     OpenRouterPublicFailure,
     "credential_clear_failed",
+    "reviewer_access_invalid",
 ]
 
 
@@ -340,12 +341,6 @@ class ReviewerAccessOperations:
                 self._replace_document(document, document.revision - 1)
                 committed = True
                 self._notify_changed()
-            status = ReviewerEngineStatus(
-                engine="openrouter",
-                state="usable",
-                model=account.model,
-                tier=account.tier,
-            )
         except (OpenRouterReviewerError, ValueError) as error:
             status = (
                 _openrouter_failure_status(selection.model, error)
@@ -368,6 +363,15 @@ class ReviewerAccessOperations:
                 self._replace_document(document, document.revision - 1)
                 committed = True
                 self._notify_changed()
+        else:
+            # Built outside the catch: a failure here follows the commit, so it
+            # must not be recorded as an unavailable model or committed again.
+            status = ReviewerEngineStatus(
+                engine="openrouter",
+                state="usable",
+                model=account.model,
+                tier=account.tier,
+            )
         return self._view(
             document=document,
             configured=configured,
@@ -579,7 +583,7 @@ class ReviewerAccessOperations:
         if task == "description_rewrite" and not api_key:
             api_key = saved_key or ""
         if not credential(api_key):
-            raise ValueError("invalid reviewer credential")
+            raise ReviewerAccessApplicationError("reviewer_access_invalid")
         try:
             account = self._probe_openrouter(api_key, model, task)
         except OpenRouterReviewerError as error:

@@ -1,8 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { useRef, useState, type ReactNode } from 'react'
+import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
 import { categoryLabel, stateLabel } from '../activityLabels'
 import { RecordedTime } from '../components/RecordedTime'
+import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
 import { languageName } from '../labels'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
@@ -111,6 +113,8 @@ function ActivityTransitions({
     },
   })
   if (query.isLoading) return <p>Loading recorded transitions…</p>
+  if (query.error instanceof BuildMismatchError)
+    return <StaleBuildRead lead="Recorded transitions were not loaded." />
   if (query.isError)
     return (
       <p role="alert">

@@ -3,9 +3,16 @@ import { useMutation } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 
-import { AmbiguousMutationError, ApiError, refusalCopy, settingsProviderKeyless } from '../api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  refusalCopy,
+  settingsProviderKeyless,
+} from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
 import { Button } from '../components/Button'
+import { reloadCurrentApplication } from '../chunkRecovery'
 import { ChangeCount } from '../components/ChangeCount'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
@@ -324,6 +331,17 @@ export default function SettingsPage() {
       <section className="settings-state" aria-busy="true" data-route-focus tabIndex={-1}>
         <h1>Loading settings…</h1>
         <p>Reading saved settings.</p>
+      </section>
+    )
+  // Another try cannot read settings from a newer server build: reload instead.
+  if (query.data === undefined && query.error instanceof BuildMismatchError)
+    return (
+      <section className="settings-state" data-route-focus tabIndex={-1}>
+        <h1>Settings were not loaded.</h1>
+        <p>This tab is running an earlier build. Reload to open it in the current application.</p>
+        <button type="button" onClick={() => reloadCurrentApplication()}>
+          Reload the current application
+        </button>
       </section>
     )
   if (query.isError && query.data === undefined)
