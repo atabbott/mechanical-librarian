@@ -90,6 +90,17 @@ Automatic destination is not queued and reads as `owner_choosable`, while an
 explicit Ask queues it. Proposal policy `fixed-conservative-v35` requires a clean
 rebuild; document shapes remain unchanged.
 
+**Populated subjective fields under a fill-only option (#1310).** A populated
+description or genre choice whose current value passes the same floor carries
+`populated_value_meets_floor`, whether or not its alternatives are material.
+When the resolved policy only fills that field (genres `fill_empty`; description
+`safe_plain_text` or `google_visible_text`), the review-case field fact sets no
+`unresolved_choice`, so the choice is kept as the owner's but not queued, and
+reads as `owner_choosable` with the setting named as the reason. A value below
+the floor, an `add` or `replace` option, or an explicit Ask still queues the
+field. Tags under option `off` are never queued. Proposal policy
+`fixed-conservative-v44` requires a clean rebuild.
+
 **Explicitly absent provider runtime (#1042).** Existing stated-runtime admission
 runs first and yields no new attribution. Otherwise one canonical non-target local
 ASIN, its retained matched-ASIN evidence, usable local runtime and complete strong

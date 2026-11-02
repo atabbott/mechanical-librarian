@@ -48,6 +48,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_review_browse_row,
+    refresh_policy_settled_field_facts,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -571,11 +572,18 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise MetadataReportError(
                     "active metadata policy resolution is unqualified"
                 )
+            first_row = not _policy_resolution_stored(
+                self._connection, resolved.resolved_id
+            )
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata_policy_resolutions("
                 "generation,library_name,resolved_policy_id,document) VALUES(1,?,?,?)",
                 (resolved.library, resolved.resolved_id, document),
             )
+            if first_row:
+                refresh_policy_settled_field_facts(
+                    self._connection, resolved.resolved_id
+                )
             stored = self._connection.execute(
                 "SELECT resolved_policy_id,document FROM metadata_policy_resolutions "
                 "WHERE generation=1 AND library_name=?",
@@ -767,6 +775,11 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     activated_at,
                 ),
             )
+            first_rows = {
+                resolved_id
+                for _, resolved_id, _ in parsed_resolutions
+                if not _policy_resolution_stored(self._connection, resolved_id)
+            }
             self._connection.executemany(
                 "INSERT INTO metadata_policy_resolutions(generation,library_name,resolved_policy_id,document) VALUES(?,?,?,?)",
                 (
@@ -774,6 +787,8 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     for library, resolved_id, document in parsed_resolutions
                 ),
             )
+            for resolved_id in sorted(first_rows):
+                refresh_policy_settled_field_facts(self._connection, resolved_id)
             for (
                 connection,
                 library,
@@ -1178,3 +1193,15 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
 
 
 __all__ = ["SQLiteMetadataPolicyRepository"]
+
+
+def _policy_resolution_stored(
+    connection: sqlite3.Connection, resolved_policy_id: str
+) -> bool:
+    return (
+        connection.execute(
+            "SELECT 1 FROM metadata_policy_resolutions WHERE resolved_policy_id=? LIMIT 1",
+            (resolved_policy_id,),
+        ).fetchone()
+        is not None
+    )

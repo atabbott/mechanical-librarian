@@ -349,3 +349,9 @@ Issue #1639 also takes the clean-rebuild branch. The image moves to CPython
 3.15, whose Unicode 17.0.0 data differs from 3.14's 16.0.0, so every earlier
 application database's browse facts are refused before mutation. The report
 schema is unchanged. No adoption is supplied.
+
+Issue #1310 also takes the clean-rebuild branch. A populated description or
+genre list that passes the audiobook synopsis and genre floor carries the
+proposal reason `populated_value_meets_floor`, so the proposal policy moves to
+`fixed-conservative-v44`, and the review-case field facts read the resolved
+policy's options. The report schema is unchanged; no adoption is supplied.

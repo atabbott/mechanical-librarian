@@ -231,6 +231,10 @@ class CurrentReviewCaseSnapshot:
     automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     policy_attention_destinations: tuple[str, ...] = ()
+    # The undecided choices the persisted field facts settle: a work-route
+    # choice that only trims or extends (#1253), a populated subjective value
+    # a fill-only option keeps, and tags while their option is off (#1310).
+    settled_choice_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
     override_blocked_destinations: tuple[str, ...] = ()
@@ -916,6 +920,14 @@ class InspectCurrentReviewCase:
                 owner_control["entry"] is not None
                 or owner_control["subset"] is not None
             )
+            # The persisted facts settle an undecided choice its policy's
+            # options keep (#1310); an immaterial one is #1253's, not this.
+            policy_settled = (
+                result["outcome"] == "unresolved_choice"
+                and "work_alternative_immaterial" not in reasons
+                and not _kept_cover(proposal)
+                and destination in snapshot.settled_choice_destinations
+            )
             classification = classify_review_field(
                 attention_candidate=(
                     (
@@ -924,6 +936,7 @@ class InspectCurrentReviewCase:
                             proposal,
                             snapshot.automatic_attention_destinations,
                             policy_attention_destinations=snapshot.policy_attention_destinations,
+                            settled_choice_destinations=snapshot.settled_choice_destinations,
                         )
                     )
                     or (
@@ -976,13 +989,19 @@ class InspectCurrentReviewCase:
                 proposed_values=tuple(
                     alternative["value"] for alternative in alternatives
                 ),
-                # A recording's undecided fill, and a kept readable cover,
-                # stay the owner's to choose in their case without joining
-                # the queue (#1249, #1310). A kept cover with no current
-                # comparison is still choosable: the owner can prepare one.
+                # A recording's undecided fill, a kept readable cover, and a
+                # choice the policy's options settle (a populated subjective
+                # value a fill-only option keeps, or tags while they are off)
+                # stay the owner's to choose in their case without joining the
+                # queue (#1249, #1310). A kept cover with no current comparison
+                # is still choosable: the owner can prepare one.
                 owner_choosable=automatic_decision is None
                 and (
-                    (cover_admits and case.media_kind == "audiobook" and bool(actions))
+                    (
+                        cover_admits
+                        and (case.media_kind == "audiobook" or policy_settled)
+                        and bool(actions)
+                    )
                     or (
                         _kept_cover(proposal)
                         and (
@@ -1000,6 +1019,8 @@ class InspectCurrentReviewCase:
                 owner_entry=owner_entry and bool(alternatives),
                 immaterial_alternatives="work_alternative_immaterial" in reasons,
                 kept_cover=_kept_cover(proposal),
+                kept_by_fill_policy=policy_settled and destination != "tags",
+                kept_by_tags_off=policy_settled and destination == "tags",
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
@@ -3054,6 +3075,7 @@ def _needs_attention(
     automatic_attention_destinations: tuple[str, ...] = (),
     *,
     policy_attention_destinations: tuple[str, ...] = (),
+    settled_choice_destinations: tuple[str, ...] = (),
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
@@ -3063,7 +3085,10 @@ def _needs_attention(
     beside this decides whether a choice exists at all (#967). A work-route
     choice whose alternatives only trim or extend the current value stays
     choosable without asking, as the persisted field facts read it (#1253),
-    and so does a cover choice over a verified current cover (#1310).
+    and so does a cover choice over a readable current cover (#1310). So do
+    a populated subjective value a fill-only option keeps and tags while their
+    option is off; the facts read those options, so the detail passes their
+    settled destinations (#1310).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -3076,6 +3101,7 @@ def _needs_attention(
             result["outcome"] == "unresolved_choice"
             and "work_alternative_immaterial" not in reasons
             and not _kept_cover(proposal)
+            and proposal["destination"] not in settled_choice_destinations
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
