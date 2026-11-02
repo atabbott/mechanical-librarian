@@ -789,7 +789,7 @@ class _DescriptionSelectionAcknowledgement(_ClosedModel):
     confirmation: _DecisionConfirmation
     decision_id: str
     advised: Literal[True]
-    invalidation_sequences: list[int]
+    invalidation_sequences: list[Annotated[int, Field(ge=1)]] = Field(max_length=8)
 
 
 class _CaseSuccessorResponse(_ClosedModel):
@@ -1682,7 +1682,7 @@ class _DecisionAcknowledgement(_DecisionProjection):
     # tab that recorded it can recognise its echo. Three: the case, its Library
     # row, and the write queue. Bounded because it is a fixed set of
     # announcements, not a log.
-    invalidation_sequences: list[int] = Field(max_length=8)
+    invalidation_sequences: list[Annotated[int, Field(ge=1)]] = Field(max_length=8)
     schema_version: str
 
 

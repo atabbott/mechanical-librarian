@@ -3678,7 +3678,7 @@ def test_owner_title_recovery_route_requeues_actual_completed_work(
 
         def observe(
             channel: LiveUpdateChannel, topic: str, subject: str | None = None
-        ) -> int:
+        ) -> int | None:
             published.append(topic)
             return publish(channel, topic, subject)
 

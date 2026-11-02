@@ -295,6 +295,60 @@ def test_recording_a_decision_announces_the_case_its_row_and_the_write_queue(
     assert row.sequence in recorded.json()["invalidation_sequences"]
 
 
+@pytest.mark.parametrize("history", ["fresh", "published"])
+def test_a_decision_recorded_after_the_channel_closes_names_no_position(
+    web: ReviewWebContext[FakeReviewRepository], history: str
+) -> None:
+    """Drain closes the channel before captured writes finish (#1674).
+
+    The write still commits, and its acknowledgement must name only what was
+    published: nothing. Neither 0, which the browser refuses, nor the last real
+    position, which aliases a frame this decision did not cause.
+    """
+    login = web.login()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
+    field = detail["fields"][0]
+    channel = _channel(web)
+    if history == "published":
+        channel.publish("library", _CASE)
+    channel.close()
+
+    recorded = web.client.post(
+        f"/api/v1/review-cases/{web.case.review_case_id}/decisions",
+        headers={
+            **web.origin,
+            "X-CSRF-Token": str(login["csrf_token"]),
+            "Idempotency-Key": "closed-channel-decision-0001",
+        },
+        json={
+            "destination": field["destination"],
+            "outcome": "accept",
+            "proposal_id": field["proposal_id"],
+            "selected_value": field["proposed_values"][0],
+            "target_fingerprint": field["target_fingerprint"],
+        },
+    )
+
+    assert recorded.status_code == 200, recorded.text
+    body = recorded.json()
+    assert body["invalidation_sequences"] == []
+    assert body["confirmation"]["status"] == "confirmed"
+    stored = json.loads(web.repository.decisions[field["destination"]])
+    assert stored["decision_id"] == body["decision_id"]
+
+
+def test_acknowledgement_sequences_are_bounded_positive_positions_in_openapi() -> None:
+    """The server refuses to name a position nothing was published at."""
+    document = json.loads(
+        Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
+    )
+    schemas = document["components"]["schemas"]
+    for name in ("_DecisionAcknowledgement", "_DescriptionSelectionAcknowledgement"):
+        sequences = schemas[name]["properties"]["invalidation_sequences"]
+        assert sequences["items"]["minimum"] == 1, name
+        assert sequences["maxItems"] == 8, name
+
+
 def test_enabling_and_revoking_write_consent_announce_the_write_queue(
     writes: ReviewWebContext[FakeReviewRepository],
 ) -> None:
