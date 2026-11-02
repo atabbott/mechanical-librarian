@@ -62,7 +62,7 @@ ENTRY_POINTS = {
 }
 CEILING = {
     "__init__.py": 8,
-    "composition.py": 4572,
+    "composition.py": 4579,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
@@ -105,7 +105,7 @@ RESIDUAL: dict[str, int | None] = {
     _C + "_compose_setup_runtime_generation": 145,
     _C + "run_review_server": 350,
     _C + "_UnavailableCodexAuth": 18,
-    _C + "_LazyCodexAuth": 119,
+    _C + "_LazyCodexAuth": 126,
     _C + "_CodexAuthLeaseCoordinator": 90,
     _C + "_compose_reviewer_access": 167,
     _C + "_compose_cover_considerations": 74,

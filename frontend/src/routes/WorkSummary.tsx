@@ -1,10 +1,12 @@
 // A Library work without an open review case: its summary, its recorded
 // evidence and the sources consulted for it. Moved out of the Library route
 // under the route-size rule (#1571).
+import { BuildMismatchError } from '../api/http'
 import type { LibraryWorkView, ProviderOutcomeView } from '../api/http'
 import { BookMark } from '../components/BookMark'
 import { MediaHealth } from '../components/MediaHealth'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
+import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatRunningTime } from '../dates'
 import { valueText } from '../fieldDecision'
 import {
@@ -95,6 +97,8 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
         Loading recorded evidence…
       </p>
     )
+  if (report.error instanceof BuildMismatchError)
+    return <StaleBuildRead lead="Recorded evidence was not loaded." />
   if (report.isError)
     return (
       <p role="alert" className="library-work-summary-reason">

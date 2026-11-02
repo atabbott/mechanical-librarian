@@ -661,6 +661,9 @@ def test_guarded_suspension_commit_flushes_affected_cases_before_propagating(
         def field_effect_restore_refused(self, _plan):
             return False
 
+        def field_effect_deferred(self, _plan_id):
+            return False
+
         def field_effect_capability_suspension(self, *_):
             return None
 

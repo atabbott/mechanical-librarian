@@ -1008,6 +1008,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> tuple[str, str] | None:
         return self._field_effects.next_field_effect_plan_id(last_library)
 
+    def field_effect_deferred(self, plan_id: str) -> bool:
+        return self._field_effects.field_effect_deferred(plan_id)
+
     def pending_field_effect_action_plan_ids(self, limit: int) -> tuple[str, ...]:
         return self._field_effects.pending_field_effect_action_plan_ids(limit)
 

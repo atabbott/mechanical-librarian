@@ -1,7 +1,9 @@
 import { ReviewerCost } from './ReviewerCost'
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
+import { StaleBuildRead } from './StaleBuildRead'
 import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel, reviewerFailureCopy, reviewerStateLabels } from '../labels'
+import { BuildMismatchError } from '../api/http'
 import type {
   CodexDeviceAuthState,
   ReviewHttp,
@@ -477,6 +479,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const access = useReviewerAccess(http)
   const { query, deviceQuery, mutation, mutationFailure, waiting } = access
   if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
+  if (query.error instanceof BuildMismatchError)
+    return <StaleBuildRead lead="Reviewer access was not loaded." />
   if (query.isError)
     return (
       <div role="alert">

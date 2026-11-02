@@ -86,6 +86,10 @@ SETUP_JS = re.sub(r"\n *", "", SHIPPED_SETUP_JS)
             (503, "reviewer_access_unavailable"),
         ),
         (ValueError("invalid"), (422, "reviewer_access_invalid")),
+        (
+            ReviewerAccessApplicationError("reviewer_access_invalid"),
+            (422, "reviewer_access_invalid"),
+        ),
     ),
 )
 def test_reviewer_failure_translation_is_shared_and_closed(
