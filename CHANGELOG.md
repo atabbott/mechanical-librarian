@@ -242,6 +242,8 @@ brackets are GitHub issues.
   sign-in. Starting or cancelling a sign-in keeps keyboard focus on the next
   control, and setup names each sign-in status in words, with its remedy
   (#1607).
+- In setup, on a host that cannot run Codex, Cancel any active sign-in keeps
+  keyboard focus while it runs and after it reports (#1615).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
