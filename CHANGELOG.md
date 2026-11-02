@@ -10,6 +10,14 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.36.1 — Persistence health (in progress)
+
+- Stopping writes for a library, or granting them again for a changed set of
+  fields, now closes a change that was waiting for Audiobookshelf to come back,
+  instead of leaving it waiting beside a new one, and a cover's restore point
+  is removed. A change whose write permission was already withdrawn stops when
+  Audiobookshelf cannot be reached, instead of starting to wait (#1543).
+
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
 - **Clean rebuild required.** A source lookup that failed inside Mechanical
