@@ -374,30 +374,52 @@ def test_the_memo_is_bounded(tmp_path: Path) -> None:
 
 
 def test_readers_share_one_memo_across_threads(tmp_path: Path) -> None:
+    """Independent repositories in one process share one validated memo.
+
+    Each reader owns its own database directory: the binding holds a lock on
+    the database's parent directory, so readers in one directory would refuse
+    each other rather than read concurrently (#1609).
+    """
     memo = cover_currentness_cache()
     documents = [_facts(f"item-{index}", index % 3 == 0) for index in range(200)]
     expected = [
         _uncached(document, _REPLAY, lambda *_: False) for document in documents
     ]
+    readers_count = 4
+    directories = [tmp_path / f"reader-{index}" for index in range(readers_count)]
+    for directory in directories:
+        directory.mkdir(mode=0o700)
     errors: list[str] = []
+    completed: list[int] = []
+    start = threading.Barrier(readers_count)
 
     def read(index: int) -> None:
-        repository = open_repository(tmp_path / f"reader-{index}.sqlite3")
         try:
-            repository.bind_cover_consideration_currentness(lambda *_: False, memo)
-            for _round in range(5):
-                answers = [_ask(repository, value, _REPLAY) for value in documents]
-                if answers != expected:
-                    errors.append(f"reader {index} disagreed")
-        finally:
-            repository.close()
+            repository = open_repository(directories[index] / "db.sqlite3")
+            try:
+                repository.bind_cover_consideration_currentness(lambda *_: False, memo)
+                start.wait(timeout=30)
+                for _round in range(5):
+                    answers = [_ask(repository, value, _REPLAY) for value in documents]
+                    if answers != expected:
+                        errors.append(f"reader {index} disagreed")
+            finally:
+                repository.close()
+        except Exception as error:
+            errors.append(f"reader {index} failed: {error!r}")
+        else:
+            completed.append(index)
 
-    readers = [threading.Thread(target=read, args=(index,)) for index in range(4)]
+    readers = [
+        threading.Thread(target=read, args=(index,)) for index in range(readers_count)
+    ]
     for reader in readers:
         reader.start()
     for reader in readers:
         reader.join(60)
+    assert [reader.is_alive() for reader in readers] == [False] * readers_count
     assert errors == []
+    assert sorted(completed) == list(range(readers_count))
     # Every document validated, fetching or not, so each is held once.
     assert _held(memo) == len(documents)
 

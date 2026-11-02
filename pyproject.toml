@@ -147,6 +147,9 @@ python_files = ["test_*.py"]
 # run holding an unexpected success either way, but declaring it here makes a
 # native `xfail` fail at the engine too rather than only in the accounting.
 xfail_strict = true
+# A thread's uncaught exception otherwise passes the test as a mere warning,
+# which hid dead reader and writer threads behind green runs (#1604, #1609).
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
 
 [tool.ruff]
 # The gate formats, lints, and type-checks the backend source, its tests, and
