@@ -2903,7 +2903,6 @@ describe('mapReportDetail', () => {
       [{ ...basis, provider: 'bad\nsource' }, 'pattern@/recording_identity_basis/provider'],
     ] as const) {
       const document = detail({ recording_identity_basis: value })
-      if (value === undefined) delete (document as Record<string, unknown>).recording_identity_basis
       await expect(readReport(document), JSON.stringify(value)).rejects.toMatchObject(
         refused(failure),
       )
@@ -2925,7 +2924,6 @@ describe('mapReportDetail', () => {
       [true, 'type@/audiobook_review_scope'],
     ] as const) {
       const document = detail({ audiobook_review_scope: value })
-      if (value === undefined) delete (document as Record<string, unknown>).audiobook_review_scope
       await expect(readReport(document), JSON.stringify(value)).rejects.toMatchObject(
         refused(failure),
       )
@@ -3775,6 +3773,27 @@ describe('central response decoding (#1685)', () => {
       expect((failure as Error).message).not.toContain('/')
     },
   )
+
+  it.each([
+    '/api/v1/library?lens=all',
+    '/api/v1/settings',
+    '/review/case-1',
+    'https://elsewhere.test/api/v1/library/report?item=item-9',
+  ])('follows no report address but the report route (%s) (#1686)', async (address) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(reportDetail()))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock })
+    const failure = await client.getReportDetail(address).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ResponseDecodeError)
+    expect(failure).toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+      operation: 'GET /api/v1/library/report',
+      reason: 'unexpected_operation',
+      at: '',
+    })
+    expect((failure as Error).message).not.toContain('/')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 
   type Answer = readonly [path: string, body: unknown, status: number, reason: string, at: string]
   it.each<Answer>([

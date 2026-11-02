@@ -1480,12 +1480,24 @@ export class ReviewApiClient implements ReviewHttp {
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
-  // server that escaped it knows how.
+  // server that escaped it knows how. It is followed only when it is the report
+  // route on this origin, so the body is decoded as a report before it is
+  // mapped as one; any other address fails closed without a request (#1686).
   async getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ) {
+    if (
+      new URL(detailUrl, 'http://local').origin !== 'http://local' ||
+      matchOperation('GET', detailUrl) !== 'GET /api/v1/library/report'
+    )
+      throw new ResponseDecodeError({
+        operation: 'GET /api/v1/library/report',
+        responseStatus: 0,
+        at: '',
+        reason: 'unexpected_operation',
+      })
     return mapReportDetail((await this.read(detailUrl, signal, workClass)) as ReportDetailDto)
   }
   async getSettings(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
