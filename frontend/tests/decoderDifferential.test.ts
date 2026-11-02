@@ -652,7 +652,8 @@ const map = async (c: Case) => {
     return 'accept'
   } catch (error) {
     if (error instanceof ApiError) return `reject:${error.code}`
-    if (error instanceof Error) return `reject:${error.message}`
+    // Only a plain Error is a mapper's own refusal; a crash (TypeError and the like) must fail the case.
+    if (error instanceof Error && error.constructor === Error) return `reject:${error.message}`
     throw error
   }
 }
