@@ -45,9 +45,12 @@ told:
    acknowledgement, a 5xx not proven to be raised before the handler ran, or
    a 2xx that fails decoding or a named check. That last is an
    `UncertainMutationError`, a kind of lost acknowledgement that keeps the
-   decoder's reason and pointer, or `invariant` and the check's code. A
-   side-effect-free command that fails the same way writes nothing and is a
-   `ResponseDecodeError` instead.
+   decoder's reason and pointer, or `invariant` and the check's code. Only a
+   command marked as writing nothing is a `ResponseDecodeError` instead; a
+   command that is merely safe to resend after a CSRF renewal still writes,
+   so it stays uncertain. A 204, or another undocumented 2xx status, to a
+   decoded operation fails the same way. Only a lost network call is a plain
+   lost acknowledgement; a defect in a decoder or mapper is not converted.
    The server half is that no failure after a committed write is answered
    with a 4xx. `tests/unit/test_unsafe_outcome_inventory.py` pins, for every
    unsafe `/api/v1` route, each error status and code and the latest point it
