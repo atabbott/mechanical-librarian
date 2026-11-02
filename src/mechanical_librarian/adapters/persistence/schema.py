@@ -108,7 +108,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v66'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v67'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -811,6 +811,71 @@ _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL = (
     + _FIELD_EFFECT_COMPANION_DECISION_SQL
     + " IS NOT NULL"
 )
+# Automatic authority decides and writes only in the Automatic posture. An
+# automatic decision recorded there stays on its case when the owner leaves
+# Automatic, and leaving Automatic with the policy unchanged admits that same
+# case again (#1568), so its field, cover or description decision waits until
+# the owner confirms Automatic again. Owner decisions are never gated on
+# posture.
+_AUTOMATIC_POSTURE_SQL = (
+    "EXISTS (SELECT 1 FROM metadata_policy_state "
+    "WHERE singleton=1 AND posture='automatic')"
+)
+
+
+def _same_policy_retirement_sql(connection: str, library: str, item: str) -> str:
+    """Whether the active generation reactivated the unchanged policy over a work.
+
+    Reactivating the unchanged policy, as leaving Automatic does, retires each
+    current case only for the same case to return (#1568). An activation adds
+    a cohort item only for work that had a current case, so this holds for a
+    work retired by the active generation, and not for one still retired by an
+    earlier change of policy. The arguments are SQL expressions naming the
+    work.
+    """
+    return (
+        "EXISTS (SELECT 1 FROM metadata_policy_state policy_state "
+        "JOIN metadata_policy_transitions reactivation "
+        "ON reactivation.generation=policy_state.generation "
+        "AND reactivation.from_policy_id=reactivation.to_policy_id "
+        "JOIN metadata_policy_transition_items cohort "
+        "ON cohort.transition_id=reactivation.transition_id "
+        f"AND cohort.connection_name={connection} "
+        f"AND cohort.library_name={library} AND cohort.item_id={item} "
+        "WHERE policy_state.singleton=1)"
+    )
+
+
+# A ready effect whose authority is withdrawn only for now waits: it is not
+# selected, and applying it defers without consuming it. An automatic effect
+# waits outside the Automatic posture, and an owner effect waits while the
+# reactivation of an unchanged policy has retired its case and preparation has
+# not admitted it again. Once the posture or case returns, the ordinary guards
+# decide it, so an effect of an earlier generation still goes stale (#1568).
+# A malformed or origin-less document is never deferred, so the readers that
+# validate it refuse it as before. CASE guards json_extract, which SQLite's AND
+# may evaluate on a malformed document, and COALESCE keeps it two-valued.
+_FIELD_EFFECT_DEFERRED_SQL = (
+    "CASE WHEN json_valid(effect.document) THEN COALESCE(("
+    "(json_extract(effect.document,'$.plan.authority.origin')='automatic_policy' "
+    "AND NOT " + _AUTOMATIC_POSTURE_SQL + ") OR "
+    "(json_extract(effect.document,'$.plan.authority.origin')='human' "
+    "AND EXISTS (SELECT 1 FROM current_review_case_lineages awaiting "
+    "JOIN review_case_transitions retirement "
+    "ON retirement.transition_id=awaiting.transition_id "
+    "AND retirement.actor='policy-activation-v1' "
+    "AND retirement.from_review_case_id="
+    "json_extract(effect.document,'$.plan.authority.review_case_id') "
+    "WHERE awaiting.connection_name=effect.connection_name "
+    "AND awaiting.library_name=effect.library_name "
+    "AND awaiting.item_id=effect.work_id AND awaiting.review_case_id IS NULL "
+    "AND "
+    + _same_policy_retirement_sql(
+        "awaiting.connection_name", "awaiting.library_name", "awaiting.item_id"
+    )
+    + "))),0) ELSE 0 END"
+)
+
 # The scheduler's claim, the Activity page's waiting effect and description
 # advice's target check read only live or one target's effects, but scanned
 # every effect ever recorded. A partial index serves only a statement whose
@@ -821,6 +886,16 @@ _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL = (
 _FIELD_EFFECT_READY_STATES_SQL = "('planned','retryable')"
 _FIELD_EFFECT_WAITING_STATES_SQL = (
     "('planned','claimed','applying','reconciling','retryable')"
+)
+# The effects that are not waiting for their authority to return. Activity
+# counts and names only these as ready or in progress: a deferred effect
+# cannot write now, so it is never presented as about to (#1568).
+_FIELD_EFFECT_NOT_DEFERRED_SQL = (
+    "NOT (effect.state IN "
+    + _FIELD_EFFECT_READY_STATES_SQL
+    + " AND "
+    + _FIELD_EFFECT_DEFERRED_SQL
+    + ")"
 )
 _FIELD_EFFECTS_READY_INDEX_SQL = (
     "CREATE INDEX field_effects_ready ON field_effects(updated_at,plan_id) "

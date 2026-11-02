@@ -46,7 +46,7 @@ dev = [
   # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which no
   # documented command does.
   "coverage==7.17.0",
-  "hypothesis==6.165.10",
+  "hypothesis==6.170.11",
   # `starlette.testclient` prefers `httpx2` and warns on the
   # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
   # `scripts/qualify_exact_artifact.py` fails its installed-workspace probe on
@@ -65,6 +65,10 @@ dev = [
 
 [tool.mutmut]
 source_paths = [
+  "src/mechanical_librarian/adapters/cover_evidence_observer.py",
+  "src/mechanical_librarian/adapters/evidence_extractors/isolated_audio.py",
+  "src/mechanical_librarian/adapters/evidence_extractors/isolated_epub.py",
+  "src/mechanical_librarian/adapters/evidence_extractors/local_media.py",
   "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
   "src/mechanical_librarian/application/review_web.py",
   "src/mechanical_librarian/bootstrap/composition.py",
@@ -148,6 +152,9 @@ python_files = ["test_*.py"]
 # run holding an unexpected success either way, but declaring it here makes a
 # native `xfail` fail at the engine too rather than only in the accounting.
 xfail_strict = true
+# A thread's uncaught exception otherwise passes the test as a mere warning,
+# which hid dead reader and writer threads behind green runs (#1604, #1609).
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
 
 [tool.ruff]
 # The gate formats, lints, and type-checks the backend source, its tests, and

@@ -299,6 +299,18 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             "non_cover_fields": attention,
             "cover_fields_with_owner_actions": 0,
             "works": 1,
+            "per_case": library["attention_per_case"],
+        }
+        # One ebook case holds the one series field (#1310).
+        assert library["attention_per_case"] == {
+            "audiobook": {
+                basis: {"cases": 0, "fields": 0, "fields_per_case": None}
+                for basis in ("with_covers", "without_covers")
+            },
+            "ebook": {
+                basis: {"cases": 1, "fields": 1, "fields_per_case": 1.0}
+                for basis in ("with_covers", "without_covers")
+            },
         }
         fidelity = cast("dict[str, object]", library["scan_fidelity"])
         assert fidelity["mount"] == "books"
@@ -320,6 +332,79 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             "edition-1",
         ):
             assert leaked not in serialized
+
+
+def test_an_epub_narrator_field_is_not_attention_the_product_hides() -> None:
+    """The report counts only fields the interface shows (#1310).
+
+    An EPUB's narrators field asking for the owner is never shown, so it is in
+    neither the product's count nor either basis's field rows.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "application.sqlite3"
+        repository = open_repository(database)
+        attention_work = _bibliographic_report(
+            current_title="Mistborn Secret History",
+            providers=(
+                _bibliographic_source(
+                    "catalogue", "edition-1", titles=(), series="Mistborn"
+                ),
+            ),
+        )
+        repository.publish(attention_work, lambda: True)
+        proposal = evaluate_report(attention_work)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        assert (
+            repository._connection.execute(
+                "UPDATE review_case_field_facts SET unresolved_choice=1,"
+                "has_owner_decision_actions=1 WHERE destination='narrators'"
+            ).rowcount
+            == 1
+        )
+        surface_count = repository.count_current_attention_fields(None)
+        repository.close()
+
+        connection = cold_start._open_read_only(database)
+        try:
+            snapshot = cold_start.cold_start_snapshot(connection)
+        finally:
+            connection.close()
+
+    assert surface_count == 1
+    for rows in (snapshot["attention_fields"], snapshot["stored_attention_fields"]):
+        assert [row[2] for row in cast("list[tuple[object, ...]]", rows)] == ["series"]
+
+
+def test_attention_per_case_splits_media_covers_and_rounds() -> None:
+    """Cases by medium; a cover leaves its case only when it was alone."""
+
+    def row(case: str, destination: str, medium: str) -> tuple[object, ...]:
+        return ("primary", "books", destination, "ask", (), None, case, medium)
+
+    counts = cold_start._attention_per_case(
+        [
+            row("one", "cover", "audiobook"),
+            row("one", "series", "audiobook"),
+            row("two", "cover", "audiobook"),
+            row("three", "genres", "audiobook"),
+            row("three", "description", "audiobook"),
+            row("four", "title", "ebook"),
+        ]
+    )
+
+    assert counts == {
+        ("primary", "books"): {
+            "audiobook": {
+                "with_covers": {"cases": 3, "fields": 5, "fields_per_case": 1.67},
+                "without_covers": {"cases": 2, "fields": 3, "fields_per_case": 1.5},
+            },
+            "ebook": {
+                "with_covers": {"cases": 1, "fields": 1, "fields_per_case": 1.0},
+                "without_covers": {"cases": 1, "fields": 1, "fields_per_case": 1.0},
+            },
+        }
+    }
 
 
 def test_current_cover_pointer_marks_attention_counts_unavailable(
@@ -418,7 +503,20 @@ def test_current_cover_pointer_marks_attention_counts_unavailable(
         },
         "cover_fields_with_owner_actions": 1,
         "works": 2,
+        "per_case": {
+            "audiobook": {
+                basis: {"cases": 0, "fields": 0, "fields_per_case": None}
+                for basis in ("with_covers", "without_covers")
+            },
+            # Two cases, one field each; without covers the cover-only case
+            # is no case (#1310).
+            "ebook": {
+                "with_covers": {"cases": 2, "fields": 2, "fields_per_case": 1.0},
+                "without_covers": {"cases": 1, "fields": 1, "fields_per_case": 1.0},
+            },
+        },
     }
+    assert library["attention_per_case"] is None
     assert library["works_without_provider_candidates"] == 0
     assert library["not_matched"] == {
         "total": 0,
@@ -821,8 +919,8 @@ def test_main_rejects_a_malformed_mount_root() -> None:
         )
 
 
-def test_the_schema_is_pinned_at_its_fifth_version() -> None:
-    assert "cold-start-report-v5" == cold_start.COLD_START_REPORT_SCHEMA
+def test_the_schema_is_pinned_at_its_sixth_version() -> None:
+    assert "cold-start-report-v6" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:

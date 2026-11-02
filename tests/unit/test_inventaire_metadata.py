@@ -194,7 +194,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v66"
+    assert report.schema_version == "metadata-report-v67"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -1468,7 +1468,7 @@ def test_complete_discovery_preserves_negative_only_creator_equivalence(
         1 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 0
     )
     assert observation.lanes
-    assert report.schema_version == "metadata-report-v66"
+    assert report.schema_version == "metadata-report-v67"
 
 
 @pytest.mark.parametrize(
@@ -1478,6 +1478,9 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
     from contextlib import closing
     from unittest.mock import Mock, patch
 
+    from mechanical_librarian.adapters.cover_evidence_observer import (
+        CoverEvidenceObserver,
+    )
     from mechanical_librarian.adapters.persistence.cover_artifacts import (
         CoverArtifactStore,
     )
@@ -1489,7 +1492,6 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
     )
     from mechanical_librarian.application.metadata_report import TargetSnapshot
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
-    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
     from mechanical_librarian.domain.cover_evidence import CoverSourceState
     from mechanical_librarian.domain.proposal_set import evaluate_report
     from tests.support.audiobook_reports import publish_audiobook_preview
@@ -1542,9 +1544,9 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
         assert descriptor.provenance.work_identity == candidate.work_identity
     target = Mock()
     with patch(
-        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover"
     ) as fetch:
-        observer = _CoverEvidenceObserver(
+        observer = CoverEvidenceObserver(
             target,
             CoverArtifactStore(tmp_path / "artifacts"),
             (ProviderConnectionConfiguration("inventaire", True, True, None),),

@@ -3223,6 +3223,11 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
         (ProviderStatus.CANDIDATES, "Returned metadata candidates for comparison."),
         (ProviderStatus.UNAVAILABLE, "Could not be reached."),
         (ProviderStatus.RATE_LIMITED, "Limited the request rate."),
+        (
+            ProviderStatus.NOT_NEEDED,
+            "Not needed, so this source was never asked: another source had "
+            "already matched this recording by its running time.",
+        ),
     ),
 )
 def test_provider_snapshot_copy_does_not_invent_match_or_retry(status, reason):
@@ -3245,6 +3250,10 @@ def test_provider_snapshot_copy_does_not_invent_match_or_retry(status, reason):
                 candidates=provider.candidates
                 if status is ProviderStatus.CANDIDATES
                 else (),
+                # A source that was never asked claims no inputs.
+                input_references=()
+                if status is ProviderStatus.NOT_NEEDED
+                else provider.input_references,
             ),
         ),
     )

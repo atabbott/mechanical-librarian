@@ -1182,7 +1182,15 @@ class ContinuousGuardedApplication:
             with self._schedule_lock:
                 return before != (self._schedule_generation, self._schedule_cursor)
         plan_id, library = selected
-        self.apply(plan_id)
+        try:
+            self.apply(plan_id)
+        except GuardedApplicationError as error:
+            # The posture or case changed between selection and the guard:
+            # the plan waits unclaimed and selection now passes it by, so
+            # this is an empty poll, not a failure (#1568).
+            if error.code != "deferred":
+                raise
+            return True
         self._last_library = library
         return True
 

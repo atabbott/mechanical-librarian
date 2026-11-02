@@ -896,9 +896,10 @@ def test_successful_recheck_records_usable(tmp_path: Path, prior: str) -> None:
     assert _lazy_over(manager).passive_status() == _USABLE
 
 
-def test_recheck_after_cancel_records_its_existing_refusal(tmp_path: Path) -> None:
-    # Cancellation stays latched until the next start, so the status child is
-    # refused and the recheck returns the same refusal it always has.
+def test_recheck_after_cancel_without_a_flow_succeeds_and_records_usable(
+    tmp_path: Path,
+) -> None:
+    # Cancellation stops only a flow's own children.
     _installed_credential(tmp_path)
     manager = _manager(tmp_path)
     assert manager.status().state == "ready"
@@ -911,9 +912,54 @@ def test_recheck_after_cancel_records_its_existing_refusal(tmp_path: Path) -> No
 
     manager._popen = popen  # type: ignore[assignment]
 
-    assert manager.recheck_credential_status() == _REFUSED
-    assert manager.status() == _REFUSED
+    assert manager.recheck_credential_status() == _USABLE
+    assert manager.status() == _USABLE
     assert spawned == ["status"]
+
+
+def test_recheck_after_cancelled_flow_uses_installed_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _installed_credential(tmp_path)
+    installed = tmp_path / "profile" / "auth.json"
+    credential = installed.read_bytes()
+    manager = _manager(tmp_path)
+    entered = Event()
+    release = Event()
+    child = _Process(b"", 0)
+    child.returncode = None  # type: ignore[assignment]
+    child.stdout = _BlockingStream(entered, release)  # type: ignore[assignment]
+
+    def flow_popen(_command: list[str], **_kwargs: Any) -> _Process:
+        return child
+
+    manager._popen = flow_popen  # type: ignore[assignment]
+
+    def terminate(_pid: int, _signal: int) -> None:
+        child.returncode = -15
+
+    monkeypatch.setattr(os, "killpg", terminate)
+    assert manager.start().state == "starting"
+    assert entered.wait(timeout=2)
+    assert manager.cancel().state == "cancelled"
+    release.set()
+    assert manager._thread is not None
+    manager._thread.join(timeout=2)
+    assert not manager._thread.is_alive()
+    assert manager.status().state == "cancelled"
+    spawned: list[str] = []
+
+    def status_popen(command: list[str], **_kwargs: Any) -> _Process:
+        spawned.append(command[-2])
+        return _Process(_STATUS, 0)
+
+    manager._popen = status_popen  # type: ignore[assignment]
+
+    assert _lazy_over(manager).recheck_credential_status() == _USABLE
+    assert manager.status() == _USABLE
+    assert _lazy_over(manager).passive_status() == _USABLE
+    assert spawned == ["status"]
+    assert installed.read_bytes() == credential
 
 
 @pytest.mark.parametrize("transition", ["clear", "start", "cancel", "equal-value"])
@@ -1460,6 +1506,44 @@ def test_cancel_between_status_validation_and_install_wins_without_install(
     assert not manager._thread.is_alive()
     assert manager.status().state == "cancelled"
     assert not (tmp_path / "profile" / "auth.json").exists()
+
+
+@pytest.mark.parametrize("action", ["validation", "start"])
+def test_cancelled_flow_child_is_released_at_spawn_and_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    manager = _manager(tmp_path)
+    original = manager._popen
+    target = "status" if action == "validation" else "start"
+
+    def cancelling_popen(command: list[str], **kwargs: Any):
+        child = original(command, **kwargs)
+        if command[-2] == target:
+            assert manager.cancel().state == "cancelled"
+        return child
+
+    manager._popen = cancelling_popen
+    read: list[str] = []
+    bounded_status = auth_module._bounded_status
+    bounded_output_lines = auth_module._bounded_output_lines
+
+    def status_spy(*args: Any, **kwargs: Any) -> tuple[bytes, int]:
+        read.append("status")
+        return bounded_status(*args, **kwargs)
+
+    def output_spy(*args: Any, **kwargs: Any) -> list[str]:
+        read.append("start")
+        return bounded_output_lines(*args, **kwargs)
+
+    monkeypatch.setattr(auth_module, "_bounded_status", status_spy)
+    monkeypatch.setattr(auth_module, "_bounded_output_lines", output_spy)
+    _finish(manager)
+
+    assert manager.status().state == "cancelled"
+    assert target not in read
+    assert not (tmp_path / "profile" / "auth.json").exists()
+    assert not list(tmp_path.glob("reviewer-auth-*"))
+    assert manager._process is None
 
 
 def test_terminal_install_uses_lease_before_manager_lock_and_handoff_completes(

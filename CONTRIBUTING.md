@@ -27,7 +27,7 @@ src/mechanical_librarian/
 ├── domain/          # values and rules; no I/O
 ├── application/     # orchestration and the ports adapters implement
 ├── adapters/        # Audiobookshelf, providers, evidence extractors, reviewers, SQLite
-├── infrastructure/  # configuration, first boot, local media, security
+├── infrastructure/  # configuration, first boot, security
 ├── interfaces/      # CLI and the authenticated web workspace
 └── bootstrap/       # composition and entry points
 frontend/            # the React owner workspace

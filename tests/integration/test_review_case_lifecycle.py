@@ -1,7 +1,6 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
 
 import json
-import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -125,32 +124,43 @@ def test_absent_restart_replay_successor_and_retirement():
 def test_concurrent_identical_admission_converges():
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "reviews.sqlite"
-        repository = open_repository(database)
+        owner = open_repository(database)
         report = _report()
-        repository.publish(report, lambda: True)
+        owner.publish(report, lambda: True)
         proposal = _actionable(report)
-        repository.publish_proposal(proposal)
-        repository.close()
+        owner.publish_proposal(proposal)
         barrier, outcomes = threading.Barrier(2), []
+        failures: list[Exception] = []
 
         def admit():
-            if sys.platform.startswith("linux"):
-                barrier.wait()
-                local = open_repository(database, create=False)
-            else:
-                local = open_repository(database, create=False)
-                barrier.wait()
+            # Each dependent borrows the live owner's authority, so both opens
+            # succeed on every platform and the barrier releases two real
+            # admissions at once. A failure in either thread is collected
+            # rather than left to escape as a thread warning.
+            local = None
             try:
+                local = open_repository(
+                    database, create=False, authority=owner.authority
+                )
+                barrier.wait(timeout=5)
                 outcomes.append(json.loads(local.admit_review_case(proposal)))
+            except Exception as error:
+                failures.append(error)
             finally:
-                local.close()
+                if local is not None:
+                    local.close()
 
-        workers = [threading.Thread(target=admit) for _ in range(2)]
-        # The comprehensions are used for their effect; the collected `None`
-        # results are discarded.
-        [worker.start() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
-        [worker.join() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
-        assert 1 == len({value["review_case_id"] for value in outcomes})
+        try:
+            workers = [threading.Thread(target=admit) for _ in range(2)]
+            # The comprehensions are used for their effect; the collected `None`
+            # results are discarded.
+            [worker.start() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            [worker.join() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            assert [] == failures
+            assert 2 == len(outcomes)
+            assert 1 == len({value["review_case_id"] for value in outcomes})
+        finally:
+            owner.close()
 
 
 def _audiobook_accept(case, destination: str, key: str):

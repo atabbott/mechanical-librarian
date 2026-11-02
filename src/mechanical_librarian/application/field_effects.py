@@ -207,6 +207,7 @@ class FieldEffectRepository(Protocol):
         self, connection: str, destination: str
     ) -> str | None: ...
     def field_effect_restore_refused(self, plan: FieldEffectPlan) -> bool: ...
+    def field_effect_deferred(self, plan_id: str) -> bool: ...
     def grant_field_effect_consent_matrix(
         self,
         connection: str,
@@ -951,6 +952,11 @@ class GuardedFieldApplication:
     ) -> FieldEffectOperation | None:
         """Evaluate current guards in their fixed order without claiming."""
         plan = operation.plan
+        # Authority withdrawn only for now, by a posture outside Automatic or
+        # a case retired until it returns as itself, is not consumed as a
+        # stale: the plan waits, unclaimed, for the ordinary guards (#1568).
+        if self._repository.field_effect_deferred(plan.plan_id):
+            raise GuardedApplicationError("deferred")
         if self._repository.field_effect_restore_refused(plan):
             return self._stale(operation, "restore_unavailable")
         if not self._backup.ready(plan):

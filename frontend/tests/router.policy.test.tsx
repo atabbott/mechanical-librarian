@@ -18,6 +18,7 @@ import type {
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
+import { policyProfile } from './wireFixtures'
 
 const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][number]['fields']) =>
   fields.map((draft) => ({
@@ -2470,7 +2471,7 @@ it.each([
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: { code: 'csrf' } }, { status: 403 }))
-      .mockResolvedValueOnce(Response.json({ policy_id: 'draft' }))
+      .mockResolvedValueOnce(Response.json(policyProfile({ policy_id: 'draft' })))
     const transport = new ReviewApiClient({
       buildIdentity: 'a'.repeat(64),
       csrf: { current: () => 'b'.repeat(32), renew: async () => 'c'.repeat(32) },

@@ -330,6 +330,21 @@ a declared cover that `encryption.xml` lists, before reading it, as
 its file and configuration fingerprints are unchanged, so a stored report would
 keep the earlier cover outcome. No adoption is supplied.
 
+Issue #1309 also takes the clean-rebuild branch. `metadata-report-v67` adds
+the `not_needed` provider status, which records an audiobook AudioSilo binding
+that was not asked because Audible or Audnexus had already admitted a recording
+by stated runtime. It also adds the `region_unavailable` provider diagnostic
+for an Audnexus marketplace miss. A v66 report cannot state either, so every
+earlier application database is rejected before mutation and needs a clean
+rebuild; no adoption is supplied.
+
+Issue #1616 also takes the clean-rebuild branch. An automatic subtitle that
+only restates the case's series is withheld, and a title strip reads an
+underscore segment and a series named only by a subtitle label (ADR-0073), so
+the decision policy moves to `deterministic-shadow-decision-policy-v27`: an
+outcome minted under v26 could state a write v27 refuses. The proposal policy
+and report schema are unchanged; no adoption is supplied.
+
 Issue #1639 also takes the clean-rebuild branch. The image moves to CPython
 3.15, whose Unicode 17.0.0 data differs from 3.14's 16.0.0, so every earlier
 application database's browse facts are refused before mutation. The report
