@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError, CsrfRenewedError } from '../src/api/http'
+import { ApiError, CsrfRenewedError, SessionExpiredError } from '../src/api/http'
 import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
@@ -1473,6 +1473,31 @@ describe('Application shell', () => {
       'href',
       '/library?lens=all',
     )
+  })
+
+  it.each([
+    ['succeeds', undefined, true],
+    ['finds the session already gone', new SessionExpiredError(), true],
+    ['is refused', new ApiError(503, 'unavailable'), false],
+  ])('signs out to the plain sign-in page when logout %s', async (_, failure, signedOut) => {
+    const assign = vi.fn()
+    const real = window.location
+    const location = new Proxy({} as Location, {
+      get: (_, key) => (key === 'assign' ? assign : (Reflect.get(real, key) as unknown)),
+    })
+    onTestFinished(() => void vi.restoreAllMocks())
+    vi.spyOn(window, 'location', 'get').mockReturnValue(location)
+    const http = createHttp()
+    http.logout = vi.fn(async () => {
+      if (failure) throw failure
+    })
+    renderRoute('/library?lens=all', http)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    if (signedOut) await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'))
+    else expect(await screen.findByRole('alert')).toBeVisible()
+    expect(assign).toHaveBeenCalledTimes(signedOut ? 1 : 0)
   })
 
   it('looks again where an event points, without rebuilding the page or reloading it', async () => {

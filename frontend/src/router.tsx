@@ -1173,13 +1173,11 @@ const Shell = () => {
   }, [navigation.status, path, title])
   const signOut = async () => {
     setShellError('')
-    try {
-      await http.logout()
-      window.location.assign('/login')
-    } catch (error) {
-      if (!(error instanceof BuildMismatchError))
-        setShellError(refusalCopy(error, 'Sign out failed. Try again.'))
-    }
+    const failure = await http.logout().catch((error: unknown) => error)
+    // A session already gone is signed out too (#1588).
+    if (!failure || failure instanceof SessionExpiredError) window.location.assign('/login')
+    else if (!(failure instanceof BuildMismatchError))
+      setShellError(refusalCopy(failure, 'Sign out failed. Try again.'))
   }
   return (
     <div className="app-shell">

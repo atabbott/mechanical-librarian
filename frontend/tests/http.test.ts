@@ -2146,8 +2146,127 @@ describe('ReviewApiClient', () => {
       onSessionExpired: expired,
     })
 
-    await expect(client.logout()).rejects.toBeInstanceOf(SessionExpiredError)
+    await expect(client.policyCommand('activate', {})).rejects.toBeInstanceOf(SessionExpiredError)
     await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  const sessionGone = () => Response.json({ error: { code: 'session' } }, { status: 401 })
+  const flushExpiryHandOff = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+
+  it('leaves the page to sign-out when a held read answers 401 after logout', async () => {
+    const expired = vi.fn()
+    let releaseHeldRead: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (releaseHeldRead = resolve)),
+    )
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }))
+    fetchMock.mockResolvedValueOnce(sessionGone())
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: fetchMock,
+      buildIdentity: 'c'.repeat(64),
+      onSessionExpired: expired,
+    })
+
+    const heldRead = client.getLibrary({ lens: 'needs_attention' })
+    await client.logout()
+    releaseHeldRead(sessionGone())
+    await expect(heldRead).rejects.toBeInstanceOf(SessionExpiredError)
+    await expect(client.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flushExpiryHandOff()
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['answers 401', vi.fn(async () => sessionGone()), csrf],
+    [
+      'finds the session gone while renewing CSRF',
+      vi.fn(async () => csrfChallenge()),
+      { current: () => token, renew: () => Promise.reject(new SessionExpiredError()) },
+    ],
+  ])('rejects a logout that %s without the expiry hand-off', async (_, fetchMock, tokens) => {
+    const expired = vi.fn()
+    const client = new ReviewApiClient({
+      csrf: tokens,
+      fetch: fetchMock,
+      buildIdentity: 'c'.repeat(64),
+      onSessionExpired: expired,
+    })
+
+    await expect(client.logout()).rejects.toBeInstanceOf(SessionExpiredError)
+    await flushExpiryHandOff()
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  const unavailable = () => Response.json({ error: { code: 'unavailable' } }, { status: 503 })
+
+  it('hands off a later expiry once when logout fails for another reason', async () => {
+    const expired = vi.fn()
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(unavailable())
+    fetchMock.mockResolvedValue(sessionGone())
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: fetchMock,
+      buildIdentity: 'c'.repeat(64),
+      onSessionExpired: expired,
+    })
+
+    await expect(client.logout()).rejects.toMatchObject({ status: 503 })
+    await expect(client.getLibrary({ lens: 'all' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await expect(client.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    await flushExpiryHandOff()
+    expect(expired).toHaveBeenCalledOnce()
+  })
+
+  it('replays an expiry held back during a logout that then fails', async () => {
+    const expired = vi.fn()
+    let releaseLogout: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (releaseLogout = resolve)),
+    )
+    fetchMock.mockResolvedValue(sessionGone())
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: fetchMock,
+      buildIdentity: 'c'.repeat(64),
+      onSessionExpired: expired,
+    })
+
+    const logout = client.logout()
+    await expect(client.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flushExpiryHandOff()
+    expect(expired).not.toHaveBeenCalled()
+    releaseLogout(unavailable())
+    await expect(logout).rejects.toMatchObject({ status: 503 })
+    await flushExpiryHandOff()
+    expect(expired).toHaveBeenCalledOnce()
+    await expect(client.getLibrary({ lens: 'all' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await flushExpiryHandOff()
+    expect(expired).toHaveBeenCalledOnce()
+  })
+
+  it('stays signed out when a second logout fails after one succeeded', async () => {
+    const expired = vi.fn()
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(unavailable())
+      .mockResolvedValue(sessionGone())
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: fetchMock,
+      buildIdentity: 'c'.repeat(64),
+      onSessionExpired: expired,
+    })
+
+    await client.logout()
+    await expect(client.logout()).rejects.toMatchObject({ status: 503 })
+    await expect(client.getLibrary({ lens: 'all' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await flushExpiryHandOff()
+    expect(expired).not.toHaveBeenCalled()
   })
 
   it('blocks mutations without a current build identity before transport', async () => {
