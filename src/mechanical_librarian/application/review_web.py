@@ -237,6 +237,11 @@ class CurrentReviewCaseSnapshot:
     # choice that only trims or extends (#1253), a populated subjective value
     # a fill-only option keeps, and tags while their option is off (#1310).
     settled_choice_destinations: tuple[str, ...] = ()
+    # The destinations the case's evaluated policy keeps, read live through
+    # the same predicate: tags while their option is off, and a floor-passing
+    # subjective value a fill-only option keeps. A fill's fact is always
+    # settled, so only this says a tags fill is kept by the setting (#1661).
+    policy_kept_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
     override_blocked_destinations: tuple[str, ...] = ()
@@ -793,12 +798,17 @@ def _classify_field(
     reasons = result["reasons"]
     assert type(reasons) is list
     # The persisted facts settle an undecided choice its policy's
-    # options keep (#1310); an immaterial one is #1253's, not this.
+    # options keep (#1310); an immaterial one is #1253's, not this. A
+    # proposed fill the evaluated policy keeps (tags while they are off)
+    # is settled the same way on every medium (#1661).
     policy_settled = (
         result["outcome"] == "unresolved_choice"
         and "work_alternative_immaterial" not in reasons
         and not _kept_cover(proposal)
         and destination in snapshot.settled_choice_destinations
+    ) or (
+        result["outcome"] == "propose_change"
+        and destination in snapshot.policy_kept_destinations
     )
     return classify_review_field(
         attention_candidate=(
@@ -861,9 +871,10 @@ def _classify_field(
         proposed_values=tuple(alternative["value"] for alternative in alternatives),
         # A recording's undecided fill, a kept readable cover, and a
         # choice the policy's options settle (a populated subjective
-        # value a fill-only option keeps, or tags while they are off)
-        # stay the owner's to choose in their case without joining the
-        # queue (#1249, #1310). A kept cover with no current comparison
+        # value a fill-only option keeps, or tags while they are off,
+        # including a single proposed list for empty Tags) stay the
+        # owner's to choose in their case without joining the queue
+        # (#1249, #1310, #1661). A kept cover with no current comparison
         # is still choosable: the owner can prepare one.
         owner_choosable=automatic_decision is None
         and (
