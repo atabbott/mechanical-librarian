@@ -1,4 +1,4 @@
-"""The API-layer response keywords the generated browser decoders enforce (#1670).
+"""The response keywords the generated browser decoders enforce (#1670, #1671).
 
 Each row pins one keyword of a stage-2b item in the committed OpenAPI document,
 which `npm run generate` turns into the browser's decoders. An enum is compared
@@ -19,10 +19,23 @@ import pytest
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from mechanical_librarian.adapters.reviewers import codex_device_auth
-from mechanical_librarian.application import cover_identity, review_web
+from mechanical_librarian.application import (
+    contained_reviewer_contract,
+    cover_identity,
+    review_web,
+)
 from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
     TargetServiceUnavailable,
+)
+from mechanical_librarian.application.reviewer_access import (
+    CodexDescriptionDisclosure,
+    OpenRouterRecommendation,
+    ReviewerAccessView,
+    ReviewerEngineStatus,
+)
+from mechanical_librarian.application.reviewer_contracts import (
+    OpenRouterAccountStatus,
 )
 from mechanical_librarian.domain import (
     activity_records,
@@ -44,6 +57,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome
+from mechanical_librarian.domain.reviewer_access import _OPENROUTER_MODEL_ID
 from mechanical_librarian.interfaces.web import app
 
 SCHEMAS: dict[str, Any] = json.loads(
@@ -90,6 +104,11 @@ SCAN_STATES = frozenset(  # "idle" when no scan, else the review_scans state
     | {"completed_with_failures"}
 )
 INSTANT = {"minimum": 0, "maximum": 8_640_000_000_000}
+# The reasons the cover consideration service admits (#1671 narrowed it to the
+# browser's two; no production path reports the stale-model reason).
+COVER_UNAVAILABLE = contained_reviewer_contract._COVER_PROFILE_CONTRACT_REASONS
+# The only producer of a usable openrouter status's tier.
+OPENROUTER_TIERS = _strings(get_type_hints(OpenRouterAccountStatus)["tier"])
 
 # (item, component, JSON pointer in the component, keyword, value). An `enum`
 # row's value is the producing vocabulary and compares as a set.
@@ -346,6 +365,13 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "minimum",
         0,
     ),
+    (
+        "S62",
+        "_CoverConsiderationResponse",
+        "/properties/reviewer_unavailable_reason/anyOf/0",
+        "enum",
+        COVER_UNAVAILABLE,
+    ),
     ("S65", "_CoverPolicyReport", "/properties/reasons", "maxItems", 32),
     ("S65", "_CoverPolicyReport", "/properties/reasons/items", "maxLength", 128),
     (
@@ -408,6 +434,50 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "maxItems",
         8,
     ),
+    # Application views (#1671), built per read and never stored.
+    ("S81", "CodexDescriptionDisclosure", "/properties/model", "minLength", 1),
+    (
+        "S82",
+        "CodexDescriptionDisclosure",
+        "/properties/profile_sha256",
+        "pattern",
+        "^[0-9a-f]{64}$",
+    ),
+    (
+        "S83",
+        "ReviewerEngineStatus",
+        "/properties/host_headroom_bytes/anyOf/0",
+        "minimum",
+        0,
+    ),
+    (
+        "S84",
+        "ReviewerEngineStatus",
+        "/properties/tier/anyOf/0",
+        "enum",
+        OPENROUTER_TIERS,
+    ),
+    (
+        "S85",
+        "ReviewerAccessView",
+        "/properties/recommendations/items",
+        "pattern",
+        _OPENROUTER_MODEL_ID.pattern,
+    ),
+    (
+        "S86",
+        "OpenRouterRecommendation",
+        "/properties/model",
+        "pattern",
+        _OPENROUTER_MODEL_ID.pattern,
+    ),
+    (
+        "S87",
+        "OpenRouterRecommendation",
+        "/properties/requests_per_minute/anyOf/0",
+        "minimum",
+        1,
+    ),
 )
 
 
@@ -432,6 +502,24 @@ def test_the_document_states_each_keyword(
         assert set(stated) == set(value)  # type: ignore[call-overload]
     else:
         assert stated == value
+
+
+def test_the_cover_unavailable_reasons_are_the_two_resource_limits() -> None:
+    # The service admits only the two limits the response and browser state; a
+    # stale model is refused as profile_contract_mismatch, never reported.
+    contract = contained_reviewer_contract
+    assert COVER_UNAVAILABLE == {
+        f"profile contract requires memory_bytes={contract.COVER_MEMORY_BYTES}",
+        f"profile contract requires process_limit={contract.COVER_PROCESS_LIMIT}",
+    }
+    stale_model = f"profile contract requires model={contract.COVER_MODEL}"
+    assert not contract.is_cover_profile_contract_reason(stale_model)
+    assert all(map(contract.is_cover_profile_contract_reason, COVER_UNAVAILABLE))
+
+
+def test_the_shared_reviewer_model_stays_untightened() -> None:
+    # X43: the codex and openrouter slots need different model grammars.
+    assert "pattern" not in _at("ReviewerEngineStatus", "/properties/model/anyOf/0")
 
 
 def test_every_activity_destination_is_a_target_destination() -> None:
@@ -537,6 +625,12 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._ProposedValue, "kind", "k" * 65, "string_too_long"),
     (app._SeriesValue, "name", "n" * 513, "string_too_long"),
     (app._CoverConsiderationResponse, "reviewer_status", "invented", "literal_error"),
+    (
+        app._CoverConsiderationResponse,
+        "reviewer_unavailable_reason",
+        "profile contract requires model=gpt-5.6-sol",
+        "literal_error",
+    ),
     (app._CoverPolicyReport, "reasons", ["r" * 129], "string_too_long"),
     (
         app._CoverPolicyReport,
@@ -549,6 +643,23 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._PreparationProgress, "state", "paused", "literal_error"),
     (app._PreparationActiveBook, "stage", "s" * 65, "string_too_long"),
     (app._CodexDeviceAuthResponse, "user_code", "ABC-1234", "string_pattern_mismatch"),
+    (CodexDescriptionDisclosure, "model", "", "string_too_short"),
+    (
+        CodexDescriptionDisclosure,
+        "profile_sha256",
+        "A" * 64,
+        "string_pattern_mismatch",
+    ),
+    (ReviewerEngineStatus, "host_headroom_bytes", -1, "greater_than_equal"),
+    (ReviewerEngineStatus, "tier", "trial", "literal_error"),
+    (
+        ReviewerAccessView,
+        "recommendations",
+        ("provider/model\nBearer secret",),
+        "string_pattern_mismatch",
+    ),
+    (OpenRouterRecommendation, "model", "gpt-6-luna", "string_pattern_mismatch"),
+    (OpenRouterRecommendation, "requests_per_minute", 0, "greater_than_equal"),
 )
 
 

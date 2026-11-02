@@ -3,7 +3,8 @@
 - Status: proposed
 - Date: 2026-11-01
 - Owners: project maintainers
-- Issues: #1577 (stage 1), #1571 (client half of uncertain outcomes)
+- Issues: #1577 (stage 1), #1571 (client half of uncertain outcomes), #1669
+  (stage 2b, the schema states every single-field check)
 - Amends: ADR-0043 (HTTP module and drift), ADR-0044 (build identity delivery)
 - Supersedes: none
 - Superseded by: none
@@ -57,6 +58,142 @@ told:
      no header.
    - A route marks the request once `_require_session` authenticates it. An
      unmatched `/api/v1` path is checked with one session read and no write.
+
+## Mapper checks the schema cannot state (X)
+
+Since #1669 the OpenAPI document states every single-field response check the
+HTTP module makes, so the generated decoders enforce it. What remains
+hand-written (decision 3) is listed here: a check relating two or more fields
+(cross-field), an order or position (positional), an identity across items or
+documents (identity), a check whose only owner is persisted (persisted), or one
+that shares the persisted Decimal price grammar no regex states (shared
+grammar). Each line gives the check, its owner and why. The first 40 are the
+`mapper_cross_field` rows of `frontend/tests/decoderDifferential.test.ts`; X40
+to X53 are checks that suite does not exercise.
+
+- `check:mapActivity.failure-reasons-order`: failure reasons ascend.
+  `_ProviderRecoveryActivity.failure_reasons`. Positional.
+- `check:mapLibraryCover.preview-binding`: the cover url names its own
+  `preview_sha256`. `_LibraryCover`. Cross-field.
+- `check:mapAudiobookReviewScope.media-kind`: a review scope needs an audio
+  media kind. `_ReportDetailResponse`. Cross-field.
+- `check:mapAudiobookReviewScope.basis`: a recording basis needs the recording
+  scope. `_ReportDetailResponse`. Cross-field.
+- `check:mapDescriptionAdvice.outcome-needs-selection`: an application outcome
+  needs a selection. `_DescriptionAdviceResponse`. Cross-field.
+- `check:mapDescriptionAdvice.selection-pairing`: the selection and
+  `selected_advice` are both present or both null.
+  `_DescriptionAdviceResponse`. Cross-field.
+- `check:mapDescriptionAdvice.selection-candidate`: the selection names the
+  selected candidate. `_DescriptionAdviceResponse` and
+  `DescriptionAdviceCandidate`. Cross-field.
+- `check:mapDescriptionAdvice.selection-binding`: the selection binding equals
+  the selected advice binding. `_DescriptionAdviceResponse` and
+  `DescriptionAdviceBinding`. Cross-field.
+- `check:mapChoiceContexts.current-first`: the first choice context is the
+  current value. `_ReviewField.choice_contexts`. Positional.
+- `check:preparationPresentation.passage-order`: each passage count is at most
+  the one before it. `_PreparationPassage`. Cross-field.
+- `check:preparationPresentation.trigger-families`: one entry per trigger
+  family. `_PreparationPresentation.triggers`. Identity across items.
+- `check:preparationPresentation.active-within-total`: active books plus
+  overflow are at most the total. `_PreparationPresentation`. Cross-field.
+- `check:preparationPresentation.updated-after-start`: `updated_at` is not
+  before `started_at`. `_PreparationPresentation`. Cross-field.
+- `check:preparationPresentation.completion-iff-terminal`: `completed_at` is
+  set exactly for a terminal state. `_PreparationPresentation`. Cross-field.
+- `check:preparationPresentation.completed-after-start`: `completed_at` is not
+  before `started_at`. `_PreparationPresentation`. Cross-field.
+- `check:reviewerStatus.codex-reason`: the codex state fixes which reasons it
+  may carry. `ReviewerEngineStatus`. Cross-field (slot).
+- `check:reviewerStatus.codex-model-presence`: the codex model is null exactly
+  when not provisioned. `ReviewerEngineStatus`. Cross-field (slot).
+- `check:reviewerStatus.codex-model`: a codex model matches the local model
+  grammar. `ReviewerEngineStatus.model`, shared with the openrouter slot,
+  whose `provider/model` values are valid. Cross-field (slot).
+- `check:mapReviewerAccess.cover-model`: cover metadata prices the saved
+  openrouter mapping model. `CoverModelMetadata`. Cross-field.
+- `check:mapReviewerAccess.cover-price`: a cover price is a decimal in
+  [0, 1000000]. `CoverModelMetadata`, stored in `ReviewerAccessDocument`.
+  Persisted.
+- `check:mapDescriptionMetadata.price`: a description price is a decimal in
+  [0, 1000000]. `DescriptionModelMetadata`, stored in
+  `ReviewerAccessDocument`. Persisted.
+- `check:mapCoverConsideration.manual-eligibility`: `manual_eligible` follows
+  the incumbent and the identity. `_CoverCandidate`. Cross-field.
+- `check:mapCoverConsideration.rank-key-reference`: the rank key ends with the
+  candidate reference. `_CoverCandidate`. Cross-field.
+- `check:mapCoverConsideration.match-state`: `match_state` follows the
+  identity outcome. `_CoverCandidate`. Cross-field.
+- `check:mapCoverConsideration.unconfirmed-unranked`: an unconfirmed candidate
+  is neither selectable nor ranked. `_CoverCandidate`. Cross-field.
+- `check:mapCoverObservation.binding`: an observation names its candidate
+  reference and preview. `_CoverObservation`. Cross-field.
+- `check:mapCoverConsideration.unique-references`: candidate references are
+  distinct. `_CoverConsiderationResponse.candidates`. Identity across items.
+- `check:mapCoverConsideration.ordinal-position`: a candidate's ordinal is its
+  position. `_CoverCandidate.ordinal`. Positional.
+- `check:mapCoverConsideration.absent-incumbent`: an absent or unavailable
+  incumbent has no reference and no incumbent candidate. `_CoverIncumbent`.
+  Cross-field.
+- `check:mapCoverConsideration.available-incumbent`: an available incumbent is
+  the one incumbent candidate. `_CoverIncumbent`. Cross-field.
+- `check:mapChoiceContexts.proposed-count`: one proposed context per manually
+  eligible alternative. `_CoverConsiderationResponse.choice_contexts`.
+  Cross-field.
+- `check:mapCoverConsideration.policy-presence`: a policy report exists
+  exactly when there are candidates. `_CoverConsiderationResponse`.
+  Cross-field.
+- `check:mapCoverConsideration.reviewer-failure-status`: a reviewer failure
+  code needs the failed status. `_CoverConsiderationResponse`. Cross-field.
+- `check:mapCoverConsideration.recommended-reference`: a recommended policy
+  names its candidate. `_CoverPolicyReport`. Cross-field.
+- `check:mapCoverConsideration.acceptable-ranking`: acceptable references are
+  the ranked alternatives in rank order. `_CoverPolicyReport`. Cross-field.
+- `check:mapCoverConsideration.derived-candidate-state`: a candidate state
+  follows selectability, the recommendation and the acceptable list.
+  `_CoverCandidate`. Cross-field.
+- `check:mapCoverConsideration.recommendation-context`: only the recommended
+  candidate's context is recommended. `_ChoiceContext`. Cross-field.
+- `check:mapCoverConsideration.readiness`: `ready` follows
+  `provider_fetching` and the candidates. `_CoverConsiderationResponse`.
+  Cross-field.
+- `check:mapDecisionAcknowledgement.case-identity`: the confirmed case is the
+  requested case. `_ConfirmedDecision`. Identity across documents.
+- `capture:post-reviewer-access-codex-device`: issued and waiting need the
+  url, code and 900-second expiry, and every other state has none.
+  `_CodexDeviceAuthResponse`. Cross-field (#1652 makes the capture realistic).
+- X40: the engine equals its slot. `ReviewerEngineStatus.engine`. Cross-field
+  (slot).
+- X41: the codex slot's state is in the codex subset.
+  `ReviewerEngineStatus.state`. Cross-field (slot).
+- X42: the codex tier is null, and the openrouter headroom is null.
+  `ReviewerEngineStatus`. Cross-field (slot).
+- X43: the per-slot couplings of state, model, tier and reason, including the
+  openrouter model grammar on the shared model field. `ReviewerEngineStatus`.
+  Cross-field.
+- X44: cost-evidence accounting (selected, attempted and completed runs, cost
+  and work sums). `ReviewerCostEstimate`. Cross-field.
+- X45: the cost-evidence price grammar. `ReviewerCostEstimate`. Shared
+  grammar (the persisted `bounded_price` Decimal).
+- X46: model and task pairs are unique. `ReviewerCostEvidence.models`.
+  Identity across items.
+- X47: the device state couples url, code and expiry.
+  `_CodexDeviceAuthResponse`. Cross-field.
+- X48: a trigger's `last_accepted_at` is not before its `first_accepted_at`.
+  `_PreparationTrigger`. Cross-field.
+- X49: description candidate text is not blank.
+  `DescriptionAdviceCandidate.output.description`. Persisted.
+- X50: the candidate and advice bind the same attempt, engine and model.
+  `_DescriptionAdviceResponse` and its candidate. Cross-field.
+- X51: a selection's `decision_id` prefix matches its origin.
+  `_DescriptionSelection`. Cross-field.
+- X52: the rank key's first six items are integers and the last is the
+  reference. `_CoverCandidate.deterministic_rank_key`. Positional; only its
+  length of 7 is stated.
+- X53: a cover history decision is accept, keep_current, reject or candidate.
+  `_HistoryCoverItem.decision`, the shared `_DecisionProjection.outcome`,
+  which admits five. Cross-field (a subset that depends on the item kind).
 
 ## Alternatives rejected
 

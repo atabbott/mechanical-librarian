@@ -295,13 +295,21 @@ const recovery=(code,address)=>{
   return origin&&reachCopy[code]?reachCopy[code](origin):recoveryCopy(code)
 };
 const recoveryCopy=code=>({reviewer_unconfigured:'The selected reviewer is no longer ready. Check its access and select it again, or continue without a reviewer.',not_provisioned:'The contained reviewer profile is unavailable. Reload to see its deployment remedy, or choose OpenRouter or no reviewer.',invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid response. Retry later or choose another model.',timed_out:'OpenRouter did not answer in time. Check network access, then retry.',response_too_large:'OpenRouter returned an answer too large to read. Retry later, or choose another model.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',unauthorized:'Audiobookshelf did not accept that API key. Issue a key that can read your libraries, then paste it again.',invalid_endpoint:'That address could not be used. Enter only the scheme, host and port Audiobookshelf serves on, such as https://audiobookshelf.example:13378, with no path, user name or password.',tls:'The certificate for that https:// address could not be verified against the address you entered. Use an address whose certificate this deployment already trusts, or use the service http:// address across a network you control. Mechanical Librarian never skips verification.',timeout:'Audiobookshelf did not answer in time. Check that the address is reachable from this deployment, then retry.',redirect:'That address redirected elsewhere. Enter the direct Audiobookshelf address; setup never follows a redirect with your key.',oversize:'Audiobookshelf returned more data than setup can safely read. Nothing was recorded.',malformed:'Audiobookshelf answered, but not with the supported libraries response. Check that the address points at Audiobookshelf itself.',unavailable:'Setup could not finish that step, so nothing was recorded. Wait a moment and try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your setup sign-in expired, so nothing was recorded. Reload this page and sign in with the owner password; every recorded step is kept.',activation_failed:'Preparation could not be started, so nothing changed. Try kicking off again; if it keeps failing, the deployment log holds the reason.',invalid_mounts:'One of those service paths could not be used. Enter the absolute folder path the Audiobookshelf service itself reports, or leave it empty.',invalid_providers:'One of those provider entries could not be recorded. Check the contact email and API key on each provider you enabled.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from this device. Wait five minutes, then try again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest token from the container log, or from private/setup-claim-token on the data volume; a restart replaces it.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name:'Use a library name from 1 to 256 characters without leading or trailing spaces.',invalid_library_display_name_duplicate:'That name is already used by another library. Choose a different name for this one.',mounts_unready:'Every selected book library needs one matching read-only mount before kickoff.'}[code]||'That could not be recorded. Check the fields and try again.');
-// `control` names the field a refusal is about; `address` is the Audiobookshelf
-// address a reach failure names; `confirm` says what the recorded step found.
-const mutate=async(path,payload,form,{control,address,confirm}={})=>{
+// `control` names the field a refusal is about and `submitted` the button
+// pressed; `address` is the Audiobookshelf address a reach failure names;
+// `confirm` says what the recorded step found. A field refusal sits after its
+// field, above the button; a refusal about no field sits under the pressed
+// button, or under its row of actions. Only the buttons this press disables are
+// enabled again, so a control that was already unavailable stays so. The pressed
+// button keeps focus, marked aria-disabled rather than disabled, and `mutating`
+// refuses a repeat press; a submit handler that calls mutate checks `mutating`
+// first, so Enter in a field runs no client check mid-request (#1678).
+const mutate=async(path,payload,form,{control,submitted,address,confirm}={})=>{
   if(mutating)return;
   mutating=true;
-  const actions=[...form.querySelectorAll('button:not(.reveal)')];
+  const actions=[...form.querySelectorAll('button:not(.reveal)')].filter(action=>!action.disabled&&action!==submitted);
   for(const action of actions)action.disabled=true;
+  submitted?.setAttribute('aria-disabled','true');
   main.setAttribute('aria-busy','true');
   announce('Working on that step\u2026');
   try{
@@ -324,10 +332,18 @@ const mutate=async(path,payload,form,{control,address,confirm}={})=>{
       }
     }
     const reached=e.status===502;
-    error(form,code,typeof control==='function'?control(code,reached):control,reached?address:undefined)
+    const target=typeof control==='function'?control(code,reached):control;
+    const node=error(form,code,target,reached?address:undefined);
+    if(!target&&submitted){
+      (submitted.closest('.actions')||submitted).after(node);
+      // Bring the button in first, then its alert, so both end up on screen together.
+      submitted.scrollIntoView?.({block:'nearest'});
+      node.scrollIntoView?.({block:'nearest'})
+    }
   }finally{
     mutating=false;
     main.setAttribute('aria-busy','false');
+    submitted?.removeAttribute('aria-disabled');
     for(const action of actions)if(action.isConnected)action.disabled=false
   }
 };
@@ -520,11 +536,13 @@ const renderConnect=()=>{
   endpoint.placeholder='https://audiobookshelf.example:443';
   const key=input('key','password');
   key.autocomplete='off';
-  form.append(field('Audiobookshelf address',endpoint),secretField('Audiobookshelf API key',key,'the Audiobookshelf API key'),button('Verify and continue',true));
+  const verify=button('Verify and continue',true);
+  form.append(field('Audiobookshelf address',endpoint),secretField('Audiobookshelf API key',key,'the Audiobookshelf API key'),verify);
   form.noValidate=true;
   const addressCodes=['invalid_endpoint','invalid_origin','name_resolution','refused','tls','timeout','redirect','malformed','oversize'];
   form.addEventListener('submit',event=>{
     event.preventDefault();
+    if(mutating)return;
     const address=endpoint.value.trim();
     if(address!==endpoint.value)endpoint.value=address;
     if(!address||!endpoint.checkValidity()||!bareOrigin(address)){
@@ -535,7 +553,7 @@ const renderConnect=()=>{
       error(form,'invalid_secret',key);
       return
     }
-    mutate('/api/setup/connect',{expected_revision:state.revision,name:'primary',endpoint:address,key:key.value},form,{control:(code,reached)=>code==='unauthorized'?key:reached||addressCodes.includes(code)?endpoint:null,address,confirm:()=>[`Connected to Audiobookshelf at ${originOf(address)||'that address'}.`]})
+    mutate('/api/setup/connect',{expected_revision:state.revision,name:'primary',endpoint:address,key:key.value},form,{control:(code,reached)=>code==='unauthorized'?key:reached||addressCodes.includes(code)?endpoint:null,address,submitted:verify,confirm:()=>[`Connected to Audiobookshelf at ${originOf(address)||'that address'}.`]})
   });
   section.append(form);
   endpoint.focus()
@@ -619,14 +637,16 @@ const renderProviders=async()=>{
   const recorded=chosen=>()=>[chosen.length?`Providers recorded: ${chosen.join(', ')}.`:'No providers recorded. You can add them later in Settings.'];
   const actions=document.createElement('div');
   actions.className='actions';
-  actions.append(button('Continue',true));
+  const next=button('Continue',true);
+  actions.append(next);
   const skip=button('Skip providers');
   skip.type='button';
-  skip.addEventListener('click',()=>mutate('/api/setup/providers',{expected_revision:state.revision,providers:[]},form,{confirm:recorded([])}));
+  skip.addEventListener('click',()=>mutate('/api/setup/providers',{expected_revision:state.revision,providers:[]},form,{submitted:skip,confirm:recorded([])}));
   actions.append(skip);
   form.append(actions);
   form.addEventListener('submit',event=>{
     event.preventDefault();
+    if(mutating)return;
     const invalidProvider=rows.find(row=>row.enabled.checked&&((row.email&&emailInvalid(row.email))||(row.key&&((settingsProviderKeyRequired(row.adapter)&&!settingsSecretValid(row.key.value))||(row.key.value&&!settingsSecretValid(row.key.value))))));
     if(invalidProvider){
       const control=invalidProvider.email&&emailInvalid(invalidProvider.email)?invalidProvider.email:invalidProvider.key;
@@ -635,7 +655,7 @@ const renderProviders=async()=>{
     }
     const chosen=rows.filter(row=>row.enabled.checked);
     const providers=chosen.map(row=>({name:row.name,adapter:row.adapter,enabled:true,cover_enabled:row.adapter==='inventaire',contact_email:row.email?.value||null,key:row.key?.value||null}));
-    mutate('/api/setup/providers',{expected_revision:state.revision,providers},form,{confirm:recorded(chosen.map(row=>row.label))})
+    mutate('/api/setup/providers',{expected_revision:state.revision,providers},form,{submitted:next,confirm:recorded(chosen.map(row=>row.label))})
   });
   section.append(form);
   // Not awaited, so the step is ready (and focused) before the read returns.
@@ -711,9 +731,11 @@ const renderLibraries=async()=>{
       row.dataset.name=stableName;
       form.append(row)
     }
-    form.append(button('Continue',true));
+    const next=button('Continue',true);
+    form.append(next);
     form.addEventListener('submit',event=>{
       event.preventDefault();
+      if(mutating)return;
       const selected=[...form.querySelectorAll('.option')].filter(row=>row.querySelector('input[type=checkbox]').checked);
       if(!selected.length){
         error(form,'invalid_libraries');
@@ -745,7 +767,7 @@ const renderLibraries=async()=>{
         seen.set(key,control)
       }
       const libraries=selected.map(row=>({display_name:row.querySelector('input[name^=display-]').value,name:row.dataset.name,library_id:row.dataset.id,media_kind:'book',provider_connections:state.providers.filter(value=>value.enabled).map(value=>value.name)}));
-      mutate('/api/setup/libraries',{expected_revision:state.revision,libraries},form,{confirm:()=>[`Libraries recorded: ${libraries.map(value=>value.display_name).join(', ')}.`]})
+      mutate('/api/setup/libraries',{expected_revision:state.revision,libraries},form,{submitted:next,confirm:()=>[`Libraries recorded: ${libraries.map(value=>value.display_name).join(', ')}.`]})
     })
   }catch(e){
     loading.textContent=recovery(refusal(e),e.status===502?state.connection?.endpoint:undefined);
@@ -801,9 +823,11 @@ const renderMounts=async()=>{
     path.placeholder=library.media_kind==='audiobook'?'Optional for audiobook libraries':'/service/path/to/books';
     form.append(field(`${shown(library)} service path`,path))
   }
-  form.append(button(state.mounts.length?'Retest mounts':'Check mounts',true));
+  const check=button(state.mounts.length?'Retest mounts':'Check mounts',true);
+  form.append(check);
   form.addEventListener('submit',event=>{
     event.preventDefault();
+    if(mutating)return;
     const service_paths={};
     const draft={};
     for(const library of state.libraries){
@@ -815,7 +839,7 @@ const renderMounts=async()=>{
     mountDraft=draft;
     // Said on the next card only once every mount matched; a retest stays here.
     const found=()=>state.next_step==='mounts'?[]:state.libraries.filter(library=>library.mount).map(library=>`${shown(library)}: found ${service_paths[library.name]||discovered.find(item=>item.library_id===library.library_id)?.service_path||'its reported folders'} on read-only mount ${library.mount}.`);
-    mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form,{confirm:found})
+    mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form,{submitted:check,confirm:found})
   });
   section.append(form)
 };
@@ -921,7 +945,7 @@ const renderPreparation=(host,visible)=>{
   };
   let access;try{access=await api('/api/setup/reviewer-access')}catch(e){failed(e);return}
   const current=document.createElement('p');current.textContent=`Current cover selection: ${access.mapping?.engine==='openrouter'?`OpenRouter — ${access.mapping.model==='openai/gpt-6-luna'?'GPT-6 Luna':access.mapping.model}`:access.mapping?.engine==='codex'?`Contained Codex — ${access.codex.model||'model unavailable'}`:'No reviewer'}`;form.append(current);
-  const skip=button('Continue without a reviewer');skip.type='button';skip.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'skipped'},form,{confirm:()=>['Cover reviewer recorded: none. You can choose one later in Settings.']}));form.append(skip);
+  const skip=button('Continue without a reviewer');skip.type='button';skip.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'skipped'},form,{submitted:skip,confirm:()=>['Cover reviewer recorded: none. You can choose one later in Settings.']}));form.append(skip);
   const codex=document.createElement('div');codex.className='option';
   const heading=document.createElement('h3');heading.textContent='Contained Codex';
   const modelName=document.createElement('p');modelName.textContent=`Model: ${access.codex.model||'Unavailable until provisioning is corrected'}`;
@@ -940,7 +964,7 @@ const renderPreparation=(host,visible)=>{
   // Only a press moves focus to Cancel; resuming on page load leaves it.
   const follow=async focus=>{
     const cancel=button('Cancel sign-in');cancel.type='button';
-    cancel.addEventListener('click',async()=>{if(cancel.disabled)return;cancel.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()}catch(e){cancel.disabled=false;failed(e,null,cancel)}});codex.append(cancel);if(focus)cancel.focus();
+    cancel.addEventListener('click',async()=>{if(cancel.getAttribute('aria-disabled')==='true')return;cancel.setAttribute('aria-disabled','true');try{codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()}catch(e){cancel.removeAttribute('aria-disabled');failed(e,null,cancel)}});codex.append(cancel);if(focus)cancel.focus();
     try{let device;do{device=await api('/api/setup/reviewer/codex/device');if(!section.isConnected)return;line.textContent=`Status: ${codexWords[device.state]||device.state.replaceAll('_',' ')}`;
       let prompt=codex.querySelector('[data-device-prompt]');if(device.verification_url&&device.user_code&&prompt?.dataset.code!==device.user_code){if(!prompt){prompt=document.createElement('div');prompt.dataset.devicePrompt='true';codex.append(prompt)}prompt.dataset.code=device.user_code;const lead=document.createElement('p');const link=document.createElement('a');link.href=device.verification_url;link.target='_blank';link.rel='noreferrer';link.textContent='Open the device sign-in page';lead.append(link,document.createTextNode(' in a new tab and enter this code:'));const row=document.createElement('p');row.className='device-code-row';const code=document.createElement('code');code.className='device-code';code.textContent=device.user_code;const copy=document.createElement('button');copy.type='button';copy.textContent='Copy code';const copied=document.createElement('span');copied.setAttribute('role','status');copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(device.user_code);copied.textContent='Copied.'}catch{const range=document.createRange();range.selectNodeContents(code);getSelection()?.removeAllRanges();getSelection()?.addRange(range);copied.textContent='Code selected. Press Ctrl+C or Command+C to copy it.'}});row.append(code,copy,copied);prompt.replaceChildren(lead,row)}
       if(active(device.state))await new Promise(resolve=>setTimeout(resolve,1000));
@@ -948,15 +972,15 @@ const renderPreparation=(host,visible)=>{
   };
   if(active(access.codex.state)){void follow()}
   else if(codexState.state==='usable'||codexState.state==='configured'){
-    const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.disabled)return;use.disabled=true;try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){
+    const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.getAttribute('aria-disabled')==='true')return;use.setAttribute('aria-disabled','true');try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){
       // The server recorded the refused sign-in; read it again, then say so above the fresh option's first control (#1617).
       if(refusal(e)==='credential_unavailable'){codexTerminal=null;await render();const fresh=main.querySelector('form');const first=fresh?.querySelector('.option button');if(first)first.before(error(fresh,'credential_unavailable'));return}
-      use.disabled=false;failed(e,null,use)}});codex.append(use);
+      use.removeAttribute('aria-disabled');failed(e,null,use)}});codex.append(use);
   }else{
     const check=button('Check existing sign-in');check.type='button';check.disabled=blocked;
-    check.addEventListener('click',async()=>{if(check.disabled)return;check.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.disabled=blocked;failed(e,null,check)}});
+    check.addEventListener('click',async()=>{if(check.disabled||check.getAttribute('aria-disabled')==='true')return;check.setAttribute('aria-disabled','true');try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.removeAttribute('aria-disabled');failed(e,null,check)}});
     const start=button(['expired','failed','cancelled','interrupted'].includes(codexState.state)?'Restart device sign-in':'Start device sign-in');start.type='button';start.disabled=blocked;
-    start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();codex.querySelector('.error')?.remove();await follow(true)}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e,null,start)}});codex.append(check,start);
+    start.addEventListener('click',async()=>{if(start.disabled||start.getAttribute('aria-disabled')==='true')return;start.setAttribute('aria-disabled','true');check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();codex.querySelector('.error')?.remove();await follow(true)}catch(e){start.removeAttribute('aria-disabled');check.disabled=blocked;failed(e,null,start)}});codex.append(check,start);
   }
   if(blocked){
     const cancel=button('Cancel any active sign-in');cancel.type='button';
@@ -979,14 +1003,14 @@ const renderPreparation=(host,visible)=>{
   }
   const key=input('reviewer-key','password');key.autocomplete='new-password';key.maxLength=2048;
   const save=button('Validate and use OpenRouter');save.type='button';
-  save.addEventListener('click',async()=>{if(save.disabled)return;save.disabled=true;save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await render();announce('OpenRouter validated and saved. Review the prices, then continue.')}catch(e){key.value='';save.disabled=false;save.textContent='Validate and use OpenRouter';failed(e,['model_unavailable','model_text_only'].includes(refusal(e))?model:key,save)}});
+  save.addEventListener('click',async()=>{if(save.getAttribute('aria-disabled')==='true')return;save.setAttribute('aria-disabled','true');save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await render();announce('OpenRouter validated and saved. Review the prices, then continue.')}catch(e){key.value='';save.removeAttribute('aria-disabled');save.textContent='Validate and use OpenRouter';failed(e,['model_unavailable','model_text_only'].includes(refusal(e))?model:key,save)}});
   const disclosure=document.createElement('div');disclosure.setAttribute('aria-live','polite');
   const showPrices=()=>{disclosure.replaceChildren();const observed=document.createElement('p');const prices=access.cover_metadata?.model===model.value?access.cover_metadata:null;observed.textContent=prices?`Observed USD rates: ${prices.prompt_price??'Unavailable'} per input token; ${prices.completion_price??'Unavailable'} per output token; ${prices.image_price??'Unavailable'} per image; ${prices.request_price??'Unavailable'} per request.`:'Validate and save this model to observe its prices.';const estimate=document.createElement('p');const measured=access.cost_evidence.models.find(row=>row.model===model.value&&row.task==='cover');estimate.textContent=measured?`About $${Number(measured.per_1000_usd).toLocaleString('en-US',{maximumSignificantDigits:4})} per 1,000 cover review requests (estimate).`:'Request cost: not measured for this model.';const packet=document.createElement('p');packet.textContent='One cover request is one work packet, which may contain several images.';disclosure.append(observed,estimate,packet)};
   model.addEventListener('input',showPrices);showPrices();
   // Limits, data use and the shared key are reference detail, read on demand.
   const about=document.createElement('details');about.className='reviewer-detail';const aboutSummary=document.createElement('summary');aboutSummary.textContent='OpenRouter limits, data use and key sharing';about.append(aboutSummary,freeCaveat,caveat,shared);
   router.append(routerHeading,recommendation,field('Model ID',model),field('API key (write-only)',key),save,disclosure,about);form.append(router);
-  if(access.mapping){const next=button('Continue with this reviewer',true);next.type='button';next.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form,{confirm:()=>[`Cover reviewer recorded: ${current.textContent.replace('Current cover selection: ','')}.`]}));form.append(next)}
+  if(access.mapping){const next=button('Continue with this reviewer',true);next.type='button';next.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form,{submitted:next,confirm:()=>[`Cover reviewer recorded: ${current.textContent.replace('Current cover selection: ','')}.`]}));form.append(next)}
 };
 const renderKickoff=async()=>{
   const section=card('Kick off preparation','Check what preparation will use, then start it. Preparation will begin in the workspace.');

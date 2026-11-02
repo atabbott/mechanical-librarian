@@ -44,12 +44,13 @@ contract families are listed in
 [application service contracts](service-port-contracts.md).
 
 Bootstrap holds wiring and entry points, plus a pinned residual of older
-behaviour. The bootstrap ratchet fails unless every growth
-in it (module size, def count, a residual span, a new behaviour-bearing class,
-a def over 60 lines, a new module) is an edit to the ratchet's constants in
-the same pull request, and stops composition once it has grown past its review band
-since the owner's last review. The test makes growth visible; whether a raise is
-acceptable is decided in review under the rule in
+behaviour; the ratchet lists each residual key with the reason it stays. The
+bootstrap ratchet fails unless every growth in it (module size, def count, a
+residual span, a new behaviour-bearing class, a def over 60 lines, a new
+module) is an edit to the ratchet's constants in the same pull request, and
+stops composition once it has grown past its review band since the owner's
+last review. The test makes growth visible; whether a raise is acceptable is
+decided in review under the rule in
 [AGENTS.md](../../AGENTS.md#code-economy).
 
 Provider adapters parse and validate hostile records, bind identities and

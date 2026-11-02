@@ -705,6 +705,9 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
    choices line up on the same edges throughout Settings. */
 .settings-field-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(13rem,22rem); align-items:start; gap:.6rem 1.5rem; min-width:0; padding:.8rem 1.25rem; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
 .settings-field-row.is-changed { background:var(--notice-soft); }
+/* Room for Try again's focus ring inside the clipped sheet (#1663). Before the
+   narrow-sheet query below, so its inline padding wins there. */
+.settings-reviewer-unavailable { padding:.8rem 1.25rem; }
 .settings-field-row > div { min-width:0; }
 .settings-field-title { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem; }
 .settings-field-row strong,.settings-field-row p,.settings-field-control span { overflow-wrap:anywhere; }
@@ -810,7 +813,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .settings-sheet { container:settings-sheet / inline-size; }
 @container settings-sheet (max-width:27rem) {
   .settings-field-row { grid-template-columns:minmax(0,1fr); }
-  .settings-field-row,.settings-sheet > header,.settings-record > h3,.settings-record-meta,.settings-immediate { padding-inline:.85rem; }
+  .settings-field-row,.settings-sheet > header,.settings-record > h3,.settings-record-meta,.settings-immediate,.settings-reviewer-unavailable { padding-inline:.85rem; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-property:none!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
 /* Variant M workspace: regular widths keep work, decision and attention in one operating surface. */

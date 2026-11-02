@@ -62,42 +62,65 @@ ENTRY_POINTS = {
 }
 CEILING = {
     "__init__.py": 8,
-    "composition.py": 3402,
+    "composition.py": 3204,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
 DEF_COUNT = {
     "__init__.py": 1,
-    "composition.py": 141,
+    "composition.py": 111,
     "contained_reviewer.py": 5,
 }
 # Set to the measured size only by an owner review; lowered by a refactor
 # stage's own net change; raised only on the owner's instruction.
-REVIEWED_NCNC = 3395
+REVIEWED_NCNC = 3197
 REVIEW_BAND = 300
 REVIEWED_MODULE = "composition.py"
 _C = "composition.py::"
-# Outermost keys carry their span; keys nested inside another key carry None
-# (their growth shows in the outermost span).
+# The residual the composition-root refactor (stages 1-5, through #1682)
+# left. Each key stays in bootstrap for the reason beside it; a later change
+# that moves one out deletes its key. Outermost keys carry their span; keys
+# nested inside another key carry None (their growth shows in the outermost
+# span).
 RESIDUAL: dict[str, int | None] = {
+    # Builds a store generation at setup completion or a Settings change and
+    # swaps it in; it calls compose_store_runtime_generation, so it stays here.
     _C + "_StoreRuntimeActivation": 118,
+    # Builds each configured library's Audiobookshelf target, capability
+    # observer and guarded application from adapters: construction only.
     _C + "compose_continuous_guarded_application": 84,
+    # Report composer shared by the CLI, run_batch and the review pipeline;
+    # builds the target reader, artifact store and provider adapters per call.
     _C + "run_metadata_report_loaded": 179,
+    # Chooses an adapter class per provider configuration; needs the adapters.
     _C + "_metadata_provider": 98,
+    # Binds adapter-typed callbacks (SQLite repositories, Audiobookshelf reader)
+    # into ReviewPipelineStages; the stage logic moved to application in stage 4.
     _C + "create_review_pipeline": 194,
+    # Wires recovery to the built pipeline; catches an adapter error type.
     _C + "_provider_recovery_wiring": 95,
+    # CLI entries: each opens its own stores and adapters for one command and
+    # shapes the result for the CLI (the CLI projections A-U4 kept).
+    # run_batch also checks its manifest against configuration and catalogue.
     _C + "run_catalogue": 70,
     _C + "run_batch": 125,
+    _C + "run_cover_review": 104,
+    # Build the whole store and setup runtimes from adapters (wiring kept by
+    # A-U4); a feature split of composition is A-U6, deferred to stage 7.
     _C + "compose_store_runtime_generation": 237,
     _C + "_compose_setup_runtime_generation": 145,
+    # Server entry. Its file-authority branch still duplicates
+    # compose_store_runtime_generation: the residual A-U4 kept.
     _C + "run_review_server": 350,
-    _C + "_UnavailableCodexAuth": 18,
-    _C + "_LazyCodexAuth": 126,
-    _C + "_CodexAuthLeaseCoordinator": 90,
+    # Constructs the Codex device-auth manager, which tests replace on
+    # composition, and the reviewer access around it.
     _C + "_compose_reviewer_access": 167,
+    # Opens the cover artifact store and binds the SQLite repository's cover
+    # hooks to CoverConsiderationService; both are adapter calls.
     _C + "_compose_cover_considerations": 74,
+    # Fail-closed session store for run_cover_review, its only user; the
+    # optional move to application was not taken (A-U4).
     _C + "_OfflineSessionStore": 40,
-    _C + "run_cover_review": 104,
 }
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
