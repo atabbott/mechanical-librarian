@@ -2406,6 +2406,10 @@ it.each([
     runSetup()
     const restart = await screen.findByRole('button', { name: 'Restart device sign-in' })
     expect(screen.getByText(remedyCopy)).toBeVisible()
+    // The step focuses its heading on the next frame; press only after that,
+    // as an owner would, so the frame cannot land after the press.
+    const heading = screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })
+    await waitFor(() => expect(heading).toHaveFocus())
     restart.focus()
     fireEvent.click(restart)
     const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
