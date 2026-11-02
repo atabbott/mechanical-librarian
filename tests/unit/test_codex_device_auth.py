@@ -33,6 +33,7 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
 )
+from mechanical_librarian.application.reviewer_contracts import DeviceAuthStatus
 from mechanical_librarian.bootstrap.composition import (
     _CodexAuthLeaseCoordinator,
     _LazyCodexAuth,
@@ -1010,6 +1011,63 @@ def test_overlapping_rechecks_record_the_one_finishing_last(
         assert manager.recheck_credential_status() == outer
     assert depth == 2
     assert manager.status() == outer
+
+
+def test_recheck_failure_during_live_flow_records_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    entered = Event()
+    release = Event()
+    child = _Process(b"", 0)
+    child.returncode = None  # type: ignore[assignment]
+    child.stdout = _BlockingStream(entered, release)  # type: ignore[assignment]
+    manager._popen = lambda *_args, **_kwargs: child  # type: ignore[assignment]
+
+    def terminate(_pid: int, _signal: int) -> None:
+        child.returncode = -15
+
+    monkeypatch.setattr(os, "killpg", terminate)
+    assert manager.start().state == "starting"
+    assert entered.wait(timeout=2)
+    with (
+        patch.object(
+            manager,
+            "_recheck_credential_status",
+            side_effect=CodexDeviceAuthError("lease"),
+        ),
+        pytest.raises(CodexDeviceAuthError, match="lease"),
+    ):
+        manager.recheck_credential_status()
+    assert manager.status().state == "starting"
+    assert manager.cancel().state == "cancelled"
+    release.set()
+    manager.close()
+
+
+@pytest.mark.parametrize("guard", ["quarantined", "trust_failed", "installing"])
+def test_guarded_manager_records_no_recheck(tmp_path: Path, guard: str) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    with manager._lock:
+        setattr(manager, f"_{guard}", True)
+
+    with patch.object(manager, "_recheck_credential_status", return_value=_REFUSED):
+        assert manager.recheck_credential_status() == _REFUSED
+    assert manager.status() == _USABLE
+
+
+@pytest.mark.parametrize("passthrough", ["configured", "expired", "interrupted"])
+def test_recheck_outcome_outside_the_allow_list_is_not_recorded(
+    tmp_path: Path, passthrough: DeviceAuthStatus
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+    outcome = CodexDeviceAuthState(passthrough)
+
+    with patch.object(manager, "_recheck_credential_status", return_value=outcome):
+        assert manager.recheck_credential_status() is outcome
+    assert manager.status() == _USABLE
 
 
 def test_application_reads_report_each_recorded_recheck(tmp_path: Path) -> None:

@@ -218,8 +218,8 @@ brackets are GitHub issues.
 - Settings and setup no longer go on showing Codex as ready to use after
   selecting it, a Codex review or Check finds its sign-in no longer works:
   the next time reviewer access is read they show the sign-in failed and offer
-  to check or restart it. A check that succeeds shows Codex as ready to use
-  again, including after a restart (#1614).
+  to check it again or sign in again. A check that succeeds shows Codex as
+  ready to use again, including after Mechanical Librarian restarts (#1614).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
