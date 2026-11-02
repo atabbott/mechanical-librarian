@@ -300,12 +300,16 @@ const recoveryCopy=code=>({reviewer_unconfigured:'The selected reviewer is no lo
 // `confirm` says what the recorded step found. A field refusal sits after its
 // field, above the button; a refusal about no field sits under the pressed
 // button, or under its row of actions. Only the buttons this press disables are
-// enabled again, so a control that was already unavailable stays so.
+// enabled again, so a control that was already unavailable stays so. The pressed
+// button keeps focus, marked aria-disabled rather than disabled, and `mutating`
+// refuses a repeat press; a submit handler that calls mutate checks `mutating`
+// first, so Enter in a field runs no client check mid-request (#1678).
 const mutate=async(path,payload,form,{control,submitted,address,confirm}={})=>{
   if(mutating)return;
   mutating=true;
-  const actions=[...form.querySelectorAll('button:not(.reveal)')].filter(action=>!action.disabled);
+  const actions=[...form.querySelectorAll('button:not(.reveal)')].filter(action=>!action.disabled&&action!==submitted);
   for(const action of actions)action.disabled=true;
+  submitted?.setAttribute('aria-disabled','true');
   main.setAttribute('aria-busy','true');
   announce('Working on that step\u2026');
   try{
@@ -339,6 +343,7 @@ const mutate=async(path,payload,form,{control,submitted,address,confirm}={})=>{
   }finally{
     mutating=false;
     main.setAttribute('aria-busy','false');
+    submitted?.removeAttribute('aria-disabled');
     for(const action of actions)if(action.isConnected)action.disabled=false
   }
 };
@@ -537,6 +542,7 @@ const renderConnect=()=>{
   const addressCodes=['invalid_endpoint','invalid_origin','name_resolution','refused','tls','timeout','redirect','malformed','oversize'];
   form.addEventListener('submit',event=>{
     event.preventDefault();
+    if(mutating)return;
     const address=endpoint.value.trim();
     if(address!==endpoint.value)endpoint.value=address;
     if(!address||!endpoint.checkValidity()||!bareOrigin(address)){
@@ -640,6 +646,7 @@ const renderProviders=async()=>{
   form.append(actions);
   form.addEventListener('submit',event=>{
     event.preventDefault();
+    if(mutating)return;
     const invalidProvider=rows.find(row=>row.enabled.checked&&((row.email&&emailInvalid(row.email))||(row.key&&((settingsProviderKeyRequired(row.adapter)&&!settingsSecretValid(row.key.value))||(row.key.value&&!settingsSecretValid(row.key.value))))));
     if(invalidProvider){
       const control=invalidProvider.email&&emailInvalid(invalidProvider.email)?invalidProvider.email:invalidProvider.key;
@@ -728,6 +735,7 @@ const renderLibraries=async()=>{
     form.append(next);
     form.addEventListener('submit',event=>{
       event.preventDefault();
+      if(mutating)return;
       const selected=[...form.querySelectorAll('.option')].filter(row=>row.querySelector('input[type=checkbox]').checked);
       if(!selected.length){
         error(form,'invalid_libraries');
@@ -819,6 +827,7 @@ const renderMounts=async()=>{
   form.append(check);
   form.addEventListener('submit',event=>{
     event.preventDefault();
+    if(mutating)return;
     const service_paths={};
     const draft={};
     for(const library of state.libraries){
@@ -955,7 +964,7 @@ const renderPreparation=(host,visible)=>{
   // Only a press moves focus to Cancel; resuming on page load leaves it.
   const follow=async focus=>{
     const cancel=button('Cancel sign-in');cancel.type='button';
-    cancel.addEventListener('click',async()=>{if(cancel.disabled)return;cancel.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()}catch(e){cancel.disabled=false;failed(e,null,cancel)}});codex.append(cancel);if(focus)cancel.focus();
+    cancel.addEventListener('click',async()=>{if(cancel.getAttribute('aria-disabled')==='true')return;cancel.setAttribute('aria-disabled','true');try{codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});await render()}catch(e){cancel.removeAttribute('aria-disabled');failed(e,null,cancel)}});codex.append(cancel);if(focus)cancel.focus();
     try{let device;do{device=await api('/api/setup/reviewer/codex/device');if(!section.isConnected)return;line.textContent=`Status: ${codexWords[device.state]||device.state.replaceAll('_',' ')}`;
       let prompt=codex.querySelector('[data-device-prompt]');if(device.verification_url&&device.user_code&&prompt?.dataset.code!==device.user_code){if(!prompt){prompt=document.createElement('div');prompt.dataset.devicePrompt='true';codex.append(prompt)}prompt.dataset.code=device.user_code;const lead=document.createElement('p');const link=document.createElement('a');link.href=device.verification_url;link.target='_blank';link.rel='noreferrer';link.textContent='Open the device sign-in page';lead.append(link,document.createTextNode(' in a new tab and enter this code:'));const row=document.createElement('p');row.className='device-code-row';const code=document.createElement('code');code.className='device-code';code.textContent=device.user_code;const copy=document.createElement('button');copy.type='button';copy.textContent='Copy code';const copied=document.createElement('span');copied.setAttribute('role','status');copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(device.user_code);copied.textContent='Copied.'}catch{const range=document.createRange();range.selectNodeContents(code);getSelection()?.removeAllRanges();getSelection()?.addRange(range);copied.textContent='Code selected. Press Ctrl+C or Command+C to copy it.'}});row.append(code,copy,copied);prompt.replaceChildren(lead,row)}
       if(active(device.state))await new Promise(resolve=>setTimeout(resolve,1000));
@@ -963,15 +972,15 @@ const renderPreparation=(host,visible)=>{
   };
   if(active(access.codex.state)){void follow()}
   else if(codexState.state==='usable'||codexState.state==='configured'){
-    const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.disabled)return;use.disabled=true;try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){
+    const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.getAttribute('aria-disabled')==='true')return;use.setAttribute('aria-disabled','true');try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){
       // The server recorded the refused sign-in; read it again, then say so above the fresh option's first control (#1617).
       if(refusal(e)==='credential_unavailable'){codexTerminal=null;await render();const fresh=main.querySelector('form');const first=fresh?.querySelector('.option button');if(first)first.before(error(fresh,'credential_unavailable'));return}
-      use.disabled=false;failed(e,null,use)}});codex.append(use);
+      use.removeAttribute('aria-disabled');failed(e,null,use)}});codex.append(use);
   }else{
     const check=button('Check existing sign-in');check.type='button';check.disabled=blocked;
-    check.addEventListener('click',async()=>{if(check.disabled)return;check.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.disabled=blocked;failed(e,null,check)}});
+    check.addEventListener('click',async()=>{if(check.disabled||check.getAttribute('aria-disabled')==='true')return;check.setAttribute('aria-disabled','true');try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.removeAttribute('aria-disabled');failed(e,null,check)}});
     const start=button(['expired','failed','cancelled','interrupted'].includes(codexState.state)?'Restart device sign-in':'Start device sign-in');start.type='button';start.disabled=blocked;
-    start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();codex.querySelector('.error')?.remove();await follow(true)}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e,null,start)}});codex.append(check,start);
+    start.addEventListener('click',async()=>{if(start.disabled||start.getAttribute('aria-disabled')==='true')return;start.setAttribute('aria-disabled','true');check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();codexRemedy.remove();codex.querySelector('.error')?.remove();await follow(true)}catch(e){start.removeAttribute('aria-disabled');check.disabled=blocked;failed(e,null,start)}});codex.append(check,start);
   }
   if(blocked){
     const cancel=button('Cancel any active sign-in');cancel.type='button';
@@ -994,7 +1003,7 @@ const renderPreparation=(host,visible)=>{
   }
   const key=input('reviewer-key','password');key.autocomplete='new-password';key.maxLength=2048;
   const save=button('Validate and use OpenRouter');save.type='button';
-  save.addEventListener('click',async()=>{if(save.disabled)return;save.disabled=true;save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await render();announce('OpenRouter validated and saved. Review the prices, then continue.')}catch(e){key.value='';save.disabled=false;save.textContent='Validate and use OpenRouter';failed(e,['model_unavailable','model_text_only'].includes(refusal(e))?model:key,save)}});
+  save.addEventListener('click',async()=>{if(save.getAttribute('aria-disabled')==='true')return;save.setAttribute('aria-disabled','true');save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await render();announce('OpenRouter validated and saved. Review the prices, then continue.')}catch(e){key.value='';save.removeAttribute('aria-disabled');save.textContent='Validate and use OpenRouter';failed(e,['model_unavailable','model_text_only'].includes(refusal(e))?model:key,save)}});
   const disclosure=document.createElement('div');disclosure.setAttribute('aria-live','polite');
   const showPrices=()=>{disclosure.replaceChildren();const observed=document.createElement('p');const prices=access.cover_metadata?.model===model.value?access.cover_metadata:null;observed.textContent=prices?`Observed USD rates: ${prices.prompt_price??'Unavailable'} per input token; ${prices.completion_price??'Unavailable'} per output token; ${prices.image_price??'Unavailable'} per image; ${prices.request_price??'Unavailable'} per request.`:'Validate and save this model to observe its prices.';const estimate=document.createElement('p');const measured=access.cost_evidence.models.find(row=>row.model===model.value&&row.task==='cover');estimate.textContent=measured?`About $${Number(measured.per_1000_usd).toLocaleString('en-US',{maximumSignificantDigits:4})} per 1,000 cover review requests (estimate).`:'Request cost: not measured for this model.';const packet=document.createElement('p');packet.textContent='One cover request is one work packet, which may contain several images.';disclosure.append(observed,estimate,packet)};
   model.addEventListener('input',showPrices);showPrices();

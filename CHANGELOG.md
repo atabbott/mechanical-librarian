@@ -297,6 +297,10 @@ brackets are GitHub issues.
   keyboard focus while they run. A refused Check of the Codex sign-in shows
   one message instead of two, and Try again's focus ring is no longer cut
   off (#1663).
+- In setup, Use Codex, Check existing sign-in, Start or Restart device
+  sign-in, Cancel sign-in, Validate and use OpenRouter, and each step's
+  Verify and continue, Continue, Skip providers and Check mounts button keep
+  keyboard focus while they run, instead of dropping it to the page (#1678).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
