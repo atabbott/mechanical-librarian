@@ -62,8 +62,9 @@ option while the field is Automatic visibly changes it to Ask me.
 ### Posture and safety controls
 
 The global posture is Review, Preview or Automatic. Automatic decisions are
-recorded only in the Automatic posture. Preview records what policy would do
-without deciding, so an owner can start there and confirm Automatic later.
+recorded only in the Automatic posture, and write only there. Preview records
+what policy would do without deciding or writing, so an owner can start there
+and confirm Automatic later.
 
 Automatic fails closed. While the owner has paused automation, or a global or
 category suspension is active, would-be automatic work stays in Attention for

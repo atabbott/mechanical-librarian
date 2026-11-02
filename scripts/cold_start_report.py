@@ -3,7 +3,7 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v5`` JSON document to stdout.
+prints one ``cold-start-report-v6`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -65,6 +65,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_COVER_ATTENTION_AUTHORITY_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _NOT_MATCHED_REASON_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_CLEAR_SQL,
@@ -107,7 +108,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v5"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v6"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -120,13 +121,18 @@ _ATTENTION_FIELD_ROWS_SQL = (
     "WHERE shadow.review_case_id=rc.review_case_id "
     "AND json_extract(outcome.value,'$.destination')="
     "result.destination "
-    "AND json_extract(outcome.value,'$.disposition')='abstention' LIMIT 1) "
+    "AND json_extract(outcome.value,'$.disposition')='abstention' LIMIT 1),"
+    "rc.review_case_id,"
+    "CASE WHEN json_extract(mr.document,'$.audio') IS NULL "
+    "THEN 'ebook' ELSE 'audiobook' END "
     + _CURRENT_REVIEW_FROM_SQL
     + " JOIN review_case_field_facts result "
     "ON result.review_case_id=rc.review_case_id,"
     "json_each(rc.document,'$.results') canonical_result WHERE "
     "json_extract(canonical_result.value,'$.destination')=result.destination AND "
     + _REVIEW_FIELD_ATTENTION_SQL
+    # The product never shows these on an EPUB, so they are not attention.
+    + _EPUB_INAPPLICABLE_ATTENTION_SQL
 )
 # The same field and work attention read on the persisted cover authority alone,
 # which needs no live policy or replay reference, so it is available for every
@@ -418,7 +424,7 @@ def _attention_field_rows(
                     for item in cast("list[object]", loaded)
                     if isinstance(item, str)
                 )
-        rows.append((row[0], row[1], row[2], row[3], parsed, row[5]))
+        rows.append((row[0], row[1], row[2], row[3], parsed, row[5], row[6], row[7]))
     return rows
 
 
@@ -1161,7 +1167,7 @@ def _attention_counts(
 ) -> dict[tuple[object, object], dict[str, object]]:
     """Count attention field rows per library by destination, cause and class."""
     buckets: dict[tuple[object, object], dict[str, Counter[str]]] = {}
-    for connection_name, library_name, destination, _, reasons, shadow in rows:
+    for connection_name, library_name, destination, _, reasons, shadow, *_ in rows:
         reason_tuple = cast("tuple[str, ...]", reasons)
         if isinstance(shadow, str) and shadow:
             cause = shadow
@@ -1189,6 +1195,56 @@ def _attention_counts(
 
 
 _NO_ATTENTION = {"total": 0, "by_destination": {}, "by_cause": {}, "by_class": {}}
+_MEDIA = ("audiobook", "ebook")
+
+
+def _per_case(fields: Counter[object]) -> dict[str, object]:
+    total = sum(fields.values())
+    return {
+        "cases": len(fields),
+        "fields": total,
+        "fields_per_case": round(total / len(fields), 2) if fields else None,
+    }
+
+
+def _attention_per_case(
+    rows: list[tuple[object, ...]],
+) -> dict[tuple[object, object], dict[str, object]]:
+    """Attention fields per case, by medium, with and without covers (#1310).
+
+    A case is one current review case with at least one attention field. With
+    covers excluded, a case whose only attention field is its cover is no case.
+    """
+    counts: dict[tuple[object, object], dict[str, dict[str, Counter[object]]]] = {}
+    for row in rows:
+        connection_name, library_name, destination = row[0], row[1], row[2]
+        case, medium = row[6], cast("str", row[7])
+        by_medium = counts.setdefault(
+            (connection_name, library_name),
+            {
+                name: {"with_covers": Counter(), "without_covers": Counter()}
+                for name in _MEDIA
+            },
+        )
+        by_medium[medium]["with_covers"][case] += 1
+        if destination != "cover":
+            by_medium[medium]["without_covers"][case] += 1
+    return {
+        key: {
+            medium: {basis: _per_case(fields) for basis, fields in bases.items()}
+            for medium, bases in by_medium.items()
+        }
+        for key, by_medium in counts.items()
+    }
+
+
+_NO_CASES = {
+    medium: {
+        basis: {"cases": 0, "fields": 0, "fields_per_case": None}
+        for basis in ("with_covers", "without_covers")
+    }
+    for medium in _MEDIA
+}
 
 
 def _stage_timings(values: tuple[StageTiming, ...]) -> dict[str, object]:
@@ -1239,7 +1295,7 @@ def assemble_cold_start_report(
     stage_timings: tuple[StageTiming, ...] | None = None,
     recovery: dict[str, list[tuple[object, ...]]] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v5`` document from persisted aggregates.
+    """Build the ``cold-start-report-v6`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
@@ -1303,6 +1359,10 @@ def assemble_cold_start_report(
     )
     stored_covers = Counter(
         (row[0], row[1]) for row in stored_rows if row[2] == "cover"
+    )
+    stored_per_case = _attention_per_case(stored_rows)
+    live_per_case = _attention_per_case(
+        cast("list[tuple[object, ...]]", snapshot["attention_fields"])
     )
     stored_works = {
         (row[0], row[1]): int(cast("int", row[2]) or 0)
@@ -1472,11 +1532,15 @@ def assemble_cold_start_report(
                 if attention_unavailable
                 else attention_by_library.get(key, _NO_ATTENTION),
                 "attention_unavailable_reason": attention_unavailable_reason,
+                "attention_per_case": None
+                if attention_unavailable
+                else live_per_case.get(key, _NO_CASES),
                 "attention_stored_basis": {
                     "basis": "stored_cover_authority",
                     "non_cover_fields": stored_attention.get(key, _NO_ATTENTION),
                     "cover_fields_with_owner_actions": stored_covers[key],
                     "works": stored_works.get(key, 0),
+                    "per_case": stored_per_case.get(key, _NO_CASES),
                 },
                 "providers": provider_rows,
                 "works_without_provider_candidates": unmatched.get(key, 0),

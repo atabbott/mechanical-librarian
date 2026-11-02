@@ -1291,8 +1291,8 @@ def test_reviewer_access_route_answers_when_an_existing_codex_status_fails(
         assert response.status_code == 200, response.text
         codex = response.json()["codex"]
         assert codex["engine"] == "codex"
-        assert codex["state"] == "ready"
-        assert codex["reason"] is None
+        assert codex["state"] == "failed"
+        assert codex["reason"] == "permission_or_profile"
         assert str(tmp_path) not in response.text
         assert managers[0].status_calls == 2
     finally:

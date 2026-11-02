@@ -31,7 +31,8 @@ Use one closed diagnostic value at application boundaries. It contains only:
 
 The closed categories are `setup_configuration`, `authentication`,
 `lookup_construction`, `provider_declared_error`, `http_non_success`,
-`quota_rate_limit`, `empty_no_match`, `malformed_over_bound_response`,
+`quota_rate_limit`, `empty_no_match`, `region_unavailable`,
+`malformed_over_bound_response`,
 `schema_construction`, `live_schema_rejection`, `spawn_runtime`, `transport`,
 `timeout`, `cancellation`, `malformed_output`, `citation_membership`,
 `identity`, `currentness`, `persistence`, `adapter_fault`, and `unknown`.
@@ -165,7 +166,10 @@ and its category reaches the provider aggregate only when an attempt names it,
 as the shared session and Hardcover do. An
 adapter may name an ordinary lookup miss `not_found`, which maps to
 `empty_no_match` and is never a `provider_request_failed` event. AudioSilo
-names its 404s that way.
+names its 404s that way. Audnexus names a recording missing from one region
+`region_unavailable`, which maps to the value-free `region_unavailable`
+category at the response stage instead of `unknown` (#1309,
+`metadata-report-v67`).
 
 The report discriminator advances to `metadata-report-v59`. **Clean rebuild
 required** under ADR-0013: a v58 report can name the removed category, and there

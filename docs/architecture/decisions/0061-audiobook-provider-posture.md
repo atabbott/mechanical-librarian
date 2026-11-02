@@ -213,6 +213,23 @@ unavailable on 80 of 238 items. Excluding all three also removes the
 second audiobook cover authority; [ADR-0064](0064-audiobook-provider-evidence-vocabularies.md)
 records that consequence.
 
+**Clause 9 amendment (#1309).** Two members of the set send only what can carry
+data. Open Library asks an audiobook work lane one rung, the first of
+`work_query_ladder(..., audiobook=True)`, and sends no narrowing retry after a
+candidate-limit overflow: on #1294's 237 audiobooks every Open Library
+admission sat on the first rung and no narrowing retry admitted anything.
+AudioSilo is dispatched last in each audiobook pass, and only when no Audible
+catalog or Audnexus observation in that pass (the ASIN feed counts phase one's
+Audible answer) admitted a recording by stated runtime. Otherwise it is
+recorded as `not_needed`: its lanes are `not_dispatched`, it sends no request,
+builds no client and queues no recovery job, and a failed Audible or Audnexus
+never suppresses it. On #1294 this skips 302 AudioSilo dispatches on 119 items,
+each already admitted elsewhere; the values only AudioSilo stated there were
+other-edition ASINs and three series and three narrator statements whose
+fields kept another alternative. Audnexus region misses get their own
+`region_unavailable` diagnostic category instead of `unknown`. The new status
+and category are `metadata-report-v67`, a clean rebuild under ADR-0013.
+
 ## Ebook dispatch set (#1486)
 
 Ebook preparation dispatches only to the connected providers named in

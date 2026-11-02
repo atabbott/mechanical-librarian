@@ -2,7 +2,7 @@
 
 This is the one cohort that executes ffprobe. It builds each container in
 code, writes it into a temporary mount, and drives the same
-``_IsolatedAudioInspector`` the application composes, so the probe child, the
+``IsolatedAudioInspector`` the application composes, so the probe child, the
 interpretation child, the sidecar descriptors, and the path grammar are all
 proved together against bytes rather than against a recorded document.
 
@@ -21,6 +21,9 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.evidence_extractors.isolated_audio import (
+    IsolatedAudioInspector,
+)
 from mechanical_librarian.adapters.evidence_extractors.process import (
     _PROBE_PATHS,
     resolve_probe_path,
@@ -34,7 +37,6 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.review_pipeline import (
     audio_inspection_failure_code,
 )
-from mechanical_librarian.bootstrap.composition import _IsolatedAudioInspector
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
     AudioInspectionOutcome,
@@ -78,13 +80,13 @@ def _track(relative_path: str, ordinal: int = 1) -> TargetFile:
 
 
 def _inspect(root: Path, relative_path: str) -> AudioInspectionResult:
-    return _IsolatedAudioInspector().inspect(
+    return IsolatedAudioInspector().inspect(
         _mount(root), (_track(relative_path),), _MAXIMUM_BYTES
     )
 
 
 def _inspect_set(root: Path, names: tuple[str, ...]) -> AudioInspectionResult:
-    return _IsolatedAudioInspector().inspect(
+    return IsolatedAudioInspector().inspect(
         _mount(root),
         tuple(_track(name, ordinal) for ordinal, name in enumerate(names, 1)),
         _MAXIMUM_BYTES,

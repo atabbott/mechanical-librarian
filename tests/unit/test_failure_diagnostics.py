@@ -163,6 +163,7 @@ def test_category_vocabulary_is_exact_and_closed() -> None:
         "persistence",
         "provider_declared_error",
         "quota_rate_limit",
+        "region_unavailable",
         "schema_construction",
         "setup_configuration",
         "spawn_runtime",
@@ -171,6 +172,19 @@ def test_category_vocabulary_is_exact_and_closed() -> None:
         "unknown",
         "work_identity_refused",
     } == {value.value for value in FailureCategory}
+
+
+def test_an_audnexus_region_miss_is_named_rather_than_unknown() -> None:
+    # The region walk moves on after "not in this marketplace" (#1309).
+    diagnostics = provider_attempt_diagnostics(
+        (_Attempt("region_unavailable", "terminal"),), status="no_match"
+    )
+    assert {FailureCategory.REGION_UNAVAILABLE, FailureCategory.EMPTY_NO_MATCH} == {
+        diagnostic.category for diagnostic in diagnostics
+    }
+    assert FailureCategory.UNKNOWN not in {
+        diagnostic.category for diagnostic in diagnostics
+    }
 
 
 def test_specific_rate_limit_evidence_does_not_gain_a_generic_duplicate() -> None:

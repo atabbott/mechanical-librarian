@@ -116,6 +116,10 @@ event, so the value a write replaced is durable.
   marked written. An earlier episode's decision still keeps a new automatic
   decision off that field of the case, so a recurrence never hands a field the
   owner decided back to automatic handling.
+- Leaving Automatic with the policy unchanged retires and re-admits the same
+  case with nothing about it changed, so that re-admission continues the
+  case's current episode instead of starting a new one: its owner decisions,
+  holds and queued writes stay current.
 - The re-admitted case's own hold row takes the work's latest hold state, a
   release or pending return included. Where that case has no automatic
   decision, a new owner decision there removes its released row, so the

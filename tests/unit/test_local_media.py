@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from mechanical_librarian.infrastructure.local_media import (
+from mechanical_librarian.adapters.evidence_extractors.local_media import (
     LocalMediaError,
     LocalMediaLimitError,
     list_local_media_siblings,
