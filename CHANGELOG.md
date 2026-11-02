@@ -288,6 +288,11 @@ brackets are GitHub issues.
   its message now appears directly under that button instead of at the top
   of the form; a refusal about a field still sits beside that field. A failed
   Continue no longer enables Codex controls a blocked host disables (#1664).
+- In Settings › Reviewer, a failed description adviser command now shows
+  its message directly under the button you pressed, and those buttons keep
+  keyboard focus while they run. A refused Check of the Codex sign-in shows
+  one message instead of two, and Try again's focus ring is no longer cut
+  off (#1663).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
