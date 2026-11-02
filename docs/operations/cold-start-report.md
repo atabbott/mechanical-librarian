@@ -44,7 +44,7 @@ Each library carries these blocks, defined fully in the script's docstrings.
 | `scan` | Latest preparation scan: state, discovered total, timestamps. |
 | `works` | Current, attention, quiet, ready, blocked and absent works. An in-flight `report_only` package counts once its proposals are complete. |
 | `attention_fields` | Attention by destination, exact cause and cause class (conflict, owner_subjective, capability, absence, safety, other). |
-| `attention_per_case` | Attention cases, fields and fields per case, by medium (`audiobook`, `ebook`), with and without covers. |
+| `attention_per_case` | Attention cases, fields and fields per case on the live cover authority, by medium (`audiobook`, `ebook`), with and without covers. |
 | `attention_stored_basis` | Attention read from the cover authority stored with each consideration, with its own `per_case` block. Always present. |
 | `providers` | Lane outcomes per configured provider; `zero_lane` marks one with no lane. |
 | `works_without_provider_candidates` | Works with no candidates from any source. |
@@ -67,14 +67,15 @@ considerations do not trigger this.
 
 ### Attention per case
 
-The measure later attention targets use is fields per case (#1310). A case is
-one current review case with at least one owner-visible attention field; with
-covers excluded, a case whose only attention field is its cover is not
-counted. EPUB narrator and explicit fields are never counted, as the interface
-never shows them. Quote `attention_stored_basis.per_case`: it reads each
-cover's stored authority, so it is available offline and does not move while a
-provider recovery check runs, whereas the interface hides a cover whose
-provider is being checked until the check ends.
+Attention is measured as fields per case. A case is one current review case
+with at least one owner-visible attention field; with covers excluded, a case
+whose only attention field is its cover is not counted. EPUB narrator and
+explicit fields are never counted, as the interface never shows them.
+`attention_per_case` reads the live cover authority and is `null` when that is
+unavailable; `attention_stored_basis.per_case` reads each cover's stored
+authority, so it is always available offline. A cover whose provider is under
+a recovery check can move either figure: a consideration recorded during the
+check stays manually unready until the cover is considered again.
 
 Each `evidence_only` audiobook report has exactly one reason, judged in this
 order from its lanes' runtime bands:
