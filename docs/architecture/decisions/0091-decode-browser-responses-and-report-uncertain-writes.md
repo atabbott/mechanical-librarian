@@ -4,7 +4,8 @@
 - Date: 2026-11-01
 - Owners: project maintainers
 - Issues: #1577 (stage 1), #1571 (client half of uncertain outcomes), #1669
-  (stage 2b, the schema states every single-field check)
+  (stage 2b, the schema states every single-field check), #1684 (stage 3, the
+  decoders replace the hand-written checks)
 - Amends: ADR-0043 (HTTP module and drift), ADR-0044 (build identity delivery)
 - Supersedes: none
 - Superseded by: none
@@ -28,7 +29,11 @@ told:
 1. **Generated decoders.** An in-repository generator emits response decoders
    from the OpenAPI document, with no runtime dependency, and the HTTP module
    decodes every JSON response through them. Generated files are not
-   committed. Delivered in later stages of the same project.
+   committed. Delivered in later stages of the same project, one response
+   family at a time (#1684). A read whose 2xx body fails decoding is a
+   `ResponseDecodeError`: a 502 `invalid_response` that carries the
+   operation, the status, and the decoder's reason and pointer as properties,
+   never in its message.
 2. **Required properties.** Every response property is required except a
    pinned list of omissions. Delivered with the decoders.
 3. **The HTTP module keeps** transport, view mapping, and the checks a schema
@@ -37,7 +42,12 @@ told:
    know is reported as possibly applied, never as refused, and the caller
    reloads the authoritative state. The browser half is #1571's
    `uncertainWriteOutcome` and `PRE_CALL_SERVER_CODES`: a lost
-   acknowledgement, or a 5xx not proven to be raised before the handler ran.
+   acknowledgement, a 5xx not proven to be raised before the handler ran, or
+   a 2xx that fails decoding or a named check. That last is an
+   `UncertainMutationError`, a kind of lost acknowledgement that keeps the
+   decoder's reason and pointer, or `invariant` and the check's code. A
+   side-effect-free command that fails the same way writes nothing and is a
+   `ResponseDecodeError` instead.
    The server half is that no failure after a committed write is answered
    with a 4xx. `tests/unit/test_unsafe_outcome_inventory.py` pins, for every
    unsafe `/api/v1` route, each error status and code and the latest point it
