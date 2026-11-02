@@ -60,6 +60,39 @@
       "enabled": false
     },
     {
+      "description": "Batch minor and patch Python package updates into one pull request",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "Python packages"
+    },
+    {
+      "description": "Batch minor and patch npm package updates into one pull request",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "npm packages"
+    },
+    {
+      "description": "Batch minor and patch workflow action updates into one pull request",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "GitHub Actions"
+    },
+    {
       "description": "Look up the workflow and engines Node pins in the same registry as the image pins, so all see the same releases",
       "matchManagers": [
         "github-actions",
@@ -126,10 +159,7 @@
       "groupName": "npm package manager"
     },
     {
-      "description": "Require approval for a new Node major line",
-      "matchDepNames": [
-        "node"
-      ],
+      "description": "Require approval for every major update",
       "matchUpdateTypes": [
         "major"
       ],
