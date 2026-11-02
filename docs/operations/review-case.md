@@ -205,9 +205,10 @@ generation no longer decides its field.
 A queued write whose authority is withdrawn only for now waits rather than
 going stale: an automatic write waits outside Automatic, and an owner's write
 waits while its case is retired by that reactivation and not yet returned.
-A write waiting for Audiobookshelf to come back closes when its case will not
-return: on a change of policy, and for an automatic write when leaving
-Automatic.
+A write waiting for Audiobookshelf to come back closes when it could never be
+written: on a change of policy, whose case does not return, and for an
+automatic field write when leaving Automatic, whose earlier-generation decision
+no longer decides its field.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still
