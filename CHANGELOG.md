@@ -236,6 +236,12 @@ brackets are GitHub issues.
   not yet written stays decided and is still written. An automatic decision
   recorded before the switch, including a cover or description, writes
   nothing in Preview. No clean rebuild is needed (#1568).
+- After you cancel a Codex device sign-in, or it finishes, expires or fails,
+  Settings › Reviewer shows the outcome and offers to check or restart the
+  sign-in, or to use Codex, without a reload, instead of a lone Cancel
+  sign-in. Starting or cancelling a sign-in keeps keyboard focus on the next
+  control, and setup names each sign-in status in words, with its remedy
+  (#1607).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
