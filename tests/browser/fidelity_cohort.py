@@ -397,6 +397,38 @@ def _field(
     preservation_only: bool | None = None,
     owner_control: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    # The response schema states every projection member; the cohort names
+    # only the ones a view reads. The rest take values no view shows, and an
+    # owner decision with no stated application reports no effect, as the
+    # lenient reader took one with none.
+    if human_decision is not None:
+        human_decision = {
+            "actor": "owner",
+            "application": "recorded_only",
+            "application_reason": None,
+            "decision_id": f"decision-{destination}",
+            "destination": destination,
+            "occurred_at": 1,
+            "proposal_id": f"proposal-{destination}",
+            "review_case_id": "case-1",
+            "selected_value": None,
+            "target_fingerprint": "f" * 64,
+            **human_decision,
+        }
+    if automatic_decision is not None:
+        automatic_decision = {
+            "candidate_id": None,
+            "destination": destination,
+            "occurred_at": 1,
+            "proposal_id": f"proposal-{destination}",
+            "review_case_id": "case-1",
+            "target_fingerprint": "f" * 64,
+            **{
+                key: value
+                for key, value in automatic_decision.items()
+                if key != "origin"
+            },
+        }
     # The installed client fails closed to the exact owner-decision vocabulary.
     # Synthetic cases mirror the domain rule: an owner can retain the incumbent
     # only alongside at least one genuinely different eligible alternative.
@@ -449,7 +481,7 @@ def _field(
             else "primary"
         ),
         "current": {
-            "kind": "synthetic",
+            "destination": destination,
             "state": "missing" if current is None else "value",
             "value": current,
         },
@@ -505,6 +537,11 @@ def _field(
         "corroboration_sources": corroboration_sources or [],
         "owner_control": owner_control,
         "uncertainty": [],
+        # Absent members the lenient reader took as none.
+        "cover_consideration": None,
+        "current_cover_selection_artifact_id": None,
+        "current_cover_selection_id": None,
+        "description_advice": None,
     }
 
 
@@ -525,6 +562,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "media_kind": "m4b",
                 "authors": ["Cedar Moss"],
                 "item": "internal-retired-case",
+                "library_display_name": None,
                 "title": "Retired exact-current case",
             },
             "fields": [],
@@ -719,7 +757,7 @@ def _case(case_id: str) -> dict[str, object]:
         ),
         _field(
             "series",
-            {"name": "Atlas Cycle", "sequence": "2.5"},
+            [{"name": "Atlas Cycle", "sequence": "2.5"}],
             [],
             disposition="ineligible" if current_only else "propose_change",
             needs_attention=False,
@@ -817,6 +855,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "match_state": "same_book",
                                     "observation": None,
                                     "original_sha256": "a" * 64,
+                                    "transport_sha256": "a" * 64,
                                     "ordinal": 0,
                                     "preview_sha256": "b" * 64,
                                     "reference": "cover-ref-current",
@@ -858,6 +897,7 @@ def _case(case_id: str) -> dict[str, object]:
                             "match_state": "same_book",
                             "observation": None,
                             "original_sha256": "c" * 64,
+                            "transport_sha256": "c" * 64,
                             "ordinal": 0 if case_id == "case-3" else 1,
                             "preview_sha256": "d" * 64,
                             "reference": "cover-ref-choice",
@@ -886,6 +926,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "match_state": "match_not_confirmed",
                                     "observation": None,
                                     "original_sha256": "1" * 64,
+                                    "transport_sha256": "1" * 64,
                                     "ordinal": 2,
                                     "preview_sha256": "2" * 64,
                                     "reference": "cover-ref-unconfirmed",
@@ -991,6 +1032,9 @@ def _case(case_id: str) -> dict[str, object]:
                     "ready": True,
                     "reviewer_access_revision": (None if case_id == "case-3" else 7),
                     "reviewer_engine": None if case_id == "case-3" else "codex",
+                    # No closed failure code, as the lenient reader took an
+                    # absent one.
+                    "reviewer_failure_code": None,
                     "reviewer_model": (
                         None if case_id == "case-3" else "contained-reviewer"
                     ),
@@ -1025,6 +1069,7 @@ def _case(case_id: str) -> dict[str, object]:
             "media_kind": work["media_kind"],
             "authors": work["authors"],
             "item": f"internal-{case_id}",
+            "library_display_name": None,
             "title": work["title"],
         },
         "fields": fields,
@@ -1773,6 +1818,8 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 },
                 {
                     "actor": "owner",
+                    "application": None,
+                    "application_reason": None,
                     "decision_id": "decision-owner-internal",
                     "destination": "title",
                     "event_id": "event-owner-internal",
@@ -1832,6 +1879,9 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "next_cursor": None,
                 "items": items,
             }
+        if subview == "successor":
+            # The case is its own successor, as the lenient reader took it.
+            return {"review_case_id": case_id}
         payload = _case(cohort_case_id)
         payload["review_case_id"] = case_id
         return payload

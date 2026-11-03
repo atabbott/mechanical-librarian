@@ -300,7 +300,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     field for field in fields if field["destination"] == "genres"
                 )
                 genres["current"] = {
-                    "kind": "synthetic",
+                    "destination": "genres",
                     "state": "value",
                     "value": ["Updated genre"],
                 }
@@ -325,7 +325,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     **fields[0],
                     "destination": "description",
                     "current": {
-                        "kind": "synthetic",
+                        "destination": "description",
                         "state": "value",
                         "value": description,
                     },

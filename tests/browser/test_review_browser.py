@@ -3234,6 +3234,13 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 "review_case_id": payload["review_case_id"],
                                 "selected_value": selected,
                                 "target_fingerprint": field["target_fingerprint"],
+                                # A cover projection states what it replaced;
+                                # the lenient reader took an absent one as none.
+                                **(
+                                    {"supersedes_decision_id": None}
+                                    if field["destination"] == "cover"
+                                    else {}
+                                ),
                             },
                             classification="automatic_recorded",
                             classification_reason=(
