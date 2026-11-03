@@ -39,7 +39,7 @@ export function ActivityStatusCopy({
   lapse,
   cardLapse,
 }: {
-  connection: NonNullable<PreparationView['connections']>[number] | undefined
+  connection: PreparationView['connections'][number] | undefined
   recoveryCount: number
   dormantRecovery: number
   /** Changes stopped until the owner acts on their ledger entry (#1430). */

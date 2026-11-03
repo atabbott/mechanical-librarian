@@ -293,6 +293,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
+            supersede_retired_waiting_effects=(
+                lambda retired, reactivation, changed_at: (
+                    self._field_effects._supersede_retired_case_waiting_plans(
+                        retired, reactivation, changed_at
+                    )
+                )
+            ),
         )
         self._owner_settings = OwnerSettingsStore(
             connection, self._setup_serialization_lock
@@ -367,6 +374,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda name, library, item, pointer, created_at: (
                     self._recovery_outbox.enqueue(
                         name, library, item, pointer, created_at
+                    )
+                )
+            ),
+            supersede_displaced_waiting_effects=(
+                lambda name, library, item, case_id, changed_at: (
+                    self._field_effects._supersede_displaced_case_waiting_plans(
+                        name, library, item, case_id, changed_at
                     )
                 )
             ),

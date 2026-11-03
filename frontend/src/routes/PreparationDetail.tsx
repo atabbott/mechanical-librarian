@@ -9,8 +9,7 @@ import type { PreparationPresentation } from '../libraryPreparation'
 
 // The run's works as they stand now, in the masthead's words (#1366). The
 // latched passage is first-finish history and is labelled Prepared instead.
-const runOutcomes = (presentation: PreparationPresentation) =>
-  preparationOutcomes(presentation.now ?? null)
+const runOutcomes = (presentation: PreparationPresentation) => preparationOutcomes(presentation.now)
 // What the run is doing now, said in the counts the owner is waiting on rather
 // than in the store's state name. A terminal run states its own outcome here
 // because that is the line a reader looks at first.

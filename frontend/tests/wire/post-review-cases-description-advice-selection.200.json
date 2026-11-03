@@ -841,8 +841,8 @@
                 "selection": "proposed"
               }
             ],
-            "classification": "unsupported",
-            "classification_reason": "There is nothing to decide for this field.",
+            "classification": "owner_choosable",
+            "classification_reason": "Tags are off in your settings, so your tags are left as they are and no review is needed. You can still choose proposed tags.",
             "corroboration_sources": [],
             "cover_consideration": null,
             "current": {
@@ -856,7 +856,7 @@
             "description_advice": null,
             "destination": "tags",
             "deterministic_disposition": "propose_change",
-            "editable": false,
+            "editable": true,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",

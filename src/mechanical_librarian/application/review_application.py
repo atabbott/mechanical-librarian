@@ -1179,14 +1179,21 @@ class ReviewApplication:
         # could not finish, another tab's decision -- reaches it unchanged.
         # This is a correlation token on the command's own response, not state
         # on the stream: the frame contract stays sequence, topic and subject.
+        # A closed channel publishes nothing, so the list can be shorter or
+        # empty; the write is committed either way.
         return {
             **result,
-            "invalidation_sequences": [
-                self._updates.publish("case", review_case_id),
-                self._updates.publish("library", review_case_id),
-                self._updates.publish("activity"),
-            ],
+            "invalidation_sequences": self._announce_decision(review_case_id),
         }
+
+    def _announce_decision(self, review_case_id: str) -> list[int]:
+        """Announce a recorded decision; the positions actually published."""
+        published = (
+            self._updates.publish("case", review_case_id),
+            self._updates.publish("library", review_case_id),
+            self._updates.publish("activity"),
+        )
+        return [sequence for sequence in published if sequence is not None]
 
     def _decision_confirmation(self, review_case_id: str) -> dict[str, object]:
         """Read committed authority without turning a read failure into write failure."""
@@ -1226,11 +1233,7 @@ class ReviewApplication:
             self._field_application.wake()
         return {
             **result,
-            "invalidation_sequences": [
-                self._updates.publish("case", review_case_id),
-                self._updates.publish("library", review_case_id),
-                self._updates.publish("activity"),
-            ],
+            "invalidation_sequences": self._announce_decision(review_case_id),
         }
 
     def cover_image(

@@ -53,6 +53,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _policy_settles_choice_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -273,6 +274,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 settled_choice_destinations=self._settled_choice_destinations(
                     review_case_id
                 ),
+                policy_kept_destinations=self._policy_kept_destinations(review_case_id),
                 automatic_attention_destinations=self._automatic_attention_destinations(
                     review_case_id
                 ),
@@ -724,6 +726,21 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         rows = self._connection.execute(
             "SELECT destination FROM review_case_field_facts "
             "WHERE review_case_id=? AND unresolved_choice=0 ORDER BY destination",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _policy_kept_destinations(self, review_case_id: str) -> tuple[str, ...]:
+        # Read from the policy the case's proposal set was evaluated under, by
+        # the predicate its facts use: a fill's fact cannot say it (#1661).
+        rows = self._connection.execute(
+            "SELECT DISTINCT json_extract(result.value,'$.destination') "
+            "FROM review_cases rc, json_each(rc.document,'$.results') result "
+            "WHERE rc.review_case_id=? AND "
+            + _policy_settles_choice_sql("rc.proposal_set_id")
+            + " ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):

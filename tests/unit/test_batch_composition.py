@@ -971,7 +971,7 @@ def test_retry_factory_refusal_type_and_text(branch):
             _report_config((_provider_for("hardcover"),)),
             None,
             ("us",),
-            composition._ProviderPacers.for_providers(()),
+            composition._provider_pacers(()),
         )
     assert type(raised.value) is ProviderRetrySuccessorError
     assert str(raised.value) == "provider retry configuration changed"
@@ -1005,7 +1005,7 @@ def test_hardcover_with_an_injected_credential_is_constructed_on_both_paths():
             config,
             credentials,
             ("us",),
-            composition._ProviderPacers.for_providers((provider,)),
+            composition._provider_pacers((provider,)),
         )
     file_client.assert_not_called()
     assert [
@@ -1054,3 +1054,166 @@ def test_each_path_passes_its_own_pacer_for_the_adapter(adapter):
             composition._ProviderPacers(*(retry[name] for name in _ADAPTERS)),
         )
     assert [foreground[adapter], retry[adapter]] == received
+
+
+_PACER_CLASSES = {
+    "google_books": "GoogleBooksPacer",
+    "open_library": "OpenLibraryPacer",
+    "inventaire": "InventairePacer",
+    "hardcover": "HardcoverPacer",
+    "audible_catalog": "AudibleCatalogPacer",
+    "audnexus": "AudnexusPacer",
+    "audiosilo": "AudioSiloPacer",
+    "itunes_search": "ITunesSearchPacer",
+}
+
+
+@pytest.mark.parametrize("adapter", _ADAPTERS)
+def test_a_pipeline_paces_each_enabled_adapter_alone(adapter):
+    enabled = _provider_for(adapter)
+    disabled = ProviderConnectionConfiguration("disabled", False, False, None, adapter)
+    pacers = composition._provider_pacers((enabled,))
+    for name in _ADAPTERS:
+        pacer = getattr(pacers, name)
+        if name == adapter:
+            assert type(pacer) is getattr(composition, _PACER_CLASSES[name])
+        else:
+            assert pacer is None
+    unpaced = composition._provider_pacers((disabled,))
+    assert all(getattr(unpaced, name) is None for name in _ADAPTERS)
+
+
+def _audiobook_config(
+    *providers: ProviderConnectionConfiguration,
+) -> ApplicationConfiguration:
+    """An audiobook library whose declared German moves Audible.de first.
+
+    The owner states ``us, uk, de``; the library's ``de`` makes the order every
+    ASIN lookup walks ``de, us, uk``, which neither the stated order nor the
+    ``us`` default produces.
+    """
+    audible = ProviderConnectionConfiguration(
+        "audible-catalog",
+        True,
+        False,
+        None,
+        "audible_catalog",
+        marketplaces=("us", "uk", "de"),
+    )
+    configured = (audible, _provider_for("audnexus"), *providers)
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "books",
+                "primary",
+                "library",
+                "audiobook",
+                "media",
+                tuple(sorted(value.name for value in configured)),
+                languages=("de",),
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/books", True),),
+        tuple(sorted(configured, key=lambda value: value.name)),
+    )
+
+
+def _recovery_resolver(
+    config: ApplicationConfiguration, credentials: dict[str, str] | None
+) -> Callable[..., object]:
+    """The retry resolver `create_review_pipeline` hands provider recovery."""
+    with (
+        patch.object(composition, "ProviderRecoveryActivation") as activation,
+        patch.object(composition, "ScopedProviderRecoveryRunner"),
+    ):
+        composition._provider_recovery_wiring(
+            config,
+            Path("/artifacts"),
+            credentials,
+            composition._provider_pacers(config.providers),
+            unittest.mock.Mock(),
+            unittest.mock.Mock(),
+            {},
+        )
+    return activation.call_args.kwargs["provider_resolver"]
+
+
+def _recorded_marketplaces(build: Callable[[], None]) -> dict[str, object]:
+    """Run `build` and return the marketplaces each audiobook adapter received."""
+    received: dict[str, object] = {}
+
+    def recorder(adapter: str) -> Callable[..., object]:
+        def construct(*args: object, **kwargs: object) -> object:
+            received[adapter] = kwargs["marketplaces"]
+            return object()
+
+        return construct
+
+    with ExitStack() as stack:
+        for client in _PROVIDER_CLIENTS:
+            stack.enter_context(patch.object(composition, client))
+        for adapter in ("audible_catalog", "audnexus"):
+            stack.enter_context(
+                patch.object(
+                    composition,
+                    _PROVIDER_CLASSES[adapter],
+                    side_effect=recorder(adapter),
+                )
+            )
+        build()
+    return received
+
+
+def test_a_report_walks_the_librarys_marketplace_order_for_each_asin_adapter():
+    config = _audiobook_config()
+
+    def build() -> None:
+        for binding in _foreground_bindings(config):
+            binding.factory()
+
+    assert {
+        "audible_catalog": ("de", "us", "uk"),
+        "audnexus": ("de", "us", "uk"),
+    } == _recorded_marketplaces(build)
+
+
+def test_a_retry_walks_the_librarys_marketplace_order_for_each_asin_adapter():
+    config = _audiobook_config()
+    resolver = _recovery_resolver(config, None)
+
+    def build() -> None:
+        for provider in config.providers:
+            retry = resolver("primary", "books", provider.name, provider.adapter, 1)
+            retry.binding.factory()
+
+    assert {
+        "audible_catalog": ("de", "us", "uk"),
+        "audnexus": ("de", "us", "uk"),
+    } == _recorded_marketplaces(build)
+
+
+def test_a_retry_under_injected_credentials_builds_its_provider_from_them():
+    hardcover = ProviderConnectionConfiguration(
+        "hardcover", True, False, "/secrets/hardcover", "hardcover"
+    )
+    config = _audiobook_config(hardcover)
+    credentials = {"provider:hardcover": "injected-token"}
+    resolver = _recovery_resolver(config, credentials)
+    client = object()
+    with (
+        patch.object(
+            composition, "hardcover_client_token", return_value=client
+        ) as token_client,
+        patch.object(composition, "hardcover_client") as file_client,
+        patch.object(composition, "HardcoverMetadataProvider") as constructed,
+    ):
+        retry = resolver("primary", "books", "hardcover", "hardcover", 1)
+        retry.binding.factory()
+    file_client.assert_not_called()
+    token_client.assert_called_once_with("injected-token", 30)
+    assert client is constructed.call_args.args[1]

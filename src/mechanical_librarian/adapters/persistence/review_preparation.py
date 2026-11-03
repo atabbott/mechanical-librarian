@@ -12,7 +12,7 @@ neither direction.
 `_review_pipeline_claim` moves here with the two methods that write and take
 it: it is a claim over this module's work rows and nothing else observes it.
 
-Five seams cross the boundary and each is injected as a lambda through the
+Six seams cross the boundary and each is injected as a lambda through the
 composing repository rather than as a bound method, which is load-bearing
 rather than stylistic. `test_failed_action_requeues_a_pending_manual_return`
 and two siblings substitute `_has_pending_field_effect_manual_return` on the
@@ -31,6 +31,10 @@ aggregate moves, as long as its delegating stub stays on the repository.
 - `_enqueue_provider_recovery_outbox` records the package cutover a completing
   action produces, inside this module's transaction. The outbox aggregate owns
   that table and its `enqueue` is deliberately scope-free for exactly this.
+- `_supersede_displaced_waiting_effects` closes, in the transaction that
+  admits or retires a work, the field effects still waiting on a case other
+  than the work's current one. The field-effect aggregate owns that write
+  (#1658).
 - `_restart_metadata_policy_work` is not injected: it writes
   `review_preparation_work`, so under the ownership rule it belongs here, and
   the metadata-policy aggregate has always received it as an injected callable
@@ -154,6 +158,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             [str, str, str, tuple[str | None, str, str | None, int | None, str], int],
             None,
         ],
+        supersede_displaced_waiting_effects: Callable[
+            [str, str, str, str | None, int], int
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._has_pending_field_effect_manual_return = (
@@ -164,6 +171,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         )
         self._refresh_metadata_policy_transition = refresh_metadata_policy_transition
         self._enqueue_provider_recovery_outbox = enqueue_provider_recovery_outbox
+        self._supersede_displaced_waiting_effects = supersede_displaced_waiting_effects
         self._review_pipeline_claim: PipelineAction | None = None
         self._claim_owner: Callable[[PipelineAction | None], None] | None = None
         self._pending_claim: tuple[PipelineAction | None] | None = None
@@ -415,7 +423,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                             (scan_id,),
                         )
                     else:
-                        self._commit_review_absences(scan_id)
+                        self._commit_review_absences(scan_id, claimed_at)
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state=?,updated_at=? WHERE scan_id=?",
                         (state, claimed_at, scan_id),
@@ -952,7 +960,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ),
         )
 
-    def _commit_review_absences(self, scan_id: str) -> None:
+    def _commit_review_absences(self, scan_id: str, retired_at: int) -> None:
         scan = self._connection.execute(
             "SELECT connection_name,library_name FROM review_preparation_scans "
             "WHERE scan_id=? AND state='processing'",
@@ -1038,6 +1046,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     checkpoint,
                 ),
             )
+            # The work has no case now, so every write still waiting on one
+            # closes with this transition (#1658).
+            self._supersede_displaced_waiting_effects(
+                connection, library, item_id, None, retired_at
+            )
             if published is not None:
                 if (
                     self._connection.execute(
@@ -1112,6 +1125,22 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
+            if action.stage == "admission":
+                # Admission left the work on this case, or on none. A write
+                # still waiting on any other case closes in the same
+                # transaction; a work with no lineage has nothing to close.
+                lineage = self._connection.execute(
+                    "SELECT review_case_id FROM current_review_case_lineages "
+                    "WHERE connection_name=? AND library_name=? AND item_id=?",
+                    (action.connection, action.library, action.item_id),
+                ).fetchone()
+                self._supersede_displaced_waiting_effects(
+                    action.connection,
+                    action.library,
+                    cast(str, action.item_id),
+                    None if lineage is None else lineage[0],
+                    completed_at,
+                )
             if action.stage == "extraction" and output_id is not None:
                 transition_row = self._connection.execute(
                     "SELECT transition_id,report_id FROM metadata_policy_transition_items "

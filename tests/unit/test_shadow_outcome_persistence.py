@@ -4219,7 +4219,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             "supersedes_decision_id": None,
             "target_fingerprint": automatic.target_fingerprint,
         }
-        transport_cover = {**projected_cover, "effect_capability": "report_only"}
+        transport_cover = {**projected_cover, "effect_capability": "unavailable"}
         _ReviewField.model_validate(transport_cover)
         malformed_cover = json.loads(json.dumps(transport_cover))
         del malformed_cover["automatic_decision"]["supersedes_decision_id"]

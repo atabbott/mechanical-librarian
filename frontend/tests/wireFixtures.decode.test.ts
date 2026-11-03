@@ -156,6 +156,29 @@ describe('decode negative controls', () => {
     expect(failure(() => decode(activityV2Predecessor, ''))).toBe('required@/lapsed_consents')
   })
 
+  // An acknowledgement names only positions that were published: none at all
+  // when the channel had closed, never 0, and at most eight (#1674).
+  it.each([
+    ['/api/v1/review-cases/case-1/decisions', builders.decisionAcknowledgement()],
+    [
+      '/api/v1/review-cases/case-1/description-advice/selection',
+      captures['./wire/post-review-cases-description-advice-selection.200.json']?.body,
+    ],
+  ])('bounds the positions %s acknowledges', (path, body) => {
+    const decode = decoderFor('POST', path, 200)
+    const acknowledged = (invalidation_sequences: number[]) => ({
+      ...(body as object),
+      invalidation_sequences,
+    })
+    roundTrip(decode, acknowledged([]))
+    roundTrip(decode, acknowledged([1, 2, 3]))
+    expect(failure(() => decode(acknowledged([0]), ''))).toBe('min@/invalidation_sequences/0')
+    expect(failure(() => decode(acknowledged([1, 0]), ''))).toBe('min@/invalidation_sequences/1')
+    expect(failure(() => decode(acknowledged([1, 2, 3, 4, 5, 6, 7, 8, 9]), ''))).toBe(
+      'max_items@/invalidation_sequences',
+    )
+  })
+
   it('refuses a captured body with a key the server never sends', () => {
     const decode = decoderFor('GET', '/api/v1/metadata-policy/shadow', 200)
     const wire = captures['./wire/get-metadata-policy-shadow.200.json']

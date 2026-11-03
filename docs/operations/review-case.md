@@ -44,6 +44,9 @@ bound report. Any other ProposalSet is `incompatible` and publishes nothing.
 Admission makes no decision, plan or write.
 
 A newer report makes an earlier case historical without rewriting it.
+When preparation admits or retires a work past a case, a write still waiting
+for Audiobookshelf to come back on that case closes, and a cover's restore
+point is removed.
 Inspection never writes.
 Earlier schemas are refused; rebuild from a clean state
 ([compatibility](../reference/compatibility.md)).
@@ -207,6 +210,11 @@ generation no longer decides its field.
 A queued write whose authority is withdrawn only for now waits rather than
 going stale: an automatic write waits outside Automatic, and an owner's write
 waits while its case is retired by that reactivation and not yet returned.
+A write waiting for Audiobookshelf to come back closes when it could never be
+written: on a change of policy, whose case does not return, and for an
+automatic field write when leaving Automatic, whose earlier-generation decision
+no longer decides its field. One whose case an earlier activation retired and
+preparation could not bring back closes at the next activation.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still

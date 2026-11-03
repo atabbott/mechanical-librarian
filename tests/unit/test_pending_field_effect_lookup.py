@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from mechanical_librarian.adapters.persistence import field_effects
+from mechanical_librarian.adapters.persistence import field_effects, metadata_policy
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_HOLDS_DECISION_SQL,
@@ -1645,3 +1645,60 @@ def test_example_keeps_rowid_order_without_an_order_by(
     )
     (other,) = connection.execute(bare).fetchall()
     assert json.loads(other[0])["decision_id"] == later[0]
+
+
+@pytest.mark.parametrize("reactivation", [False, True])
+def test_a_policy_activation_reaches_waiting_effects_by_the_target_index(
+    store: tuple[sqlite3.Connection, list[str]], reactivation: bool
+) -> None:
+    """Closing a retired case's waiting plans reads one work's effects (#1599)."""
+    connection, _ = store
+    statement = (
+        field_effects._RETIRED_CASE_WAITING_SQL
+        + (field_effects._AUTOMATIC_DECISION_SQL if reactivation else "")
+        + " ORDER BY rowid"
+    )
+    plan = _plan(connection, statement, ("primary", "ebooks", "item", "case"))
+    assert not _scans_effects(plan)
+    assert (
+        "SEARCH field_effects USING INDEX field_effects_target "
+        "(connection_name=? AND library_name=? AND work_id=?)"
+    ) in plan
+
+
+@pytest.mark.parametrize("current", ["case", None], ids=["case", "none"])
+def test_the_displaced_case_lookup_uses_the_target_index(
+    store: tuple[sqlite3.Connection, list[str]], current: str | None
+) -> None:
+    """Preparation finds the cases a work's waiting plans were left on by that
+    one work's effects, whether the work keeps a case or has none (#1658)."""
+    connection, _ = store
+    plan = _plan(
+        connection,
+        field_effects._DISPLACED_CASES_SQL,
+        ("primary", "ebooks", "item", current),
+    )
+    assert not _scans_effects(plan)
+    assert (
+        "SEARCH field_effects USING INDEX field_effects_target "
+        "(connection_name=? AND library_name=? AND work_id=?)"
+    ) in plan
+
+
+def test_the_unreturned_case_lookup_uses_its_indexes(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    """Finding the cases an earlier activation left retired reads the null-case
+    lineages by index and probes each transition by key, never walking the
+    append-only transitions (#1657)."""
+    connection, _ = store
+    plan = _plan(connection, metadata_policy._UNRETURNED_CASES_SQL, ())
+    assert any(
+        step.startswith("SEARCH awaiting USING INDEX current_review_case_lineages_case")
+        for step in plan
+    ), plan
+    assert (
+        "SEARCH retirement USING INDEX sqlite_autoindex_review_case_transitions_1 "
+        "(transition_id=?)"
+    ) in plan
+    assert not any(step.startswith("SCAN retirement") for step in plan), plan

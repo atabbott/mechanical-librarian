@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import type { CaseDetailView, DecisionOutcome, LibraryView, ReviewHttp } from '../src/api/http'
+import type { CaseDetailView, LibraryView, ReviewHttp } from '../src/api/http'
 import { hasBackgroundDebt } from '../src/queryWork'
 import { createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 it('confirms an off-page decision despite a pre-ack read and repeated case/resync frames', async () => {
@@ -23,7 +23,7 @@ it('confirms an off-page decision despite a pre-ack read and repeated case/resyn
       {
         ...field,
         needsAttention: false,
-        humanDecision: { ...ack, outcome: ack.outcome as DecisionOutcome },
+        humanDecision: { ...ack, outcome: ack.outcome },
       },
     ],
   }

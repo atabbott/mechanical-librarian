@@ -132,7 +132,7 @@ in `schema_version`. The main ones are `review-session-v1`,
 `review-case-evidence-v4`, `review-report-detail-v5`, `review-case-history-v3`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
-`review-session-v1` and `review-attention-v1`, which the server sets.
+`review-session-v1`, which the server sets.
 
 ## Browser bundle identity
 

@@ -86,6 +86,29 @@ from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import TargetDestination
 
+# The plans a lost connection left waiting on one work's review case. The
+# target index finds the work's effects; the case and the failure only filter
+# them (#1599). A same-policy reactivation adds `_AUTOMATIC_DECISION_SQL`.
+_RETIRED_CASE_WAITING_SQL = (
+    "SELECT document,state FROM field_effects WHERE connection_name=? "
+    "AND library_name=? AND work_id=? AND state='stale' "
+    "AND json_extract(document,'$.failure')='connection' "
+    "AND json_extract(document,'$.plan.authority.review_case_id')=?"
+)
+_AUTOMATIC_DECISION_SQL = (
+    " AND decision_id IN (SELECT decision_id FROM automatic_decisions)"
+)
+# The cases other than a work's current one that a lost connection left plans
+# waiting on. Preparation names the case it left the work on, or none; the
+# target index finds the work's effects and the rest only filters (#1658).
+_DISPLACED_CASES_SQL = (
+    "SELECT DISTINCT json_extract(document,'$.plan.authority.review_case_id') "
+    "FROM field_effects WHERE connection_name=? AND library_name=? "
+    "AND work_id=? AND state='stale' "
+    "AND json_extract(document,'$.failure')='connection' "
+    "AND json_extract(document,'$.plan.authority.review_case_id') IS NOT ?"
+)
+
 
 class SQLiteFieldEffectRepository(ConnectionScoped):
     """Plan, claim, transition, suspend and retire one library's field effects."""
@@ -1680,6 +1703,76 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             )
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
+
+    def _supersede_retired_case_waiting_plans(
+        self,
+        retired: tuple[tuple[str, str, str, str], ...],
+        reactivation: bool,
+        changed_at: int,
+    ) -> int:
+        """Supersede the waiting plans of cases a policy activation retires.
+
+        ``retired`` names each retired case with its work. A changed policy
+        retires a case for good, so every plan waiting on it closes.
+        ``reactivation`` means these cases return as themselves in their
+        episode, as a same-policy reactivation's cohort does, so only a plan
+        whose authority is a field automatic decision closes: an earlier
+        generation's decision never authorizes again, while an owner's, a cover
+        selection's or a description's does. A case an earlier activation
+        retired and preparation never readmitted returns only as a new episode,
+        so it passes without ``reactivation`` (#1657). The caller's transaction
+        owns the outcome (#1599).
+        """
+        statement = (
+            _RETIRED_CASE_WAITING_SQL
+            + (_AUTOMATIC_DECISION_SQL if reactivation else "")
+            + " ORDER BY rowid"
+        )
+        closed = 0
+        for connection, library, work_id, review_case_id in retired:
+            rows = self._connection.execute(
+                statement, (connection, library, work_id, review_case_id)
+            ).fetchall()
+            for document, state in rows:
+                operation = FieldEffectOperation.from_json(document).transition(
+                    "superseded", at=changed_at, failure="authority_superseded"
+                )
+                self._update_field_effect(operation, state)
+                self._record_field_effect_event(
+                    operation, "superseded", operation.updated_at
+                )
+                self._schedule_field_effect_cleanup(operation, changed_at)
+            closed += len(rows)
+        return closed
+
+    def _supersede_displaced_case_waiting_plans(
+        self,
+        connection: str,
+        library: str,
+        work_id: str,
+        current_case_id: str | None,
+        changed_at: int,
+    ) -> int:
+        """Supersede the waiting plans of cases preparation moved a work past.
+
+        Preparation admits or retires the work in the caller's transaction and
+        names the case it left the work on, or ``None`` when the work has none.
+        A case other than that one can return only as a new episode, whose
+        authority none of its plans carries, so every plan still waiting on
+        such a case closes, whatever its origin. A plan on the current case,
+        including one that returned as itself, keeps waiting (#1658).
+        """
+        rows = self._connection.execute(
+            _DISPLACED_CASES_SQL, (connection, library, work_id, current_case_id)
+        ).fetchall()
+        return self._supersede_retired_case_waiting_plans(
+            tuple(
+                (connection, library, work_id, review_case_id)
+                for (review_case_id,) in rows
+            ),
+            False,
+            changed_at,
+        )
 
     @local_operation
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:

@@ -10,18 +10,15 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import openapi from '../../docs/reference/review-openapi-v1.json'
 import {
   ApiError,
+  DECODED,
   ReviewApiClient,
   mapActivity,
   mapActivityConsent,
   mapActivityPermissionReadiness,
-  mapAttention,
   mapCaseDetail,
   mapCoverConsideration,
   mapEvidence,
   mapHistory,
-  mapLibrary,
-  mapPreparation,
-  mapReportDetail,
   mapReviewerAccess,
   mapSettings,
 } from '../src/api/http'
@@ -39,8 +36,15 @@ import {
   attention,
   caseDetail,
   caseHistory,
+  choiceContext,
+  coverCandidate,
   coverConsideration,
+  coverIdentity,
+  coverPolicyReport,
   decisionAcknowledgement,
+  historyCoverItem,
+  historyDecisionItem,
+  historyShadowItem,
   library,
   libraryWork,
   policyPreview,
@@ -72,11 +76,13 @@ interface Case {
   readonly mutates?: string
   readonly provenance: 'server' | 'builder' | 'mutation'
 }
-type Divergence = 'decoder_stricter' | 'mapper_cross_field' | 'pending_server'
+type Divergence = 'decoder_stricter' | 'mapper_cross_field'
 interface Expected {
   readonly class: Divergence
   readonly check: string
-  readonly owner?: string
+  // The mapper result the row's own check gives, once its family is decoded
+  // (stage-3 Q7): a neighbouring check cannot then stand in for it.
+  readonly result?: string
 }
 
 // ---- Documents ---------------------------------------------------------------
@@ -227,19 +233,16 @@ accepted(
 
 const ACTIVITY = get('/api/v1/activity')
 const CASE = get(casePath('case-1'))
+const COVER = post(casePath('case-1', '/cover-considerations/retry'))
+const HISTORY = get(casePath('case-1', '/history'))
 const LIBRARY = get('/api/v1/library?lens=all')
 const PREPARATION = get('/api/v1/review-preparation')
 const REPORT = get('/api/v1/library/report?item=item-9')
 const SETTINGS = get('/api/v1/settings')
 builder('Library', 'reportDetail', REPORT, reportDetail)
-builder('CaseDetail', 'caseDetail', CASE, caseDetail)
-const coverBase = builder(
-  'CaseDetail',
-  'coverConsideration',
-  post(casePath('case-1', '/cover-considerations/retry')),
-  coverConsideration,
-)
-builder('CaseDetail', 'caseHistory', get(casePath('case-1', '/history')), caseHistory)
+const caseBase = builder('CaseDetail', 'caseDetail', CASE, caseDetail)
+const coverBase = builder('CaseDetail', 'coverConsideration', COVER, coverConsideration)
+builder('CaseDetail', 'caseHistory', HISTORY, caseHistory)
 const decisionBase = builder(
   'CaseDetail',
   'decisionAcknowledgement',
@@ -388,98 +391,190 @@ const libraryWithWork = builder('Library', 'library.work', LIBRARY, () =>
 
 // ---- Presence rows: one per `exactKeys` call site (lines at 04fa742) --------
 
-// [site, component, accept document, pointer of the component instance in it]
-const PRESENCE_SITES: readonly (readonly [string, string, Case, string])[] = [
-  ['ReviewApiClient.startCodexDevice:1517', '_CodexDeviceStartResponse', issued, ''],
-  ['reviewerStatus:2020', 'ReviewerEngineStatus', codexCleared, '/codex'],
-  ['mapDescriptionMetadata:2067', 'DescriptionModelMetadata', modelTest, ''],
-  ['mapCostEvidence:2111', 'ReviewerCostEvidence', codexCleared, '/cost_evidence'],
-  ['mapCostEvidence:2123', 'MeasuredRun', codexCleared, '/cost_evidence/models/0/measured_run'],
-  ['mapCostEvidence:2130', 'ReviewerCostEstimate', codexCleared, '/cost_evidence/models/0'],
-  ['mapReviewerAccess:2179', 'ReviewerAccessView', codexCleared, ''],
-  ['mapReviewerAccess:2207', 'OpenRouterRecommendation', codexCleared, '/candidates/0'],
-  ['mapReviewerAccess:2233', 'OpenRouterTaskSelection', openRouterRefresh, '/mapping'],
-  ['mapReviewerAccess:2256', 'CoverModelMetadata', openRouterRefresh, '/cover_metadata'],
-  ['mapReviewerAccess:2279', 'CodexTaskSelection', openRouterCleared, '/description_mapping'],
+// [site, family whose PR deletes the site, component, accept document, pointer
+// of the component instance in it]. A decoded family's sites are gone from
+// http.ts; their cases stay, and both sides must still reject (stage-3 Q6).
+const PRESENCE_SITES: readonly (readonly [string, Family, string, Case, string])[] = [
+  [
+    'ReviewApiClient.startCodexDevice:1517',
+    'ReviewerAccess',
+    '_CodexDeviceStartResponse',
+    issued,
+    '',
+  ],
+  ['reviewerStatus:2020', 'ReviewerAccess', 'ReviewerEngineStatus', codexCleared, '/codex'],
+  ['mapDescriptionMetadata:2067', 'ReviewerAccess', 'DescriptionModelMetadata', modelTest, ''],
+  [
+    'mapCostEvidence:2111',
+    'ReviewerAccess',
+    'ReviewerCostEvidence',
+    codexCleared,
+    '/cost_evidence',
+  ],
+  [
+    'mapCostEvidence:2123',
+    'ReviewerAccess',
+    'MeasuredRun',
+    codexCleared,
+    '/cost_evidence/models/0/measured_run',
+  ],
+  [
+    'mapCostEvidence:2130',
+    'ReviewerAccess',
+    'ReviewerCostEstimate',
+    codexCleared,
+    '/cost_evidence/models/0',
+  ],
+  ['mapReviewerAccess:2179', 'ReviewerAccess', 'ReviewerAccessView', codexCleared, ''],
+  [
+    'mapReviewerAccess:2207',
+    'ReviewerAccess',
+    'OpenRouterRecommendation',
+    codexCleared,
+    '/candidates/0',
+  ],
+  [
+    'mapReviewerAccess:2233',
+    'ReviewerAccess',
+    'OpenRouterTaskSelection',
+    openRouterRefresh,
+    '/mapping',
+  ],
+  [
+    'mapReviewerAccess:2256',
+    'ReviewerAccess',
+    'CoverModelMetadata',
+    openRouterRefresh,
+    '/cover_metadata',
+  ],
+  [
+    'mapReviewerAccess:2279',
+    'ReviewerAccess',
+    'CodexTaskSelection',
+    openRouterCleared,
+    '/description_mapping',
+  ],
   [
     'mapReviewerAccess:2281',
+    'ReviewerAccess',
     'OpenRouterTaskSelection',
     describedByOpenRouter,
     '/description_mapping',
   ],
-  ['mapCodexDevice:2292', '_CodexDeviceAuthResponse', issued, '/device'],
-  ['mapSettings:2389', 'DescriptionAdviceSettings', settings, '/document/description_advice'],
+  ['mapCodexDevice:2292', 'ReviewerAccess', '_CodexDeviceAuthResponse', issued, '/device'],
+  [
+    'mapSettings:2389',
+    'Settings',
+    'DescriptionAdviceSettings',
+    settings,
+    '/document/description_advice',
+  ],
   [
     'mapDecisionAcknowledgement:2598',
+    'CaseDetail',
     '_UnavailableDecisionConfirmation',
     unavailable,
     '/confirmation',
   ],
-  ['mapDecisionAcknowledgement:2602', '_ConfirmedDecision', selection, '/confirmation'],
-  ['preparationPresentation:2736', '_PreparationNow', preparationNow, '/presentation/now'],
-  ['providerThrottling:2767', '_PreparationThrottling', throttled, '/provider_throttling'],
+  [
+    'mapDecisionAcknowledgement:2602',
+    'CaseDetail',
+    '_ConfirmedDecision',
+    selection,
+    '/confirmation',
+  ],
+  [
+    'preparationPresentation:2736',
+    'Preparation',
+    '_PreparationNow',
+    preparationNow,
+    '/presentation/now',
+  ],
+  [
+    'providerThrottling:2767',
+    'Preparation',
+    '_PreparationThrottling',
+    throttled,
+    '/provider_throttling',
+  ],
   [
     'providerThrottling:2781',
+    'Preparation',
     '_PreparationThrottleEntry',
     throttled,
     '/provider_throttling/entries/0',
   ],
-  ['activityLapses:2977', '_ActivityLapsedConsent', lapsed, '/lapsed_consents/0'],
-  ['mapActivityConsent:2993', '_ActivityConsentState', consentState, ''],
-  ['mapActivityPermissionReadiness:3017', '_ActivityPermissionReadiness', permissionReadiness, ''],
+  ['activityLapses:2977', 'Activity', '_ActivityLapsedConsent', lapsed, '/lapsed_consents/0'],
+  ['mapActivityConsent:2993', 'Activity', '_ActivityConsentState', consentState, ''],
+  [
+    'mapActivityPermissionReadiness:3017',
+    'Activity',
+    '_ActivityPermissionReadiness',
+    permissionReadiness,
+    '',
+  ],
   [
     'mapRecordingIdentityBasis:3308',
+    'CaseDetail',
     '_RecordingIdentityBasis',
     recordingBasis,
     '/recording_identity_basis',
   ],
   [
     'mapDescriptionCandidate:3589',
+    'CaseDetail',
     'DescriptionAdviceCandidate',
     advice,
     '/fields/8/description_advice/candidate',
   ],
   [
     'mapDescriptionCandidate:3615',
+    'CaseDetail',
     'DescriptionAdviceOutput',
     advice,
     '/fields/8/description_advice/candidate/output',
   ],
   [
     'mapDescriptionBinding:3640',
+    'CaseDetail',
     'DescriptionAdviceBinding',
     advice,
     '/fields/8/description_advice/binding',
   ],
   [
     'mapDescriptionAdvice:3669',
+    'CaseDetail',
     '_DescriptionAdviceResponse',
     advice,
     '/fields/8/description_advice',
   ],
   [
     'mapDescriptionAdvice:3718',
+    'CaseDetail',
     'AuthoredDescriptionDecision',
     preserved,
     '/fields/8/description_advice/selection',
   ],
   [
     'mapDescriptionAdvice:3746',
+    'CaseDetail',
     '_SelectedDescriptionAdvice',
     preserved,
     '/fields/8/description_advice/selected_advice',
   ],
-  ['mapOwnerControl:3932', '_OwnerControl', advice, '/fields/1/owner_control'],
-  ['mapOwnerControl:3938', '_OwnerEntry', advice, '/fields/3/owner_control/entry'],
-  ['mapOwnerControl:3943', '_OwnerSubset', advice, '/fields/1/owner_control/subset'],
+  ['mapOwnerControl:3932', 'CaseDetail', '_OwnerControl', advice, '/fields/1/owner_control'],
+  ['mapOwnerControl:3938', 'CaseDetail', '_OwnerEntry', advice, '/fields/3/owner_control/entry'],
+  ['mapOwnerControl:3943', 'CaseDetail', '_OwnerSubset', advice, '/fields/1/owner_control/subset'],
   [
     'mapOwnerControl:3956',
+    'CaseDetail',
     '_OwnerSuggestion',
     suggested,
     '/fields/3/owner_control/entry/suggestions/0',
   ],
   [
     'mapOwnerControl:3976',
+    'CaseDetail',
     '_OwnerSubsetOption',
     advice,
     '/fields/1/owner_control/subset/options/0',
@@ -493,7 +588,7 @@ const tagKeys = new Set(
   [...JSON.stringify(openapi).matchAll(/"propertyName":"([^"]+)"/g)].map((match) => match[1]),
 )
 // Each presence case with the decoder results its deletion may give.
-const presence = PRESENCE_SITES.flatMap(([site, component, instance, pointer]) =>
+const presence = PRESENCE_SITES.flatMap(([site, , component, instance, pointer]) =>
   Object.keys(schemas[component]?.properties ?? { [`<no ${component}>`]: null }).map((key) => {
     const at = `${pointer}/${key}`
     const results = [`required@${at}`, ...(tagKeys.has(key) ? [`discriminator@${at}`] : [])]
@@ -523,18 +618,6 @@ const TOLERANCES = [
     'mapCoverConsideration http.ts:4679 reads an absent reviewer_failure_code as null (?? null)',
   ],
   [
-    'T4',
-    libraryWithWork,
-    '/items/0/cover',
-    'mapLibrary http.ts:3472 reads an absent work cover as none (item.cover == null)',
-  ],
-  [
-    'T5',
-    preparationBase,
-    '/provider_throttling',
-    'providerThrottling http.ts:2764 reads an absent provider_throttling as null',
-  ],
-  [
     'T6',
     activityItems,
     '/provider_recovery/0/failure_reasons',
@@ -542,11 +625,448 @@ const TOLERANCES = [
   ],
 ] as const
 for (const [row, instance, pointer] of TOLERANCES) deletion(`tolerance:${row}`, instance, pointer)
+// Tolerances whose family is decoded: the absence is now refused on both sides,
+// so the case agrees and keeps no row (#1685 drained T5, #1686 drained T4).
+const DRAINED = [
+  ['T4', libraryWithWork, '/items/0/cover'],
+  ['T5', preparationBase, '/provider_throttling'],
+] as const
+for (const [row, instance, pointer] of DRAINED) deletion(`tolerance:${row}`, instance, pointer)
 
 // ---- B4 reject rows for the two families with no `exactKeys` site -----------
 
 deletion('reject:attention.items', attentionCapture, '/items')
 deletion('reject:policy-state.schema_version', policyState, '/schema_version')
+
+// ---- X/S rows: the mapper-stricter checks the suite exercises ---------------
+
+// Accept bases for the checks that no case above reaches.
+builder('Activity', 'activity.capability-and-suspension', ACTIVITY, () =>
+  activityResponse({
+    capabilities: [
+      {
+        connection: 'primary',
+        library: 'Fiction',
+        state: 'allowed',
+        destinations: [{ destination: 'title', state: 'allowed', consented: true, prepared: 4 }],
+      },
+    ],
+    suspensions: [
+      {
+        connection: 'primary',
+        destination: null,
+        reason: 'connection_unavailable',
+        scope: 'library',
+        updated_at: 1,
+      },
+    ],
+  }),
+)
+const preview = 'a'.repeat(64)
+const coveredWork = builder('Library', 'library.cover-and-failure', LIBRARY, () =>
+  library({
+    items: [
+      libraryWork({
+        cover: {
+          height: 452,
+          preview_sha256: preview,
+          url: `/api/v1/library/cover?connection=primary&library=books&item=item-1&preview=${preview}`,
+          width: 302,
+        },
+        preparation: {
+          attempt: 1,
+          diagnostic_reference: 'diagnostic-1',
+          media_health: [],
+          provider: 'none',
+          reason: 'The file could not be read.',
+          recovery: 'Replace the file.',
+          recovery_attempt: 0,
+          stage: 'extraction',
+          status: 'unreadable_media',
+        },
+      }),
+    ],
+  }),
+)
+builder('Library', 'reportDetail.evidence', REPORT, () =>
+  reportDetail({
+    embedded_cover: { present: true, surface: 'mp4_ilst' },
+    evidence: [
+      {
+        basis: 'sidecar',
+        excerpt: 'Recorded Narrator',
+        kind: 'contributor',
+        role: 'narrator',
+        state: 'valid',
+        value: 'Recorded Narrator',
+      },
+    ],
+  }),
+)
+const completed = builder('Preparation', 'preparation.completed', PREPARATION, () =>
+  preparation({
+    active: true,
+    presentation: preparationPresentation({ state: 'completed_clean', completed_at: 101 }),
+  }),
+)
+// One ranked, acceptable candidate with its observation, under an abstaining
+// policy.
+const consideration = () =>
+  coverConsideration({
+    candidates: [
+      coverCandidate({
+        observation: {
+          candidate_reference: 'candidate-1',
+          composition: 'minimal',
+          cover_text_language: 'english',
+          explicit_imagery: 'absent',
+          format_branding: 'absent',
+          medium: 'illustrated',
+          overlay_marking: 'absent',
+          placeholder: 'absent',
+          preview_sha256: 'b'.repeat(64),
+          preview_variant: 'cover-preview-v1',
+          promotional_text: 'absent',
+          reproduction: 'clean',
+          series_styling: 'standalone',
+          thumbnail_legibility: 'legible',
+          tie_in_branding: 'absent',
+        },
+      }),
+    ],
+    choice_contexts: [
+      choiceContext(),
+      choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+    ],
+    policy: coverPolicyReport(),
+    ready: true,
+  })
+const covered = builder('CaseDetail', 'coverConsideration.candidate', COVER, consideration)
+// One item of each kind mapHistory reads: transition, preview, two owner
+// decisions (text and authors, then series) and a cover consideration.
+builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
+  caseHistory({
+    items: [
+      { checkpoint: 1, kind: 'admitted', reason: 'actionable', transition_id: 'transition-1' },
+      historyShadowItem({ dispositions: { candidate: 1 } }),
+      historyDecisionItem({
+        destination: 'authors',
+        previous_value: { kind: 'text', value: 'Old' },
+        selected_value: { kind: 'authors', value: ['Ada Example'] },
+      }),
+      historyDecisionItem({
+        destination: 'series',
+        selected_value: { kind: 'series', value: [{ name: 'Saga', sequence: '1' }] },
+      }),
+      historyCoverItem({ consideration: consideration() }),
+    ],
+  }),
+)
+
+// [case id, accept case, pointer, replacement, the http.ts check (lines at
+// 6f660c8, or where its family PR moved it) and why it stays hand-written, and
+// once the family is decoded the mapper result of that check alone]. Each
+// relates two or more fields, or a position or identity across items or
+// documents (A5), or is a single-field check whose only owner is persisted (B3).
+const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, string?])[] = [
+  [
+    'check:mapActivity.failure-reasons-order',
+    activityItems,
+    '/provider_recovery/0/failure_reasons',
+    ['transient', 'authentication'],
+    'mapActivity http.ts:3087: failure_reasons are in ascending order; positional',
+  ],
+  [
+    'check:mapLibraryCover.preview-binding',
+    coveredWork,
+    '/items/0/cover/url',
+    `/api/v1/library/cover?connection=primary&library=books&item=item-1&preview=${'b'.repeat(64)}`,
+    'mapLibraryCover http.ts:3369: the cover url names its own preview_sha256; cross-field',
+    'reject:invalid_library_cover',
+  ],
+  [
+    'check:mapAudiobookReviewScope.media-kind',
+    recordingBasis,
+    '/media_kind',
+    'epub',
+    'mapAudiobookReviewScope http.ts:3227: a scope needs an audio media_kind; cross-field',
+    'reject:inconsistent_audiobook_review_scope',
+  ],
+  [
+    'check:mapAudiobookReviewScope.basis',
+    recordingBasis,
+    '/audiobook_review_scope',
+    'work',
+    'mapAudiobookReviewScope http.ts:3228: a recording basis needs the recording scope; cross-field',
+    'reject:inconsistent_audiobook_review_scope',
+  ],
+  [
+    'check:mapDescriptionAdvice.outcome-needs-selection',
+    advice,
+    '/fields/8/description_advice/application_outcome',
+    'verified',
+    'mapDescriptionAdvice http.ts:3693-3698: an application outcome needs a selection; cross-field',
+  ],
+  [
+    'check:mapDescriptionAdvice.selection-pairing',
+    preserved,
+    '/fields/8/description_advice/selected_advice',
+    null,
+    'mapDescriptionAdvice http.ts:3739: selection and selected_advice are both present or both null; cross-field',
+  ],
+  [
+    'check:mapDescriptionAdvice.selection-candidate',
+    preserved,
+    '/fields/8/description_advice/selected_advice/candidate/candidate_id',
+    `description_candidate_${'f'.repeat(64)}`,
+    'mapDescriptionAdvice http.ts:3764: the selection names the selected candidate; cross-field',
+  ],
+  [
+    'check:mapDescriptionAdvice.selection-binding',
+    preserved,
+    '/fields/8/description_advice/selected_advice/binding/access_revision',
+    99,
+    'mapDescriptionAdvice http.ts:3766-3770: the selection binding equals the selected advice binding; cross-field',
+  ],
+  [
+    'check:mapChoiceContexts.current-first',
+    caseBase,
+    '/fields/0/choice_contexts',
+    [],
+    'mapChoiceContexts http.ts:4360: the first choice context is the current value; positional',
+  ],
+  [
+    'check:preparationPresentation.passage-order',
+    preparationNow,
+    '/presentation/passage/checked',
+    3,
+    'preparationPresentation http.ts:2742-2748: each passage count is at most the one before it; cross-field',
+    'reject:invalid_preparation_passage_order',
+  ],
+  [
+    'check:preparationPresentation.trigger-families',
+    preparationNow,
+    '/presentation/triggers',
+    [
+      { trigger: 'manual_scan', accepted_count: 1, first_accepted_at: 100, last_accepted_at: 100 },
+      { trigger: 'manual_scan', accepted_count: 1, first_accepted_at: 100, last_accepted_at: 100 },
+    ],
+    'preparationPresentation http.ts:2749: one entry per trigger family; identity across items',
+    'reject:invalid_preparation_trigger',
+  ],
+  [
+    'check:preparationPresentation.active-within-total',
+    preparationNow,
+    '/presentation/active_overflow',
+    5,
+    'preparationPresentation http.ts:2756: active books plus overflow are at most total; cross-field',
+    'reject:invalid_preparation_passage_total',
+  ],
+  [
+    'check:preparationPresentation.updated-after-start',
+    preparationNow,
+    '/presentation/updated_at',
+    99,
+    'preparationPresentation http.ts:2757: updated_at is not before started_at; cross-field',
+    'reject:invalid_preparation_passage_total',
+  ],
+  [
+    'check:preparationPresentation.completion-iff-terminal',
+    preparationNow,
+    '/presentation/state',
+    'completed_clean',
+    'preparationPresentation http.ts:2758-2759: completed_at is set exactly for a terminal state; cross-field',
+    'reject:invalid_preparation_passage_total',
+  ],
+  [
+    'check:preparationPresentation.completed-after-start',
+    completed,
+    '/presentation/completed_at',
+    99,
+    'preparationPresentation http.ts:2758: completed_at is not before started_at; cross-field',
+    'reject:invalid_preparation_passage_total',
+  ],
+  [
+    'check:reviewerStatus.codex-reason',
+    codexCleared,
+    '/codex/reason',
+    'profile_not_provisioned',
+    'reviewerStatus http.ts:2038-2047: the codex state fixes which reasons it may carry; cross-field',
+  ],
+  [
+    'check:reviewerStatus.codex-model-presence',
+    codexCleared,
+    '/codex/model',
+    null,
+    'reviewerStatus http.ts:2031-2034: the codex model is null exactly when not_provisioned; cross-field',
+  ],
+  [
+    'check:reviewerStatus.codex-model',
+    codexCleared,
+    '/codex/model',
+    'provider/model',
+    'reviewerStatus http.ts:2032-2034: a codex model matches ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$; ReviewerEngineStatus.model is shared with the openrouter statuses, whose provider/model values are valid, so only a codex-specific status type could carry this pattern',
+  ],
+  [
+    'check:mapReviewerAccess.cover-model',
+    openRouterRefresh,
+    '/cover_metadata/model',
+    'example/other',
+    'mapReviewerAccess http.ts:2264-2266: cover_metadata prices the saved openrouter mapping model; cross-field',
+  ],
+  [
+    'check:mapReviewerAccess.cover-price',
+    openRouterRefresh,
+    '/cover_metadata/image_price',
+    'NaN',
+    'mapReviewerAccess http.ts:2269-2270 (costPrice :2099): a price is a decimal string in [0, 1000000]. Single-field, but its only owner, domain/reviewer_access.py CoverModelMetadata, is persisted in ReviewerAccessDocument (adapters/persistence/reviewer_access.py:120, :203), so X by B3',
+  ],
+  [
+    'check:mapDescriptionMetadata.price',
+    modelTest,
+    '/request_price',
+    '-1',
+    'mapDescriptionMetadata http.ts:2085-2093: a price is a decimal string in [0, 1000000]. Single-field, but its only owner, domain/reviewer_access.py DescriptionModelMetadata, is persisted in ReviewerAccessDocument (adapters/persistence/reviewer_access.py:120, :203), so X by B3',
+  ],
+  [
+    'check:mapCoverConsideration.manual-eligibility',
+    covered,
+    '/candidates/0/manual_eligible',
+    false,
+    'mapCoverConsideration http.ts:4568-4574: manual_eligible follows incumbent and identity; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.rank-key-reference',
+    covered,
+    '/candidates/0/deterministic_rank_key/6',
+    'candidate-2',
+    'mapCoverConsideration http.ts:4541: the rank key ends with the candidate reference; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.match-state',
+    covered,
+    '/candidates/0/match_state',
+    'same_edition',
+    'mapCoverConsideration http.ts:4579: match_state follows the identity outcome; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.unconfirmed-unranked',
+    covered,
+    '/candidates/0',
+    coverCandidate({
+      identity: coverIdentity({ outcome: 'unknown' }),
+      match_state: 'match_not_confirmed',
+    }),
+    'mapCoverConsideration http.ts:4580: an unconfirmed candidate is neither selectable nor ranked; cross-field',
+  ],
+  [
+    'check:mapCoverObservation.binding',
+    covered,
+    '/candidates/0/observation/candidate_reference',
+    'candidate-2',
+    'mapCoverObservation http.ts:4409-4411: an observation names its candidate reference and preview; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.unique-references',
+    covered,
+    '/candidates',
+    [coverCandidate(), coverCandidate({ artifact_id: 'artifact-2', ordinal: 1 })],
+    'mapCoverConsideration http.ts:4614: candidate references are distinct; identity across items',
+  ],
+  [
+    'check:mapCoverConsideration.ordinal-position',
+    covered,
+    '/candidates/0/ordinal',
+    1,
+    'mapCoverConsideration http.ts:4617: a candidate ordinal is its position; positional',
+  ],
+  [
+    'check:mapCoverConsideration.absent-incumbent',
+    covered,
+    '/incumbent/reference',
+    'candidate-1',
+    'mapCoverConsideration http.ts:4623-4624: an absent or unavailable incumbent has no reference and no incumbent candidate; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.available-incumbent',
+    covered,
+    '/incumbent/state',
+    'available',
+    'mapCoverConsideration http.ts:4625-4626: an available incumbent is the one incumbent candidate; cross-field',
+  ],
+  [
+    'check:mapChoiceContexts.proposed-count',
+    covered,
+    '/choice_contexts',
+    [choiceContext()],
+    'mapChoiceContexts http.ts:4362 (count from mapCoverConsideration :4632): one proposed context per manually eligible alternative; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.policy-presence',
+    covered,
+    '/policy',
+    null,
+    'mapCoverConsideration http.ts:4647: a policy report exists exactly when there are candidates; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.reviewer-failure-status',
+    coverBase,
+    '/reviewer_failure_code',
+    'timed_out',
+    'mapCoverConsideration http.ts:4680-4685: a reviewer failure code needs the failed status; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.recommended-reference',
+    covered,
+    '/policy/status',
+    'recommended',
+    'mapCoverConsideration http.ts:4695: a recommended policy names its candidate; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.acceptable-ranking',
+    covered,
+    '/policy/acceptable_candidate_references',
+    [],
+    'mapCoverConsideration http.ts:4704-4719: acceptable references are the ranked alternatives in rank order; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.derived-candidate-state',
+    covered,
+    '/candidates/0/state',
+    'available',
+    'mapCoverConsideration http.ts:4720-4733: a candidate state follows selectable, the recommendation and the acceptable list; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.recommendation-context',
+    covered,
+    '/choice_contexts/0/recommendation',
+    'recommended',
+    'mapCoverConsideration http.ts:4745-4756: only the recommended candidate context is recommended; cross-field',
+  ],
+  [
+    'check:mapCoverConsideration.readiness',
+    covered,
+    '/ready',
+    false,
+    'mapCoverConsideration http.ts:4757-4776: ready follows provider_fetching and the candidates; cross-field',
+  ],
+  [
+    'check:mapDecisionAcknowledgement.case-identity',
+    decisionBase,
+    '/confirmation/case/review_case_id',
+    'another-case',
+    'mapDecisionAcknowledgement http.ts:2605: the confirmed case is the requested case; cross-document identity',
+  ],
+]
+
+for (const [id, from, pointer, value] of CROSS_FIELD)
+  add({
+    ...from,
+    id,
+    doc: () => replacing(pointer, value)(from.doc()),
+    mutates: pointer,
+    provenance: 'mutation',
+  })
 
 // ---- Expected divergences ----------------------------------------------------
 
@@ -560,6 +1080,12 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     TOLERANCES.map(([row, , , check]): [string, Expected] => [
       `tolerance:${row}`,
       { class: 'decoder_stricter', check: `${row}: ${check}` },
+    ]),
+  ),
+  ...Object.fromEntries(
+    CROSS_FIELD.map(([id, , , , check, result]): [string, Expected] => [
+      id,
+      { class: 'mapper_cross_field', check, ...(result === undefined ? {} : { result }) },
     ]),
   ),
 }
@@ -602,8 +1128,8 @@ const authored = { ...decision, authoredDescription: { candidateId: 'c', binding
 const policy = (c: Case) => client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length))
 const reviewerAccess = (c: Case) => mapReviewerAccess(c.doc())
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
-  'GET /api/v1/library': (c) => mapLibrary(c.doc()),
-  'GET /api/v1/library/report': (c) => mapReportDetail(c.doc()),
+  'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
+  'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
   'GET /api/v1/settings': (c) => mapSettings(c.doc()),
   'PUT /api/v1/reviewer-access/openrouter': reviewerAccess,
   'DELETE /api/v1/reviewer-access/openrouter': reviewerAccess,
@@ -613,7 +1139,7 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'POST /api/v1/reviewer-access/codex/device': (c) => client(c).startCodexDevice(1),
   'POST /api/v1/reviewer-access/description-model/test': (c) =>
     client(c).testDescriptionModel({ expected_revision: 1, api_key: '', model: 'example/text' }),
-  'GET /api/v1/attention': (c) => mapAttention(c.doc()),
+  'GET /api/v1/attention': (c) => client(c).getAttention({}),
   'GET /api/v1/review-cases/{review_case_id}': (c) => mapCaseDetail(c.doc()),
   'GET /api/v1/review-cases/{review_case_id}/evidence': (c) => mapEvidence(c.doc()),
   'GET /api/v1/review-cases/{review_case_id}/history': (c) => mapHistory(c.doc()),
@@ -625,7 +1151,7 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
     client(c).recordDecision(caseId(c), authored),
   'POST /api/v1/review-cases/{review_case_id}/description-advice/retry': (c) =>
     client(c).retryDescriptionAdvice(caseId(c)),
-  'GET /api/v1/review-preparation': (c) => mapPreparation(c.doc()),
+  'GET /api/v1/review-preparation': (c) => client(c).getPreparation(),
   'POST /api/v1/review-preparation/{connection}/{library_name}/scan': (c) =>
     client(c).preparationAction(c.path.slice('/api/v1/review-preparation/'.length)),
   'GET /api/v1/activity': (c) => mapActivity(c.doc()),
@@ -672,7 +1198,7 @@ const classify = (c: Case, decoder: string, mapper: string): Observed => {
   if (decoder === 'ok') {
     if (mapper === 'accept') return 'agree'
     const row = EXPECTED[c.id]?.class
-    return row === 'mapper_cross_field' || row === 'pending_server' ? row : 'unclassified'
+    return row === 'mapper_cross_field' ? row : 'unclassified'
   }
   if (mapper === 'accept') return 'decoder_stricter'
   const at = decoder.slice(decoder.indexOf('@') + 1)
@@ -721,15 +1247,41 @@ describe('expected-divergence table', () => {
   })
 })
 
+// A family is decoded once `request()` decodes the operation of every case it
+// owns; its mapper then has no presence check of its own.
+const decodedFamilies = new Set(
+  cases
+    .map(({ family }) => family)
+    .filter((family) =>
+      cases
+        .filter((c) => c.family === family)
+        .every((c) => {
+          const key = matchOperation(c.method, c.path)
+          return key !== undefined && DECODED.has(key)
+        }),
+    ),
+)
+
 describe('presence parity', () => {
-  it('has a row for every exactKeys call site', () => {
+  it('has a row for every exactKeys call site of a family not yet decoded', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/api/http.ts'), 'utf8')
-    expect(source.match(/\bexactKeys\(/g)?.length).toBe(PRESENCE_SITES.length)
+    const undecoded = PRESENCE_SITES.filter(([, family]) => !decodedFamilies.has(family))
+    expect(source.match(/\bexactKeys\(/g)?.length ?? 0).toBe(undecoded.length)
   })
   it.each(presence)('%s rejects at the deleted key on both sides', (id, results) => {
     expect(results).toContain(seen(id).decoder)
     expect(seen(id).mapper).toMatch(/^reject:/)
   })
+  it.each(DRAINED.map(([row, , pointer]) => [row, pointer]))(
+    '%s, drained, is refused at its one deleted key on both sides',
+    (row, pointer) => {
+      expect(seen(`tolerance:${row}`)).toMatchObject({
+        decoder: `required@${pointer}`,
+        mapper: 'reject:invalid_response',
+        observed: 'agree',
+      })
+    },
+  )
   it.each(TOLERANCES.map(([row, , pointer]) => [row, pointer]))(
     '%s is decoder-stricter at its one deleted key',
     (row, pointer) => {
@@ -741,18 +1293,23 @@ describe('presence parity', () => {
   )
 })
 
+describe('pinned cross-field results', () => {
+  const pinned = Object.entries(EXPECTED).flatMap(([id, row]) =>
+    row.result === undefined ? [] : [[id, row.result] as const],
+  )
+  it('pins every row of a decoded family, and only those', () => {
+    const decodedRows = CROSS_FIELD.filter(([, from]) => decodedFamilies.has(from.family))
+    expect(pinned.map(([id]) => id).sort()).toEqual(decodedRows.map(([id]) => id).sort())
+  })
+  it.each(pinned)('%s fails its own check', (id, result) => {
+    expect(seen(id).mapper).toBe(result)
+  })
+})
+
 describe('bars', () => {
   it('decodes every captured document', () => {
     const rejected = cases.filter((c) => c.provenance === 'server' && seen(c.id).decoder !== 'ok')
     expect(rejected.map(({ id }) => id)).toEqual([])
-  })
-  // B3: a pending-server row names the server field that 2b tightens; no other
-  // row has an owner, so a class flip without its owner edit fails.
-  it('names an owner for exactly the pending-server rows', () => {
-    const wrong = Object.entries(EXPECTED).filter(
-      ([, row]) => (row.class === 'pending_server') !== Boolean(row.owner),
-    )
-    expect(wrong.map(([id]) => id)).toEqual([])
   })
   // The accept is a capture where the family has one, otherwise a decode-tested
   // base (Q4).

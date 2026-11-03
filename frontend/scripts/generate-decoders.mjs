@@ -15,9 +15,10 @@ const KNOWN = new Set([
   ...['type', 'const', 'enum', 'properties', 'required', 'additionalProperties', 'items'],
   ...['anyOf', 'oneOf', 'discriminator', '$ref', 'minimum', 'maximum', 'minLength'],
   ...['maxLength', 'pattern', 'minItems', 'maxItems', 'maxProperties', 'default', 'title'],
-  ...['description', 'writeOnly', 'format', 'propertyNames'],
+  ...['description', 'writeOnly', 'format', 'propertyNames', 'uniqueItems', 'prefixItems'],
 ])
 const TYPES = new Set(['string', 'integer', 'number', 'boolean', 'null', 'array', 'object'])
+const SCALARS = ['string', 'integer', 'number', 'boolean', 'null']
 const METHODS = ['get', 'put', 'post', 'delete', 'patch']
 const PREFIX = '#/components/schemas/'
 const pointer = (...parts) => parts.map((p) => String(p).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')
@@ -81,8 +82,17 @@ function guard(document, node, at, top = false) {
     if ((enumForm ? names.enum : [names.const]).some((name) => typeof name !== 'string'))
       fail(`${at}/propertyNames`, 'propertyNames value')
   }
+  // A unique array compares its items as JSON primitives, and a tuple is closed:
+  // exactly one schema per position and nothing after them.
+  if ('uniqueItems' in node && (node.uniqueItems !== true || node.type !== 'array' || !SCALARS.includes(kind(node.items ?? {}))))
+    fail(at, 'uniqueItems form')
+  if ('prefixItems' in node) {
+    const { prefixItems: items, minItems, maxItems } = node
+    if (!Array.isArray(items) || node.type !== 'array' || ![undefined, false].includes(node.items) || minItems !== items.length || maxItems !== items.length)
+      fail(at, 'prefixItems form')
+    items.forEach((item, index) => guard(document, item, `${at}/prefixItems/${index}`))
+  } else if ('items' in node) guard(document, node.items, `${at}/items`)
   for (const [key, value] of Object.entries(node.properties ?? {})) guard(document, value, `${at}/properties/${pointer(key)}`)
-  if ('items' in node) guard(document, node.items, `${at}/items`)
   if (plain(node.additionalProperties)) guard(document, node.additionalProperties, `${at}/additionalProperties`)
   else if ('additionalProperties' in node && typeof node.additionalProperties !== 'boolean')
     fail(`${at}/additionalProperties`, 'not a schema')
@@ -105,7 +115,7 @@ function analyse(document) {
     const refs = [node.$ref, ...Object.values(node.discriminator?.mapping ?? {})]
     for (const name of refs.filter(Boolean).map((ref) => ref.slice(PREFIX.length)))
       if (!reached.has(name)) reached.add(name) && visit(schemas[name])
-    const children = [...Object.values(node.properties ?? {}), ...(node.anyOf ?? []), ...(node.oneOf ?? [])]
+    const children = [...Object.values(node.properties ?? {}), ...(node.anyOf ?? []), ...(node.oneOf ?? []), ...(node.prefixItems ?? [])]
     for (const child of [...children, node.items, node.additionalProperties]) if (plain(child)) visit(child)
   }
   entries.forEach((entry) => visit(entry.schema))
@@ -146,7 +156,11 @@ export class DecodeFailure {
     readonly reason: string,
   ) {}
 }
-export type D<T> = (v: unknown, at: string) => T
+// Where a value sits. A field passes its parent and key, and only a failure
+// joins them into a JSON pointer, so a valid document builds no pointer.
+type Seg = { readonly parent: Path; readonly key: string | number }
+export type Path = string | Seg
+export type D<T> = (v: unknown, at: Path) => T
 export interface Field<T> {
   readonly kind: 'req' | 'opt' | 'dflt'
   readonly d: D<T>
@@ -154,11 +168,13 @@ export interface Field<T> {
   readonly inv?: (t: T) => void
 }
 type Rec = Record<string, unknown>
-const fail = (at: string, reason: string): never => {
-  throw new DecodeFailure(at, reason)
+const text = (at: Path): string =>
+  typeof at === 'string' ? at : \`\${text(at.parent)}/\${String(at.key).replaceAll('~', '~0').replaceAll('/', '~1')}\`
+const fail = (at: Path, reason: string): never => {
+  throw new DecodeFailure(text(at), reason)
 }
-const ptr = (at: string, key: string | number) => \`\${at}/\${String(key).replaceAll('~', '~0').replaceAll('/', '~1')}\`
-const record = (v: unknown, at: string): Rec =>
+const ptr = (parent: Path, key: string | number): Path => ({ parent, key })
+const record = (v: unknown, at: Path): Rec =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Rec) : fail(at, 'type')
 const is = (kind: Kind, v: unknown): boolean =>
   kind === 'null' ? v === null
@@ -167,7 +183,7 @@ const is = (kind: Kind, v: unknown): boolean =>
   : kind === 'integer' ? Number.isSafeInteger(v)
   : kind === 'number' ? Number.isFinite(v)
   : typeof v === kind
-const bounds = (v: number, at: string, min?: number, max?: number) => {
+const bounds = (v: number, at: Path, min?: number, max?: number) => {
   if (min !== undefined && v < min) fail(at, 'min')
   if (max !== undefined && v > max) fail(at, 'max')
   return v
@@ -214,12 +230,23 @@ export const lit =
     return literals.some((literal) => literal === v) ? (v as L[number]) : fail(at, literals.length === 1 ? 'const' : 'enum')
   }
 export const arr =
-  <T>(item: D<T>, min?: number, max?: number): D<readonly T[]> =>
+  <T>(item: D<T>, min?: number, max?: number, unique?: true): D<readonly T[]> =>
   (v, at) => {
     if (!Array.isArray(v)) return fail(at, 'type')
     if (min !== undefined && v.length < min) fail(at, 'min_items')
     if (max !== undefined && v.length > max) fail(at, 'max_items')
-    return v.map((element, index) => item(element, ptr(at, index)))
+    const out = v.map((element, index) => item(element, ptr(at, index)))
+    if (unique && new Set(out).size !== out.length) fail(at, 'unique')
+    return out
+  }
+// A closed tuple: each present position, then the length.
+export const tuple =
+  <const T extends readonly D<unknown>[]>(...items: T): D<{ readonly [I in keyof T]: T[I] extends D<infer U> ? U : never }> =>
+  (v, at) => {
+    if (!Array.isArray(v)) return fail(at, 'type')
+    const out = items.slice(0, v.length).map((item, index) => item(v[index], ptr(at, index)))
+    if (v.length !== items.length) fail(at, v.length < items.length ? 'min_items' : 'max_items')
+    return out as never
   }
 export const map =
   <T>(value: D<T>, max?: number, names?: readonly string[]): D<{ readonly [key: string]: T }> =>
@@ -258,7 +285,7 @@ export const anyOf =
           if (!(error instanceof DecodeFailure)) throw error
           if (!deepest || error.at.split('/').length > deepest.at.split('/').length) deepest = error
         }
-    throw deepest ?? new DecodeFailure(at, 'no_branch')
+    throw deepest ?? new DecodeFailure(text(at), 'no_branch')
   }
 const rt = <O extends keyof operations, St extends keyof operations[O]['responses']>(d: D<Body<O, St>>) => d
 `
@@ -318,7 +345,8 @@ export function emitDecoders(document) {
       case 'null':
         return 'nil'
       case 'array':
-        return `arr(${args(expr(node.items ?? {}), node.minItems, node.maxItems)})`
+        if ('prefixItems' in node) return `tuple(${node.prefixItems.map(expr).join(', ')})`
+        return `arr(${args(expr(node.items ?? {}), node.minItems, node.maxItems, node.uniqueItems)})`
       case 'object': {
         if (plain(node.additionalProperties)) {
           const names = node.propertyNames && ('const' in node.propertyNames ? [node.propertyNames.const] : node.propertyNames.enum)

@@ -215,10 +215,12 @@
         "additionalProperties": false,
         "properties": {
           "model": {
+            "minLength": 1,
             "title": "Model",
             "type": "string"
           },
           "profile_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
             "title": "Profile Sha256",
             "type": "string"
           }
@@ -931,6 +933,7 @@
             "type": "string"
           },
           "model": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
             "title": "Model",
             "type": "string"
           },
@@ -954,6 +957,7 @@
           "requests_per_minute": {
             "anyOf": [
               {
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
@@ -1365,6 +1369,7 @@
               "openai/gpt-6-luna"
             ],
             "items": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
               "type": "string"
             },
             "title": "Recommendations",
@@ -1515,6 +1520,7 @@
           "host_headroom_bytes": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -1603,6 +1609,10 @@
           "tier": {
             "anyOf": [
               {
+                "enum": [
+                  "free",
+                  "paid"
+                ],
                 "type": "string"
               },
               {
@@ -1869,6 +1879,12 @@
             "type": "string"
           },
           "state": {
+            "enum": [
+              "allowed",
+              "partially_allowed",
+              "connection_unavailable",
+              "not_ready"
+            ],
             "title": "State",
             "type": "string"
           }
@@ -1977,6 +1993,24 @@
             "type": "boolean"
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -1987,6 +2021,14 @@
             "type": "integer"
           },
           "state": {
+            "enum": [
+              "allowed",
+              "not_ready",
+              "connection_unavailable",
+              "insufficient_permission",
+              "field_unavailable",
+              "unexpected_effect_behavior"
+            ],
             "title": "State",
             "type": "string"
           }
@@ -2093,7 +2135,13 @@
           },
           "event_type": {
             "default": "unknown",
-            "maxLength": 32,
+            "enum": [
+              "review",
+              "policy",
+              "metadata",
+              "safety",
+              "unknown"
+            ],
             "title": "Event Type",
             "type": "string"
           },
@@ -2131,6 +2179,7 @@
           "occurred_at": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -2222,6 +2271,24 @@
             "title": "Before"
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -2466,14 +2533,17 @@
         "additionalProperties": false,
         "properties": {
           "automatic": {
+            "minimum": 0.0,
             "title": "Automatic",
             "type": "integer"
           },
           "human": {
+            "minimum": 0.0,
             "title": "Human",
             "type": "integer"
           },
           "total": {
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -2516,6 +2586,7 @@
           },
           "counts": {
             "additionalProperties": {
+              "minimum": 0.0,
               "type": "integer"
             },
             "title": "Counts",
@@ -2648,6 +2719,12 @@
             "title": "Destination"
           },
           "reason": {
+            "enum": [
+              "connection_unavailable",
+              "insufficient_permission",
+              "field_unavailable",
+              "unexpected_effect_behavior"
+            ],
             "title": "Reason",
             "type": "string"
           },
@@ -2656,6 +2733,7 @@
             "type": "string"
           },
           "updated_at": {
+            "minimum": 0.0,
             "title": "Updated At",
             "type": "integer"
           }
@@ -2742,7 +2820,24 @@
         "additionalProperties": false,
         "properties": {
           "destination": {
-            "maxLength": 512,
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -2958,6 +3053,24 @@
             "type": "string"
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -2986,6 +3099,14 @@
             "title": "Library Display Name"
           },
           "media_kind": {
+            "enum": [
+              "epub",
+              "m4b",
+              "m4a",
+              "mp3",
+              "audio",
+              "unknown"
+            ],
             "title": "Media Kind",
             "type": "string"
           },
@@ -3012,6 +3133,7 @@
             "type": "string"
           },
           "work_attention_count": {
+            "minimum": 0.0,
             "title": "Work Attention Count",
             "type": "integer"
           }
@@ -3066,10 +3188,12 @@
             "title": "Query"
           },
           "schema_version": {
+            "const": "review-attention-v1",
             "title": "Schema Version",
             "type": "string"
           },
           "total": {
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -3251,6 +3375,11 @@
             "type": "integer"
           },
           "outcome": {
+            "enum": [
+              "candidate",
+              "keep_current",
+              "ignore"
+            ],
             "title": "Outcome",
             "type": "string"
           },
@@ -3594,6 +3723,7 @@
           "expires_in_seconds": {
             "anyOf": [
               {
+                "const": 900,
                 "type": "integer"
               },
               {
@@ -3639,6 +3769,7 @@
           "user_code": {
             "anyOf": [
               {
+                "pattern": "^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$",
                 "type": "string"
               },
               {
@@ -3650,6 +3781,7 @@
           "verification_url": {
             "anyOf": [
               {
+                "const": "https://auth.openai.com/codex/device",
                 "type": "string"
               },
               {
@@ -3848,6 +3980,7 @@
           "deterministic_rank": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -3869,6 +4002,8 @@
                     }
                   ]
                 },
+                "maxItems": 7,
+                "minItems": 7,
                 "type": "array"
               },
               {
@@ -3878,6 +4013,7 @@
             "title": "Deterministic Rank Key"
           },
           "height": {
+            "minimum": 0.0,
             "title": "Height",
             "type": "integer"
           },
@@ -3912,6 +4048,7 @@
             ]
           },
           "ordinal": {
+            "minimum": 0.0,
             "title": "Ordinal",
             "type": "integer"
           },
@@ -3933,12 +4070,27 @@
           },
           "source_kinds": {
             "items": {
+              "enum": [
+                "abs",
+                "epub",
+                "hardcover",
+                "open_library",
+                "inventaire",
+                "audible_catalog",
+                "itunes_search"
+              ],
               "type": "string"
             },
             "title": "Source Kinds",
             "type": "array"
           },
           "state": {
+            "enum": [
+              "acceptable",
+              "available",
+              "excluded",
+              "recommended"
+            ],
             "title": "State",
             "type": "string"
           },
@@ -3947,6 +4099,7 @@
             "type": "string"
           },
           "width": {
+            "minimum": 0.0,
             "title": "Width",
             "type": "integer"
           }
@@ -4066,6 +4219,7 @@
           "reviewer_access_revision": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -4116,6 +4270,7 @@
           "reviewer_model": {
             "anyOf": [
               {
+                "maxLength": 256,
                 "type": "string"
               },
               {
@@ -4125,12 +4280,21 @@
             "title": "Reviewer Model"
           },
           "reviewer_status": {
+            "enum": [
+              "completed",
+              "failed",
+              "unavailable"
+            ],
             "title": "Reviewer Status",
             "type": "string"
           },
           "reviewer_unavailable_reason": {
             "anyOf": [
               {
+                "enum": [
+                  "profile contract requires memory_bytes=1073741824",
+                  "profile contract requires process_limit=32"
+                ],
                 "type": "string"
               },
               {
@@ -4199,6 +4363,13 @@
             "type": "array"
           },
           "outcome": {
+            "enum": [
+              "verified_manifestation_match",
+              "verified_work_match",
+              "plausible_match",
+              "unknown",
+              "conflict"
+            ],
             "title": "Outcome",
             "type": "string"
           },
@@ -4496,7 +4667,8 @@
               "type": "string"
             },
             "title": "Acceptable Candidate References",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "actual_target_state": {
             "enum": [
@@ -4544,8 +4716,10 @@
           },
           "reasons": {
             "items": {
+              "maxLength": 128,
               "type": "string"
             },
+            "maxItems": 32,
             "title": "Reasons",
             "type": "array"
           },
@@ -4759,6 +4933,7 @@
           },
           "invalidation_sequences": {
             "items": {
+              "minimum": 1.0,
               "type": "integer"
             },
             "maxItems": 8,
@@ -4770,6 +4945,13 @@
             "type": "integer"
           },
           "outcome": {
+            "enum": [
+              "accept",
+              "keep_current",
+              "reject",
+              "owner_entered",
+              "withdraw"
+            ],
             "title": "Outcome",
             "type": "string"
           },
@@ -4858,6 +5040,13 @@
             "type": "integer"
           },
           "outcome": {
+            "enum": [
+              "accept",
+              "keep_current",
+              "reject",
+              "owner_entered",
+              "withdraw"
+            ],
             "title": "Outcome",
             "type": "string"
           },
@@ -4990,6 +5179,7 @@
             "title": "Application Outcome"
           },
           "attempt_id": {
+            "pattern": "^description_attempt_[0-9a-f]{32}$",
             "title": "Attempt Id",
             "type": "string"
           },
@@ -5035,6 +5225,7 @@
             "title": "Failure"
           },
           "model": {
+            "maxLength": 256,
             "title": "Model",
             "type": "string"
           },
@@ -5239,8 +5430,10 @@
           },
           "invalidation_sequences": {
             "items": {
+              "minimum": 1.0,
               "type": "integer"
             },
+            "maxItems": 8,
             "title": "Invalidation Sequences",
             "type": "array"
           },
@@ -5328,13 +5521,31 @@
         "properties": {
           "destinations": {
             "items": {
-              "maxLength": 64,
+              "enum": [
+                "title",
+                "subtitle",
+                "authors",
+                "narrators",
+                "series",
+                "genres",
+                "publishedYear",
+                "publishedDate",
+                "publisher",
+                "description",
+                "isbn",
+                "asin",
+                "language",
+                "explicit",
+                "tags",
+                "cover"
+              ],
               "type": "string"
             },
             "maxItems": 16,
             "minItems": 1,
             "title": "Destinations",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "observation": {
             "maxLength": 1024,
@@ -5593,6 +5804,24 @@
             "type": "string"
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -5602,6 +5831,8 @@
             "type": "string"
           },
           "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
             "title": "Occurred At",
             "type": "integer"
           },
@@ -5713,6 +5944,8 @@
             "type": "string"
           },
           "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
             "title": "Occurred At",
             "type": "integer"
           },
@@ -5779,6 +6012,24 @@
             "type": "string"
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
@@ -5792,6 +6043,8 @@
             "type": "string"
           },
           "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
             "title": "Occurred At",
             "type": "integer"
           },
@@ -5894,10 +6147,13 @@
             "type": "string"
           },
           "model": {
+            "maxLength": 256,
             "title": "Model",
             "type": "string"
           },
           "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
             "title": "Occurred At",
             "type": "integer"
           },
@@ -6016,9 +6272,21 @@
           },
           "dispositions": {
             "additionalProperties": {
+              "minimum": 0.0,
               "type": "integer"
             },
             "maxProperties": 32,
+            "propertyNames": {
+              "enum": [
+                "abstention",
+                "candidate",
+                "conflict",
+                "ignore",
+                "keep_current",
+                "manual",
+                "unsupported"
+              ]
+            },
             "title": "Dispositions",
             "type": "object"
           },
@@ -6028,6 +6296,8 @@
             "type": "string"
           },
           "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
             "title": "Occurred At",
             "type": "integer"
           },
@@ -6072,7 +6342,13 @@
             "type": "integer"
           },
           "kind": {
-            "maxLength": 64,
+            "enum": [
+              "admitted",
+              "superseded",
+              "no_case",
+              "retired",
+              "tombstoned"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -6307,6 +6583,13 @@
             "type": "array"
           },
           "lens": {
+            "enum": [
+              "all",
+              "needs_attention",
+              "no_attention_needed",
+              "not_matched",
+              "preparation_failed"
+            ],
             "title": "Lens",
             "type": "string"
           },
@@ -6322,6 +6605,7 @@
             "title": "Next Cursor"
           },
           "page": {
+            "minimum": 0.0,
             "title": "Page",
             "type": "integer"
           },
@@ -6370,6 +6654,7 @@
         "additionalProperties": false,
         "properties": {
           "attention_count": {
+            "minimum": 0.0,
             "title": "Attention Count",
             "type": "integer"
           },
@@ -6454,6 +6739,14 @@
             "title": "Library Display Name"
           },
           "media_kind": {
+            "enum": [
+              "epub",
+              "m4b",
+              "m4a",
+              "mp3",
+              "audio",
+              "unknown"
+            ],
             "title": "Media Kind",
             "type": "string"
           },
@@ -6637,6 +6930,7 @@
           },
           "tracks": {
             "items": {
+              "minimum": 0.0,
               "type": "integer"
             },
             "maxItems": 512,
@@ -7660,6 +7954,7 @@
             "type": "string"
           },
           "stage": {
+            "maxLength": 64,
             "title": "Stage",
             "type": "string"
           }
@@ -7768,6 +8063,7 @@
         "additionalProperties": false,
         "properties": {
           "attempt": {
+            "minimum": 0.0,
             "title": "Attempt",
             "type": "integer"
           },
@@ -7796,14 +8092,42 @@
             "type": "string"
           },
           "recovery_attempt": {
+            "minimum": 0.0,
             "title": "Recovery Attempt",
             "type": "integer"
           },
           "stage": {
+            "enum": [
+              "extraction",
+              "provider",
+              "proposal",
+              "admission",
+              "projection",
+              "complete"
+            ],
             "title": "Stage",
             "type": "string"
           },
           "status": {
+            "enum": [
+              "provider",
+              "configuration",
+              "authentication",
+              "stale",
+              "transient",
+              "projection",
+              "failed",
+              "currentness",
+              "persistence",
+              "unsupported_media",
+              "unreadable_media",
+              "parser_refused",
+              "multi_file_budget_exceeded",
+              "missing_required_input",
+              "malformed_retained_data",
+              "internal_failure",
+              "unknown"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -8037,10 +8361,12 @@
         "additionalProperties": false,
         "properties": {
           "blocked": {
+            "minimum": 0.0,
             "title": "Blocked",
             "type": "integer"
           },
           "checked": {
+            "minimum": 0.0,
             "title": "Checked",
             "type": "integer"
           },
@@ -8057,14 +8383,17 @@
             "type": "string"
           },
           "not_matched": {
+            "minimum": 0.0,
             "title": "Not Matched",
             "type": "integer"
           },
           "ready": {
+            "minimum": 0.0,
             "title": "Ready",
             "type": "integer"
           },
           "recorded": {
+            "minimum": 0.0,
             "title": "Recorded",
             "type": "integer"
           },
@@ -8092,10 +8421,19 @@
             "type": "array"
           },
           "state": {
+            "enum": [
+              "idle",
+              "queued",
+              "discovering",
+              "processing",
+              "completed",
+              "completed_with_failures"
+            ],
             "title": "State",
             "type": "string"
           },
           "total": {
+            "minimum": 0.0,
             "title": "Total",
             "type": "integer"
           }
@@ -8413,12 +8751,14 @@
         "additionalProperties": false,
         "properties": {
           "kind": {
+            "maxLength": 64,
             "title": "Kind",
             "type": "string"
           },
           "value": {
             "anyOf": [
               {
+                "maxLength": 16384,
                 "type": "string"
               },
               {
@@ -8426,14 +8766,17 @@
               },
               {
                 "items": {
+                  "maxLength": 512,
                   "type": "string"
                 },
+                "maxItems": 128,
                 "type": "array"
               },
               {
                 "items": {
                   "$ref": "#/components/schemas/_SeriesValue"
                 },
+                "maxItems": 128,
                 "type": "array"
               }
             ],
@@ -8451,7 +8794,13 @@
         "additionalProperties": false,
         "properties": {
           "lane_kind": {
-            "maxLength": 64,
+            "enum": [
+              "isbn",
+              "work",
+              "asin",
+              "discovery",
+              "none"
+            ],
             "title": "Lane Kind",
             "type": "string"
           },
@@ -8471,7 +8820,23 @@
             "type": "string"
           },
           "status": {
-            "maxLength": 64,
+            "enum": [
+              "disabled",
+              "insufficient_input",
+              "candidates",
+              "no_match",
+              "authentication",
+              "authorization",
+              "rate_limited",
+              "unavailable",
+              "incomplete",
+              "malformed",
+              "oversized",
+              "candidate_limit_exceeded",
+              "query_limit_exceeded",
+              "not_needed",
+              "adapter_fault"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -8507,7 +8872,8 @@
             },
             "maxItems": 4,
             "title": "Dispatch Reasons",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "failure_reasons": {
             "items": {
@@ -8524,7 +8890,8 @@
             },
             "maxItems": 7,
             "title": "Failure Reasons",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "next_eligible_at": {
             "anyOf": [
@@ -8638,12 +9005,14 @@
           "candidate": {
             "maxLength": 128,
             "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f   -     　﻿][^\\x00-\\x1f\\x7f]*$",
             "title": "Candidate",
             "type": "string"
           },
           "provider": {
             "maxLength": 128,
             "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f   -     　﻿][^\\x00-\\x1f\\x7f]*$",
             "title": "Provider",
             "type": "string"
           }
@@ -8776,7 +9145,14 @@
             "type": "array"
           },
           "media_kind": {
-            "maxLength": 32,
+            "enum": [
+              "epub",
+              "m4b",
+              "m4a",
+              "mp3",
+              "audio",
+              "unknown"
+            ],
             "title": "Media Kind",
             "type": "string"
           },
@@ -8859,7 +9235,22 @@
           "surface": {
             "anyOf": [
               {
-                "maxLength": 64,
+                "enum": [
+                  "container_format",
+                  "container_stream",
+                  "mp4_ilst",
+                  "mp4_freeform",
+                  "mp4_freeform_tone",
+                  "id3_frame",
+                  "id3_user_text",
+                  "sidecar_audiobookshelf",
+                  "sidecar_libation",
+                  "sidecar_opf",
+                  "sidecar_nfo",
+                  "sidecar_cue",
+                  "path_folder",
+                  "path_file"
+                ],
                 "type": "string"
               },
               {
@@ -8879,7 +9270,15 @@
         "additionalProperties": false,
         "properties": {
           "basis": {
-            "maxLength": 64,
+            "enum": [
+              "opening_matter",
+              "package_metadata",
+              "target_metadata",
+              "embedded_tag",
+              "sidecar",
+              "path",
+              "prior_admission"
+            ],
             "title": "Basis",
             "type": "string"
           },
@@ -8889,7 +9288,29 @@
             "type": "string"
           },
           "kind": {
-            "maxLength": 64,
+            "enum": [
+              "title",
+              "subtitle",
+              "creator",
+              "contributor",
+              "series",
+              "series_sequence",
+              "isbn",
+              "asin",
+              "publication_date",
+              "date_event",
+              "contextual_credit",
+              "publisher",
+              "description",
+              "language",
+              "subject",
+              "imprint",
+              "genre",
+              "tag",
+              "duration",
+              "performance_type",
+              "adult_product"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -8906,7 +9327,15 @@
             "title": "Role"
           },
           "state": {
-            "maxLength": 32,
+            "enum": [
+              "valid",
+              "absent",
+              "malformed",
+              "oversized",
+              "unsupported",
+              "untyped",
+              "inapplicable"
+            ],
             "title": "State",
             "type": "string"
           },
@@ -8987,22 +9416,27 @@
         "additionalProperties": false,
         "properties": {
           "all": {
+            "minimum": 0.0,
             "title": "All",
             "type": "integer"
           },
           "needs_attention": {
+            "minimum": 0.0,
             "title": "Needs Attention",
             "type": "integer"
           },
           "no_attention_needed": {
+            "minimum": 0.0,
             "title": "No Attention Needed",
             "type": "integer"
           },
           "not_matched": {
+            "minimum": 0.0,
             "title": "Not Matched",
             "type": "integer"
           },
           "preparation_failed": {
+            "minimum": 0.0,
             "title": "Preparation Failed",
             "type": "integer"
           }
@@ -9119,15 +9553,29 @@
             "title": "Current Cover Selection Id"
           },
           "decision_actions": {
-            "items": {
-              "enum": [
-                "accept",
-                "keep_current"
-              ],
-              "type": "string"
-            },
-            "title": "Decision Actions",
-            "type": "array"
+            "anyOf": [
+              {
+                "maxItems": 0,
+                "minItems": 0,
+                "type": "array"
+              },
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "const": "keep_current",
+                    "type": "string"
+                  },
+                  {
+                    "const": "accept",
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              }
+            ],
+            "title": "Decision Actions"
           },
           "description_advice": {
             "anyOf": [
@@ -9140,10 +9588,37 @@
             ]
           },
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
           "deterministic_disposition": {
+            "enum": [
+              "propose_change",
+              "acceptable_choice",
+              "unresolved_choice",
+              "keep",
+              "reject",
+              "defer",
+              "ineligible"
+            ],
             "title": "Deterministic Disposition",
             "type": "string"
           },
@@ -9152,6 +9627,14 @@
             "type": "boolean"
           },
           "effect_capability": {
+            "enum": [
+              "allowed",
+              "unavailable",
+              "connection_unavailable",
+              "insufficient_permission",
+              "field_unavailable",
+              "unexpected_effect_behavior"
+            ],
             "title": "Effect Capability",
             "type": "string"
           },
@@ -9574,12 +10057,14 @@
         "additionalProperties": false,
         "properties": {
           "name": {
+            "maxLength": 512,
             "title": "Name",
             "type": "string"
           },
           "sequence": {
             "anyOf": [
               {
+                "maxLength": 512,
                 "type": "string"
               },
               {
@@ -10337,10 +10822,37 @@
         "additionalProperties": false,
         "properties": {
           "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
             "title": "Destination",
             "type": "string"
           },
           "state": {
+            "enum": [
+              "value",
+              "missing",
+              "null",
+              "empty",
+              "unloaded",
+              "malformed",
+              "oversized"
+            ],
             "title": "State",
             "type": "string"
           },
@@ -10419,7 +10931,14 @@
             "title": "Library Display Name"
           },
           "media_kind": {
-            "maxLength": 64,
+            "enum": [
+              "epub",
+              "m4b",
+              "m4a",
+              "mp3",
+              "audio",
+              "unknown"
+            ],
             "title": "Media Kind",
             "type": "string"
           },

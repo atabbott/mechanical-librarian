@@ -8,11 +8,11 @@ import os
 import stat
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import uvicorn
@@ -110,9 +110,13 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
 )
+from mechanical_librarian.adapters.reviewers.codex_auth_lease import (
+    CodexAuthLeaseCoordinator,
+    LazyCodexAuth,
+    UnavailableCodexAuth,
+)
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexAuthCommand,
-    CodexDeviceAuthError,
     CodexDeviceAuthManager,
 )
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
@@ -153,7 +157,10 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
-from mechanical_librarian.application.description_advice import DescriptionAdviceService
+from mechanical_librarian.application.description_advice import (
+    admit_staged_description,
+    prepare_staged_description,
+)
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
     PolicyPreviewApplication,
@@ -200,9 +207,8 @@ from mechanical_librarian.application.provider_recovery_runner import (
     ScopedProviderRecoveryRunner,
 )
 from mechanical_librarian.application.provider_retry_successor import (
-    ConfiguredProviderRetry,
-    ProviderRetryDisabled,
     ProviderRetrySuccessorError,
+    resolve_configured_retry,
 )
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
@@ -233,7 +239,6 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessOperations,
 )
 from mechanical_librarian.application.reviewer_contracts import (
-    CodexDeviceAuthState,
     ReviewerProvisioningStatus,
     openrouter_profile,
 )
@@ -251,13 +256,10 @@ from mechanical_librarian.bootstrap.contained_reviewer import (
     run_description_reviewer,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
-    admitted_audiobook_identity,
     recording_unmatched,
 )
 from mechanical_librarian.domain.description_advice import (
-    DescriptionAdviceBinding,
     DescriptionAdviceSettings,
-    description_digest,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -269,7 +271,6 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
 from mechanical_librarian.domain.proposal_set import ProposalSet, audiobook_review_scope
-from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
@@ -376,7 +377,7 @@ class _StoreRuntimeActivation:
         self._lock = threading.RLock()
         # The candidate's recovery cutover, held until its authority commits.
         self._cutover: Callable[[], None] | None = None
-        self._codex_auth = _CodexAuthLeaseCoordinator()
+        self._codex_auth = CodexAuthLeaseCoordinator()
         self.activity_facts = ActivityFactStore()
         # What root validation and Activity parsed, kept by exact bytes so a
         # document parses once across cutovers (#1231).
@@ -1172,21 +1173,22 @@ class _ProviderPacers:
     audiosilo: AudioSiloPacer | None
     itunes_search: ITunesSearchPacer | None
 
-    @classmethod
-    def for_providers(
-        cls, providers: Sequence[ProviderConnectionConfiguration]
-    ) -> _ProviderPacers:
-        enabled = {value.adapter for value in providers if value.enabled}
-        return cls(
-            GoogleBooksPacer() if "google_books" in enabled else None,
-            OpenLibraryPacer() if "open_library" in enabled else None,
-            InventairePacer() if "inventaire" in enabled else None,
-            HardcoverPacer() if "hardcover" in enabled else None,
-            AudibleCatalogPacer() if "audible_catalog" in enabled else None,
-            AudnexusPacer() if "audnexus" in enabled else None,
-            AudioSiloPacer() if "audiosilo" in enabled else None,
-            ITunesSearchPacer() if "itunes_search" in enabled else None,
-        )
+
+def _provider_pacers(
+    providers: Sequence[ProviderConnectionConfiguration],
+) -> _ProviderPacers:
+    """One pacer for each enabled adapter, none for the rest."""
+    enabled = {value.adapter for value in providers if value.enabled}
+    return _ProviderPacers(
+        GoogleBooksPacer() if "google_books" in enabled else None,
+        OpenLibraryPacer() if "open_library" in enabled else None,
+        InventairePacer() if "inventaire" in enabled else None,
+        HardcoverPacer() if "hardcover" in enabled else None,
+        AudibleCatalogPacer() if "audible_catalog" in enabled else None,
+        AudnexusPacer() if "audnexus" in enabled else None,
+        AudioSiloPacer() if "audiosilo" in enabled else None,
+        ITunesSearchPacer() if "itunes_search" in enabled else None,
+    )
 
 
 _ProviderRefusal = Literal["credential unavailable", "configuration invalid"]
@@ -1309,21 +1311,18 @@ def _retry_provider(
     return instance
 
 
-def create_review_pipeline(
-    configuration: ApplicationConfiguration,
+def _pipeline_repositories(
     database_path: Path,
-    catalogue_path: Path,
     artifact_store_path: Path,
-    reviewer_access: ReviewerAccessOperations,
-    database_authority: object | None = None,
-    timing: StageTimer | None = None,
-    private_root: Path | None = None,
-    provider_recovery: SQLiteProviderRecoveryStore | None = None,
-    credentials: dict[str, str] | None = None,
-    first_boot: bool = False,
-    admission: OperationAdmission | None = None,
-    defer_cutover: Callable[[Callable[[], None]], None] | None = None,
-) -> ReviewPreparationSupervisor:
+    database_authority: object | None,
+    admission: OperationAdmission | None,
+    review: ReviewWebConfiguration | None,
+) -> tuple[
+    Callable[[], None],
+    Callable[[], SQLiteMetadataReportRepository],
+    Callable[[], SQLiteMetadataReportRepository],
+]:
+    """Open a review pipeline's repositories, and recover its artifacts once."""
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
 
@@ -1350,31 +1349,6 @@ def create_review_pipeline(
                 recovery_repository.close()
             artifacts_recovered = True
 
-    mounts = {item.name: item for item in configuration.mounts}
-    clients = {item.name: item for item in configuration.connections}
-    reader = AudiobookshelfCatalogueReader(
-        client_factory=lambda name: (
-            target_client(
-                clients[name].endpoint,
-                _required_secret_file(clients[name].secret_file),
-                configuration.limits.timeout_seconds,
-            )
-            if credentials is None
-            else target_client_token(
-                clients[name].endpoint,
-                credentials["target:" + name],
-                configuration.limits.timeout_seconds,
-            )
-        ),
-        mounts=mounts,
-        maximum_bytes=configuration.limits.target_response_bytes,
-        timeout_seconds=configuration.limits.timeout_seconds,
-    )
-    pacers = _ProviderPacers.for_providers(configuration.providers)
-    discovery_lock = threading.Lock()
-    if provider_recovery is None:
-        raise ConfigurationError("provider recovery store is unavailable")
-
     def repository_factory() -> SQLiteMetadataReportRepository:
         repository = open_repository(
             database_path,
@@ -1382,7 +1356,7 @@ def create_review_pipeline(
             authority=database_authority,
             admission=admission,
         )
-        _bind_description_authority(repository, configuration.review)
+        _bind_description_authority(repository, review)
         return repository
 
     def observation_repository_factory() -> SQLiteMetadataReportRepository:
@@ -1393,63 +1367,34 @@ def create_review_pipeline(
             cross_thread=True,
             admission=admission,
         )
-        _bind_description_authority(repository, configuration.review)
+        _bind_description_authority(repository, review)
         return repository
 
-    def retry_resolver(
-        connection_name: str,
-        library_name: str,
-        name: str,
-        adapter: str,
-        generation: int,
-    ) -> ConfiguredProviderRetry | None:
-        if generation != configuration.provider_recovery_generation:
-            return None
-        try:
-            _, selected, _, configured = configuration.select(
-                connection_name, library_name
-            )
-        except ConfigurationError:
-            return None
-        provider = next(
-            (
-                value
-                for value in configured
-                if value.name == name and value.adapter == adapter
-            ),
-            None,
-        )
-        if provider is None:
-            return None
-        if not provider.enabled:
-            raise ProviderRetryDisabled("provider retry is disabled")
+    return recover_artifacts_once, repository_factory, observation_repository_factory
 
-        def factory(
-            value: ProviderConnectionConfiguration = provider,
-        ) -> MetadataProvider:
-            # The marketplace order is read from `configured` -- the provider
-            # set this retry was resolved against -- so a retry never walks an
-            # order the report it is succeeding did not.
-            return _retry_provider(
-                value,
-                configuration,
-                credentials,
-                audiobook_marketplaces(configured, selected.languages),
-                pacers,
-            )
 
-        return ConfiguredProviderRetry(
-            ProviderBinding(name, True, factory, adapter),
-            adapter,
-            generation,
-            google_burst_remaining=(
-                pacers.google_books.remaining_burst
-                if adapter == "google_books" and pacers.google_books is not None
-                else None
-            ),
-        )
-
-    pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
+def _provider_recovery_wiring(
+    configuration: ApplicationConfiguration,
+    artifact_store_path: Path,
+    credentials: dict[str, str] | None,
+    pacers: _ProviderPacers,
+    provider_recovery: SQLiteProviderRecoveryStore,
+    repository_factory: Callable[[], SQLiteMetadataReportRepository],
+    pipeline_holder: dict[str, ReviewPreparationPipeline],
+) -> tuple[ProviderRecoveryActivation, threading.Event, Callable[[int], RecoveryRun]]:
+    """Wire provider recovery to the pipeline `pipeline_holder` holds once built."""
+    retry_resolver = partial(
+        resolve_configured_retry,
+        configuration,
+        retry_provider=lambda value, marketplaces: _retry_provider(
+            value, configuration, credentials, marketplaces, pacers
+        ),
+        google_burst_remaining=(
+            pacers.google_books.remaining_burst
+            if pacers.google_books is not None
+            else None
+        ),
+    )
 
     def retry_observers(
         connection: TargetConnectionConfiguration,
@@ -1459,18 +1404,8 @@ def create_review_pipeline(
         """Build one successor observation's adapters from validated selections."""
         artifacts = CoverArtifactStore(artifact_store_path, create=False)
         target = AudiobookshelfItemReader(
-            client_factory=lambda: (
-                target_client(
-                    connection.endpoint,
-                    _required_secret_file(connection.secret_file),
-                    configuration.limits.timeout_seconds,
-                )
-                if credentials is None
-                else target_client_token(
-                    connection.endpoint,
-                    credentials["target:" + connection.name],
-                    configuration.limits.timeout_seconds,
-                )
+            client_factory=_target_client_factory(
+                configuration, credentials, connection
             ),
             endpoint=connection.endpoint,
             library_id=library.library_id,
@@ -1531,6 +1466,59 @@ def create_review_pipeline(
             # this seam. Report it in the pipeline's vocabulary, as every other
             # repository seam does, rather than in the adapter's.
             raise ReviewPipelineError("persistence") from error
+
+    return activation, recovery_cancel, recover_provider
+
+
+def create_review_pipeline(
+    configuration: ApplicationConfiguration,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
+    reviewer_access: ReviewerAccessOperations,
+    database_authority: object | None = None,
+    timing: StageTimer | None = None,
+    private_root: Path | None = None,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    credentials: dict[str, str] | None = None,
+    first_boot: bool = False,
+    admission: OperationAdmission | None = None,
+    defer_cutover: Callable[[Callable[[], None]], None] | None = None,
+) -> ReviewPreparationSupervisor:
+    mounts = {item.name: item for item in configuration.mounts}
+    clients = {item.name: item for item in configuration.connections}
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda name: _target_client_factory(
+            configuration, credentials, clients[name]
+        )(),
+        mounts=mounts,
+        maximum_bytes=configuration.limits.target_response_bytes,
+        timeout_seconds=configuration.limits.timeout_seconds,
+    )
+    pacers = _provider_pacers(configuration.providers)
+    discovery_lock = threading.Lock()
+    if provider_recovery is None:
+        raise ConfigurationError("provider recovery store is unavailable")
+
+    recover_artifacts_once, repository_factory, observation_repository_factory = (
+        _pipeline_repositories(
+            database_path,
+            artifact_store_path,
+            database_authority,
+            admission,
+            configuration.review,
+        )
+    )
+    pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
+    activation, recovery_cancel, recover_provider = _provider_recovery_wiring(
+        configuration,
+        artifact_store_path,
+        credentials,
+        pacers,
+        provider_recovery,
+        repository_factory,
+        pipeline_holder,
+    )
 
     # The pipeline hands every stage callback back exactly the repository
     # ``repository_factory`` above created, so each of these narrows the seam's
@@ -1617,100 +1605,6 @@ def create_review_pipeline(
             provider_recovery=provider_recovery,
         )
 
-    def prepare_description(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
-    ) -> None:
-        if action.review_case_id is None:
-            return
-        repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
-        if action.report_id is not None:
-            bound_report = MetadataReport.from_json(repository.get(action.report_id))
-            if bound_report.audio is not None and not admitted_audiobook_identity(
-                bound_report
-            ):
-                return
-        identity = reviewer_access.current_description_rewrite_identity()
-        if identity is None:
-            repository.description_advice_store().consume_pending_if_unconfigured(
-                action.review_case_id
-            )
-            return
-        snapshot = repository.read_staged_description_preparation(action)
-        case = ReviewCase.from_json(snapshot[0])
-        report = MetadataReport.from_json(snapshot[1])
-        review = cast("ReviewWebConfiguration", configuration.review)
-        settings = DescriptionAdviceSettings(
-            remove_marketing=review.description_remove_marketing,
-            remove_sales_boasts=review.description_remove_sales_boasts,
-            remove_praise=review.description_remove_praise,
-            automatic_application=review.description_automatic_application,
-        )
-        binding = DescriptionAdviceBinding(
-            review_case_id=case.review_case_id,
-            report_id=case.report_id,
-            proposal_set_id=case.proposal_set_id,
-            target_fingerprint=case.target_fingerprint,
-            policy_generation=action.policy_generation or 1,
-            access_revision=identity[0],
-            preferences_digest=description_digest(settings.model_dump()),
-        )
-
-        def current() -> bool:
-            try:
-                return (
-                    repository.read_staged_description_preparation(action) == snapshot
-                )
-            except (ValueError, RuntimeError):
-                return False
-
-        repository.description_advice_store().bind_settings(settings)
-        DescriptionAdviceService(
-            repository.description_advice_store(),
-            reviewer_access,
-            repository.description_advice_store().current_settings,
-            lambda: int(time.time()),
-        ).prepare(
-            report,
-            binding,
-            current,
-        )
-
-    def admit_description(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
-    ) -> None:
-        if action.review_case_id is None:
-            return
-        repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
-        if action.report_id is not None:
-            bound_report = MetadataReport.from_json(repository.get(action.report_id))
-            if bound_report.audio is not None and not admitted_audiobook_identity(
-                bound_report
-            ):
-                return
-        store = repository.description_advice_store()
-        advice = store.read(action.review_case_id)
-        if advice is None or advice["candidate"] is None:
-            return
-        candidate = cast("dict[str, object]", advice["candidate"])
-        binding = DescriptionAdviceBinding.model_validate(advice["binding"])
-        try:
-            store.admit(
-                str(candidate["candidate_id"]),
-                binding,
-                "automatic_policy",
-                description_digest(
-                    {
-                        "candidate": candidate["candidate_id"],
-                        "binding": binding.digest,
-                        "origin": "automatic_policy",
-                    }
-                ),
-                int(time.time()),
-            )
-        except ValueError:
-            # Parked, owner-final and stale results retain their immutable text.
-            return
-
     stages = ReviewPipelineStages(
         configuration=configuration,
         catalogue=catalogue_repository,
@@ -1724,8 +1618,12 @@ def create_review_pipeline(
         create_proposal_set=create_proposal_set_for,
         admit_review_case=admit_review_case_for,
         cover_considerations=cover_considerations,
-        prepare_description=prepare_description,
-        admit_description=admit_description,
+        prepare_description=partial(
+            prepare_staged_description,
+            reviewer_access=reviewer_access,
+            review=cast("ReviewWebConfiguration", configuration.review),
+        ),
+        admit_description=admit_staged_description,
         recovery_observer=provider_recovery,
         google_burst_remaining=(
             pacers.google_books.remaining_burst
@@ -3035,246 +2933,6 @@ def _store_first_preparation(
     )
 
 
-class _UnavailableCodexAuth:
-    def activate_lease(self) -> None:
-        return None
-
-    def _state(self) -> CodexDeviceAuthState:
-        return CodexDeviceAuthState("failed", failure="permission_or_profile")
-
-    start = status = clear = current_credential_status = _state
-    recheck_credential_status = _state
-
-    def cancel(self) -> CodexDeviceAuthState:
-        return CodexDeviceAuthState("ready")
-
-    def passive_status(self) -> CodexDeviceAuthState:
-        return CodexDeviceAuthState("ready")
-
-    def close(self) -> None:
-        return None
-
-
-class _LazyCodexAuth:
-    """Do not touch the Codex profile or staging tree until Codex is requested."""
-
-    def __init__(
-        self,
-        factory: Callable[
-            [Callable[[], bool], Callable[[], AbstractContextManager[None]]],
-            CodexDeviceAuthManager,
-        ],
-        coordinator: _CodexAuthLeaseCoordinator,
-        cleanup_factory: Callable[
-            [Callable[[], bool], Callable[[], AbstractContextManager[None]]],
-            CodexDeviceAuthManager,
-        ]
-        | None = None,
-    ) -> None:
-        self._factory = factory
-        self._cleanup_factory = cleanup_factory or factory
-        self._coordinator = coordinator
-        self._lock = Lock()
-        self._manager: CodexDeviceAuthManager | None = None
-        self._lease: int | None = None
-        self._retired = False
-
-    def activate_lease(self) -> None:
-        with self._lock:
-            if self._retired:
-                raise CodexDeviceAuthError("lease")
-        self._lease = self._coordinator.activate(self)
-
-    def _lease_current(self) -> bool:
-        lease = self._lease
-        return lease is not None and self._coordinator.current(self, lease)
-
-    def bind(self, loader: Callable[[], tuple[str, bytes]]) -> tuple[str, bytes]:
-        """Capture immutable review identity under the current short lease."""
-        if not self._lease_current():
-            self.activate_lease()
-        lease = cast("int", self._lease)
-        with self._coordinator.guard(self, lease):
-            return loader()
-
-    @contextmanager
-    def review_admission(self) -> Iterator[None]:
-        """Revalidate the captured generation after taking global activity."""
-        lease = cast("int", self._lease)
-        with self._coordinator.guard(self, lease):
-            yield
-
-    def _get(self, *, cleanup: bool = False) -> CodexDeviceAuthManager:
-        if not self._lease_current():
-            self.activate_lease()
-        with self._lock:
-            if self._manager is None:
-                factory = self._cleanup_factory if cleanup else self._factory
-                self._manager = factory(
-                    self._lease_current,
-                    lambda: self._coordinator.guard(self, cast("int", self._lease)),
-                )
-            return self._manager
-
-    def _state(
-        self, operation: str, manager: CodexDeviceAuthManager | None = None
-    ) -> CodexDeviceAuthState:
-        try:
-            current = self._get() if manager is None else manager
-            return cast("CodexDeviceAuthState", getattr(current, operation)())
-        except (
-            OSError,
-            ValueError,
-            CodexDeviceAuthError,
-            ReviewerAccessApplicationError,
-            ContainedReviewerProcessError,
-        ):
-            return CodexDeviceAuthState("failed", failure="permission_or_profile")
-
-    def start(self) -> CodexDeviceAuthState:
-        return self._state("start")
-
-    def status(self) -> CodexDeviceAuthState:
-        return self._state("status")
-
-    def passive_status(self) -> CodexDeviceAuthState:
-        """Return an existing flow without constructing Codex authority."""
-        with self._lock:
-            manager = self._manager
-        return (
-            CodexDeviceAuthState("ready")
-            if manager is None
-            else self._state("status", manager)
-        )
-
-    def cancel(self) -> CodexDeviceAuthState:
-        # Cleanup never constructs authority or activates another generation.
-        with self._lock:
-            manager = self._manager
-        if manager is None:
-            return CodexDeviceAuthState("ready")
-        try:
-            return manager.cancel()
-        except (OSError, ValueError, CodexDeviceAuthError):
-            return CodexDeviceAuthState("failed", failure="permission_or_profile")
-
-    def clear(self) -> CodexDeviceAuthState:
-        return self._get(cleanup=True).clear()
-
-    def current_credential_status(self) -> CodexDeviceAuthState:
-        return self._state("current_credential_status")
-
-    def recheck_credential_status(self) -> CodexDeviceAuthState:
-        return self._state("recheck_credential_status")
-
-    def close(self) -> None:
-        self._mark_retired()
-        self._drain()
-        self._coordinator.release(self)
-
-    def _mark_retired(self) -> None:
-        with self._lock:
-            self._retired = True
-
-    def _drain(self) -> None:
-        with self._lock:
-            manager = self._manager
-        if manager is not None:
-            manager.close()
-
-
-class _CodexAuthLeaseCoordinator:
-    """Serialize one process-lifetime owner of a configured auth store."""
-
-    def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._transition = Lock()
-        self._activity = Lock()
-        self._owner: _LazyCodexAuth | None = None
-        self._lease = 0
-        self._quarantined = False
-
-    def activate(self, owner: _LazyCodexAuth) -> int:
-        with self._transition:
-            with self._lock:
-                if self._quarantined:
-                    raise CodexDeviceAuthError("process")
-                if self._owner is owner:
-                    return self._lease
-                predecessor = self._owner
-                if predecessor is not None:
-                    predecessor._mark_retired()
-            if predecessor is not None:
-                try:
-                    predecessor._drain()
-                except Exception:
-                    with self._lock:
-                        if self._owner is predecessor:
-                            self._owner = None
-                            self._lease += 1
-                    raise
-            # A device flow can be pre-cancelled without this gate. A review
-            # cannot, so handoff waits for its complete broker tree to reap
-            # before changing lease authority.
-            with self._activity:
-                with self._lock:
-                    if self._quarantined:
-                        raise CodexDeviceAuthError("process")
-                    if self._owner not in {None, predecessor}:
-                        raise CodexDeviceAuthError("lease")
-                    self._lease += 1
-                    self._owner = owner
-                    return self._lease
-
-    def current(self, owner: _LazyCodexAuth, lease: int) -> bool:
-        with self._lock:
-            return (
-                not self._quarantined and self._owner is owner and self._lease == lease
-            )
-
-    @contextmanager
-    def activity(self) -> Iterator[None]:
-        """Admit exactly one Codex auth, recheck, or review process tree."""
-        with self._activity:
-            with self._lock:
-                if self._quarantined:
-                    raise CodexDeviceAuthError("process")
-            yield
-
-    @contextmanager
-    def guard(self, owner: _LazyCodexAuth, lease: int) -> Iterator[None]:
-        with self._lock:
-            if self._quarantined or self._owner is not owner or self._lease != lease:
-                raise CodexDeviceAuthError("lease")
-            yield
-
-    def quarantine(self) -> None:
-        """Permanently reject Codex admission after an unproved process teardown."""
-        with self._lock:
-            if not self._quarantined:
-                self._quarantined = True
-                self._lease += 1
-
-    def release(self, owner: _LazyCodexAuth) -> None:
-        with self._transition, self._activity, self._lock:
-            if self._owner is owner:
-                self._owner = None
-                self._lease += 1
-
-    def close(self) -> None:
-        with self._transition:
-            with self._lock:
-                owner = self._owner
-                if owner is not None:
-                    owner._mark_retired()
-            if owner is not None:
-                owner._drain()
-            with self._activity, self._lock:
-                if self._owner is owner:
-                    self._owner = None
-                    self._lease += 1
-
-
 def _bind_description_authority(
     repository: SQLiteMetadataReportRepository,
     review: ReviewWebConfiguration | None,
@@ -3312,7 +2970,7 @@ def _bind_description_authority(
 def _compose_reviewer_access(
     repository: SQLiteMetadataReportRepository,
     review: ReviewWebConfiguration,
-    coordinator: _CodexAuthLeaseCoordinator | None = None,
+    coordinator: CodexAuthLeaseCoordinator | None = None,
 ) -> ReviewerAccessOperations:
     _bind_description_authority(repository, review)
     codex_auth: CodexAuth
@@ -3355,7 +3013,7 @@ def _compose_reviewer_access(
 
     codex_provisioning(True)
     if profile_file is None:
-        codex_auth = _UnavailableCodexAuth()
+        codex_auth = UnavailableCodexAuth()
 
         def codex_host() -> ReviewerHostStatus:
             return ReviewerHostStatus(False, "host_evidence_unavailable", None)
@@ -3364,7 +3022,7 @@ def _compose_reviewer_access(
             raise ReviewerAccessApplicationError("not_provisioned")
 
     else:
-        active_coordinator = coordinator or _CodexAuthLeaseCoordinator()
+        active_coordinator = coordinator or CodexAuthLeaseCoordinator()
 
         def manager(
             lease_current: Callable[[], bool],
@@ -3398,7 +3056,7 @@ def _compose_reviewer_access(
                 raise ReviewerAccessApplicationError("not_provisioned")
             return manager(lease_current, lease_guard, cleanup_profile)
 
-        lazy_codex_auth = _LazyCodexAuth(
+        lazy_codex_auth = LazyCodexAuth(
             manager, active_coordinator, cleanup_factory=cleanup_manager
         )
         codex_auth = lazy_codex_auth

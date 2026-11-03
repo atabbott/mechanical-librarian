@@ -17,6 +17,18 @@ brackets are GitHub issues.
   instead of leaving it waiting beside a new one, and a cover's restore point
   is removed. A change whose write permission was already withdrawn stops when
   Audiobookshelf cannot be reached, instead of starting to wait (#1543).
+- Activating a changed policy now closes a change that was waiting for
+  Audiobookshelf to come back, instead of leaving it waiting for good, and a
+  cover's restore point is removed; leaving Automatic does the same for an
+  automatic field change, while an owner's waiting change still writes once
+  Audiobookshelf can be reached (#1599).
+- A change waiting for Audiobookshelf to come back on a work that could not be
+  prepared again after leaving Automatic now closes at the next policy
+  activation, and a cover's restore point is removed, instead of waiting for
+  good (#1657).
+- A change waiting for Audiobookshelf to come back now closes when a rescan
+  replaces or retires its review case, or the work leaves the library, instead
+  of waiting for good, and a cover's restore point is removed (#1658).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
@@ -74,6 +86,10 @@ brackets are GitHub issues.
   marked-up description, or a genre list that only names the format, such as
   "Audiobook", still asks, and so does a field set to Ask me. With tags turned
   off, no tags choice asks you (#1310).
+- With tags turned off, a book with no tags that a source offers tags for now
+  says tags are off and left as they are, instead of "There is nothing to
+  decide for this field", and you can still choose the proposed tags on its
+  page (#1661).
 - **Clean rebuild required.** A readable current cover is kept without asking,
   even when a better cover is recommended or an earlier cover choice went
   stale. Other sources' covers stay choosable on the work's page, which offers
@@ -273,6 +289,36 @@ brackets are GitHub issues.
   failed with Codex's own remedy, an old warning no longer stays under "ready
   to use", and a check that meets a sign-in running in another tab shows its
   code. Keyboard focus moves to the next control (#1617).
+- In setup's reviewer step, when Start or Restart device sign-in, Check
+  existing sign-in, Use Codex, Cancel sign-in or Cancel any active sign-in
+  fails, or the sign-in poll fails, its message now appears directly under
+  that button instead of at the top of the form, and it clears once the next
+  sign-in step succeeds. A refused Codex sign-in on Use Codex still shows
+  above the refreshed option, as in #1617 (#1618).
+- A decision or chosen description recorded while Mechanical Librarian is
+  shutting down or applying changed settings now shows as recorded, instead
+  of failing in the browser although it was saved (#1674).
+- In setup, when Verify and continue, the providers Continue or Skip
+  providers, the libraries Continue, Check or Retest mounts, or Continue
+  with or without a reviewer fails for a reason that is not about one field,
+  its message now appears directly under that button instead of at the top
+  of the form; a refusal about a field still sits beside that field. A failed
+  Continue no longer enables Codex controls a blocked host disables (#1664).
+- In Settings › Reviewer, a failed description adviser command now shows
+  its message directly under the button you pressed, and those buttons keep
+  keyboard focus while they run. A refused Check of the Codex sign-in shows
+  one message instead of two, and Try again's focus ring is no longer cut
+  off (#1663).
+- In setup, Use Codex, Check existing sign-in, Start or Restart device
+  sign-in, Cancel sign-in, Validate and use OpenRouter, and each step's
+  Verify and continue, Continue, Skip providers and Check mounts button keep
+  keyboard focus while they run, instead of dropping it to the page (#1678).
+- In setup, Kick off preparation keeps keyboard focus while it runs, and a
+  failed kickoff shows its message directly under that button; a kickoff
+  refused because setup changed in another tab now reloads the latest step.
+  On Choose libraries, "Select at least one…" sits under Continue, and the
+  message for an invalid library name sits beside that name's field, which is
+  opened if needed (#1677).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

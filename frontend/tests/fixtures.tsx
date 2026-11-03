@@ -14,7 +14,6 @@ import type {
   AppearanceView,
   CaseDetailView,
   DecisionAcknowledgementView,
-  DecisionOutcome,
   LibraryView,
   PolicyStateView,
   PreparationView,
@@ -42,7 +41,7 @@ export const recordedAcknowledgement = (
               needsAttention: false,
               humanDecision: {
                 ...acknowledgement,
-                outcome: acknowledgement.outcome as DecisionOutcome,
+                outcome: acknowledgement.outcome,
               },
             }
           : field,
@@ -254,6 +253,22 @@ export const permissionReadiness = (data: ActivityView, backupReady: boolean | n
   example: data.example,
 })
 
+// An idle preparation view with every field the decoder requires. A case
+// spreads it and states only the fields it reads.
+export const idlePreparation: PreparationView = {
+  schema_version: 'review-preparation-v2',
+  recovery_required: false,
+  active: false,
+  actionable: false,
+  paused: false,
+  first_boot: false,
+  first_boot_complete: false,
+  first_boot_works: null,
+  libraries: [],
+  connections: [],
+  presentation: null,
+  provider_throttling: null,
+}
 export const createHttp = (): ReviewHttp => ({
   getReportDetail: vi.fn(async () => {
     throw new Error('not configured')
@@ -314,33 +329,9 @@ export const createHttp = (): ReviewHttp => ({
   retryCoverConsideration: vi.fn(async () => {
     throw new Error('not configured')
   }),
-  getPreparation: vi.fn(async (): Promise<PreparationView> => ({
-    schema_version: 'review-preparation-v2',
-    recovery_required: false,
-    active: false,
-    actionable: false,
-    paused: false,
-    libraries: [],
-    provider_throttling: null,
-  })),
-  preparationAction: vi.fn(async (): Promise<PreparationView> => ({
-    schema_version: 'review-preparation-v2',
-    recovery_required: false,
-    active: false,
-    actionable: false,
-    paused: false,
-    libraries: [],
-    provider_throttling: null,
-  })),
-  dismissPreparation: vi.fn(async (): Promise<PreparationView> => ({
-    schema_version: 'review-preparation-v2',
-    recovery_required: false,
-    active: false,
-    actionable: false,
-    paused: false,
-    libraries: [],
-    provider_throttling: null,
-  })),
+  getPreparation: vi.fn(async (): Promise<PreparationView> => idlePreparation),
+  preparationAction: vi.fn(async (): Promise<PreparationView> => idlePreparation),
+  dismissPreparation: vi.fn(async (): Promise<PreparationView> => idlePreparation),
   retryProviderRecovery: vi.fn(async () => {
     throw new Error('not configured')
   }),

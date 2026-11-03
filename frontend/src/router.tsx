@@ -36,7 +36,6 @@ import {
 } from './api/http'
 import type {
   ActivitySearch,
-  ScanState,
   AutomaticSafetyView,
   DetailSearch,
   LibraryLens,
@@ -405,12 +404,12 @@ export const ConnectionNotice = ({
   works: number | undefined
   checking: boolean
   onCheck: (connection: string) => void
-  recovered: NonNullable<PreparationView['connections']>[number] | undefined
+  recovered: PreparationView['connections'][number] | undefined
   onDismissRecovery: () => void
   onControlFocusChange: (focused: boolean) => void
   error: Error | null
 }) => {
-  const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? recovered
+  const condition = data?.connections.find((item) => item.state !== 'recovered') ?? recovered
   if (!condition) return null
   const paused = condition.state === 'recovered' ? 0 : condition.affected
   const title =
@@ -479,10 +478,8 @@ export const ConnectionNotice = ({
 export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) => {
   const { data, queryClient, http } = usePreparation()
   const connectionControlFocused = useRef(false)
-  const [recovered, setRecovered] = useState<
-    NonNullable<PreparationView['connections']>[number] | undefined
-  >()
-  const currentRecovery = data?.connections?.find(
+  const [recovered, setRecovered] = useState<PreparationView['connections'][number] | undefined>()
+  const currentRecovery = data?.connections.find(
     (condition) => condition.connection === recovered?.connection,
   )
   const acknowledgedRecovery =
@@ -492,7 +489,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
         currentRecovery.updated_at === recovered.updated_at))
       ? recovered
       : undefined
-  const activeConnection = data?.connections?.some((condition) => condition.state !== 'recovered')
+  const activeConnection = data?.connections.some((condition) => condition.state !== 'recovered')
   // Only a shown notice reads the summary, so Activity issues no extra read.
   const summary = useQuery({
     ...librarySummaryQuery(http),
@@ -524,7 +521,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       const connection = decodeURIComponent(encodedConnection)
       const previous = queryClient.getQueryData<PreparationView>(['review-preparation'])
       queryClient.setQueryData<PreparationView>(['review-preparation'], (current) => {
-        if (!current || !current.connections) return current
+        if (!current) return current
         return {
           ...current,
           connections: current.connections.map((condition) =>
@@ -537,7 +534,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       return { previous }
     },
     onSuccess: (result, path) => {
-      if (!('schema_version' in result) || !result.connections) return
+      if (!('schema_version' in result)) return
       const match = /^([^/]+)\/check-connection$/.exec(path)
       const encodedConnection = match?.[1]
       if (!encodedConnection) return
@@ -895,10 +892,7 @@ export const PreparationActivity = () => {
             <article key={`${item.connection}:${item.library}`}>
               <strong>{names.name(item.library)}</strong>
               <span>
-                {data.recovery_required
-                  ? 'Last saved progress'
-                  : // The progress mapper refuses a state outside the closed set.
-                    scanStateLabels[item.state as ScanState]}
+                {data.recovery_required ? 'Last saved progress' : scanStateLabels[item.state]}
                 {/*
                  * The run line sums only the libraries its run enrolled, so a
                  * library outside it is the one way the two totals differ.
@@ -934,7 +928,7 @@ export const PreparationActivity = () => {
                  * it (#641). A finished scan is not moving, so the buckets
                  * nothing reached are a wall of zeros and are left out.
                  */}
-                {(item.stages ?? [])
+                {item.stages
                   .filter((stage) => !item.state.startsWith('completed') || stage.count > 0)
                   .map((stage) => (
                     <div key={stage.stage}>

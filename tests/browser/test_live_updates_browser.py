@@ -762,6 +762,11 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                             "active": True,
                             "actionable": False,
                             "paused": True,
+                            "first_boot": False,
+                            "first_boot_complete": False,
+                            "first_boot_works": None,
+                            "presentation": None,
+                            "provider_throttling": None,
                             "libraries": [],
                             "connections": [
                                 {
