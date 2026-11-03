@@ -1105,6 +1105,7 @@ def _attention() -> dict[str, object]:
                     "title": work["title"],
                     "authors": work["authors"],
                     "library": work["library"],
+                    "library_display_name": None,
                     "media_kind": work["media_kind"],
                     "item": work["item"],
                     "detail_url": f"/review/{work['review_case_id']}?field={destination}",
@@ -1118,7 +1119,7 @@ def _attention() -> dict[str, object]:
                 }
             )
     return {
-        "schema_version": "attention-v1",
+        "schema_version": "review-attention-v1",
         "query": None,
         "next_cursor": None,
         "total": len(items),
