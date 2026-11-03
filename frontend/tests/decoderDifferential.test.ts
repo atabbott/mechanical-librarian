@@ -825,7 +825,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     caseBase,
     '/fields/0/choice_contexts',
     [],
-    'mapChoiceContexts http.ts:3589: the first choice context is the current value; positional',
+    'mapChoiceContexts http.ts:3591: the first choice context is the current value; positional',
     'reject:misaligned_choice_contexts',
   ],
   [
@@ -926,7 +926,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/manual_eligible',
     false,
-    'mapCoverConsideration http.ts:3651-3657: manual_eligible follows incumbent and identity; cross-field',
+    'mapCoverConsideration http.ts:3653-3659: manual_eligible follows incumbent and identity; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_manual_eligibility',
   ],
   [
@@ -934,7 +934,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/deterministic_rank_key/6',
     'candidate-2',
-    'mapCoverConsideration http.ts:3640: the rank key ends with the candidate reference; cross-field',
+    'mapCoverConsideration http.ts:3642: the rank key ends with the candidate reference; cross-field',
     'reject:mutation_outcome_unknown:invariant@invalid_cover_deterministic_rank_key',
   ],
   [
@@ -942,7 +942,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/match_state',
     'same_edition',
-    'mapCoverConsideration http.ts:3663: match_state follows the identity outcome; cross-field',
+    'mapCoverConsideration http.ts:3667: match_state follows the identity outcome; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_identity',
   ],
   [
@@ -953,7 +953,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
       identity: coverIdentity({ outcome: 'unknown' }),
       match_state: 'match_not_confirmed',
     }),
-    'mapCoverConsideration http.ts:3664: an unconfirmed candidate is neither selectable nor ranked; cross-field',
+    'mapCoverConsideration http.ts:3668: an unconfirmed candidate is neither selectable nor ranked; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_identity',
   ],
   [
@@ -961,7 +961,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/observation/candidate_reference',
     'candidate-2',
-    'mapCoverObservation http.ts:3607-3608: an observation names its candidate reference and preview; cross-field',
+    'mapCoverObservation http.ts:3609-3610: an observation names its candidate reference and preview; cross-field',
     'reject:mutation_outcome_unknown:invariant@misaligned_cover_observation',
   ],
   [
@@ -969,7 +969,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates',
     [coverCandidate(), coverCandidate({ artifact_id: 'artifact-2', ordinal: 1 })],
-    'mapCoverConsideration http.ts:3693: candidate references are distinct; identity across items',
+    'mapCoverConsideration http.ts:3699: candidate references are distinct; identity across items',
     'reject:mutation_outcome_unknown:invariant@misaligned_cover_candidates',
   ],
   [
@@ -977,7 +977,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/ordinal',
     1,
-    'mapCoverConsideration http.ts:3696: a candidate ordinal is its position; positional',
+    'mapCoverConsideration http.ts:3701: a candidate ordinal is its position; positional',
     'reject:mutation_outcome_unknown:invariant@misaligned_cover_candidates',
   ],
   [
@@ -985,7 +985,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/incumbent/reference',
     'candidate-1',
-    'mapCoverConsideration http.ts:3703-3704: an absent or unavailable incumbent has no reference and no incumbent candidate; cross-field',
+    'mapCoverConsideration http.ts:3709-3710: an absent or unavailable incumbent has no reference and no incumbent candidate; cross-field',
     'reject:mutation_outcome_unknown:invariant@misaligned_cover_incumbent',
   ],
   [
@@ -993,7 +993,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/incumbent/state',
     'available',
-    'mapCoverConsideration http.ts:3705-3706: an available incumbent is the one incumbent candidate; cross-field',
+    'mapCoverConsideration http.ts:3711-3712: an available incumbent is the one incumbent candidate; cross-field',
     'reject:mutation_outcome_unknown:invariant@misaligned_cover_incumbent',
   ],
   [
@@ -1001,7 +1001,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/choice_contexts',
     [choiceContext()],
-    'mapChoiceContexts http.ts:3591 (count from mapCoverConsideration :3712): one proposed context per manually eligible alternative; cross-field',
+    'mapChoiceContexts http.ts:3593 (count from mapCoverConsideration :3718): one proposed context per manually eligible alternative; cross-field',
     'reject:mutation_outcome_unknown:invariant@misaligned_choice_contexts',
   ],
   [
@@ -1009,7 +1009,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/policy',
     null,
-    'mapCoverConsideration http.ts:3720: a policy report exists exactly when there are candidates; cross-field',
+    'mapCoverConsideration http.ts:3727: a policy report exists exactly when there are candidates; cross-field',
     'reject:mutation_outcome_unknown:invariant@invalid_cover_policy_candidates',
   ],
   [
@@ -1017,7 +1017,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     coverBase,
     '/reviewer_failure_code',
     'timed_out',
-    'mapCoverConsideration http.ts:3729: a reviewer failure code needs the failed status; cross-field',
+    'mapCoverConsideration http.ts:3737: a reviewer failure code needs the failed status; cross-field',
     'reject:mutation_outcome_unknown:invariant@invalid_cover_reviewer_failure_code',
   ],
   [
@@ -1025,7 +1025,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/policy/status',
     'recommended',
-    'mapCoverConsideration http.ts:3733: a recommended policy names its candidate; cross-field',
+    'mapCoverConsideration http.ts:3741: a recommended policy names its candidate; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_policy',
   ],
   [
@@ -1033,7 +1033,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/policy/acceptable_candidate_references',
     [],
-    'mapCoverConsideration http.ts:3740-3755: acceptable references are the ranked alternatives in rank order; cross-field',
+    'mapCoverConsideration http.ts:3748-3763: acceptable references are the ranked alternatives in rank order; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_policy',
   ],
   [
@@ -1041,7 +1041,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/state',
     'available',
-    'mapCoverConsideration http.ts:3756-3769: a candidate state follows selectable, the recommendation and the acceptable list; cross-field',
+    'mapCoverConsideration http.ts:3764-3777: a candidate state follows selectable, the recommendation and the acceptable list; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_candidate_state',
   ],
   [
@@ -1049,7 +1049,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/choice_contexts/0/recommendation',
     'recommended',
-    'mapCoverConsideration http.ts:3781-3792: only the recommended candidate context is recommended; cross-field',
+    'mapCoverConsideration http.ts:3789-3800: only the recommended candidate context is recommended; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_recommendation',
   ],
   [
@@ -1057,7 +1057,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/ready',
     false,
-    'mapCoverConsideration http.ts:3793-3812: ready follows provider_fetching and the candidates; cross-field',
+    'mapCoverConsideration http.ts:3801-3820: ready follows provider_fetching and the candidates; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_readiness',
   ],
   [

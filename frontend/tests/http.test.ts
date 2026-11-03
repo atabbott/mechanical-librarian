@@ -4288,3 +4288,169 @@ describe('case-detail write decoding (#1688)', () => {
     )
   })
 })
+
+// The cover and choice-context checks named X55-X61 in ADR-0091, and the two
+// conditions their named neighbours already imply (#1688). Each answer is to
+// the cover retry, so a failed check reports the write as uncertain.
+describe('named cover and choice-context checks (#1688)', () => {
+  const proposed = (alternative_id: string | null) =>
+    choiceContext({ alternative_id, selection: 'proposed', rationale: 'Retained cover choice.' })
+  const second = (overrides: Record<string, unknown> = {}) =>
+    coverCandidate({
+      artifact_id: 'artifact-2',
+      deterministic_rank: 2,
+      deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-2'],
+      ordinal: 1,
+      reference: 'candidate-2',
+      ...overrides,
+    })
+  const retained = (overrides: Record<string, unknown> = {}) =>
+    coverCandidate({
+      incumbent: true,
+      manual_eligible: false,
+      selectable: false,
+      deterministic_rank: null,
+      state: 'excluded',
+      ...overrides,
+    })
+  const payload = (overrides: Record<string, unknown> = {}) =>
+    coverConsideration({
+      candidates: [coverCandidate()],
+      choice_contexts: [choiceContext(), proposed('candidate-1')],
+      policy: coverPolicyReport(),
+      ready: true,
+      reviewer_access_revision: 7,
+      reviewer_engine: 'openrouter',
+      reviewer_model: 'provider/model',
+      reviewer_status: 'completed',
+      ...overrides,
+    })
+  const twoAlternatives = (overrides: Record<string, unknown> = {}) =>
+    payload({
+      candidates: [coverCandidate(), second()],
+      choice_contexts: [choiceContext(), proposed('candidate-1'), proposed('candidate-2')],
+      policy: coverPolicyReport({
+        acceptable_candidate_references: ['candidate-1', 'candidate-2'],
+      }),
+      ...overrides,
+    })
+
+  it('accepts the base answers', async () => {
+    expect((await retryCover(payload())).choiceContexts).toHaveLength(2)
+    expect((await retryCover(twoAlternatives())).candidates).toHaveLength(2)
+  })
+
+  it.each<readonly [string, Record<string, unknown>, string]>([
+    // X55: the current context names no alternative.
+    [
+      'X55',
+      {
+        choice_contexts: [
+          choiceContext({ alternative_id: 'candidate-1' }),
+          proposed('candidate-1'),
+        ],
+      },
+      'misaligned_choice_contexts',
+    ],
+    // X56: every later context is proposed and names an alternative.
+    [
+      'X56 selection',
+      {
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'current' }),
+        ],
+      },
+      'misaligned_choice_contexts',
+    ],
+    [
+      'X56 identity',
+      { choice_contexts: [choiceContext(), proposed(null)] },
+      'misaligned_choice_contexts',
+    ],
+    // X57: proposed alternatives are distinct.
+    [
+      'X57',
+      { choice_contexts: [choiceContext(), proposed('candidate-1'), proposed('candidate-1')] },
+      'misaligned_choice_contexts',
+    ],
+    // X58: candidate artifacts are distinct.
+    [
+      'X58',
+      { candidates: [coverCandidate(), second({ artifact_id: 'artifact-1' })] },
+      'misaligned_cover_candidates',
+    ],
+    // X59: a confirmed incumbent is unselectable and unranked with a rank
+    // key, and a confirmed alternative has a rank key.
+    [
+      'X59 incumbent',
+      {
+        candidates: [retained({ selectable: true })],
+        choice_contexts: [choiceContext()],
+        incumbent: { reference: 'candidate-1', state: 'available' },
+      },
+      'contradictory_cover_identity',
+    ],
+    [
+      'X59 alternative',
+      { candidates: [coverCandidate({ deterministic_rank: null, deterministic_rank_key: null })] },
+      'contradictory_cover_identity',
+    ],
+    // X60: proposed contexts follow the eligible alternatives in order.
+    [
+      'X60',
+      { choice_contexts: [choiceContext(), proposed('candidate-2'), proposed('candidate-1')] },
+      'misaligned_cover_choice_contexts',
+    ],
+    // X61: an unavailable reason needs the unavailable status.
+    [
+      'X61',
+      { reviewer_unavailable_reason: 'profile contract requires process_limit=32' },
+      'invalid_cover_reviewer_unavailable_reason',
+    ],
+    // Implied by ordinal-position: a repeated ordinal is out of position.
+    [
+      'repeated ordinal',
+      { candidates: [coverCandidate(), second({ ordinal: 0 })] },
+      'misaligned_cover_candidates',
+    ],
+    // Implied by the incumbent rule: no state admits two incumbents.
+    [
+      'two available incumbents',
+      {
+        candidates: [
+          retained(),
+          retained({
+            artifact_id: 'artifact-2',
+            ordinal: 1,
+            reference: 'candidate-2',
+            deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-2'],
+          }),
+        ],
+        choice_contexts: [choiceContext()],
+        incumbent: { reference: 'candidate-1', state: 'available' },
+      },
+      'misaligned_cover_incumbent',
+    ],
+    [
+      'two incumbents with none stated',
+      {
+        candidates: [
+          retained(),
+          retained({
+            artifact_id: 'artifact-2',
+            ordinal: 1,
+            reference: 'candidate-2',
+            deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-2'],
+          }),
+        ],
+        choice_contexts: [choiceContext()],
+      },
+      'misaligned_cover_incumbent',
+    ],
+  ])('refuses %s', async (_name, overrides, code) => {
+    const base = 'candidates' in overrides && (overrides.candidates as unknown[]).length === 2
+    const document = base ? twoAlternatives(overrides) : payload(overrides)
+    await expect(retryCover(document)).rejects.toMatchObject(uncertain(`invariant@${code}`))
+  })
+})

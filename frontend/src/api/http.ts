@@ -3585,6 +3585,8 @@ const mapChoiceContexts = (
     selection: item.selection,
   }))
   const [current, ...proposed] = contexts
+  // current-first and proposed-count; X55 (the current context names no
+  // alternative), X56 (later ones are proposed and name one), X57 (distinct).
   if (
     current?.selection !== 'current' ||
     current.alternativeId !== null ||
@@ -3659,6 +3661,8 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const previewSha256 = candidate.preview_sha256
     const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
     const matchState = candidate.match_state
+    // match-state and unconfirmed-unranked; X59 (a confirmed incumbent is
+    // unselectable and unranked with a key; a confirmed alternative has a key).
     if (
       matchState !== expectedMatchState ||
       (!confirmed && (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
@@ -3689,17 +3693,19 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       width: candidate.width,
     }
   })
+  // unique-references, X58 (distinct artifacts) and ordinal-position, which
+  // also leaves no ordinal repeated.
   if (
     new Set(candidates.map((candidate) => candidate.reference)).size !== candidates.length ||
     new Set(candidates.map((candidate) => candidate.artifactId)).size !== candidates.length ||
-    new Set(candidates.map((candidate) => candidate.ordinal)).size !== candidates.length ||
     candidates.some((candidate, index) => candidate.ordinal !== index)
   )
     throw new ApiError(502, 'misaligned_cover_candidates')
   const incumbentState = value.incumbent.state
   const incumbents = candidates.filter((candidate) => candidate.incumbent)
+  // Two incumbents fail both states: an absent or unavailable one admits none,
+  // an available one exactly one.
   if (
-    incumbents.length > 1 ||
     ((incumbentState === 'absent' || incumbentState === 'unavailable') &&
       (incumbents.length !== 0 || value.incumbent.reference !== null)) ||
     (incumbentState === 'available' &&
@@ -3710,6 +3716,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     .filter((candidate) => candidate.manualEligible && !candidate.incumbent)
     .map((candidate) => candidate.reference)
   const choiceContexts = mapChoiceContexts(value.choice_contexts, proposedReferences.length)
+  // X60: proposed contexts follow the eligible alternatives in order.
   if (
     choiceContexts
       .slice(1)
@@ -3723,6 +3730,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
   const policyOwnerReady = policy === null ? false : policy.owner_ready
   const reviewerStatus = value.reviewer_status
   const reviewerUnavailableReason = value.reviewer_unavailable_reason
+  // X61: an unavailable reason needs the unavailable status.
   if (reviewerUnavailableReason !== null && reviewerStatus !== 'unavailable')
     throw new ApiError(502, 'invalid_cover_reviewer_unavailable_reason')
   const reviewerFailureCode = value.reviewer_failure_code
