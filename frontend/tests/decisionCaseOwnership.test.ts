@@ -16,6 +16,7 @@ const acknowledgement = (id: string, current = true): DecisionAcknowledgementVie
       schema_version: 'review-decision-v1',
       actor: 'owner',
       application: 'apply',
+      application_reason: null,
       decision_id: id,
       destination: 'title',
       occurred_at: 1,

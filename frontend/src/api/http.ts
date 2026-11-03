@@ -28,7 +28,22 @@ type LibraryDto = ResponseSchema<'_LibraryResponse'>
 type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
 type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
 type AttentionDto = ResponseSchema<'_AttentionResponse'>
-type CaseDetailDto = Schema<'_CaseDetailResponse'>
+type CaseDetailDto = ResponseSchema<'_CaseDetailResponse'>
+type ReviewFieldDto = ResponseSchema<'_ReviewField'>
+type DescriptionCandidateDto = ResponseSchema<'DescriptionAdviceCandidate'>
+type DescriptionBindingDto = ResponseSchema<'DescriptionAdviceBinding'>
+type OwnerControlDto = ResponseSchema<'_OwnerControl'>
+type EvidenceDto = ResponseSchema<'_EvidenceResponse'>
+type HistoryDto = ResponseSchema<'_HistoryResponse'>
+type ChoiceContextDto = ResponseSchema<'_ChoiceContext'>
+type CoverObservationDto = ResponseSchema<'_CoverObservation'>
+type CoverConsiderationDto = ResponseSchema<'_CoverConsiderationResponse'>
+type ProviderOutcomeDto = ResponseSchema<'_ProviderOutcome'>
+type MediaHealthDto = ResponseSchema<'_MediaHealthObservation'>
+type RecordingIdentityBasisDto = ResponseSchema<'_RecordingIdentityBasis'>
+type DecisionAcknowledgementDto =
+  | ResponseSchema<'_DecisionAcknowledgement'>
+  | ResponseSchema<'_DescriptionSelectionAcknowledgement'>
 export type SettingsView = Schema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
 export type AppearanceView = Schema<'_AppearanceResponse'>
@@ -691,7 +706,7 @@ export interface ChoiceContextView {
   recommendationReason: string
   selection: 'current' | 'proposed'
 }
-export type DescriptionAdviceView = Schema<'_DescriptionAdviceResponse'>
+export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
 export interface ReviewFieldView {
   classification: string
   classificationReason: string
@@ -705,15 +720,15 @@ export interface ReviewFieldView {
   manualHold: boolean
   currentValue: string
   currentRaw: unknown
-  proposedValues: readonly Schema<'_ProposedValue'>[]
+  proposedValues: readonly ResponseSchema<'_ProposedValue'>[]
   choiceContexts: readonly ChoiceContextView[]
   proposalId: string
   targetFingerprint: string
-  humanDecision: (Schema<'_DecisionProjection'> & { outcome: DecisionOutcome }) | null
+  humanDecision: ResponseSchema<'_DecisionProjection'> | null
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
-    | (Schema<'_AutomaticDecisionProjection'> & { outcome: AutomaticOutcome })
-    | Schema<'_CoverAutomaticDecisionProjection'>
+    | ResponseSchema<'_AutomaticDecisionProjection'>
+    | ResponseSchema<'_CoverAutomaticDecisionProjection'>
     | null
   automaticWithheldReason: string | null
   automaticSelectionSources?: readonly string[]
@@ -847,7 +862,7 @@ export type HistoryItemView = (
       state: DescriptionState
       model: string
       engine: string
-      candidate: Schema<'DescriptionAdviceCandidate'> | null
+      candidate: DescriptionCandidateDto | null
       selected: boolean
     }
   | {
@@ -1171,11 +1186,9 @@ export interface DecisionCommand {
   authoredDescription?: { candidateId: string; binding: Schema<'DescriptionAdviceBinding'> }
 }
 
-type DecisionWireAcknowledgement =
-  Schema<'_DecisionAcknowledgement'> | Schema<'_DescriptionSelectionAcknowledgement'>
 export type DecisionAcknowledgementView = (
-  | Omit<Schema<'_DecisionAcknowledgement'>, 'confirmation'>
-  | Omit<Schema<'_DescriptionSelectionAcknowledgement'>, 'confirmation'>
+  | Omit<ResponseSchema<'_DecisionAcknowledgement'>, 'confirmation'>
+  | Omit<ResponseSchema<'_DescriptionSelectionAcknowledgement'>, 'confirmation'>
 ) & { confirmation: { status: 'confirmed'; case: CaseDetailView } | { status: 'unavailable' } }
 
 export interface ReviewHttp {
@@ -1395,6 +1408,14 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'GET /api/v1/library',
   'GET /api/v1/library/report',
   'GET /api/v1/attention',
+  'GET /api/v1/review-cases/{review_case_id}',
+  'GET /api/v1/review-cases/{review_case_id}/evidence',
+  'GET /api/v1/review-cases/{review_case_id}/history',
+  'GET /api/v1/review-cases/{review_case_id}/successor',
+  'POST /api/v1/review-cases/{review_case_id}/cover-considerations/retry',
+  'POST /api/v1/review-cases/{review_case_id}/decisions',
+  'POST /api/v1/review-cases/{review_case_id}/description-advice/retry',
+  'POST /api/v1/review-cases/{review_case_id}/description-advice/selection',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1636,7 +1657,11 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async getCaseDetail(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapCaseDetail(
-      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal, workClass),
+      (await this.read(
+        `/api/v1/review-cases/${encodeURIComponent(id)}`,
+        signal,
+        workClass,
+      )) as CaseDetailDto,
     )
   }
 
@@ -1645,17 +1670,12 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ) {
-    const value = await this.read(
+    const value = (await this.read(
       `/api/v1/review-cases/${encodeURIComponent(id)}/successor`,
       signal,
       workClass,
-    )
-    if (typeof value !== 'object' || value === null || !('review_case_id' in value))
-      throw new ApiError(502, 'invalid_response')
-    const successor = value.review_case_id
-    if (successor !== null && typeof successor !== 'string')
-      throw new ApiError(502, 'invalid_response')
-    return successor
+    )) as ResponseSchema<'_CaseSuccessorResponse'>
+    return value.review_case_id
   }
   async getEvidence(
     id: string,
@@ -1666,28 +1686,34 @@ export class ReviewApiClient implements ReviewHttp {
     const p = new URLSearchParams({ limit: '50' })
     if (cursor) p.set('cursor', cursor)
     return mapEvidence(
-      await this.read(
+      (await this.read(
         `/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`,
         signal,
         workClass,
-      ),
+      )) as EvidenceDto,
     )
   }
   async getHistory(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapHistory(
-      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal, workClass),
+      (await this.read(
+        `/api/v1/review-cases/${encodeURIComponent(id)}/history`,
+        signal,
+        workClass,
+      )) as HistoryDto,
     )
   }
+  // The answer is decoded as a consideration, never null, before it is mapped.
   async retryCoverConsideration(id: string, signal?: AbortSignal) {
-    const value = mapCoverConsideration(
-      await this.mutate(
-        `/api/v1/review-cases/${encodeURIComponent(id)}/cover-considerations/retry`,
-        undefined,
-        signal,
-      ),
+    return this.mutate(
+      `/api/v1/review-cases/${encodeURIComponent(id)}/cover-considerations/retry`,
+      undefined,
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value) => mapCoverConsideration(value as CoverConsiderationDto),
     )
-    if (value === null) throw new ApiError(502, 'invalid_cover_consideration_response')
-    return value
   }
   async getPreparation(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapPreparation(
@@ -1740,20 +1766,25 @@ export class ReviewApiClient implements ReviewHttp {
       (value) => mapPreparation(value as PreparationDto),
     )
   }
+  // The confirmation is mapped inside `mutate`, so one the browser cannot read,
+  // or one naming another case, is an uncertain outcome rather than a refusal
+  // a same-key Retry would only repeat (#1688).
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
+    const map = (value: unknown) =>
+      mapDecisionAcknowledgement(value as DecisionAcknowledgementDto, id)
     if (command.authoredDescription) {
-      return mapDecisionAcknowledgement(
-        await this.mutate(
-          `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/selection`,
-          {
-            candidate_id: command.authoredDescription.candidateId,
-            binding: command.authoredDescription.binding,
-          },
-          signal,
-          { 'idempotency-key': command.idempotencyKey },
-        ),
-        'description_selection',
-        id,
+      return this.mutate(
+        `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/selection`,
+        {
+          candidate_id: command.authoredDescription.candidateId,
+          binding: command.authoredDescription.binding,
+        },
+        signal,
+        { 'idempotency-key': command.idempotencyKey },
+        'POST',
+        false,
+        false,
+        map,
       )
     }
     const {
@@ -1766,33 +1797,32 @@ export class ReviewApiClient implements ReviewHttp {
       considerationId,
       coverConfirmation,
     } = command
-    return mapDecisionAcknowledgement(
-      await this.mutate(
-        `/api/v1/review-cases/${encodeURIComponent(id)}/decisions`,
-        {
-          destination,
-          outcome,
-          proposal_id: proposalId,
-          selected_value: selectedValue ?? null,
-          target_fingerprint: targetFingerprint,
-          consideration_id: considerationId ?? null,
-          cover_confirmation: coverConfirmation ?? null,
-        },
-        signal,
-        { 'idempotency-key': idempotencyKey },
-      ),
-      'decision',
-      id,
+    return this.mutate(
+      `/api/v1/review-cases/${encodeURIComponent(id)}/decisions`,
+      {
+        destination,
+        outcome,
+        proposal_id: proposalId,
+        selected_value: selectedValue ?? null,
+        target_fingerprint: targetFingerprint,
+        consideration_id: considerationId ?? null,
+        cover_confirmation: coverConfirmation ?? null,
+      },
+      signal,
+      { 'idempotency-key': idempotencyKey },
+      'POST',
+      false,
+      false,
+      map,
     )
   }
+  // The decoder holds the one value the answer may carry (`queued: true`).
   async retryDescriptionAdvice(id: string, signal?: AbortSignal) {
-    const result = await this.mutate(
+    await this.mutate(
       `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/retry`,
       {},
       signal,
     )
-    if (!record(result) || result.queued !== true)
-      throw new ApiError(502, 'invalid_description_retry')
   }
   async returnToAutomatic(id: string, destination: string, signal?: AbortSignal) {
     await this.mutate(
@@ -2510,12 +2540,6 @@ const stringValue = (value: unknown, field: string) => {
   if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
   return value
 }
-const codePointLength = (value: string) => Array.from(value).length
-const boundedStringValue = (value: unknown, field: string, maximum: number) => {
-  const result = stringValue(value, field)
-  if (codePointLength(result) > maximum) throw new ApiError(502, `invalid_${field}`)
-  return result
-}
 const integerValue = (value: unknown, field: string) => {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     throw new ApiError(502, `invalid_${field}`)
@@ -2528,22 +2552,19 @@ const stringArray = (value: unknown, field: string) => {
     throw new ApiError(502, `invalid_${field}`)
   return value
 }
-// A list the server is never entitled to send empty. Separate from
-// `stringArray` because most lists are legitimately empty, and reading an
-// absence as a value is the failure this refuses.
-const statedStringArray = (value: unknown, field: string) => {
-  const values = stringArray(value, field)
-  if (values.length === 0) throw new ApiError(502, `invalid_${field}`)
-  return values
-}
 const nullValue = (value: unknown, field: string): null => {
   if (value !== null) throw new ApiError(502, `invalid_${field}`)
   return value
 }
 
-const booleanValue = (value: unknown, field: string) => {
-  if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
-  return value
+const coverObservationValue = <T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+): T => {
+  const result = stringValue(value, label)
+  if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
+  return result as T
 }
 export const mapSettings = (value: unknown): SettingsView => {
   if (
@@ -2617,90 +2638,28 @@ export const mapSettings = (value: unknown): SettingsView => {
     },
   } as unknown as SettingsView
 }
-// `tracks` is required by review-report-detail-v5. A missing or non-array
-// member is a malformed document, not an observation about the whole item:
-// coercing it to no tracks would print "this item's audio files" where the
-// server named the files it read.
-const mediaHealthTracks = (value: unknown, field: string): number[] => {
-  if (!Array.isArray(value)) throw new ApiError(502, `invalid_${field}_tracks`)
-  return (value as unknown[]).map((ordinal, position) =>
-    integerValue(ordinal, `${field}_track_${String(position)}`),
-  )
-}
-const mapMediaHealth = (value: unknown, field: string): MediaHealthObservationView[] => {
-  if (!Array.isArray(value)) throw new ApiError(502, `invalid_${field}`)
-  return (value as unknown[]).map((observation, index) => {
-    if (!record(observation)) throw new ApiError(502, `invalid_${field}_${String(index)}`)
-    return {
-      bound: boundedStringValue(observation.bound, `${field}_${String(index)}_bound`, 256),
-      cited: statedStringArray(observation.cited, `${field}_${String(index)}_cited`),
-      expected:
-        observation.expected == null
-          ? null
-          : boundedStringValue(observation.expected, `${field}_${String(index)}_expected`, 256),
-      kind: coverObservationValue(
-        observation.kind,
-        `${field}_${String(index)}_kind`,
-        MEDIA_HEALTH_KINDS,
-      ),
-      observed:
-        observation.observed == null
-          ? null
-          : boundedStringValue(observation.observed, `${field}_${String(index)}_observed`, 256),
-      tracks: mediaHealthTracks(observation.tracks, `${field}_${String(index)}`),
-    }
-  })
-}
+// The media-health and provider-outcome lists are decoded with the document
+// that carries them (report, works list, case detail, evidence); these only
+// rename (#1688).
+const mapMediaHealth = (value: readonly MediaHealthDto[]): MediaHealthObservationView[] =>
+  value.map(({ bound, cited, expected, kind, observed, tracks }) => ({
+    bound,
+    cited,
+    expected,
+    kind,
+    observed,
+    tracks,
+  }))
 
-const mapProviderOutcome = (value: unknown, index: number): ProviderOutcomeView => {
-  if (!record(value)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)
-  return {
-    providerRequests: integerValue(
-      value.provider_requests,
-      `provider_outcome_${String(index)}_requests`,
-    ),
-    laneKind: coverObservationValue(
-      value.lane_kind,
-      `provider_outcome_${String(index)}_lane`,
-      PROVIDER_QUERY_KINDS,
-    ),
-    provider: boundedStringValue(value.provider, `provider_outcome_${String(index)}_provider`, 128),
-    reason: boundedStringValue(value.reason, `provider_outcome_${String(index)}_reason`, 512),
-    status: coverObservationValue(
-      value.status,
-      `provider_outcome_${String(index)}_status`,
-      PROVIDER_STATUSES,
-    ),
-  }
-}
-const decisionAction = (value: unknown): DecisionAction => {
-  if (value !== 'accept' && value !== 'keep_current')
-    throw new ApiError(502, 'invalid_case_detail_actions')
-  return value
-}
-const classificationValue = (value: unknown) => {
-  const allowed: readonly string[] = [
-    'needs_attention',
-    'manual_fallback',
-    'automatic_recorded',
-    'human_recorded',
-    'unsupported',
-    'owner_choosable',
-  ] satisfies readonly Schema<'_ReviewField'>['classification'][]
-  if (typeof value !== 'string' || !allowed.includes(value))
-    throw new ApiError(502, 'invalid_classification')
-  return value
-}
-const navigationRole = (value: unknown) => {
-  if (value !== 'attention' && value !== 'inspect')
-    throw new ApiError(502, 'invalid_navigation_role')
-  return value
-}
-const inventoryRole = (value: unknown) => {
-  if (value !== 'primary' && value !== 'contextual')
-    throw new ApiError(502, 'invalid_inventory_role')
-  return value
-}
+const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => ({
+  providerRequests: value.provider_requests,
+  laneKind: value.lane_kind,
+  provider: value.provider,
+  reason: value.reason,
+  status: value.status,
+})
+// Formats any target or proposed value. It throws nothing: the Activity
+// example still reaches it undecoded until that family is decoded.
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -2714,7 +2673,10 @@ export const displayValue = (value: unknown): string =>
 // A target field that holds no value says whether Audiobookshelf has none or
 // could not be read, in Audiobookshelf's own name (#1286).
 export const EMPTY_TARGET_TEXT = 'Not set in Audiobookshelf'
-export const targetValueText = (state: TargetFieldState, value: unknown) =>
+export const targetValueText = (
+  state: TargetFieldState,
+  value: ResponseSchema<'_TargetField'>['value'],
+) =>
   state === 'value'
     ? displayValue(value)
     : state === 'missing' || state === 'null' || state === 'empty'
@@ -2727,52 +2689,34 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
   return value
 }
 // A deliberate, named exception to the rule that every field a view reads is
-// validated. These responses are handed back as their generated DTO unchanged
-// instead of being narrowed into a hand-written view model, so the only
-// invariant this file can assert without transcribing
-// docs/reference/review-openapi-v1.json is the version handshake: a
-// hand-written copy of that document would become a second contract and would
-// fail closed on responses the server is entitled to send. Every response that
-// is narrowed into a hand-written view validates each field it reads instead —
-// see mapPreparation, mapLibrary, mapAttention, and mapCaseDetail. This is the
-// one place in the file allowed to widen a validated document to a DTO type,
-// which is why the call sites carry no cast of their own.
+// checked. These responses are handed back as their generated DTO unchanged
+// instead of being narrowed into a hand-written view model, and their
+// operations are not yet decoded centrally, so the only invariant this file
+// asserts for them is the version handshake: a hand-written copy of
+// docs/reference/review-openapi-v1.json would become a second contract and
+// would fail closed on responses the server is entitled to send. The families
+// that are decoded (`DECODED`: preparation, library, attention and the case
+// detail) are checked field by field by their generated decoders instead, and
+// their mappers keep only the checks the schema cannot state (ADR-0091). This
+// is the one place in the file allowed to widen an unchecked document to a DTO
+// type, which is why the call sites carry no cast of their own.
 // The lint rule below objects that a type parameter used once is an assertion in
 // disguise. It is, deliberately: this is the file's single declared assertion seam,
-// and naming it here is what keeps the seven call sites free of casts of their own.
+// and naming it here is what keeps the call sites free of casts of their own.
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 const schemaVersionOnly = <T>(value: unknown, name: string): T =>
   validateObject(value, name) as unknown as T
+// The decoder holds the acknowledgement's shape; the confirmed case must be the
+// one the decision was recorded on (ADR-0091).
 const mapDecisionAcknowledgement = (
-  value: unknown,
-  name: string,
+  value: DecisionAcknowledgementDto,
   reviewCaseId: string,
 ): DecisionAcknowledgementView => {
-  if (
-    !record(value) ||
-    !record(value.confirmation) ||
-    !Array.isArray(value.invalidation_sequences) ||
-    value.invalidation_sequences.length > 8 ||
-    !value.invalidation_sequences.every(
-      (sequence) => Number.isSafeInteger(sequence) && sequence > 0,
-    )
-  )
-    throw new ApiError(502, 'invalid_decision_confirmation')
-  const confirmation = value.confirmation
-  let mapped: DecisionAcknowledgementView['confirmation']
-  if (confirmation.status === 'unavailable') {
-    if (!exactKeys(confirmation, ['status']))
-      throw new ApiError(502, 'invalid_decision_confirmation')
-    mapped = { status: 'unavailable' }
-  } else if (confirmation.status === 'confirmed') {
-    if (!exactKeys(confirmation, ['status', 'case']))
-      throw new ApiError(502, 'invalid_decision_confirmation')
-    const detail = mapCaseDetail(confirmation.case)
-    if (detail.id !== reviewCaseId) throw new ApiError(502, 'invalid_decision_confirmation')
-    mapped = { status: 'confirmed', case: detail }
-  } else throw new ApiError(502, 'invalid_decision_confirmation')
-  const wire = schemaVersionOnly<DecisionWireAcknowledgement>(value, name)
-  return { ...wire, confirmation: mapped }
+  const { confirmation } = value
+  if (confirmation.status === 'unavailable') return { ...value, confirmation }
+  const detail = mapCaseDetail(confirmation.case)
+  if (detail.id !== reviewCaseId) throw new ApiError(502, 'invalid_decision_confirmation')
+  return { ...value, confirmation: { status: 'confirmed', case: detail } }
 }
 
 type PreparationDto = ResponseSchema<'_PreparationResponse'>
@@ -3233,46 +3177,24 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   }
 }
 
+// The decoder holds each member; a review scope must agree with the media kind
+// and the recording basis beside it (ADR-0091).
 const mapAudiobookReviewScope = (
-  value: unknown,
-  mediaKind: unknown,
-  basis: unknown,
+  value: 'work' | 'recording' | null,
+  mediaKind: MediaKind,
+  basis: RecordingIdentityBasisDto | null,
 ): 'work' | 'recording' | null => {
-  if (value !== null && value !== 'work' && value !== 'recording')
-    throw new ApiError(502, 'invalid_audiobook_review_scope')
   if (
-    (!['m4b', 'm4a', 'mp3'].includes(String(mediaKind)) && value !== null) ||
+    (!['m4b', 'm4a', 'mp3'].includes(mediaKind) && value !== null) ||
     (basis !== null && value !== 'recording')
   )
     throw new ApiError(502, 'inconsistent_audiobook_review_scope')
   return value
 }
 
-const mapRecordingIdentityBasis = (value: unknown): RecordingIdentityBasisView | null => {
-  if (value === null) return null
-  if (
-    !record(value) ||
-    !exactKeys(value, ['basis', 'provider', 'candidate']) ||
-    value.basis !== 'chapter_runtime_and_structure'
-  )
-    throw new ApiError(502, 'invalid_recording_identity_basis')
-  const provider = boundedStringValue(value.provider, 'recording_identity_provider', 128)
-  const candidate = boundedStringValue(value.candidate, 'recording_identity_candidate', 128)
-  if (
-    !provider.trim() ||
-    !candidate.trim() ||
-    Array.from(provider + candidate).some(
-      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
-    )
-  )
-    throw new ApiError(502, 'invalid_recording_identity_basis')
-  return { basis: 'chapter_runtime_and_structure', provider, candidate }
-}
-
-// The report detail and the works list are decoded centrally (#1686). Their
-// mappers only rename; the media-health, provider-outcome, recording-basis and
-// audiobook-scope helpers they share with the case detail keep their checks
-// until the case detail is decoded too.
+// The report detail, the works list and the case detail are decoded centrally
+// (#1686, #1688), so their mappers only rename; the audiobook scope keeps the
+// checks the schema cannot state.
 export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
   chapters: value.chapters.map((chapter) => ({
     endMilliseconds: chapter.end_milliseconds,
@@ -3295,8 +3217,8 @@ export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
   item: value.item,
   library: value.library,
   libraryDisplayName: value.library_display_name ?? value.library,
-  mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
-  recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
+  mediaHealth: mapMediaHealth(value.media_health),
+  recordingIdentityBasis: value.recording_identity_basis,
   audiobookReviewScope: mapAudiobookReviewScope(
     value.audiobook_review_scope,
     value.media_kind,
@@ -3352,7 +3274,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
           : {
               attempt: preparation.attempt,
               diagnosticReference: preparation.diagnostic_reference,
-              mediaHealth: mapMediaHealth(preparation.media_health, 'preparation_media_health'),
+              mediaHealth: mapMediaHealth(preparation.media_health),
               provider: preparation.provider,
               reason: preparation.reason,
               recovery: preparation.recovery,
@@ -3412,779 +3334,256 @@ export const mapAttention = (value: AttentionDto): AttentionView => ({
   })),
 })
 
-const mapDescriptionCandidate = (value: unknown): Schema<'DescriptionAdviceCandidate'> | null => {
-  if (value === null) return null
-  if (
-    !record(value) ||
-    !exactKeys(value, [
-      'schema_version',
-      'candidate_id',
-      'attempt_id',
-      'request_identity',
-      'request_digest',
-      'instruction_digest',
-      'schema_digest',
-      'preferences_digest',
-      'profile_digest',
-      'engine',
-      'model',
-      'access_revision',
-      'output',
-      'provenance',
-      'advised',
-      'created_at',
-    ]) ||
-    value.schema_version !== 'description-advice-candidate-v1' ||
-    value.provenance !== 'authored_content' ||
-    value.advised !== true ||
-    typeof value.candidate_id !== 'string' ||
-    !/^description_candidate_[0-9a-f]{64}$/.test(value.candidate_id) ||
-    typeof value.attempt_id !== 'string' ||
-    !/^description_attempt_[0-9a-f]{32}$/.test(value.attempt_id) ||
-    !record(value.output) ||
-    !exactKeys(value.output, ['description', 'disposition']) ||
-    !['ready', 'needs_review'].includes(String(value.output.disposition)) ||
-    !['codex', 'openrouter'].includes(String(value.engine))
-  )
-    throw new ApiError(502, 'invalid_description_candidate')
-  boundedStringValue(value.output.description, 'description_text', 16384)
-  if (!String(value.output.description).trim()) throw new ApiError(502, 'invalid_description_text')
-  boundedStringValue(value.model, 'description_model', 256)
-  integerValue(value.created_at, 'description_created_at')
-  integerValue(value.access_revision, 'description_access_revision')
-  for (const name of [
-    'request_identity',
-    'request_digest',
-    'instruction_digest',
-    'schema_digest',
-    'preferences_digest',
-    'profile_digest',
-  ])
-    if (typeof value[name] !== 'string' || !/^[0-9a-f]{64}$/.test(value[name]))
-      throw new ApiError(502, 'invalid_description_digest')
-  return value as unknown as Schema<'DescriptionAdviceCandidate'>
+// The case-detail family is decoded centrally (#1688). Its mappers rename, and
+// keep only the checks the schema cannot state, each named in ADR-0091.
+// X49: a candidate's description is not blank. Its only owner is persisted.
+const mapDescriptionCandidate = (value: DescriptionCandidateDto): DescriptionCandidateDto => {
+  if (!value.output.description.trim()) throw new ApiError(502, 'invalid_description_text')
+  return value
 }
-const mapDescriptionBinding = (value: unknown): Schema<'DescriptionAdviceBinding'> => {
-  if (
-    !record(value) ||
-    !exactKeys(value, [
-      'review_case_id',
-      'report_id',
-      'proposal_set_id',
-      'target_fingerprint',
-      'policy_generation',
-      'access_revision',
-      'preferences_digest',
-    ])
-  )
-    throw new ApiError(502, 'invalid_description_binding')
-  for (const [name, prefix] of [
-    ['review_case_id', 'review_case_'],
-    ['report_id', 'report_'],
-    ['proposal_set_id', 'proposal_set_'],
-    ['target_fingerprint', ''],
-    ['preferences_digest', ''],
-  ] as const)
-    if (typeof value[name] !== 'string' || !new RegExp(`^${prefix}[0-9a-f]{64}$`).test(value[name]))
-      throw new ApiError(502, 'invalid_description_binding')
-  for (const name of ['policy_generation', 'access_revision'])
-    if (!Number.isSafeInteger(value[name]) || Number(value[name]) < 1)
-      throw new ApiError(502, 'invalid_description_binding')
-  return value as unknown as Schema<'DescriptionAdviceBinding'>
-}
-const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
-  if (value === null || value === undefined) return null
-  if (
-    !record(value) ||
-    !exactKeys(value, [
-      'state',
-      'failure',
-      'engine',
-      'model',
-      'attempt_id',
-      'current',
-      'candidate',
-      'binding',
-      'selection',
-      'selected_advice',
-      'application_outcome',
-    ]) ||
-    !['requested', 'running', 'succeeded', 'failed', 'interrupted'].includes(String(value.state)) ||
-    !(
-      value.failure === null ||
-      (typeof value.failure === 'string' &&
-        ['unavailable', 'invalid_output', 'interrupted'].includes(value.failure))
-    ) ||
-    !['codex', 'openrouter'].includes(String(value.engine)) ||
-    !record(value.binding)
-  )
-    throw new ApiError(502, 'invalid_description_advice')
-  if (
-    value.application_outcome !== null &&
-    (typeof value.application_outcome !== 'string' ||
-      !['verified', 'no_change_required'].includes(value.application_outcome) ||
-      value.selection === null)
-  )
+const mapDescriptionAdvice = (value: DescriptionAdviceView): DescriptionAdviceView => {
+  if (value.application_outcome !== null && value.selection === null)
     throw new ApiError(502, 'invalid_description_application_outcome')
-  booleanValue(value.current, 'description_current')
-  boundedStringValue(value.model, 'description_model', 256)
+  const { candidate } = value
+  if (candidate !== null) mapDescriptionCandidate(candidate)
   if (
-    typeof value.attempt_id !== 'string' ||
-    !/^description_attempt_[0-9a-f]{32}$/.test(value.attempt_id)
-  )
-    throw new ApiError(502, 'invalid_description_attempt')
-  mapDescriptionBinding(value.binding)
-  const candidate = mapDescriptionCandidate(value.candidate)
-  if (
-    candidate &&
+    candidate !== null &&
     (candidate.attempt_id !== value.attempt_id ||
       candidate.engine !== value.engine ||
       candidate.model !== value.model)
   )
     throw new ApiError(502, 'invalid_description_candidate_binding')
-  if (
-    value.selection !== null &&
-    (!record(value.selection) ||
-      !exactKeys(value.selection, [
-        'schema_version',
-        'decision_id',
-        'candidate_id',
-        'binding',
-        'origin',
-        'resolved_policy_id',
-        'qualification_manifest_sha256',
-        'idempotency_digest',
-        'occurred_at',
-        'destination',
-        'outcome',
-        'application',
-      ]) ||
-      value.selection.schema_version !== 'authored-description-decision-v1' ||
-      !['human', 'automatic_policy'].includes(String(value.selection.origin)) ||
-      value.selection.destination !== 'description' ||
-      value.selection.outcome !== 'accept' ||
-      value.selection.application !== 'guarded')
-  )
-    throw new ApiError(502, 'invalid_description_selection')
   if ((value.selection === null) !== (value.selected_advice === null))
     throw new ApiError(502, 'invalid_description_selection')
-  let selectedCandidate: ReturnType<typeof mapDescriptionCandidate> = null
-  let selectedAdviceBinding: ReturnType<typeof mapDescriptionBinding> | null = null
-  if (value.selected_advice !== null) {
+  const { selection, selected_advice: selectedAdvice } = value
+  if (selection !== null && selectedAdvice !== null) {
+    const selectedCandidate = mapDescriptionCandidate(selectedAdvice.candidate)
+    const selectedBinding = selection.binding
     if (
-      !record(value.selected_advice) ||
-      !exactKeys(value.selected_advice, ['candidate', 'binding', 'current'])
-    )
-      throw new ApiError(502, 'invalid_description_selection')
-    booleanValue(value.selected_advice.current, 'description_selected_current')
-    selectedCandidate = mapDescriptionCandidate(value.selected_advice.candidate)
-    if (!selectedCandidate) throw new ApiError(502, 'invalid_description_selection')
-    selectedAdviceBinding = mapDescriptionBinding(value.selected_advice.binding)
-  }
-  if (record(value.selection)) {
-    const selection = value.selection
-    const selectedBinding = mapDescriptionBinding(selection.binding)
-    if (
-      typeof selection.decision_id !== 'string' ||
       !new RegExp(
         `^${selection.origin === 'human' ? 'human' : 'automatic'}_decision_[0-9a-f]{64}$`,
       ).test(selection.decision_id) ||
-      typeof selection.candidate_id !== 'string' ||
-      !/^description_candidate_[0-9a-f]{64}$/.test(selection.candidate_id) ||
-      selection.candidate_id !== selectedCandidate?.candidate_id ||
-      selectedAdviceBinding === null ||
-      Object.keys(selectedBinding).some(
-        (key) =>
-          selectedBinding[key as keyof typeof selectedBinding] !==
-          selectedAdviceBinding[key as keyof typeof selectedBinding],
+      selection.candidate_id !== selectedCandidate.candidate_id ||
+      (Object.keys(selectedBinding) as (keyof DescriptionBindingDto)[]).some(
+        (key) => selectedBinding[key] !== selectedAdvice.binding[key],
       )
     )
       throw new ApiError(502, 'invalid_description_selection')
-    for (const name of ['qualification_manifest_sha256', 'idempotency_digest'])
-      if (typeof selection[name] !== 'string' || !/^[0-9a-f]{64}$/.test(selection[name]))
-        throw new ApiError(502, 'invalid_description_selection')
-    if (
-      typeof selection.resolved_policy_id !== 'string' ||
-      !/^resolved_policy_[0-9a-f]{64}$/.test(selection.resolved_policy_id)
-    )
-      throw new ApiError(502, 'invalid_description_selection')
-    integerValue(selection.occurred_at, 'description_selection_time')
   }
-  return value as unknown as DescriptionAdviceView
+  return value
 }
 
-export const mapCaseDetail = (value: unknown): CaseDetailView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-case-detail-v6' ||
-    !record(value.target) ||
-    !Array.isArray(value.fields)
-  )
-    throw new ApiError(502, 'invalid_case_detail_response')
-  // Validated at each read: this cast names the DTO's fields, and every one the
-  // view model consumes passes through the validators below before it is used.
-  const dto = value as unknown as CaseDetailDto
-  if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
-  const authors = stringArray(dto.target.authors, 'target_authors')
-  if (authors.length > 128 || authors.some((author) => codePointLength(author) > 512))
-    throw new ApiError(502, 'invalid_target_authors')
-  const library = boundedStringValue(dto.target.library, 'target_library', 512)
-  const mediaKind = coverObservationValue(dto.target.media_kind, 'target_media_kind', MEDIA_KINDS)
-  const libraryDisplayName =
-    optionalString(dto.target.library_display_name, 'library_display_name') ?? library
+export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
+  const { target } = value
   return {
-    id: stringValue(dto.review_case_id, 'review_case_id'),
-    current: dto.current,
+    id: value.review_case_id,
+    current: value.current,
     target: {
-      connection: boundedStringValue(dto.target.connection, 'target_connection', 512),
-      library,
-      libraryDisplayName,
-      item: boundedStringValue(dto.target.item, 'target_item', 512),
-      mediaKind,
-      title: boundedStringValue(dto.target.title, 'target_title', 512),
+      connection: target.connection,
+      library: target.library,
+      libraryDisplayName: target.library_display_name ?? target.library,
+      item: target.item,
+      mediaKind: target.media_kind,
+      title: target.title,
     },
-    title: boundedStringValue(dto.target.title, 'target_title', 512),
-    authors,
-    comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
-    mediaHealth: mapMediaHealth(value.media_health, 'case_media_health'),
-    recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
+    title: target.title,
+    authors: target.authors,
+    comparisonNotices: value.comparison_notices,
+    mediaHealth: mapMediaHealth(value.media_health),
+    recordingIdentityBasis: value.recording_identity_basis,
     audiobookReviewScope: mapAudiobookReviewScope(
       value.audiobook_review_scope,
-      mediaKind,
+      target.media_kind,
       value.recording_identity_basis,
     ),
-    writesConsented: booleanValue(dto.writes_consented, 'writes_consented'),
-    fields: dto.fields.map((field) => {
-      // The three fields dereferenced without a validator below: an entry that
-      // is not an object, or that omits `current` or `proposed_values`, used to
-      // surface as an unhandled TypeError instead of a rejected response.
-      if (
-        !record(field) ||
-        !record(field.current) ||
-        !Array.isArray(field.proposed_values) ||
-        !Array.isArray(field.decision_actions)
-      )
-        throw new ApiError(502, 'invalid_case_detail_field')
-      const decisionActions = field.decision_actions.map(decisionAction)
-      if (
-        new Set(decisionActions).size !== decisionActions.length ||
-        (decisionActions.length !== 0 &&
-          (decisionActions.length !== 2 ||
-            decisionActions[0] !== 'keep_current' ||
-            decisionActions[1] !== 'accept'))
-      )
-        throw new ApiError(502, 'invalid_case_detail_actions')
-      return {
-        classification: classificationValue(field.classification),
-        classificationReason: stringValue(field.classification_reason, 'classification_reason'),
-        destination: coverObservationValue(field.destination, 'destination', TARGET_DESTINATIONS),
-        decisionActions,
-        disposition: coverObservationValue(
-          field.deterministic_disposition,
-          'disposition',
-          PROPOSAL_OUTCOMES,
-        ),
-        editable: booleanValue(field.editable, 'editable'),
-        effectCapability: coverObservationValue(
-          field.effect_capability,
-          'effect_capability',
-          EFFECT_CAPABILITIES,
-        ),
-        needsAttention: booleanValue(field.needs_attention, 'needs_attention'),
-        manualHold: booleanValue(field.manual_hold, 'manual_hold'),
-        navigationRole: navigationRole(field.navigation_role),
-        // An empty or unreadable current value says which, in Audiobookshelf's
-        // name, rather than one word for both (#1286).
-        currentValue: targetValueText(
-          coverObservationValue(field.current.state, 'current_state', TARGET_FIELD_STATES),
-          field.current.value,
-        ),
-        currentRaw: field.current.value,
-        proposedValues: field.proposed_values,
-        choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
-        proposalId: stringValue(field.proposal_id, 'proposal_id'),
-        targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'),
-        humanDecision:
-          field.human_decision === null
-            ? null
-            : {
-                ...field.human_decision,
-                outcome: coverObservationValue(
-                  field.human_decision.outcome,
-                  'human_decision_outcome',
-                  DECISION_OUTCOMES,
-                ),
-              },
-        inventoryRole: inventoryRole(field.inventory_role),
-        automaticDecision:
-          field.automatic_decision?.destination === 'cover' || field.automatic_decision == null
-            ? (field.automatic_decision ?? null)
-            : {
-                ...field.automatic_decision,
-                outcome: coverObservationValue(
-                  field.automatic_decision.outcome,
-                  'automatic_decision_outcome',
-                  AUTOMATIC_OUTCOMES,
-                ),
-              },
-        automaticWithheldReason:
-          field.automatic_withheld_reason == null
-            ? null
-            : boundedStringValue(field.automatic_withheld_reason, 'automatic_withheld_reason', 512),
-        automaticSelectionSources: stringArray(
-          field.automatic_selection_sources,
-          'automatic_selection_sources',
-        ),
-        notices: stringArray(field.notices, 'notices'),
-        provenance: stringArray(field.provenance, 'provenance'),
-        preservationOnly: booleanValue(field.preservation_only, 'preservation_only'),
-        corroborationSources: stringArray(field.corroboration_sources, 'corroboration_sources'),
-        // `record(field)` above widens the entry to a string-keyed record, which
-        // is how this reads a field the generated DTO does not declare;
-        // mapCoverConsideration then validates the value in full.
-        descriptionAdvice: mapDescriptionAdvice(field.description_advice),
-        ownerControl: mapOwnerControl(field.owner_control),
-        coverConsideration: mapCoverConsideration(field.cover_consideration),
-        currentCoverSelectionArtifactId:
-          optionalString(
-            field.current_cover_selection_artifact_id,
-            'current_cover_selection_artifact_id',
-          ) ?? null,
-        currentCoverSelectionId:
-          optionalString(field.current_cover_selection_id, 'current_cover_selection_id') ?? null,
-      }
-    }),
+    writesConsented: value.writes_consented,
+    fields: value.fields.map(mapReviewField),
   }
 }
 
-const mapOwnerControl = (value: unknown): OwnerControlView | null => {
-  if (value === null) return null
-  if (!record(value) || !exactKeys(value, ['entry', 'subset', 'withdraw']))
-    throw new ApiError(502, 'invalid_owner_control')
-  const { entry, subset, withdraw } = value
-  if (
-    (entry !== null &&
-      (!record(entry) ||
-        !exactKeys(entry, ['max_characters', 'suggestions']) ||
-        !Array.isArray(entry.suggestions) ||
-        entry.suggestions.length > 5)) ||
-    (subset !== null &&
-      (!record(subset) ||
-        !exactKeys(subset, ['max_items', 'options']) ||
-        !Array.isArray(subset.options) ||
-        subset.options.length === 0 ||
-        subset.options.length > 160))
-  )
-    throw new ApiError(502, 'invalid_owner_control')
-  return {
-    entry:
-      entry === null
-        ? null
-        : {
-            maxCharacters: integerValue(entry.max_characters, 'owner_entry_max_characters'),
-            suggestions: (entry.suggestions as unknown[]).map((item) => {
-              if (!record(item) || !exactKeys(item, ['rule', 'value']))
-                throw new ApiError(502, 'invalid_owner_suggestion')
-              return {
-                rule: coverObservationValue(item.rule, 'owner_suggestion_rule', [
-                  'title_case',
-                  'strip_part',
-                  'split_author',
-                  'combined',
-                  'previous',
-                ] as const),
-                value: boundedStringValue(item.value, 'owner_suggestion_value', 512),
-              }
-            }),
-          },
-    subset:
-      subset === null
-        ? null
-        : {
-            maxItems: integerValue(subset.max_items, 'owner_subset_max_items'),
-            options: (subset.options as unknown[]).map((item) => {
-              if (!record(item) || !exactKeys(item, ['value', 'current', 'proposed', 'previous']))
-                throw new ApiError(502, 'invalid_owner_subset_option')
-              return {
-                value: boundedStringValue(item.value, 'owner_subset_value', 1024),
-                current: booleanValue(item.current, 'owner_subset_current'),
-                proposed: booleanValue(item.proposed, 'owner_subset_proposed'),
-                previous: booleanValue(item.previous, 'owner_subset_previous'),
-              }
-            }),
-          },
-    withdraw:
-      withdraw === null
-        ? null
-        : coverObservationValue(withdraw, 'owner_withdraw', [
-            'available',
-            'automatic_hold',
-            'in_progress',
-            'written',
-          ] as const),
-  }
-}
+const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
+  classification: field.classification,
+  classificationReason: field.classification_reason,
+  destination: field.destination,
+  // The decoder admits exactly [] or ['keep_current', 'accept'].
+  decisionActions: field.decision_actions.length === 0 ? [] : ['keep_current', 'accept'],
+  disposition: field.deterministic_disposition,
+  editable: field.editable,
+  effectCapability: field.effect_capability,
+  needsAttention: field.needs_attention,
+  manualHold: field.manual_hold,
+  navigationRole: field.navigation_role,
+  // An empty or unreadable current value says which, in Audiobookshelf's
+  // name, rather than one word for both (#1286).
+  currentValue: targetValueText(field.current.state, field.current.value),
+  currentRaw: field.current.value,
+  proposedValues: field.proposed_values,
+  choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
+  proposalId: field.proposal_id,
+  targetFingerprint: field.target_fingerprint,
+  humanDecision: field.human_decision,
+  inventoryRole: field.inventory_role,
+  automaticDecision: field.automatic_decision,
+  automaticWithheldReason: field.automatic_withheld_reason,
+  automaticSelectionSources: field.automatic_selection_sources,
+  notices: field.notices,
+  provenance: field.provenance,
+  preservationOnly: field.preservation_only,
+  corroborationSources: field.corroboration_sources,
+  descriptionAdvice:
+    field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
+  ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
+  coverConsideration:
+    field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),
+  currentCoverSelectionArtifactId: field.current_cover_selection_artifact_id,
+  currentCoverSelectionId: field.current_cover_selection_id,
+})
 
-export const mapEvidence = (value: unknown): EvidenceView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-case-evidence-v4' ||
-    !Array.isArray(value.items) ||
-    value.items.length > 50 ||
-    !Array.isArray(value.source_ledger) ||
-    value.source_ledger.length > 100
-  )
-    throw new ApiError(502, 'invalid_evidence_response')
-  stringValue(value.review_case_id, 'evidence_review_case_id')
-  const nextCursor = optionalString(value.next_cursor, 'evidence_next_cursor')
-  return {
-    items: value.items.map((item, index) => {
-      if (!record(item)) throw new ApiError(502, `invalid_evidence_item_${String(index)}`)
-      const role = item.role
-      if (
-        role !== 'external_corroboration' &&
-        role !== 'external_observation' &&
-        role !== 'local_presence'
-      )
-        throw new ApiError(502, `invalid_evidence_item_${String(index)}_role`)
-      return {
-        destinations: (() => {
-          if (
-            !Array.isArray(item.destinations) ||
-            item.destinations.length === 0 ||
-            item.destinations.length > 16
-          )
-            throw new ApiError(502, `invalid_evidence_item_${String(index)}_destinations`)
-          const destinations = item.destinations.map((destination, destinationIndex) =>
-            coverObservationValue(
-              destination,
-              `evidence_item_${String(index)}_destination_${String(destinationIndex)}`,
-              TARGET_DESTINATIONS,
-            ),
-          )
-          if (new Set(destinations).size !== destinations.length)
-            throw new ApiError(502, `invalid_evidence_item_${String(index)}_destinations`)
-          return destinations
-        })(),
-        observation: boundedStringValue(
-          item.observation,
-          `evidence_item_${String(index)}_observation`,
-          1024,
-        ),
-        role,
-        source: boundedStringValue(item.source, `evidence_item_${String(index)}_source`, 128),
-      }
-    }),
-    missingLineageCount: (() => {
-      const count = integerValue(value.missing_lineage_count, 'evidence_missing_lineage_count')
-      if (count > 10_000) throw new ApiError(502, 'invalid_evidence_missing_lineage_count')
-      return count
-    })(),
-    ...(nextCursor ? { nextCursor } : {}),
-    sourceLedger: value.source_ledger.map(mapProviderOutcome),
-  }
-}
-
-const mapHistoryValue = (value: unknown, field: string): HistoryValueView | null => {
-  if (value === null) return null
-  if (!record(value)) throw new ApiError(502, `invalid_${field}`)
-  const kind = boundedStringValue(value.kind, `${field}_kind`, 64)
-  const retained = value.value
-  if (typeof retained === 'string') {
-    if (codePointLength(retained) > 16_384) throw new ApiError(502, `invalid_${field}_value`)
-    return { kind, value: retained }
-  }
-  if (typeof retained === 'boolean') return { kind, value: retained }
-  if (!Array.isArray(retained) || retained.length > 128)
-    throw new ApiError(502, `invalid_${field}_value`)
-  if (retained.every((item) => typeof item === 'string' && codePointLength(item) <= 512))
-    return { kind, value: retained }
-  if (
-    retained.every(
-      (item) =>
-        record(item) &&
-        typeof item.name === 'string' &&
-        codePointLength(item.name) <= 512 &&
-        Object.hasOwn(item, 'sequence') &&
-        (item.sequence === null ||
-          (typeof item.sequence === 'string' && codePointLength(item.sequence) <= 512)),
-    )
-  )
-    return { kind, value: retained as { name: string; sequence: string | null }[] }
-  throw new ApiError(502, `invalid_${field}_value`)
-}
-
-export const mapHistory = (value: unknown): HistoryView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'review-case-history-v3' ||
-    !Array.isArray(value.items) ||
-    value.items.length > 150
-  )
-    throw new ApiError(502, 'invalid_history_response')
-  stringValue(value.review_case_id, 'history_review_case_id')
-  const nextCursor = optionalString(value.next_cursor, 'history_next_cursor')
-  return {
-    items: value.items.map((item, index): HistoryItemView => {
-      if (!record(item)) throw new ApiError(502, `invalid_history_item_${String(index)}`)
-      const kind = stringValue(item.kind, `history_item_${String(index)}_kind`)
-      const occurredAt = Object.hasOwn(item, 'checkpoint')
-        ? null
-        : integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
-      if (occurredAt !== null && occurredAt > 8640000000000)
-        throw new ApiError(502, 'invalid_history_time')
-      if (
-        kind === 'description_advice_recorded' ||
-        kind === 'description_selected' ||
-        kind === 'description_application'
-      ) {
-        integerValue(item.occurred_at, 'description_history_at')
-        return {
-          category: 'description',
-          occurredAt,
-          outcome: kind,
-          state: coverObservationValue(item.state, 'description_state', DESCRIPTION_STATES),
-          model: boundedStringValue(item.model, 'description_model', 256),
-          engine: boundedStringValue(item.engine, 'description_engine', 32),
-          candidate: mapDescriptionCandidate(item.candidate),
-          selected: kind === 'description_selected',
-        }
-      }
-      if (kind === 'human_decision_recorded' || kind === 'automatic_decision_recorded') {
-        integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
-        const outcome = `history_item_${String(index)}_outcome`
-        const decision = {
-          occurredAt,
-          destination: coverObservationValue(
-            item.destination,
-            `history_item_${String(index)}_destination`,
-            TARGET_DESTINATIONS,
-          ),
-          previousValue: mapHistoryValue(
-            item.previous_value,
-            `history_item_${String(index)}_previous_value`,
-          ),
-          selectedValue: mapHistoryValue(
-            item.selected_value,
-            `history_item_${String(index)}_selected_value`,
-          ),
-        }
-        // Only an owner decision states what it may go on to do; a retained
-        // F45 decision is the only one that carries a reason (#968).
-        return kind === 'human_decision_recorded'
-          ? {
-              category: 'owner' as const,
-              applicationReason:
-                optionalString(
-                  item.application_reason,
-                  `history_item_${String(index)}_application_reason`,
-                ) ?? null,
-              outcome: coverObservationValue(item.outcome, outcome, DECISION_OUTCOMES),
-              ...decision,
-            }
-          : {
-              category: 'automatic' as const,
-              outcome: coverObservationValue(item.outcome, outcome, AUTOMATIC_OUTCOMES),
-              ...decision,
-            }
-      }
-      if (kind === 'shadow_preview_recorded') {
-        integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
-        if (!record(item.dispositions) || Object.keys(item.dispositions).length > 32)
-          throw new ApiError(502, `invalid_history_item_${String(index)}_dispositions`)
-        return {
-          category: 'preview',
-          occurredAt,
-          dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
-            count: integerValue(count, `history_item_${String(index)}_disposition`),
-            outcome: coverObservationValue(
-              outcome,
-              `history_item_${String(index)}_disposition_name`,
-              SHADOW_DISPOSITIONS,
-            ),
+const mapOwnerControl = ({ entry, subset, withdraw }: OwnerControlDto): OwnerControlView => ({
+  entry:
+    entry === null
+      ? null
+      : {
+          maxCharacters: entry.max_characters,
+          suggestions: entry.suggestions.map(({ rule, value }) => ({ rule, value })),
+        },
+  subset:
+    subset === null
+      ? null
+      : {
+          maxItems: subset.max_items,
+          options: subset.options.map(({ value, current, proposed, previous }) => ({
+            value,
+            current,
+            proposed,
+            previous,
           })),
-        }
-      }
-      if (
-        kind === 'automatic_prepared' ||
-        kind === 'owner_retry_prepared' ||
-        (kind === 'superseded' && Object.hasOwn(item, 'consideration')) ||
-        kind === 'selected' ||
-        kind === 'kept_incumbent' ||
-        kind === 'no_action' ||
-        kind === 'stale'
-      ) {
-        integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
-        if (
-          !record(item.consideration) ||
-          !Array.isArray(item.consideration.candidates) ||
-          item.consideration.candidates.length > 12
-        )
-          throw new ApiError(502, `invalid_history_item_${String(index)}_consideration`)
-        const policy = item.consideration.policy
-        if (policy !== null && !record(policy))
-          throw new ApiError(502, `invalid_history_item_${String(index)}_policy`)
-        const decision = item.decision
-        if (decision !== null && !record(decision))
-          throw new ApiError(502, `invalid_history_item_${String(index)}_decision`)
-        const decisionOutcome = decision
-          ? boundedStringValue(
-              decision.outcome,
-              `history_item_${String(index)}_decision_outcome`,
-              64,
-            )
-          : undefined
-        const ownerOutcome =
-          decisionOutcome === 'accept' ||
-          decisionOutcome === 'keep_current' ||
-          decisionOutcome === 'reject'
-            ? decisionOutcome
-            : undefined
-        const automaticOutcome = decisionOutcome === 'candidate' ? decisionOutcome : undefined
-        if (decisionOutcome && !ownerOutcome && !automaticOutcome)
-          throw new ApiError(502, `invalid_history_item_${String(index)}_decision_outcome`)
-        const supersedesAutomatic =
-          automaticOutcome !== undefined &&
-          optionalString(
-            decision?.supersedes_decision_id,
-            `history_item_${String(index)}_supersedes_decision_id`,
-          ) !== undefined
-        const policyReasons = policy
-          ? stringArray(policy.reasons, `history_item_${String(index)}_policy_reasons`)
-          : []
-        if (
-          policyReasons.length > 32 ||
-          policyReasons.some((reason) => codePointLength(reason) > 128)
-        )
-          throw new ApiError(502, `invalid_history_item_${String(index)}_policy_reasons`)
-        const reviewerStatus = coverObservationValue(
-          item.consideration.reviewer_status,
-          `history_item_${String(index)}_reviewer_status`,
-          ['completed', 'failed', 'unavailable'] as const,
-        )
-        return {
-          category: 'cover',
-          occurredAt,
-          ...(automaticOutcome ? { automaticOutcome } : {}),
-          candidateCount: item.consideration.candidates.length,
-          ...(item.consideration.reviewer_model == null
-            ? {}
-            : {
-                reviewerModel: boundedStringValue(
-                  item.consideration.reviewer_model,
-                  'history_reviewer_model',
-                  256,
-                ),
-              }),
-          outcome: coverObservationValue(
-            kind,
-            `history_item_${String(index)}_kind`,
-            COVER_HISTORY_OUTCOMES,
-          ),
-          ...(ownerOutcome
-            ? {
-                ownerOutcome,
-                ...(item.consideration.candidates.some(
-                  (candidate) =>
-                    record(candidate) &&
-                    (ownerOutcome === 'keep_current'
-                      ? candidate.incumbent === true
-                      : ownerOutcome === 'accept' &&
-                        record(decision?.selected_value) &&
-                        candidate.artifact_id === decision.selected_value.value) &&
-                    candidate.match_state === 'match_not_confirmed',
-                )
-                  ? { ownerMatchUnconfirmed: true }
-                  : {}),
-              }
+        },
+  withdraw,
+})
+
+export const mapEvidence = (value: EvidenceDto): EvidenceView => ({
+  items: value.items.map(({ destinations, observation, role, source }) => ({
+    destinations,
+    observation,
+    role,
+    source,
+  })),
+  missingLineageCount: value.missing_lineage_count,
+  ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
+  sourceLedger: value.source_ledger.map(mapProviderOutcome),
+})
+
+const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
+  if ('checkpoint' in item)
+    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+  const occurredAt = item.occurred_at
+  // Each item kind has its own event schema, named by its version.
+  if (item.schema_version === 'description-advice-history-v1')
+    return {
+      category: 'description',
+      occurredAt,
+      outcome: item.kind,
+      state: item.state,
+      model: item.model,
+      engine: item.engine,
+      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
+      selected: item.kind === 'description_selected',
+    }
+  // Only an owner decision states what it may go on to do; a retained F45
+  // decision is the only one that carries a reason (#968).
+  if (item.schema_version === 'human-decision-event-v1')
+    return {
+      category: 'owner',
+      applicationReason: item.application_reason,
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'automatic-decision-history-event-v1')
+    return {
+      category: 'automatic',
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'shadow-preview-history-event-v1')
+    return {
+      category: 'preview',
+      occurredAt,
+      // The decoder holds each key to the disposition names (propertyNames).
+      dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
+        count,
+        outcome: outcome as ShadowDisposition,
+      })),
+    }
+  const { consideration, decision } = item
+  const decisionOutcome = decision?.outcome
+  const ownerOutcome =
+    decisionOutcome === 'accept' ||
+    decisionOutcome === 'keep_current' ||
+    decisionOutcome === 'reject'
+      ? decisionOutcome
+      : undefined
+  const automaticOutcome = decisionOutcome === 'candidate' ? decisionOutcome : undefined
+  // X53: a cover decision is an owner choice or the automatic candidate.
+  if (decisionOutcome !== undefined && !ownerOutcome && !automaticOutcome)
+    throw new ApiError(502, `invalid_history_item_${String(index)}_decision_outcome`)
+  const { policy } = consideration
+  return {
+    category: 'cover',
+    occurredAt,
+    ...(automaticOutcome ? { automaticOutcome } : {}),
+    candidateCount: consideration.candidates.length,
+    ...(consideration.reviewer_model === null
+      ? {}
+      : { reviewerModel: consideration.reviewer_model }),
+    outcome: item.kind,
+    ...(ownerOutcome
+      ? {
+          ownerOutcome,
+          ...(consideration.candidates.some(
+            (candidate) =>
+              (ownerOutcome === 'keep_current'
+                ? candidate.incumbent
+                : ownerOutcome === 'accept' &&
+                  candidate.artifact_id === decision?.selected_value?.value) &&
+              candidate.match_state === 'match_not_confirmed',
+          )
+            ? { ownerMatchUnconfirmed: true }
             : {}),
-          policyReasons,
-          ...(policy
-            ? {
-                policyStatus: coverObservationValue(
-                  policy.status,
-                  `history_item_${String(index)}_policy_status`,
-                  ['recommended', 'abstained'] as const,
-                ),
-              }
-            : {}),
-          reviewerStatus,
-          supersedesAutomatic,
         }
-      }
-      integerValue(item.checkpoint, `history_item_${String(index)}_checkpoint`)
-      return {
-        category: 'transition',
-        occurredAt,
-        outcome: coverObservationValue(
-          kind,
-          `history_item_${String(index)}_kind`,
-          TRANSITION_OUTCOMES,
-        ),
-        reason: boundedStringValue(item.reason, `history_item_${String(index)}_reason`, 512),
-      }
-    }),
-    ...(nextCursor ? { nextCursor } : {}),
+      : {}),
+    policyReasons: policy === null ? [] : policy.reasons,
+    ...(policy === null ? {} : { policyStatus: policy.status }),
+    reviewerStatus: consideration.reviewer_status,
+    supersedesAutomatic:
+      decision?.outcome === 'candidate' && decision.supersedes_decision_id !== null,
   }
 }
+
+export const mapHistory = (value: HistoryDto): HistoryView => ({
+  items: value.items.map(mapHistoryItem),
+  ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
+})
 
 const mapChoiceContexts = (
-  value: unknown,
+  value: readonly ChoiceContextDto[],
   proposedValueCount: number,
 ): readonly ChoiceContextView[] => {
-  if (!Array.isArray(value)) throw new ApiError(502, 'invalid_choice_contexts')
-  const contexts = value.map((item, index) => {
-    if (!record(item) || !Array.isArray(item.evidence))
-      throw new ApiError(502, `invalid_choice_context_${String(index)}`)
-    const selection = stringValue(item.selection, `choice_context_${String(index)}_selection`)
-    const recommendation = stringValue(
-      item.recommendation,
-      `choice_context_${String(index)}_recommendation`,
-    )
-    if (
-      !['current', 'proposed'].includes(selection) ||
-      !['no_recommendation', 'recommended'].includes(recommendation)
-    )
-      throw new ApiError(502, `invalid_choice_context_${String(index)}_state`)
-    return {
-      alternativeId:
-        item.alternative_id === null
-          ? null
-          : stringValue(item.alternative_id, `choice_context_${String(index)}_alternative`),
-      evidence: item.evidence.map((row, rowIndex) => {
-        if (!record(row))
-          throw new ApiError(502, `invalid_choice_evidence_${String(index)}_${String(rowIndex)}`)
-        const role = stringValue(
-          row.role,
-          `choice_evidence_${String(index)}_${String(rowIndex)}_role`,
-        )
-        if (!['local_presence', 'external_corroboration', 'external_observation'].includes(role))
-          throw new ApiError(
-            502,
-            `invalid_choice_evidence_${String(index)}_${String(rowIndex)}_role`,
-          )
-        return {
-          source: stringValue(
-            row.source,
-            `choice_evidence_${String(index)}_${String(rowIndex)}_source`,
-          ),
-          observation: stringValue(
-            row.observation,
-            `choice_evidence_${String(index)}_${String(rowIndex)}_observation`,
-          ),
-          role: role as ChoiceEvidenceView['role'],
-        }
-      }),
-      limitations: stringArray(item.limitations, `choice_context_${String(index)}_limitations`),
-      rationale: stringValue(item.rationale, `choice_context_${String(index)}_rationale`),
-      recommendation: recommendation as ChoiceContextView['recommendation'],
-      recommendationReason: stringValue(
-        item.recommendation_reason,
-        `choice_context_${String(index)}_recommendation_reason`,
-      ),
-      selection: selection as ChoiceContextView['selection'],
-    }
-  })
+  const contexts = value.map((item) => ({
+    alternativeId: item.alternative_id,
+    evidence: item.evidence.map(({ source, observation, role }) => ({ source, observation, role })),
+    limitations: item.limitations,
+    rationale: item.rationale,
+    recommendation: item.recommendation,
+    recommendationReason: item.recommendation_reason,
+    selection: item.selection,
+  }))
   const [current, ...proposed] = contexts
   if (
     current?.selection !== 'current' ||
@@ -4199,212 +3598,67 @@ const mapChoiceContexts = (
   return contexts
 }
 
-const coverObservationValue = <T extends string>(
-  value: unknown,
-  label: string,
-  allowed: readonly T[],
-): T => {
-  const result = stringValue(value, label)
-  if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
-  return result as T
-}
-
 const mapCoverObservation = (
-  value: unknown,
+  value: CoverObservationDto | null,
   candidateReference: string,
   previewSha256: string,
 ): CoverObservationView | null => {
   if (value === null) return null
-  if (!record(value)) throw new ApiError(502, 'invalid_cover_observation')
-  const keys = [
-    'candidate_reference',
-    'composition',
-    'cover_text_language',
-    'explicit_imagery',
-    'format_branding',
-    'medium',
-    'overlay_marking',
-    'placeholder',
-    'preview_sha256',
-    'preview_variant',
-    'promotional_text',
-    'reproduction',
-    'series_styling',
-    'thumbnail_legibility',
-    'tie_in_branding',
-  ]
-  if (Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)))
-    throw new ApiError(502, 'invalid_cover_observation_shape')
-  const boundReference = stringValue(value.candidate_reference, 'cover_observation_reference')
-  const boundPreview = stringValue(value.preview_sha256, 'cover_observation_preview')
-  if (boundReference !== candidateReference || boundPreview !== previewSha256)
+  if (value.candidate_reference !== candidateReference || value.preview_sha256 !== previewSha256)
     throw new ApiError(502, 'misaligned_cover_observation')
   return {
-    candidateReference: boundReference,
-    composition: coverObservationValue(value.composition, 'cover_observation_composition', [
-      'dense',
-      'minimal',
-      'unknown',
-    ]),
-    coverTextLanguage: coverObservationValue(
-      value.cover_text_language,
-      'cover_observation_text_language',
-      ['english', 'non_english', 'multiple', 'no_visible_title', 'unknown'],
-    ),
-    explicitImagery: coverObservationValue(
-      value.explicit_imagery,
-      'cover_observation_explicit_imagery',
-      ['absent', 'suggestive', 'explicit', 'unknown'],
-    ),
-    formatBranding: coverObservationValue(
-      value.format_branding,
-      'cover_observation_format_branding',
-      ['absent', 'text_edition', 'audiobook', 'unknown'],
-    ),
-    medium: coverObservationValue(value.medium, 'cover_observation_medium', [
-      'illustrated',
-      'mixed',
-      'photographic',
-      'typographic',
-      'unknown',
-    ]),
-    overlayMarking: coverObservationValue(
-      value.overlay_marking,
-      'cover_observation_overlay_marking',
-      ['absent', 'present', 'unknown'],
-    ),
-    placeholder: coverObservationValue(value.placeholder, 'cover_observation_placeholder', [
-      'absent',
-      'present',
-      'unknown',
-    ]),
-    previewSha256: boundPreview,
-    previewVariant: stringValue(value.preview_variant, 'cover_observation_preview_variant'),
-    promotionalText: coverObservationValue(
-      value.promotional_text,
-      'cover_observation_promotional_text',
-      ['absent', 'present', 'unknown'],
-    ),
-    reproduction: coverObservationValue(value.reproduction, 'cover_observation_reproduction', [
-      'clean',
-      'degraded',
-      'unknown',
-    ]),
-    seriesStyling: coverObservationValue(value.series_styling, 'cover_observation_series_styling', [
-      'standalone',
-      'series_branded',
-      'omnibus_or_set',
-      'unknown',
-    ]),
-    thumbnailLegibility: coverObservationValue(
-      value.thumbnail_legibility,
-      'cover_observation_thumbnail_legibility',
-      ['legible', 'illegible', 'unknown'],
-    ),
-    tieInBranding: coverObservationValue(
-      value.tie_in_branding,
-      'cover_observation_tie_in_branding',
-      ['absent', 'present', 'unknown'],
-    ),
+    candidateReference: value.candidate_reference,
+    composition: value.composition,
+    coverTextLanguage: value.cover_text_language,
+    explicitImagery: value.explicit_imagery,
+    formatBranding: value.format_branding,
+    medium: value.medium,
+    overlayMarking: value.overlay_marking,
+    placeholder: value.placeholder,
+    previewSha256: value.preview_sha256,
+    previewVariant: value.preview_variant,
+    promotionalText: value.promotional_text,
+    reproduction: value.reproduction,
+    seriesStyling: value.series_styling,
+    thumbnailLegibility: value.thumbnail_legibility,
+    tieInBranding: value.tie_in_branding,
   }
 }
 
-export const mapCoverConsideration = (value: unknown): CoverConsiderationView | null => {
-  if (value === null || value === undefined) return null
-  if (
-    !record(value) ||
-    value.schema_version !== 'cover-consideration-v4' ||
-    !Array.isArray(value.candidates) ||
-    !Array.isArray(value.omissions) ||
-    !record(value.incumbent) ||
-    !record(value.policy_preferences)
-  )
-    throw new ApiError(502, 'invalid_cover_consideration')
-  const incumbentState = stringValue(value.incumbent.state, 'cover_incumbent_state')
-  if (!['absent', 'available', 'unavailable'].includes(incumbentState))
-    throw new ApiError(502, 'invalid_cover_incumbent_state')
-  const preferences = value.policy_preferences
-  if (
-    typeof preferences.avoid_promotional_text !== 'boolean' ||
-    typeof preferences.avoid_tie_in_branding !== 'boolean' ||
-    typeof preferences.prefer_minimal_composition !== 'boolean'
-  )
-    throw new ApiError(502, 'invalid_cover_policy_preferences')
-  if (typeof value.provider_fetching !== 'boolean' || typeof value.ready !== 'boolean')
-    throw new ApiError(502, 'invalid_cover_readiness')
+export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsiderationView => {
   const providerFetching = value.provider_fetching
   const ready = value.ready
-  const candidates = value.candidates.map((candidate, index): CoverCandidateView => {
+  const candidates = value.candidates.map((candidate): CoverCandidateView => {
+    const { identity, incumbent, selectable } = candidate
+    const deterministicRank = candidate.deterministic_rank
+    const deterministicRankKey = candidate.deterministic_rank_key
+    // X52: the rank key's first six items are integers and the last is the
+    // candidate's reference.
     if (
-      !record(candidate) ||
-      !record(candidate.identity) ||
-      (candidate.observation !== null && !record(candidate.observation))
+      deterministicRankKey !== null &&
+      (!deterministicRankKey.slice(0, 6).every((item) => Number.isInteger(item)) ||
+        deterministicRankKey[6] !== candidate.reference)
     )
-      throw new ApiError(502, `invalid_cover_candidate_${String(index)}`)
-    const state = stringValue(candidate.state, 'cover_state')
-    if (
-      state !== 'acceptable' &&
-      state !== 'available' &&
-      state !== 'excluded' &&
-      state !== 'recommended'
-    )
-      throw new ApiError(502, 'invalid_cover_candidate_state')
-    const matchStateRaw = stringValue(candidate.match_state, 'cover_match_state')
-    if (!['same_edition', 'same_book', 'match_not_confirmed'].includes(matchStateRaw))
-      throw new ApiError(502, 'invalid_cover_match_state')
-    const matchState: CoverCandidateView['matchState'] =
-      matchStateRaw === 'same_edition'
-        ? 'same_edition'
-        : matchStateRaw === 'same_book'
-          ? 'same_book'
-          : 'match_not_confirmed'
-    const deterministicRank =
-      candidate.deterministic_rank === null
-        ? null
-        : integerValue(candidate.deterministic_rank, 'cover_deterministic_rank')
-    const deterministicRankKey =
-      candidate.deterministic_rank_key === null
-        ? null
-        : Array.isArray(candidate.deterministic_rank_key) &&
-            candidate.deterministic_rank_key.length === 7 &&
-            candidate.deterministic_rank_key.slice(0, 6).every((item) => Number.isInteger(item)) &&
-            candidate.deterministic_rank_key[6] === candidate.reference
-          ? (candidate.deterministic_rank_key as readonly (number | string)[])
-          : (() => {
-              throw new ApiError(502, 'invalid_cover_deterministic_rank_key')
-            })()
-    const identityOutcome = stringValue(candidate.identity.outcome, 'cover_identity_outcome')
-    if (
-      ![
-        'verified_manifestation_match',
-        'verified_work_match',
-        'plausible_match',
-        'unknown',
-        'conflict',
-      ].includes(identityOutcome)
-    )
-      throw new ApiError(502, 'invalid_cover_identity_outcome')
+      throw new ApiError(502, 'invalid_cover_deterministic_rank_key')
     const expectedMatchState =
-      identityOutcome === 'verified_manifestation_match'
+      identity.outcome === 'verified_manifestation_match'
         ? 'same_edition'
-        : identityOutcome === 'verified_work_match'
+        : identity.outcome === 'verified_work_match'
           ? 'same_book'
           : 'match_not_confirmed'
     const confirmed = expectedMatchState !== 'match_not_confirmed'
-    const incumbent = candidate.incumbent === true
-    const selectable = candidate.selectable === true
-    const manualEligible = booleanValue(candidate.manual_eligible, 'cover_manual_eligible')
-    const identityReasons = stringArray(candidate.identity.reasons, 'cover_identity_reasons')
+    const manualEligible = candidate.manual_eligible
     if (
       manualEligible !==
       (!incumbent &&
-        identityOutcome !== 'conflict' &&
-        !identityReasons.includes('retained_creator_or_contributor_disagreement'))
+        identity.outcome !== 'conflict' &&
+        !identity.reasons.includes('retained_creator_or_contributor_disagreement'))
     )
       throw new ApiError(502, 'contradictory_cover_manual_eligibility')
-    const reference = stringValue(candidate.reference, 'cover_reference')
-    const previewSha256 = stringValue(candidate.preview_sha256, 'cover_preview_digest')
+    const { reference } = candidate
+    const previewSha256 = candidate.preview_sha256
     const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
+    const matchState = candidate.match_state
     if (
       matchState !== expectedMatchState ||
       (!confirmed && (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
@@ -4415,29 +3669,24 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     )
       throw new ApiError(502, 'contradictory_cover_identity')
     return {
-      artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'),
-      deterministicCitations: stringArray(
-        candidate.deterministic_citations,
-        'cover_deterministic_citations',
-      ),
+      artifactId: candidate.artifact_id,
+      deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
       deterministicRankKey,
-      height: integerValue(candidate.height, 'cover_height'),
-      identity: candidate.identity,
+      height: candidate.height,
+      identity,
       incumbent,
       matchState,
       observation,
-      originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'),
-      ordinal: integerValue(candidate.ordinal, 'cover_ordinal'),
+      originalSha256: candidate.original_sha256,
+      ordinal: candidate.ordinal,
       previewSha256,
       reference,
       selectable,
       manualEligible,
-      sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds').map((kind) =>
-        coverObservationValue(kind, 'cover_source_kind', COVER_SOURCE_KINDS),
-      ),
-      state,
-      width: integerValue(candidate.width, 'cover_width'),
+      sourceKinds: candidate.source_kinds,
+      state: candidate.state,
+      width: candidate.width,
     }
   })
   if (
@@ -4447,6 +3696,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     candidates.some((candidate, index) => candidate.ordinal !== index)
   )
     throw new ApiError(502, 'misaligned_cover_candidates')
+  const incumbentState = value.incumbent.state
   const incumbents = candidates.filter((candidate) => candidate.incumbent)
   if (
     incumbents.length > 1 ||
@@ -4466,65 +3716,21 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       .some((context, index) => context.alternativeId !== proposedReferences[index])
   )
     throw new ApiError(502, 'misaligned_cover_choice_contexts')
-  const policy =
-    value.policy === null
-      ? null
-      : record(value.policy)
-        ? value.policy
-        : (() => {
-            throw new ApiError(502, 'invalid_cover_policy')
-          })()
+  const { policy } = value
   if ((policy === null) !== (candidates.length === 0))
     throw new ApiError(502, 'invalid_cover_policy_candidates')
-  const policyStatus = policy === null ? null : stringValue(policy.status, 'cover_policy_status')
-  if (policyStatus !== null && !['recommended', 'abstained'].includes(policyStatus))
-    throw new ApiError(502, 'invalid_cover_policy_status')
-  const policyOwnerReady = policy === null ? false : policy.owner_ready === true
-  const actualTargetState =
-    policy === null ? null : stringValue(policy.actual_target_state, 'cover_actual_target_state')
-  if (
-    policy !== null &&
-    (policy.schema_version !== 'cover-policy-report-v2' ||
-      typeof policy.owner_ready !== 'boolean' ||
-      !['known_empty', 'confirmed', 'unknown'].includes(actualTargetState ?? ''))
-  )
-    throw new ApiError(502, 'invalid_cover_policy')
-  const reviewerStatus = stringValue(value.reviewer_status, 'cover_reviewer_status')
-  if (!['completed', 'failed', 'unavailable'].includes(reviewerStatus))
-    throw new ApiError(502, 'invalid_cover_reviewer_status')
-  const reviewerUnavailableReason =
-    value.reviewer_unavailable_reason === null
-      ? null
-      : stringValue(value.reviewer_unavailable_reason, 'cover_reviewer_unavailable_reason')
-  if (
-    reviewerUnavailableReason !== null &&
-    (reviewerStatus !== 'unavailable' ||
-      ![
-        'profile contract requires memory_bytes=1073741824',
-        'profile contract requires process_limit=32',
-      ].includes(reviewerUnavailableReason))
-  )
+  const policyStatus = policy === null ? null : policy.status
+  const policyOwnerReady = policy === null ? false : policy.owner_ready
+  const reviewerStatus = value.reviewer_status
+  const reviewerUnavailableReason = value.reviewer_unavailable_reason
+  if (reviewerUnavailableReason !== null && reviewerStatus !== 'unavailable')
     throw new ApiError(502, 'invalid_cover_reviewer_unavailable_reason')
-  // Optional on the wire; absent and null both mean no closed failure code.
-  const reviewerFailureCode = value.reviewer_failure_code ?? null
-  if (
-    reviewerFailureCode !== null &&
-    (reviewerStatus !== 'failed' ||
-      !(reviewerFailureCodes as readonly unknown[]).includes(reviewerFailureCode))
-  )
+  const reviewerFailureCode = value.reviewer_failure_code
+  if (reviewerFailureCode !== null && reviewerStatus !== 'failed')
     throw new ApiError(502, 'invalid_cover_reviewer_failure_code')
-  const recommendedReference =
-    policy === null || policy.recommended_candidate_reference === null
-      ? null
-      : stringValue(policy.recommended_candidate_reference, 'cover_recommended_reference')
-  const acceptable =
-    policy === null
-      ? []
-      : stringArray(policy.acceptable_candidate_references, 'cover_acceptable_references')
-  if (
-    (policyStatus === 'recommended') !== (recommendedReference !== null) ||
-    new Set(acceptable).size !== acceptable.length
-  )
+  const recommendedReference = policy === null ? null : policy.recommended_candidate_reference
+  const acceptable = policy === null ? [] : policy.acceptable_candidate_references
+  if ((policyStatus === 'recommended') !== (recommendedReference !== null))
     throw new ApiError(502, 'contradictory_cover_policy')
   const byReference = new Map(candidates.map((candidate) => [candidate.reference, candidate]))
   const rankedAlternatives = candidates
@@ -4605,58 +3811,29 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   )
     throw new ApiError(502, 'contradictory_cover_readiness')
   return {
-    id: stringValue(value.consideration_id, 'cover_consideration_id'),
-    current: value.current === true,
+    id: value.consideration_id,
+    current: value.current,
     candidates,
     choiceContexts,
-    incumbent: {
-      reference:
-        value.incumbent.reference === null
-          ? null
-          : stringValue(value.incumbent.reference, 'cover_incumbent_reference'),
-      state: incumbentState as 'absent' | 'available' | 'unavailable',
-    },
-    omissions: value.omissions.map((item, index) => {
-      if (!record(item)) throw new ApiError(502, `invalid_cover_omission_${String(index)}`)
-      return item
-    }),
+    incumbent: { reference: value.incumbent.reference, state: incumbentState },
+    omissions: value.omissions,
     policy,
     providerFetching,
     ready,
     policyPreferences: {
-      avoidPromotionalText: preferences.avoid_promotional_text,
-      avoidTieInBranding: preferences.avoid_tie_in_branding,
-      preferMinimalComposition: preferences.prefer_minimal_composition,
+      avoidPromotionalText: value.policy_preferences.avoid_promotional_text,
+      avoidTieInBranding: value.policy_preferences.avoid_tie_in_branding,
+      preferMinimalComposition: value.policy_preferences.prefer_minimal_composition,
     },
-    policyReference: stringValue(value.policy_reference, 'cover_policy_reference'),
-    reviewerEngine:
-      value.reviewer_engine === null
-        ? null
-        : value.reviewer_engine === 'codex' || value.reviewer_engine === 'openrouter'
-          ? value.reviewer_engine
-          : (() => {
-              throw new ApiError(502, 'invalid_cover_reviewer_engine')
-            })(),
-    reviewerModel:
-      value.reviewer_model === null
-        ? null
-        : stringValue(value.reviewer_model, 'cover_reviewer_model'),
-    reviewerAccessRevision:
-      value.reviewer_access_revision === null
-        ? null
-        : integerValue(value.reviewer_access_revision, 'cover_reviewer_access_revision'),
+    policyReference: value.policy_reference,
+    reviewerEngine: value.reviewer_engine,
+    reviewerModel: value.reviewer_model,
+    reviewerAccessRevision: value.reviewer_access_revision,
     reviewerStatus,
-    reviewerUnavailableReason: reviewerUnavailableReason as
-      | 'profile contract requires memory_bytes=1073741824'
-      | 'profile contract requires process_limit=32'
-      | null,
-    ...(reviewerFailureCode === null
-      ? {}
-      : { reviewerFailureCode: reviewerFailureCode as ReviewerFailureCode }),
-    ...(value.supersedes_id === null
-      ? {}
-      : { supersedesId: stringValue(value.supersedes_id, 'cover_supersedes_id') }),
-    targetFingerprint: stringValue(value.target_fingerprint, 'cover_target_fingerprint'),
+    reviewerUnavailableReason,
+    ...(reviewerFailureCode === null ? {} : { reviewerFailureCode }),
+    ...(value.supersedes_id === null ? {} : { supersedesId: value.supersedes_id }),
+    targetFingerprint: value.target_fingerprint,
   }
 }
 
