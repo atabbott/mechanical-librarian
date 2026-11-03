@@ -56,7 +56,10 @@ told:
    unsafe `/api/v1` route, each error status and code and the latest point it
    can be raised, and fails for an unclassified route. A decision's same-key
    Retry is the one place a repeat is offered, because the decision route
-   replays a recorded decision instead of recording a second one.
+   replays a recorded decision instead of recording a second one. An
+   acknowledgement the browser cannot read is reported as uncertain and the
+   case is refreshed, because a same-key Retry would replay the same
+   unreadable acknowledgement.
 5. **Build identity on authenticated responses.** The server sets
    `x-ml-build-identity` on `/api/v1` responses to requests that authenticated
    an owner session, and the browser compares it on every response, read or
