@@ -76,7 +76,10 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderStatus,
 )
-from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+    work_route_cover_offered,
+)
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionResult,
     ReviewAdmissionStaleError,
@@ -425,6 +428,10 @@ class ReviewPipelineStages:
                 cast("ReviewStageRepository", repository).get(action.report_id)
             )
             if report.audio is not None and not admitted_audiobook_identity(report):
+                # The work route may offer a cover, never description advice
+                # (#1642).
+                if work_route_cover_offered(report):
+                    self.prepare_cover(repository, action)
                 return
         self.prepare_cover(repository, action)
         if self._prepare_description is not None:

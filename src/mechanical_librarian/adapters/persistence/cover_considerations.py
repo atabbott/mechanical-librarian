@@ -32,6 +32,9 @@ from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness_document,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.audiobook_cover_replacement import (
     material_audiobook_cover_reference,
 )
@@ -109,6 +112,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         try:
             report = MetadataReport.from_json(value["report_document"])
         except (KeyError, TypeError, ValueError):
+            return
+        # A work-route cover on an audiobook with no admitted recording is an
+        # owner choice only; it never mints automatic authority (#1642).
+        if report.audio is not None and not admitted_audiobook_identity(report):
             return
         if (
             report.report_id != case.report_id

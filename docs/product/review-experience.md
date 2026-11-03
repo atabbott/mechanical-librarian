@@ -326,7 +326,13 @@ choices stay available but settled fills are not counted. Tag and ASIN fills
 never queue alone; narrators queue only under "Authors and narrators: Ask me".
 
 When only the book is supported, the view says the recording is unresolved
-and offers series, title, description and genre, never subtitle. A description
+and offers series, title, description, genre, publication date and cover,
+never subtitle. The date reads as the book's first publication. A narrator
+choice from a Hardcover audio edition has its own sentence, is offered only for
+an empty field, and each evidence row names its edition by number and runtime.
+The cover gallery holds only the current cover and the covers the work route
+offers; choosing one asks the owner to confirm an unverified match.
+Recording identifiers and automatic changes stay unavailable. A description
 or genre that only trims or extends the current value is optional, unless the
 current value is a placeholder, contains markup, is visibly cut off, or lists
 only formats.

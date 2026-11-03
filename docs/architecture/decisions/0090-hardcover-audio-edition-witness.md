@@ -1,7 +1,8 @@
 # ADR-0090: Hardcover audio editions witness which recording an audiobook is
 
 - Status: accepted (scope, same-narrator rule and independence decided by the
-  owner on 2026-10-28 and 2026-10-31)
+  owner on 2026-10-28 and 2026-10-31; independence narrowed by the owner on
+  2026-11-02, #1642)
 - Date: 2026-10-31
 - Owners: project maintainers
 - Issues: #962
@@ -44,7 +45,17 @@ from Audible.
    never replaces a value on its own.
 2. **Independence.** A Hardcover edition never counts as a second independent
    source when a field is corroborated. Agreement between an edition and
-   Audible is, at most, Audible repeated.
+   Audible is, at most, Audible repeated. An edition Audible cannot confirm
+   may come from another audiobook publisher, so it is independent evidence
+   (`unconfirmed_audio_editions`, #1642). It is one that states no ASIN, or
+   whose every ASIN was asked of the Audible catalog, Audnexus or AudioSilo,
+   with every lane that asked finding nothing. An ASIN never asked, a lane
+   that answered with a product and a failed lane each disqualify it. While no
+   recording is admitted and the counted editions agree, such an edition's
+   narrators may be offered for an empty narrator field, as an owner choice
+   that stays unsettled. An edition crediting only narrators the file's own
+   tags do not offers nothing. Editions of one provider share one
+   correlation, so they never vote.
 3. **Which items.** Every audiobook WORK lane whose qualified answer admits one
    or two Hardcover books asks for those books' audio editions, whether or not
    a recording was accepted. The item must state one local running time. An
@@ -82,8 +93,9 @@ from Audible.
    - **`challenged`:** every accepted recording states a runtime outside the
      band and credits only narrators the counted editions do not.
 7. **Record.** The kept editions are persisted per provider as
-   `audio_editions` in `metadata-report-v64`. They are never read for admission
-   or as field evidence. The cold-start report counts each witness outcome per
+   `audio_editions` in `metadata-report-v64`. They are never read for
+   admission. Only the narrators of an edition decision 2 names unconfirmed
+   are field evidence. The cold-start report counts each witness outcome per
    library.
 8. **Leads.** When the witness is `challenged` or `unmatched`, the counted
    editions' ASINs (`hardcover_edition_leads`) join the phase-two ASIN feed,
@@ -119,10 +131,10 @@ from Audible.
 
 ### Neutral or deferred
 
-- A counted edition with no ASIN gives no lead and fills nothing. Under
-  decision 2, its narrator would be Audible's word repeated, so a recording
-  is only offered once Audible confirms one. The owner's current ASIN is
-  never withheld.
+- A counted edition with no ASIN gives no lead. Under decision 2 its
+  narrators may be offered for an empty narrator field, as an owner choice;
+  nothing is filled automatically, and its ASIN, runtime and the recording's
+  other facts are never offered. The owner's current ASIN is never withheld.
 - `metadata-report-v64` is a clean rebuild under ADR-0013. Decision 8 adds no
   persisted field.
 
@@ -167,7 +179,8 @@ Rejected: it would measure Audible against itself.
     edition.
 - `tests/unit/test_hardcover_edition_witness.py` covers every witness outcome,
   including the same-narrator and minute-floor agreements, the edition
-  provenance bounds and the report round trip.
+  provenance bounds and the report round trip, and every case of an edition
+  Audible cannot confirm.
 - `tests/unit/test_hardcover_asin_leads.py` covers which witness outcomes
   give leads, their place in the feed and the cap, and end to end that a lead
   Audible confirms is proposed while one outside the band proposes nothing.

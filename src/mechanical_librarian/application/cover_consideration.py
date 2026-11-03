@@ -65,6 +65,9 @@ from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterPublicFailure,
     ReviewerDispatch,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSourceKind,
@@ -83,6 +86,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
     provider_candidate_represents_target_recording,
+    work_route_cover_offered,
 )
 
 SCHEMA_VERSION = "cover-consideration-v4"
@@ -901,10 +905,17 @@ class CoverConsiderationService:
         self, report_document: str, report: MetadataReport
     ) -> PreparedCoverPacket | None:
         """Build a bounded packet; audiobook evaluation stays deterministic."""
-        if report.file.format in AUDIO_FILE_FORMATS and not any(
-            provider_candidate_represents_target_recording(report, provider, candidate)
-            for provider in report.providers
-            for candidate in provider.candidates
+        if (
+            report.file.format in AUDIO_FILE_FORMATS
+            and not any(
+                provider_candidate_represents_target_recording(
+                    report, provider, candidate
+                )
+                for provider in report.providers
+                for candidate in provider.candidates
+            )
+            # A recording-less audiobook's work route may offer a cover (#1642).
+            and not work_route_cover_offered(report)
         ):
             return None
         try:
@@ -1371,6 +1382,11 @@ class CoverConsiderationService:
             if source.state is CoverSourceState.RETRIEVED
             and source.artifact is not None
         }
+        # Without an admitted recording no cover is selectable, whatever its
+        # identity: selection is what automatic authority reads (#1642).
+        unadmitted = report.audio is not None and not admitted_audiobook_identity(
+            report
+        )
         result: list[dict[str, object]] = []
         for ordinal, candidate in enumerate(packet["candidates"]):
             reference = candidate["reference"]
@@ -1408,6 +1424,7 @@ class CoverConsiderationService:
             observation_row = observation_rows.get(reference)
             selectable = (
                 identity_eligible
+                and not unadmitted
                 and candidate["incumbent"] is False
                 and policy.get("owner_ready") is True
             )

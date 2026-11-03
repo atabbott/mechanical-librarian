@@ -2,7 +2,17 @@ import type { RecordingIdentityBasisView, TargetDestination } from '../api/http'
 import { candidateReference, destinationPhrase } from '../labels'
 
 // The fields book-level evidence can decide, in the order the note names them.
-const workScopeFields = ['series', 'title', 'description', 'genres'] as const
+// Narrators come from an audio edition, not the book, so they have a sentence
+// of their own (#1642).
+const workScopeFields = [
+  'series',
+  'title',
+  'description',
+  'genres',
+  'publishedDate',
+  'cover',
+  'narrators',
+] as const
 
 export function RecordingIdentityBasis({
   value,
@@ -16,18 +26,25 @@ export function RecordingIdentityBasis({
 }) {
   if (scope === 'work') {
     // Only the fields this case actually offers are named (#1253, #1286).
-    const named = workScopeFields.filter((field) => offered.includes(field))
+    const named = workScopeFields.filter(
+      (field) => field !== 'narrators' && offered.includes(field),
+    )
+    const narrators = offered.includes('narrators')
+    const sentences = [
+      named.length
+        ? `Book-level evidence supports ${new Intl.ListFormat('en', { type: 'conjunction' }).format(named.map((field) => (field === 'genres' ? 'genre' : destinationPhrase(field))))} choices.`
+        : narrators
+          ? ''
+          : 'Book-level evidence is recorded for this work.',
+      narrators ? 'A Hardcover audio edition supports a narrator choice.' : '',
+      'The exact recording remains unresolved.',
+    ]
     return (
       <section className="diagnostic-entry" aria-label="Book-level evidence">
+        <p>{sentences.filter(Boolean).join(' ')}</p>
         <p>
-          {named.length
-            ? `Book-level evidence supports ${new Intl.ListFormat('en', { type: 'conjunction' }).format(named.map((field) => (field === 'genres' ? 'genre' : destinationPhrase(field))))} choices.`
-            : 'Book-level evidence is recorded for this work.'}{' '}
-          The exact recording remains unresolved.
-        </p>
-        <p>
-          {named.length ? 'Your choices apply only to these fields. ' : ''}Recording details, covers
-          and automatic changes are unavailable from this evidence.
+          {named.length || narrators ? 'Your choices apply only to these fields. ' : ''}Recording
+          identifiers and automatic changes are unavailable from this evidence.
         </p>
       </section>
     )

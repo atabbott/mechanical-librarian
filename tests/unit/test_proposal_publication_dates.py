@@ -387,3 +387,54 @@ def test_offset_timestamp_normalizes_to_day_and_provider_order_replays() -> None
         date.alternatives[0].date_precision,
     )
     assert forward == reverse
+
+
+def _hardcover_work_date_report(*, recording: bool, release_date: str | None):
+    from tests.support.audiobook_providers import local_runtime_claim, work_plan
+    from tests.support.hardcover_work_route import NARRATOR, hardcover_work_report
+    from tests.unit.test_carried_recording_admission import _candidate, _catalogue
+
+    claims = work_plan(local_runtime_claim()).local_claims
+    providers = (
+        (
+            _catalogue(
+                claims,
+                search=(_candidate("audible", ("B0RECORDED",), narrator=NARRATOR),),
+            ),
+        )
+        if recording
+        else ()
+    )
+    return hardcover_work_report(release_date=release_date, providers=providers)
+
+
+def test_a_work_route_audiobook_takes_its_books_first_publication() -> None:
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+
+    report = _hardcover_work_date_report(recording=False, release_date="1999-05-01")
+    assert audiobook_review_scope(report) == "work"
+    date = _result(evaluate_report(report), TargetDestination.PUBLISHED_DATE)
+    assert date.outcome is ProposalOutcome.PROPOSE_CHANGE
+    (alternative,) = date.alternatives
+    assert alternative.value.value == "1999-05-01"
+    assert alternative.date_event is DateEvent.WORK_FIRST_PUBLICATION
+    assert alternative.date_precision is DatePrecision.DAY
+
+
+def test_hardcovers_work_date_never_votes_beside_an_admitted_recording() -> None:
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+
+    stated = _hardcover_work_date_report(recording=True, release_date="1999-05-01")
+    silent = _hardcover_work_date_report(recording=True, release_date=None)
+    assert audiobook_review_scope(stated) == "recording"
+    assert any(
+        claim.kind is ClaimKind.PUBLICATION_DATE
+        and claim.date_event is DateEvent.WORK_FIRST_PUBLICATION
+        for provider in stated.providers
+        if provider.authority == "hardcover"
+        for candidate in provider.candidates
+        for claim in candidate.claims
+    )
+    assert _result(
+        evaluate_report(stated), TargetDestination.PUBLISHED_DATE
+    ) == _result(evaluate_report(silent), TargetDestination.PUBLISHED_DATE)

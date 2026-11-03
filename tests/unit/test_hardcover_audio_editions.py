@@ -12,13 +12,18 @@ from collections.abc import Callable
 from dataclasses import replace
 
 import httpx
+import pytest
 
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.metadata_report import MetadataDiscoveryPlan
+from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
+    DateLinkConfidence,
+    FieldState,
     ProviderObservation,
     ProviderStatus,
     _provider_from_data,
@@ -256,3 +261,90 @@ def test_an_isbn_shaped_edition_asin_is_kept() -> None:
         tuple(claim.value for claim in edition.claims if claim.kind is ClaimKind.ASIN)
         for edition in observation.audio_editions
     ]
+
+
+def _dated_observation(
+    release_date: object, plan: MetadataDiscoveryPlan
+) -> ProviderObservation:
+    """One book stating `release_date`, with one edition row for an ebook lane."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["operationName"] == "AudioEditions":
+            return _page()
+        return httpx.Response(
+            200,
+            json=hardcover_envelope(
+                [] if plan.audio is not None else [{"id": 3, "book_id": 10}],
+                [
+                    {
+                        "id": 10,
+                        "title": _TITLE,
+                        "release_date": release_date,
+                        "contributions": [
+                            {
+                                "id": 100,
+                                "contribution": None,
+                                "author": {"id": 7, "name": _AUTHOR},
+                            }
+                        ],
+                    }
+                ],
+            ),
+        )
+
+    return (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            262_144,
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+            sleep=lambda _seconds: None,
+            jitter=lambda: 0.0,
+        )
+        .observe(plan)
+        .observation
+    )
+
+
+@pytest.mark.parametrize(
+    ("release_date", "precision"),
+    (("1999-05-01", "day"), ("1999-05", "month"), ("1999", "year")),
+)
+def test_an_audiobook_work_states_its_first_publication_last(
+    release_date: str, precision: str
+) -> None:
+    """The book's release date is the audiobook work's first publication (#1642)."""
+    (work,) = _dated_observation(release_date, _plan()).candidates
+    without = _dated_observation(None, _plan()).candidates[0]
+    *earlier, date = work.claims
+    # Every claim the work already stated keeps its place.
+    assert tuple(earlier) == without.claims
+    assert (ClaimKind.PUBLICATION_DATE, ClaimScope.WORK) == (date.kind, date.scope)
+    assert (date.value, date.date_lexical) == (release_date, release_date)
+    assert DateEvent.WORK_FIRST_PUBLICATION is date.date_event
+    assert precision == date.date_precision.value  # type: ignore[union-attr]
+    assert DateLinkConfidence.EXPLICIT is date.date_confidence
+    assert FieldState.VALID is date.state
+
+
+def test_an_unreadable_release_date_is_stated_malformed() -> None:
+    (work,) = _dated_observation("sometime", _plan()).candidates
+    date = work.claims[-1]
+    assert (ClaimKind.PUBLICATION_DATE, FieldState.MALFORMED, None) == (
+        date.kind,
+        date.state,
+        date.value,
+    )
+    assert DateEvent.WORK_FIRST_PUBLICATION is date.date_event
+
+
+def test_an_ebook_lane_states_no_work_first_publication_claim() -> None:
+    observation = _dated_observation("1999-05-01", _plan(audio=False))
+    assert observation.candidates
+    assert not any(
+        claim.kind is ClaimKind.PUBLICATION_DATE and claim.scope is ClaimScope.WORK
+        for candidate in observation.candidates
+        for claim in candidate.claims
+    )

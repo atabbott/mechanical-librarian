@@ -105,7 +105,10 @@ provider. Audiobook evidence remains read-side only.
    bindings are required; contradictory or orphaned links remain refusals.
    Neither adapter enters the recording-authority registry. Audiobook original
    publication means a linked work's first publication, retaining year, month
-   or day precision; recording and edition release dates do not vote. This
+   or day precision; recording and edition release dates do not vote.
+   Hardcover states it from the admitted book's release date on an audiobook
+   title-and-author lane only. That claim is offered while no recording is
+   admitted and does not vote beside an admitted recording (#1642). This
    adds no provider, credential mode or network destination. The audiobook
    dispatch set is amended below (#1247). Hardcover also reads an admitted
    book's audio editions, as a witness to which recording the file is and

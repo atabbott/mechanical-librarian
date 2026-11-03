@@ -29,6 +29,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 
 SCHEMA_VERSION = "cover-review-packet-v2"
 PRODUCER_REVISION = "cover-packet-producer-v1"
@@ -96,17 +97,27 @@ def prepare_cover_packet(
 ) -> PreparedCoverPacket:
     """Project exact report-bound previews into one deterministic private packet."""
     report = MetadataReport.from_json(report_document)
+    sources = report.cover_sources
     if report.audio is not None and not admitted_audiobook_identity(report):
-        raise ValueError("cover packet requires recording admission")
+        # With no admitted recording, the gallery holds only the library's
+        # own cover and the covers the work route offers (#1642).
+        offered = work_route_cover_sources(report)
+        if not offered:
+            raise ValueError("cover packet requires recording admission")
+        sources = tuple(
+            source
+            for source in sources
+            if source.kind is CoverSourceKind.ABS or source in offered
+        )
     retrieved = tuple(
-        source
-        for source in report.cover_sources
-        if source.state is CoverSourceState.RETRIEVED
+        source for source in sources if source.state is CoverSourceState.RETRIEVED
     )
     if not retrieved:
         raise ValueError("cover packet has no retrieved previews")
 
     candidates_by_digest: dict[str, _Candidate] = {}
+    # Every source not retrieved is named, as before #1642, so a pending
+    # work cover says why the gallery is incomplete.
     omissions: list[dict[str, object]] = [
         {
             "reason": "source_" + source.state.value,

@@ -86,6 +86,7 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentationError,
     PreparationTrigger,
 )
+from mechanical_librarian.domain.proposal_set import work_route_cover_offered
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.cover_consideration import (
@@ -1659,8 +1660,10 @@ def prepare_cover_consideration(
                 raise ReviewApplicationError("stale")
             report_document, proposal_id, has_human_decision = staged
         bound_report = MetadataReport.from_json(report_document)
-        if bound_report.audio is not None and not admitted_audiobook_identity(
-            bound_report
+        if (
+            bound_report.audio is not None
+            and not admitted_audiobook_identity(bound_report)
+            and not work_route_cover_offered(bound_report)
         ):
             raise ReviewApplicationError("unavailable")
         current = cover_considerations.current(review_case_id)

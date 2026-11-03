@@ -61,6 +61,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
@@ -83,6 +84,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS,
     ClaimKind,
     ClaimScope,
+    DateLinkConfidence,
     EditionEnrichmentOverflow,
     FieldState,
     LocalClaim,
@@ -1334,6 +1336,11 @@ def _parse_candidates(
             claims = _work_claims(
                 provider, identity, book, local_claims, 0, rejected, bindings
             )
+            first_publication = _work_first_publication_claim(
+                provider, identity, book["release_date"], len(claims)
+            )
+            if first_publication is not None:
+                claims.append(first_publication)
             candidates.append(
                 finalize_candidate_comparisons(
                     ProviderCandidate(
@@ -1363,6 +1370,41 @@ def _parse_candidates(
     ) != len(candidates):
         raise ValueError("provider join invalid")
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
+
+
+def _work_first_publication_claim(
+    provider: str, identity: str, value: object, raw_order: int
+) -> ProviderClaim | None:
+    """State an audiobook work's first publication from the book's release date.
+
+    Only an audiobook work lane reads a book alone, so only an audiobook's
+    work candidate states it, at the precision Hardcover gives (#1642,
+    ADR-0061 clause 9). It comes last, after every claim the work already
+    stated, so no earlier claim changes its place.
+    """
+    if value is None:
+        return None
+    fields: dict[str, Any] = {
+        "provider": provider,
+        "candidate": identity,
+        "kind": ClaimKind.PUBLICATION_DATE,
+        "scope": ClaimScope.WORK,
+        "applicability": "not_applicable",
+        "raw_order": raw_order,
+        "date_event": DateEvent.WORK_FIRST_PUBLICATION,
+        "date_confidence": DateLinkConfidence.EXPLICIT,
+    }
+    try:
+        date, precision = normalize_date_value(_text(value, MAX_SCALAR_CHARACTERS))
+    except ValueError:
+        return ProviderClaim.create(**fields, value=None, state=FieldState.MALFORMED)
+    return ProviderClaim.create(
+        **fields,
+        value=date,
+        state=FieldState.VALID,
+        date_precision=precision,
+        date_lexical=date,
+    )
 
 
 def _parse_edition_enrichment_overflow(
