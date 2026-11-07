@@ -1209,6 +1209,11 @@ def audio_set_content_digest(digests: tuple[str, ...]) -> str:
 # The two item surfaces a discovery title is read from, in the order a plan
 # prefers them: the folder leaf, then the single-file title tag (#1255).
 AUDIO_DISCOVERY_TITLE_BASES = ("path_leaf", "title_tag")
+# The companion EPUB's own title (#1468): the publisher's metadata, so it is
+# asked before the folder leaf and the title tag. It is never part of the
+# audio section, which states only what the audio files themselves carry.
+COMPANION_TITLE_BASIS = "companion_title"
+DISCOVERY_TITLE_BASES = (COMPANION_TITLE_BASIS, *AUDIO_DISCOVERY_TITLE_BASES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1225,7 +1230,7 @@ class AudioDiscoveryTitle:
     title: str
 
     def __post_init__(self) -> None:
-        if type(self.basis) is not str or self.basis not in AUDIO_DISCOVERY_TITLE_BASES:
+        if type(self.basis) is not str or self.basis not in DISCOVERY_TITLE_BASES:
             raise ReportValueError("audio discovery title is invalid")
         _projection_text(self.title, "audio discovery title", MAX_OBSERVED_CHARACTERS)
         if normalize_title(self.title) != self.title:
@@ -1327,10 +1332,8 @@ class AudioFacts:
         if (
             type(titles) is not tuple
             or any(type(value) is not AudioDiscoveryTitle for value in titles)
-            or [AUDIO_DISCOVERY_TITLE_BASES.index(value.basis) for value in titles]
-            != sorted(
-                {AUDIO_DISCOVERY_TITLE_BASES.index(value.basis) for value in titles}
-            )
+            or [DISCOVERY_TITLE_BASES.index(value.basis) for value in titles]
+            != sorted({DISCOVERY_TITLE_BASES.index(value.basis) for value in titles})
             or any(
                 _closed_title_equal(value.title, other.title)
                 for index, value in enumerate(titles)
@@ -3714,6 +3717,7 @@ def work_discovery_lane_payloads(
     fields: tuple[TargetField, ...],
     local_claims: tuple[LocalClaim, ...],
     discovery_titles: tuple[AudioDiscoveryTitle, ...] | None = None,
+    companion: CompanionEbook | None = None,
 ) -> tuple[WorkLanePayload, ...]:
     """Return the WORK lanes one plan dispatches and one report replays.
 
@@ -3758,15 +3762,37 @@ def work_discovery_lane_payloads(
     if not references:
         return ()
     asserted = WorkLanePayload(normalized_title, normalized_authors, references)
+    # The companion EPUB's title is asked first among the alternatives
+    # (#1468); it survives, or not, exactly as the audio surfaces do.
+    companion_title = (
+        None if discovery_titles is None else companion_discovery_title(companion)
+    )
     surviving = (
         ()
         if discovery_titles is None
-        else surviving_discovery_titles(discovery_titles, fields)
+        else surviving_discovery_titles(
+            (
+                discovery_titles
+                if companion_title is None
+                else (companion_title, *discovery_titles)
+            ),
+            fields,
+        )
     )
     if not surviving:
         return (asserted,)
+    # A companion title names the claim it was read from, which is what keeps
+    # its lane a different lane from an audio surface over the same text.
+    alternative_references = (
+        tuple(sorted((*references, cast("str", companion_title_reference(companion)))))
+        if surviving[0].basis == COMPANION_TITLE_BASIS
+        else references
+    )
     alternative = WorkLanePayload(
-        surviving[0].title, normalized_authors, references, surviving[0].basis
+        surviving[0].title,
+        normalized_authors,
+        alternative_references,
+        surviving[0].basis,
     )
     first = work_query_ladder(normalized_title, normalized_authors, audiobook=True)[:1]
     # A title with no query rung (a bare position such as "Part II") cannot
@@ -3778,6 +3804,144 @@ def work_discovery_lane_payloads(
         for name in _target_series_names(fields)
     )
     return (alternative,) if collapsed else (asserted, alternative)
+
+
+# The one authority an audiobook's companion ISBN lane is asked of (#1468).
+# An ISBN names the ebook edition, never the recording, so the lane is only
+# useful where the book it names lists audio editions to compare with the
+# file: Hardcover. ADR-0061 dispatches no other book provider an audiobook
+# could ask, apart from Open Library, whose answer would only repeat its work
+# lane.
+COMPANION_ISBN_AUTHORITIES = frozenset({"hardcover"})
+
+
+@dataclass(frozen=True, slots=True)
+class CompanionIsbnLanePayload:
+    """The one ISBN lane an audiobook's companion EPUB contributes (#1468).
+
+    It is planned from the companion's ISBN claims, never from the report's
+    local claims, so the ebook's identifier finds the book without ever
+    standing as the recording's own.
+    """
+
+    matched_family: str
+    canonical_isbns: tuple[str, ...]
+    input_references: tuple[str, ...]
+
+    @property
+    def identity(self) -> str:
+        return discovery_lane_identity(
+            {
+                "canonical_isbns": list(self.canonical_isbns),
+                "input_references": list(self.input_references),
+                "kind": ProviderQueryKind.ISBN.value,
+                "matched_family": self.matched_family,
+            }
+        )
+
+
+def companion_isbn_lane(
+    companion: CompanionEbook | None,
+) -> CompanionIsbnLanePayload | None:
+    """Return the companion's ISBN lane, or `None` when it names no one family.
+
+    Several families are several books (a box set, a reprint's own number), and
+    the lane asks for exactly one book, so they plan nothing.
+    """
+    if companion is None:
+        return None
+    families: dict[str, list[LocalClaim]] = {}
+    for claim in companion.claims:
+        if (
+            claim.kind is ClaimKind.ISBN
+            and claim.canonical is not None
+            and (family := isbn_family(claim.canonical)) is not None
+        ):
+            families.setdefault(family, []).append(claim)
+    if len(families) != 1:
+        return None
+    ((family, claims),) = families.items()
+    return CompanionIsbnLanePayload(
+        family,
+        tuple(sorted({cast("str", claim.canonical) for claim in claims})),
+        tuple(sorted(claim.reference for claim in claims)),
+    )
+
+
+def companion_isbn_claims(
+    companion: CompanionEbook | None,
+) -> tuple[LocalClaim, ...]:
+    """The companion claims its ISBN lane asks with, for the query alone."""
+    lane = companion_isbn_lane(companion)
+    if lane is None or companion is None:
+        return ()
+    return tuple(
+        claim for claim in companion.claims if claim.reference in lane.input_references
+    )
+
+
+def companion_isbn_books(
+    candidates: tuple[ProviderCandidate, ...],
+    audio_editions: tuple[ProviderCandidate, ...],
+    title: str | None,
+    authors: tuple[str, ...],
+) -> tuple[ProviderCandidate, ...]:
+    """The books a companion ISBN lane keeps (#1468).
+
+    A companion EPUB is not always the recording's own book (a study guide, a
+    companion volume), so the book its ISBN names is kept only when it is
+    this work by the target's own title and authors, or when it lists an audio
+    edition counted against this file: a narrator credit and a running time
+    in the tight band. Either way it is kept at work shape, never as the ebook
+    edition the ISBN names.
+    """
+    linked = {edition.work_identity for edition in audio_editions}
+    return tuple(
+        candidate
+        for candidate in candidates
+        if candidate.identity == candidate.work_identity
+        and (
+            candidate.identity in linked
+            or (
+                title is not None
+                and bool(authors)
+                and provider_candidate_exact_work_identity_admission(
+                    candidate, title, authors, audiobook=True
+                ).admitted
+            )
+        )
+    )
+
+
+def companion_discovery_title(
+    companion: CompanionEbook | None,
+) -> AudioDiscoveryTitle | None:
+    """The companion EPUB's own title, as a query-only discovery title (#1468).
+
+    It is the publisher's metadata for the book, so it is asked before the
+    folder leaf and the title tag. Like them it is never a claim or a value.
+    """
+    if companion is None:
+        return None
+    titles = tuple(claim for claim in companion.claims if claim.kind is ClaimKind.TITLE)
+    if len(titles) != 1 or titles[0].canonical is None:
+        return None
+    title = normalize_title(titles[0].canonical)
+    if not title:
+        return None
+    try:
+        return AudioDiscoveryTitle(COMPANION_TITLE_BASIS, title)
+    except ReportValueError:
+        return None
+
+
+def companion_title_reference(companion: CompanionEbook | None) -> str | None:
+    """The reference of the companion title claim a discovery title came from."""
+    if companion_discovery_title(companion) is None or companion is None:
+        return None
+    return next(
+        claim.reference for claim in companion.claims if claim.kind is ClaimKind.TITLE
+    )
 
 
 def provider_candidate_work_identity_contradiction(
@@ -4483,6 +4647,66 @@ class MetadataReport:
     # (#1357). It is never a cover source and only an EPUB report states one.
     cover_recovery: EpubCoverRecovery | None = None
 
+    def _validate_companion_lanes(self, is_audio: bool) -> None:
+        """Replay what an audiobook's companion EPUB contributed (#1468).
+
+        Its ISBN lane is the one the companion plans, at Hardcover alone, and
+        keeps only the books the companion rule keeps. A companion claim
+        stands behind no other lane than that one and the alternative WORK
+        lane its title asks, which the work-lane replay checks.
+        """
+        companion_references = (
+            set()
+            if self.companion is None
+            else {claim.reference for claim in self.companion.claims}
+        )
+        planned = companion_isbn_lane(self.companion) if is_audio else None
+        title_values = {field.destination: field.value for field in self.target.fields}
+        authors_value = title_values.get(TargetDestination.AUTHORS)
+        authors = (
+            tuple(value for value in authors_value if type(value) is str)
+            if type(authors_value) is tuple
+            else ()
+        )
+        for provider in self.providers:
+            candidates = {value.identity: value for value in provider.candidates}
+            for lane in provider.lanes:
+                companion_lane = (
+                    lane.kind is ProviderQueryKind.ISBN
+                    and planned is not None
+                    and lane.identity == planned.identity
+                )
+                if (
+                    is_audio
+                    and lane.kind is ProviderQueryKind.ISBN
+                    and (
+                        not companion_lane
+                        or provider.authority not in COMPANION_ISBN_AUTHORITIES
+                    )
+                ):
+                    raise ReportValueError("provider companion lane is invalid")
+                if (
+                    set(lane.input_references) & companion_references
+                    and not companion_lane
+                    and lane.kind is not ProviderQueryKind.WORK
+                ):
+                    raise ReportValueError("provider companion lane is invalid")
+                if not companion_lane or lane.status is not ProviderStatus.CANDIDATES:
+                    continue
+                kept = tuple(
+                    candidates[value.edition_identity] for value in lane.candidates
+                )
+                if (
+                    companion_isbn_books(
+                        kept,
+                        provider.audio_editions,
+                        self.target.current_title,
+                        authors,
+                    )
+                    != kept
+                ):
+                    raise ReportValueError("provider companion books are invalid")
+
     def __post_init__(self) -> None:
         if (
             _REPORT_ID.fullmatch(self.report_id) is None
@@ -4500,6 +4724,14 @@ class MetadataReport:
             self.audio is not None and type(self.audio) is not AudioFacts
         ) or is_audio != (self.audio is not None):
             raise ReportValueError("audio section does not match the selected file")
+        # A plan's audio facts may carry the companion title among its
+        # discovery titles (#1468); a report's states only what its audio
+        # files carry.
+        if self.audio is not None and any(
+            value.basis == COMPANION_TITLE_BASIS
+            for value in self.audio.discovery_titles
+        ):
+            raise ReportValueError("audio discovery titles are invalid")
         if self.companion is not None and (
             type(self.companion) is not CompanionEbook or self.audio is None
         ):
@@ -4591,7 +4823,10 @@ class MetadataReport:
             else {
                 payload.identity: payload
                 for payload in work_discovery_lane_payloads(
-                    self.target.fields, self.local_claims, self.audio.discovery_titles
+                    self.target.fields,
+                    self.local_claims,
+                    self.audio.discovery_titles,
+                    self.companion,
                 )
             }
         )
@@ -4937,13 +5172,20 @@ class MetadataReport:
         except CoverEvidenceError as error:
             raise ReportValueError("cover evidence is invalid") from error
         known = set(references)
+        self._validate_companion_lanes(is_audio)
+        # A companion claim is a lane input only, never a local claim (#1468).
+        lane_known = known | (
+            set()
+            if self.companion is None
+            else {claim.reference for claim in self.companion.claims}
+        )
         if any(
-            not set(provider.input_references).issubset(known)
+            not set(provider.input_references).issubset(lane_known)
             for provider in self.providers
         ):
             raise ReportValueError("provider inputs do not reference local claims")
         if any(
-            not set(lane.input_references).issubset(known)
+            not set(lane.input_references).issubset(lane_known)
             for provider in self.providers
             for lane in provider.lanes
         ):
@@ -7815,6 +8057,15 @@ __all__ = [
     "surviving_discovery_titles",
     "work_discovery_lane_payloads",
     "work_ladder_diagnostics",
+    "COMPANION_ISBN_AUTHORITIES",
+    "COMPANION_TITLE_BASIS",
+    "DISCOVERY_TITLE_BASES",
+    "CompanionIsbnLanePayload",
+    "companion_discovery_title",
+    "companion_isbn_books",
+    "companion_isbn_claims",
+    "companion_isbn_lane",
+    "companion_title_reference",
 ]
 
 
