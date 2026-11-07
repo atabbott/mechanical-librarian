@@ -2238,7 +2238,7 @@ describe('shipped first-run setup script', () => {
       false,
     ],
     [
-      'Preparation needs attention',
+      'Preparation paused',
       0,
       false,
       true,
@@ -2544,7 +2544,9 @@ describe('shipped first-run setup script', () => {
     expect(inFlight).toBe(1)
     releaseFailure(response({ error: 'unavailable' }, 503))
     await pending
-    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(
+      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
+    ).toBeVisible()
     expect(timers).toHaveLength(1)
 
     const retry = timers.shift()
@@ -2559,10 +2561,10 @@ describe('shipped first-run setup script', () => {
       row.querySelector('dd')?.textContent ?? '',
     ])
     expect(passage).toEqual([
-      ['Read from library', '3 of 3'],
-      ['Searches finished', '3 of 3'],
-      ['Candidates compared', '3 of 3'],
-      ['Metadata checked', '2 of 3'],
+      ['Files read', '3 of 3'],
+      ['Sources asked', '3 of 3'],
+      ['Sources compared', '3 of 3'],
+      ['Automatic choices checked', '2 of 3'],
       ['Prepared', '2 of 3'],
       ['Stopped before finishing', '1 of 3'],
     ])

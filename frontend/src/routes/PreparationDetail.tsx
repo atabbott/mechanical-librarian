@@ -10,17 +10,18 @@ import type { PreparationPresentation } from '../libraryPreparation'
 // The run's works as they stand now, in the masthead's words (#1366). The
 // latched passage is first-finish history and is labelled Prepared instead.
 const runOutcomes = (presentation: PreparationPresentation) => preparationOutcomes(presentation.now)
-// What the run is doing now, said in the counts the owner is waiting on rather
-// than in the store's state name. A terminal run states its own outcome here
-// because that is the line a reader looks at first.
+// The one sentence under the heading: what the heading does not already say,
+// or the run's counts where nothing else is left to say (#1765). A paused run
+// may be an owner pause, a deferred library or a connection check, so the
+// reason is left to the notice or control that owns it.
 const preparationStateLine = (presentation: PreparationPresentation) => {
   switch (presentation.state) {
     case 'starting':
-      return 'Preparation is starting'
+      return 'Waiting for the first book to begin'
     case 'running':
-      return 'Preparation continues'
+      return 'Prepared works can be reviewed while the rest of the run finishes.'
     case 'blocked':
-      return 'Paused until the reported connection issue is resolved'
+      return 'Prepared works can still be reviewed.'
     case 'completed_clean':
     case 'completed_with_failures':
       return (
@@ -29,15 +30,19 @@ const preparationStateLine = (presentation: PreparationPresentation) => {
         </>
       )
     case 'dismissed':
-      return 'Preparation dismissed'
+      return (
+        <>
+          Dismissed · <CountPhrases phrases={runOutcomes(presentation)} />
+        </>
+      )
   }
 }
 const preparationTriggerCopy: Record<
   PreparationPresentation['triggers'][number]['trigger'],
   string
 > = {
-  initial_setup: 'Started by initial setup',
-  manual_scan: 'Started by an owner scan',
+  initial_setup: 'Started by setup',
+  manual_scan: 'Started by Scan now',
   library_added: 'Started when a library was added',
   title_recovery: 'Title recovery requested',
   automatic_confirmed: 'Started when Automatic was turned on',
@@ -51,7 +56,7 @@ const preparationRepeatedTriggerCopy: Record<
   Exclude<PreparationPresentation['triggers'][number]['trigger'], 'initial_setup'>,
   string
 > = {
-  manual_scan: 'Owner scan requested',
+  manual_scan: 'Scan now used',
   library_added: 'Library addition requested',
   title_recovery: 'Title recovery requested',
   automatic_confirmed: 'Automatic turned on',
@@ -84,16 +89,16 @@ const preparationScope = (presentation: PreparationPresentation, recoveryRequire
   <CountPhrases
     phrases={[
       ...runOutcomes(presentation),
-      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'retained' : 'in progress'}`,
+      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'waiting' : 'in progress'}`,
     ]}
     separator={'\u00a0· '}
   />
 )
 const preparationPassage = [
-  ['read', 'Read from library'],
-  ['searches_finished', 'Searches finished'],
-  ['compared', 'Candidates compared'],
-  ['checked', 'Metadata checked'],
+  ['read', 'Files read'],
+  ['searches_finished', 'Sources asked'],
+  ['compared', 'Sources compared'],
+  ['checked', 'Automatic choices checked'],
 ] as const
 
 export const PreparationSummary = ({
@@ -119,11 +124,11 @@ export const PreparationSummary = ({
       rest = ` · ${String(active)} active`
       break
     case 'running':
-      title = 'Preparing your library'
+      title = 'Preparing libraries'
       rest = ` · ${String(active)} active`
       break
     case 'blocked':
-      title = 'Preparation needs attention'
+      title = 'Preparation paused'
       rest = ` · ${String(active)} active`
       break
     case 'completed_clean':
@@ -155,7 +160,7 @@ export const PreparationSummary = ({
         <strong>{title}</strong>
         <small>
           {reconnecting && !recoveryRequired ? (
-            'Reconnecting · last confirmed progress shown'
+            'Reconnecting…'
           ) : (
             <>
               This run: <CountPhrases phrases={runOutcomes(presentation)} />
@@ -186,40 +191,30 @@ export const PreparationDetail = ({
   onDismiss: () => void
 }) => {
   const outcomeTotal = presentation.passage.ready + presentation.passage.failed
+  // The heading names the state; the status line below it says the rest, once
+  // (#1765).
   let heading: string
-  let introduction: string
   switch (presentation.state) {
     case 'starting':
       heading = 'Preparation is starting'
-      introduction = 'The run is open and waiting for preparation work to begin or resume.'
       break
     case 'running':
-      heading = 'Preparing your library'
-      introduction = 'Prepared works remain selectable while the rest of this run finishes.'
+      heading = 'Preparing libraries'
       break
     case 'blocked':
-      heading = 'Preparation needs attention'
-      introduction = 'Preparation is paused until the reported issue is resolved.'
+      heading = 'Preparation paused'
       break
     case 'completed_clean':
       heading = 'Preparation complete'
-      introduction = 'This run finished without a reported failure.'
       break
     case 'completed_with_failures':
       heading = 'Preparation completed with failures'
-      introduction =
-        'This run finished with reported failures; prepared books remain available and the failed outcomes stay visible.'
       break
     case 'dismissed':
       heading = 'Preparation dismissed'
-      introduction = 'This preparation record has been dismissed.'
       break
   }
-  if (recoveryRequired) {
-    heading = 'Preparation stopped'
-    introduction =
-      'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
-  }
+  if (recoveryRequired) heading = 'Preparation stopped'
   return (
     <div className="preparation-detail">
       <header>
@@ -227,7 +222,6 @@ export const PreparationDetail = ({
           <h2 tabIndex={-1} data-route-focus="true">
             {heading}
           </h2>
-          <p>{introduction}</p>
         </div>
         <strong>
           {presentation.now ? String(presentation.now.ready) : '…'} ready to browse in this run
@@ -238,9 +232,9 @@ export const PreparationDetail = ({
         role="status"
       >
         {recoveryRequired
-          ? 'Service restart required · last saved progress shown'
+          ? 'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
           : reconnecting
-            ? 'Reconnecting · showing the last confirmed state'
+            ? 'Reconnecting… The progress shown is from before the connection dropped.'
             : preparationStateLine(presentation)}
       </p>
       <p className="preparation-provenance">
@@ -248,10 +242,12 @@ export const PreparationDetail = ({
       </p>
       <section aria-labelledby="now-preparing-title">
         <div className="preparation-section-heading">
-          <h3 id="now-preparing-title">{recoveryRequired ? 'Retained work' : 'Now preparing'}</h3>
+          <h3 id="now-preparing-title">
+            {recoveryRequired ? 'Waiting for restart' : 'Now preparing'}
+          </h3>
           <span>
             {String(presentation.active_books.length + presentation.active_overflow)}{' '}
-            {recoveryRequired ? 'retained' : 'active'}
+            {recoveryRequired ? 'waiting' : 'active'}
           </span>
         </div>
         {presentation.active_books.length ? (
@@ -269,14 +265,14 @@ export const PreparationDetail = ({
         ) : (
           <p>
             {recoveryRequired
-              ? 'No work is retained at the last confirmed refresh.'
-              : 'No book is active at the last confirmed refresh.'}
+              ? 'No book was in progress when preparation stopped.'
+              : 'No book is being prepared right now.'}
           </p>
         )}
         {presentation.active_overflow ? (
           <p>
-            {String(presentation.active_overflow)} more {recoveryRequired ? 'retained' : 'active'}{' '}
-            books follow in this run.
+            {String(presentation.active_overflow)} more{' '}
+            {recoveryRequired ? 'are waiting.' : 'are being prepared.'}
           </p>
         ) : null}
         {presentation.active_books.length ? (
@@ -287,13 +283,8 @@ export const PreparationDetail = ({
       </section>
       <section aria-labelledby="preparation-progress-title">
         <div className="preparation-section-heading">
-          <div>
-            <h3 id="preparation-progress-title">Preparation progress</h3>
-            <p>
-              Each stage counts the books that first reached it in this run, and a book that could
-              not finish stops at its last stage; In this run counts them as they stand now.
-            </p>
-          </div>
+          {/* How the stages count is said in the product page, not here (#1765). */}
+          <h3 id="preparation-progress-title">Preparation progress</h3>
           {/*
            * A rate is only a fact while the run is moving. A finished, paused
            * or dismissed run has no current rate, and a reconnected page has
@@ -337,7 +328,7 @@ export const PreparationDetail = ({
       <section aria-labelledby="recent-completions-title">
         <div className="preparation-section-heading">
           <h3 id="recent-completions-title">Recent completions</h3>
-          <span>{String(outcomeTotal)} outcomes</span>
+          <span>{String(outcomeTotal)} books</span>
         </div>
         {presentation.recent_completions.length ? (
           <ul className="preparation-completions">
@@ -363,13 +354,11 @@ export const PreparationDetail = ({
             ))}
           </ul>
         ) : (
-          <p>No terminal book has been reported yet.</p>
+          <p>No book has finished yet.</p>
         )}
         {presentation.passage.failed > 0 ? (
           <small className="activity-backup-note">
-            A book that could not finish is listed in Works under its library title, with its stage,
-            reason, next step and reference. If its library record has since changed, it is listed
-            as Preparation unavailable.
+            Books that could not finish are listed in Works.
           </small>
         ) : null}
       </section>
@@ -390,8 +379,7 @@ export const PreparationDetail = ({
       ) : null}
       {uncertain ? (
         <p role="alert">
-          Dismissal could not be confirmed. This preparation is still shown as current; dismiss it
-          again if you still want to.
+          No answer came back. Check whether the run was dismissed before dismissing it again.
         </p>
       ) : null}
     </div>

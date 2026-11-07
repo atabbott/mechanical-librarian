@@ -191,7 +191,7 @@ describe('Application shell', () => {
             ready: 1,
             failed: 0,
           },
-          active_books: [{ name: 'A Book', stage: 'Comparing candidates' }],
+          active_books: [{ name: 'A Book', stage: 'Comparing sources' }],
           active_overflow: 0,
           recent_completions: [],
           throughput_per_minute: 1,
@@ -230,12 +230,16 @@ describe('Application shell', () => {
     }
     renderRoute('/library?lens=all', http)
 
-    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    const summary = await screen.findByRole('button', {
+      name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+    })
     expect(summary).toBeVisible()
     expect(screen.getByText(wholeText('This run: 1 ready to browse · 1 active'))).toBeVisible()
     fireEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
-    expect(screen.getByText('Preparation continues')).toBeVisible()
+    expect(
+      screen.getByText('Prepared works can be reviewed while the rest of the run finishes.'),
+    ).toBeVisible()
   })
 
   it('shows terminal preparation outcomes in the same Library state model', async () => {
@@ -1998,7 +2002,7 @@ describe('Application shell', () => {
     }
     const { queryClient } = renderRoute('/library?lens=all', http, updates)
     await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(initial))
-    await screen.findByRole('button', { name: /Preparing your library/u })
+    await screen.findByRole('button', { name: /^Preparing libraries\s*(This run|Reconnecting)/u })
     // Finish the real lazy route mount before controlling the recovery cadence.
     vi.useFakeTimers()
     onTestFinished(() => {
@@ -2036,7 +2040,7 @@ describe('Application shell', () => {
     expect(query.state.status).toBe('error')
     expect(heldAborted).toBe(false)
     expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(true)
-    expect(screen.getByText(/Reconnecting · last confirmed progress shown/u)).toBeVisible()
+    expect(screen.getByText(/^Reconnecting…$/u)).toBeVisible()
     expect(queryClient.getQueryData(['review-preparation'])).toBe(initial)
     expect(debtHistory).not.toContain(false)
 

@@ -879,12 +879,12 @@ const renderPreparation=(host,visible)=>{
     active.append(list)
   }else{
     const empty=document.createElement('p');
-    empty.textContent='No book is active at the last confirmed refresh.';
+    empty.textContent='No book is being prepared right now.';
     active.append(empty)
   }
   if(visible.active_overflow){
     const overflow=document.createElement('p');
-    overflow.textContent=`${visible.active_overflow} more active books follow in this run.`;
+    overflow.textContent=`${visible.active_overflow} more are being prepared.`;
     active.append(overflow)
   }
   const passage=document.createElement('section');
@@ -892,7 +892,7 @@ const renderPreparation=(host,visible)=>{
   passageHeading.textContent='How many books made it this far?';
   const measures=document.createElement('dl');
   measures.className='setup-passage';
-  for(const [field,label] of [['read','Read from library'],['searches_finished','Searches finished'],['compared','Candidates compared'],['checked','Metadata checked'],['ready','Prepared'],['failed','Stopped before finishing']]){
+  for(const [field,label] of [['read','Files read'],['searches_finished','Sources asked'],['compared','Sources compared'],['checked','Automatic choices checked'],['ready','Prepared'],['failed','Stopped before finishing']]){
     const row=document.createElement('div');
     const term=document.createElement('dt');
     term.textContent=label;
@@ -1176,7 +1176,7 @@ const renderKickoff=async()=>{
         const terminal=['completed_clean','completed_with_failures'].includes(visible.state);
         pollDelay=terminal?5000:1500;
         // The state line below says how the run stands; the heading and copy do not repeat it.
-        heading.textContent=visible.state==='blocked'?'Preparation needs attention':terminal?'Preparation is complete':'Preparing your library';
+        heading.textContent=visible.state==='blocked'?'Preparation paused':terminal?'Preparation is complete':'Preparing your library';
         copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery while preparation remains safely paused.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace to browse works as they are prepared.';
         if(confirmed!==announcedState){
           announcedState=confirmed;
@@ -1185,7 +1185,7 @@ const renderKickoff=async()=>{
       }catch{
         const confirmed=progress.querySelector('[role=status]');
         if(confirmed){
-          confirmed.textContent='Reconnecting · showing the last confirmed state';
+          confirmed.textContent='Reconnecting… The progress shown is from before the connection dropped.';
           announce('Reconnecting to preparation progress')
         }
       }finally{if(!stopped)timer=setTimeout(poll,pollDelay)}};

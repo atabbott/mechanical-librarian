@@ -632,7 +632,7 @@ describe('Library route', () => {
           },
         ],
         passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
-        active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
+        active_books: [{ name: 'Private title', stage: 'Comparing sources' }],
         active_overflow: 2,
         recent_completions: [
           { name: 'Finished title', outcome: 'failed' as const, completed_at: 101 },
@@ -667,7 +667,9 @@ describe('Library route', () => {
     }))
     const { queryClient, router } = renderRoute('/library?lens=all', http, updates)
 
-    const summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    const summary = await screen.findByRole('button', {
+      name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+    })
     expect(summary).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     await user.click(summary)
@@ -677,10 +679,10 @@ describe('Library route', () => {
     expect(
       passage.map((item) => [item.getAttribute('aria-label'), item.getAttribute('value')]),
     ).toEqual([
-      ['Read from library: 4 of 4', '4'],
-      ['Searches finished: 3 of 4', '3'],
-      ['Candidates compared: 2 of 4', '2'],
-      ['Metadata checked: 2 of 4', '2'],
+      ['Files read: 4 of 4', '4'],
+      ['Sources asked: 3 of 4', '3'],
+      ['Sources compared: 2 of 4', '2'],
+      ['Automatic choices checked: 2 of 4', '2'],
     ])
     for (const item of passage) {
       expect(item).toHaveAttribute('max', '4')
@@ -703,14 +705,16 @@ describe('Library route', () => {
     await waitFor(() => expect(releaseOlderFetch).toBeTypeOf('function'))
     act(() => updates.setState('degraded'))
     expect(
-      await screen.findByText(/Reconnecting · showing the last confirmed state/u),
+      await screen.findByText(
+        /Reconnecting… The progress shown is from before the connection dropped\./u,
+      ),
     ).toBeVisible()
     expect(screen.getByText('Private title')).toBeVisible()
     const changedDuringOutage = {
       ...confirmed,
       presentation: {
         ...confirmedPresentation,
-        active_books: [{ name: 'Unconfirmed title', stage: 'Checking metadata' }],
+        active_books: [{ name: 'Unconfirmed title', stage: 'Checking automatic choices' }],
         updated_at: 102,
       },
     }
@@ -730,9 +734,13 @@ describe('Library route', () => {
         }),
     )
     act(() => updates.setState('live'))
-    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(
+      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
+    ).toBeVisible()
     await waitFor(() => expect(releaseRefresh).toBeTypeOf('function'))
-    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(
+      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
+    ).toBeVisible()
     act(() => updates.setState('degraded'))
     await act(async () => releaseRefresh(changedDuringOutage))
     expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
@@ -740,7 +748,11 @@ describe('Library route', () => {
     expect(screen.queryByText('Unconfirmed title')).toBeNull()
     act(() => updates.setState('live'))
     await waitFor(() =>
-      expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull(),
+      expect(
+        screen.queryByText(
+          /Reconnecting… The progress shown is from before the connection dropped\./u,
+        ),
+      ).toBeNull(),
     )
     expect(screen.getByText('Private title')).toBeVisible()
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
@@ -749,7 +761,9 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: /Preparing your library/u }))
+    await user.click(
+      screen.getByRole('button', { name: /^Preparing libraries\s*(This run|Reconnecting)/u }),
+    )
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
 
@@ -820,7 +834,7 @@ describe('Library route', () => {
       ...presentation,
       state: 'running' as const,
       passage: { ...presentation.passage, ready: 1, failed: 0 },
-      active_books: [{ name: 'Active title', stage: 'Checking metadata' }],
+      active_books: [{ name: 'Active title', stage: 'Checking automatic choices' }],
       completed_at: null,
       dismissible: false,
       now: { ready: 1, recorded: 0, not_matched: 0, failed: 0, in_progress: 0, scan_ids: [] },
@@ -835,7 +849,9 @@ describe('Library route', () => {
     http.getPreparation = vi.fn(async () => current)
     const { queryClient } = renderRoute('/library?lens=all', http)
 
-    let summary = await screen.findByRole('button', { name: /Preparing your library/u })
+    let summary = await screen.findByRole('button', {
+      name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+    })
     expect(
       within(summary).getByText(wholeText('This run: 1 ready to browse · 1 active')),
     ).toBeVisible()
@@ -867,7 +883,7 @@ describe('Library route', () => {
         presentation: { ...runningPresentation, state: 'blocked', updated_at: 102 },
       })
     })
-    summary = await screen.findByRole('button', { name: /Preparation needs attention/u })
+    summary = await screen.findByRole('button', { name: /^Preparation paused\s*This run/u })
     expect(
       within(summary).getByText(wholeText('This run: 1 ready to browse · 1 active')),
     ).toBeVisible()
@@ -903,39 +919,22 @@ describe('Library route', () => {
   })
 
   it.each([
-    [
-      'starting',
-      'Preparation is starting',
-      'The run is open and waiting for preparation work to begin or resume.',
-      'Preparation is starting',
-    ],
+    ['starting', 'Preparation is starting', 'Waiting for the first book to begin'],
     [
       'running',
-      'Preparing your library',
-      'Prepared works remain selectable while the rest of this run finishes.',
-      'Preparation continues',
+      'Preparing libraries',
+      'Prepared works can be reviewed while the rest of the run finishes.',
     ],
-    [
-      'blocked',
-      'Preparation needs attention',
-      'Preparation is paused until the reported issue is resolved.',
-      'Paused until the reported connection issue is resolved',
-    ],
-    [
-      'completed_clean',
-      'Preparation complete',
-      'This run finished without a reported failure.',
-      'Finished · 1 ready to browse',
-    ],
+    ['blocked', 'Preparation paused', 'Prepared works can still be reviewed.'],
+    ['completed_clean', 'Preparation complete', 'Finished · 1 ready to browse'],
     [
       'completed_with_failures',
       'Preparation completed with failures',
-      'This run finished with reported failures; prepared books remain available and the failed outcomes stay visible.',
       'Finished · 1 ready to browse · 1 could not finish',
     ],
   ] as const)(
     'describes the %s preparation detail truthfully',
-    async (state, heading, introduction, runState) => {
+    async (state, heading, runState) => {
       const runId = `preparation_run_${'8'.repeat(64)}`
       const base = terminalPreparation(runId)
       const terminal = state === 'completed_clean' || state === 'completed_with_failures'
@@ -970,7 +969,9 @@ describe('Library route', () => {
       renderRoute(`/library?lens=all&preparation=${runId}`, http)
 
       const detailHeading = await screen.findByRole('heading', { name: heading })
-      expect(screen.getByText(introduction)).toBeVisible()
+      // The heading names the state and one status line says the rest; no
+      // introduction repeats either (#1765).
+      expect(document.querySelector('.preparation-detail header p')).toBeNull()
       expect(
         screen.getByText(wholeText(runState), { selector: '.preparation-run-state' }),
       ).toBeVisible()
@@ -985,7 +986,7 @@ describe('Library route', () => {
       ...base.presentation,
       state: 'running' as const,
       passage: { read: 2, searches_finished: 2, compared: 1, checked: 1, ready: 1, failed: 0 },
-      active_books: [{ name: 'Active title', stage: 'Comparing candidates' }],
+      active_books: [{ name: 'Active title', stage: 'Comparing sources' }],
       recent_completions: [{ name: 'Ready title', outcome: 'ready' as const, completed_at: 101 }],
       total: 3,
       completed_at: null,
@@ -1002,8 +1003,12 @@ describe('Library route', () => {
     http.getPreparation = vi.fn(async () => running)
     const { queryClient } = renderRoute('/library?lens=all', http)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Preparing your library/u }))
-    await screen.findByRole('heading', { name: 'Preparing your library' })
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+      }),
+    )
+    await screen.findByRole('heading', { name: 'Preparing libraries' })
     const readyLink = screen.getByRole('link', { name: 'Find in Works' })
     expect(readyLink).toHaveAttribute('href', '/library?lens=all&q=Ready+title')
     expect(screen.getByText('A book appears in Works once it is prepared.')).toBeVisible()
@@ -1023,7 +1028,7 @@ describe('Library route', () => {
     expect(document.querySelector('.preparation-detail > header > strong')?.textContent).toBe(
       '1 ready to browse in this run',
     )
-    expect(screen.getByText('Started by an owner scan')).toBeVisible()
+    expect(screen.getByText('Started by Scan now')).toBeVisible()
     act(() => {
       queryClient.setQueryData(['review-preparation'], {
         ...running,
@@ -1046,9 +1051,7 @@ describe('Library route', () => {
         },
       })
     })
-    expect(
-      await screen.findByText('Started by an owner scan · Title recovery requested'),
-    ).toBeVisible()
+    expect(await screen.findByText('Started by Scan now · Title recovery requested')).toBeVisible()
     expect(screen.getByText('Active title')).toBeVisible()
     expect(screen.getByText('Unrelated unfinished title')).toBeVisible()
     expect(
@@ -1078,7 +1081,7 @@ describe('Library route', () => {
     })
 
     const failureSentence = await screen.findByText(
-      'A book that could not finish is listed in Works under its library title, with its stage, reason, next step and reference. If its library record has since changed, it is listed as Preparation unavailable.',
+      'Books that could not finish are listed in Works.',
     )
     expect(failureSentence).toBeVisible()
     const links = screen.getAllByRole('link', { name: 'Find in Works' })
@@ -1112,8 +1115,12 @@ describe('Library route', () => {
       })
     })
 
-    fireEvent.click(await screen.findByRole('button', { name: /Preparing your library/u }))
-    expect(await screen.findByText('Owner scan requested 3 times')).toBeVisible()
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+      }),
+    )
+    expect(await screen.findByText('Scan now used 3 times')).toBeVisible()
 
     // Initial setup accepts once per library; that is never a repeated request.
     act(() => {
@@ -1137,7 +1144,7 @@ describe('Library route', () => {
         },
       })
     })
-    expect(await screen.findByText('Started by initial setup')).toBeVisible()
+    expect(await screen.findByText('Started by setup')).toBeVisible()
     expect(screen.queryByText(/Initial setup requested/u)).toBeNull()
 
     // Turning on Automatic prepares the current works again (#1573); that is
@@ -1188,7 +1195,7 @@ describe('Library route', () => {
       ...base.presentation,
       state: 'running' as const,
       passage: { read: 3, searches_finished: 2, compared: 1, checked: 1, ready: 1, failed: 0 },
-      active_books: [{ name: 'Active title', stage: 'Comparing candidates' }],
+      active_books: [{ name: 'Active title', stage: 'Comparing sources' }],
       recent_completions: [],
       throughput_per_minute: 0,
       total: 4,
@@ -1205,12 +1212,9 @@ describe('Library route', () => {
     http.getPreparation = vi.fn(async () => running)
     const { queryClient } = renderRoute(`/library?lens=all&preparation=${runId}`, http)
 
-    await screen.findByRole('heading', { name: 'Preparing your library' })
-    expect(
-      screen.getByText(
-        'Each stage counts the books that first reached it in this run, and a book that could not finish stops at its last stage; In this run counts them as they stand now.',
-      ),
-    ).toBeVisible()
+    await screen.findByRole('heading', { name: 'Preparing libraries' })
+    // How the stages count is said in the product page, not on the screen (#1765).
+    expect(screen.queryByText(/first reached it in this run/u)).toBeNull()
     expect(
       screen
         .getAllByRole('progressbar')
@@ -1387,7 +1391,9 @@ describe('Library route', () => {
       ).toBeVisible()
       act(() => updates.setState('degraded'))
       expect(
-        await screen.findByText(/Reconnecting · showing the last confirmed state/u),
+        await screen.findByText(
+          /Reconnecting… The progress shown is from before the connection dropped\./u,
+        ),
       ).toBeVisible()
       const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
 
@@ -1710,7 +1716,7 @@ describe('Library route', () => {
         expect(screen.queryByRole('alert')).toBeNull()
       } else {
         expect(await screen.findByRole('alert')).toHaveTextContent(
-          'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+          'No answer came back. Check whether the run was dismissed before dismissing it again.',
         )
         const dismiss = screen.getByRole('button', { name: 'Dismiss preparation' })
         expect(dismiss).not.toHaveAttribute('aria-disabled', 'true')
@@ -1755,7 +1761,7 @@ describe('Library route', () => {
 
     await act(async () => fail(new ApiError(503, 'persistence')))
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Dismissal could not be confirmed. This preparation is still shown as current; dismiss it again if you still want to.',
+      'No answer came back. Check whether the run was dismissed before dismissing it again.',
     )
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toHaveFocus()
   })
@@ -1803,7 +1809,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(await screen.findByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
-    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
   })
 
   it('keeps a refused dismissal silent', async () => {
@@ -1820,7 +1826,7 @@ describe('Library route', () => {
     )
     await user.click(await screen.findByRole('button', { name: 'Dismiss preparation' }))
     await waitFor(() => expect(http.dismissPreparation).toHaveBeenCalledOnce())
-    expect(screen.queryByText(/Dismissal could not be confirmed/u)).toBeNull()
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
   })
 
   it('retries a failed live confirmation until authoritative HTTP succeeds', async () => {
@@ -1876,15 +1882,21 @@ describe('Library route', () => {
       vi.useRealTimers()
     })
     act(() => updates.setState('degraded'))
-    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(
+      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
+    ).toBeVisible()
     act(() => updates.setState('live'))
 
     await act(() => vi.advanceTimersByTimeAsync(0))
     expect(http.getPreparation).toHaveBeenCalledTimes(2)
-    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(
+      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
+    ).toBeVisible()
     await act(() => vi.advanceTimersByTimeAsync(1_499))
     expect(http.getPreparation).toHaveBeenCalledTimes(2)
-    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    expect(
+      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
+    ).toBeVisible()
     await act(() => vi.advanceTimersByTimeAsync(1))
     expect(http.getPreparation).toHaveBeenCalledTimes(3)
     expect(queryClient.getQueryState(['review-preparation'])?.status).toBe('success')
@@ -1893,7 +1905,11 @@ describe('Library route', () => {
     // Query publishes to React on its separate zero-delay notification turn.
     await act(() => vi.advanceTimersByTimeAsync(1))
     expect(http.getPreparation).toHaveBeenCalledTimes(3)
-    expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull()
+    expect(
+      screen.queryByText(
+        /Reconnecting… The progress shown is from before the connection dropped\./u,
+      ),
+    ).toBeNull()
   })
 
   it('shows the terminal first-boot measurement without a Library self-action', async () => {

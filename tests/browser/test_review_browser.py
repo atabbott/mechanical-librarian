@@ -6769,7 +6769,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     else [
                                         {
                                             "name": active["value"],
-                                            "stage": "Checking metadata",
+                                            "stage": "Checking automatic choices",
                                         }
                                     ]
                                 ),
@@ -6847,10 +6847,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
 
                 handoff.click()
                 page.wait_for_url(re.compile(r"/library\?.*preparation="))
-                heading = page.get_by_role("heading", name="Preparing your library")
+                heading = page.get_by_role("heading", name="Preparing libraries")
                 expect(heading).to_be_focused()
                 expect(page.locator(".preparation-run-state")).to_have_text(
-                    "Preparation continues"
+                    "Prepared works can be reviewed while the rest of the run finishes."
                 )
                 # Its one status line speaks for it; the detail is no live
                 # region re-read on every poll (#1288).
@@ -6873,7 +6873,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 )
                 assert passage_facts == [
                     {
-                        "label": "Read from library: 4 of 4",
+                        "label": "Files read: 4 of 4",
                         "value": 4,
                         "max": 4,
                         "position": 1,
@@ -6882,7 +6882,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "width": passage_facts[0]["width"],
                     },
                     {
-                        "label": "Searches finished: 3 of 4",
+                        "label": "Sources asked: 3 of 4",
                         "value": 3,
                         "max": 4,
                         "position": 0.75,
@@ -6891,7 +6891,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "width": passage_facts[1]["width"],
                     },
                     {
-                        "label": "Candidates compared: 2 of 4",
+                        "label": "Sources compared: 2 of 4",
                         "value": 2,
                         "max": 4,
                         "position": 0.5,
@@ -6900,7 +6900,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "width": passage_facts[2]["width"],
                     },
                     {
-                        "label": "Metadata checked: 1 of 4",
+                        "label": "Automatic choices checked: 1 of 4",
                         "value": 1,
                         "max": 4,
                         "position": 0.25,
@@ -6975,7 +6975,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 summary_cases = (
                     (
                         "blocked",
-                        "Preparation needs attention",
+                        "Preparation paused",
                         "0 ready to browse · 1 active",
                     ),
                     (
@@ -8374,7 +8374,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                             "active_books": [
                                 {
                                     "name": f"Private setup book {index}",
-                                    "stage": "Comparing candidates",
+                                    "stage": "Comparing sources",
                                 }
                                 for index in range(5)
                             ],
@@ -8815,9 +8815,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="Before you start")
                 ).not_to_be_visible()
                 expect(page.get_by_text("Private setup book 0")).to_be_visible()
-                expect(
-                    page.get_by_text("2 more active books follow in this run.")
-                ).to_be_visible()
+                expect(page.get_by_text("2 more are being prepared.")).to_be_visible()
                 expect(
                     page.get_by_role("heading", name="How many books made it this far?")
                 ).to_be_visible()
