@@ -766,6 +766,7 @@ def _product(
     minutes: int,
     *narrators: str,
     title: str = "A Mangled Folder Title",
+    creator: str = "Zed Stranger",
     language: str | None = None,
     edition_statement: str | None = None,
 ) -> ProviderCandidate:
@@ -779,7 +780,7 @@ def _product(
             (
                 (ClaimKind.ASIN, _ASIN, None),
                 (ClaimKind.TITLE, title, None),
-                (ClaimKind.CREATOR, "Zed Stranger", "author"),
+                (ClaimKind.CREATOR, creator, "author"),
                 (ClaimKind.DURATION, f"{minutes * 60}.000", None),
                 *((ClaimKind.CONTRIBUTOR, name, "narrator") for name in narrators),
                 *(((ClaimKind.LANGUAGE, language, None),) if language else ()),
@@ -859,6 +860,38 @@ def test_a_linked_product_is_admitted_with_no_target_identity() -> None:
         (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),),
         answer.candidates[0],
         title=None,
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+def test_the_companion_work_requalifies_a_fed_product_with_no_target() -> None:
+    """A fallback-search recording keeps its enrichment when fed (#1468).
+
+    With no target work, the search asks with the companion's title and
+    creators, so its promoted product is looked up again against that same
+    identity, and is kept only as the tight-band recording.
+    """
+
+    def answer(minutes: int, title: str) -> ProviderObservation:
+        return _asin_answer(
+            _product(minutes, "Nia Narrator", title=title, creator="Ada Author"),
+            linked=(),
+            work_title=None,
+            work_authors=(),
+        )
+
+    kept = answer(_LOCAL_SECONDS // 60, "Companion Title")
+    assert _kept(kept)
+    assert not _kept(answer(_LOCAL_SECONDS // 60 + 30, "Companion Title"))
+    assert not _kept(answer(_LOCAL_SECONDS // 60, "Another Work Entirely"))
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audiobooks", "item-1", _fields(None, ())),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(_duration_claim(),),
+        local_reasons=("no_local_audio_claims",),
+        providers=(replace(kept, query_kind=ProviderQueryKind.DISCOVERY),),
+        audio=single_track_audio_facts(),
+        companion=_companion(isbns=()),
     )
     assert MetadataReport.from_json(report.to_json()) == report
 

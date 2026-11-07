@@ -130,6 +130,7 @@ from mechanical_librarian.domain.metadata_report import (
     companion_isbn_books,
     companion_isbn_claims,
     companion_isbn_lane,
+    companion_work_payload,
     complete_creator_identity_bindings,
     default_target_fields,
     derive_field_results,
@@ -2514,6 +2515,24 @@ def _identifier_lane_candidates(
         else set()
     )
     alternative_admitted |= corroborated_admitted
+    # With no target work, the search asked with the companion EPUB's own
+    # title and creators (#1468), so a product it promoted is looked up again
+    # against that same identity. Like an alternative title's, it is kept only
+    # as the recording the tight band corroborates.
+    fallback = (
+        companion_work_payload(lookup.companion)
+        if lookup.work_title is None or not lookup.work_authors
+        else None
+    )
+    if fallback is not None:
+        alternative_admitted |= {
+            c.identity
+            for c in observation.candidates
+            if c.identity not in work_admitted
+            and provider_candidate_exact_work_identity_admission(
+                c, fallback.title, fallback.authors, audiobook=True
+            ).admitted
+        }
     # A product whose ASIN the companion ISBN's own book lists as an audio
     # edition counted against this file is that book's work (#1468). Like an
     # alternative title's, it is kept only as the recording the tight band
