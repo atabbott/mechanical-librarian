@@ -1935,12 +1935,12 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 {
                     "authority": "none",
                     "dispositions": {"candidate": 2, "ignore": 1},
-                    "kind": "shadow_preview_recorded",
+                    "kind": "preview_recorded",
                     "occurred_at": 1_754_858_300,
                     "origin": "policy_preview",
                     "outcome_set_id": "outcome-set-internal",
                     "review_case_id": case_id,
-                    "schema_version": "shadow-preview-history-event-v1",
+                    "schema_version": "preview-history-event-v1",
                 },
             ]
             if cover is not None:
@@ -2129,9 +2129,9 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ],
         }
         return preview
-    if path == "/api/v1/metadata-policy/shadow":
+    if path == "/api/v1/metadata-policy/preview-mode":
         return {
-            "schema_version": "shadow-posture-v1",
+            "schema_version": "preview-posture-v1",
             "posture": "preview",
             "authority": "none",
             "can_leave_preview": False,
@@ -2142,9 +2142,9 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "global_suspension": None,
             "category_suspensions": {"title": "target_changed"},
         }
-    if path == "/api/v1/metadata-policy/shadow/outcomes":
+    if path == "/api/v1/metadata-policy/preview-mode/outcomes":
         return {
-            "schema_version": "shadow-outcome-sample-v1",
+            "schema_version": "preview-outcome-sample-v1",
             "authority": "none",
             "items": [
                 _shadow_outcome_set("preview-1", ("title", "authors")),

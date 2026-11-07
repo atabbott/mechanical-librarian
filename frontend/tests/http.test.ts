@@ -4363,15 +4363,15 @@ describe('central response decoding (#1685)', () => {
       '/policy_id',
     ],
     [
-      'GET /api/v1/metadata-policy/shadow',
+      'GET /api/v1/metadata-policy/preview-mode',
       (client: ReviewApiClient) => client.getShadowPosture(),
-      { schema_version: 'shadow-posture-v1' },
+      { schema_version: 'preview-posture-v1' },
       '/authority',
     ],
     [
-      'GET /api/v1/metadata-policy/shadow/outcomes',
+      'GET /api/v1/metadata-policy/preview-mode/outcomes',
       (client: ReviewApiClient) => client.getShadowSample(),
-      { schema_version: 'shadow-outcome-sample-v1' },
+      { schema_version: 'preview-outcome-sample-v1' },
       '/authority',
     ],
     [
@@ -5427,9 +5427,9 @@ describe('policy command types (#1729)', () => {
         'automatic-safety/pause' | 'automatic-safety/recover' | 'automatic-safety/suspend'
       >
     >().toEqualTypeOf<AutomaticSafetyView>()
-    expectTypeOf<PolicyCommandAnswer<'shadow/enter'>>().toEqualTypeOf<ShadowPostureView>()
+    expectTypeOf<PolicyCommandAnswer<'preview-mode/enter'>>().toEqualTypeOf<ShadowPostureView>()
     expectTypeOf<
-      PolicyCommandAnswer<'shadow/confirm-automatic'>
+      PolicyCommandAnswer<'preview-mode/confirm-automatic'>
     >().toEqualTypeOf<ShadowPostureView>()
     expectTypeOf<
       PolicyCommandAnswer<'transitions/transition-1/acknowledge'>
@@ -5438,7 +5438,7 @@ describe('policy command types (#1729)', () => {
       PolicyCommandAnswer<'transitions/transition-1/retry'>
     >().toEqualTypeOf<PolicyTransitionView>()
     // A union of paths answers the union of their answers.
-    expectTypeOf<PolicyCommandAnswer<'validate' | 'shadow/enter'>>().toEqualTypeOf<
+    expectTypeOf<PolicyCommandAnswer<'validate' | 'preview-mode/enter'>>().toEqualTypeOf<
       PolicyStateView | ShadowPostureView
     >()
   })
@@ -5456,8 +5456,8 @@ describe('policy command types (#1729)', () => {
     >()
     expectTypeOf<
       PolicyCommandBody<
-        | 'shadow/enter'
-        | 'shadow/confirm-automatic'
+        | 'preview-mode/enter'
+        | 'preview-mode/confirm-automatic'
         | 'transitions/transition-1/acknowledge'
         | 'transitions/transition-1/retry'
       >
@@ -5771,10 +5771,13 @@ describe('policy decoding (#1692)', () => {
       'POST /api/v1/metadata-policy/automatic-safety/suspend',
       (client) => client.policyCommand('automatic-safety/suspend', { reason: 'repeated_failure' }),
     ],
-    ['POST /api/v1/metadata-policy/shadow/enter', (client) => client.policyCommand('shadow/enter')],
     [
-      'POST /api/v1/metadata-policy/shadow/confirm-automatic',
-      (client) => client.policyCommand('shadow/confirm-automatic'),
+      'POST /api/v1/metadata-policy/preview-mode/enter',
+      (client) => client.policyCommand('preview-mode/enter'),
+    ],
+    [
+      'POST /api/v1/metadata-policy/preview-mode/confirm-automatic',
+      (client) => client.policyCommand('preview-mode/confirm-automatic'),
     ],
     [
       'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',

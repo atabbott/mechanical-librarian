@@ -445,7 +445,7 @@ describe('Policy route', () => {
     renderRoute('/policy?section=curation', {
       ...createHttp(),
       getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-        schema_version: 'shadow-posture-v1',
+        schema_version: 'preview-posture-v1',
         posture: 'preview',
         authority: 'none',
         can_leave_preview: false,
@@ -2154,7 +2154,7 @@ it('keeps explicit off until the owner chooses its representation and review mod
   renderRoute('/policy?section=unsupported', {
     ...http,
     getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-      schema_version: 'shadow-posture-v1',
+      schema_version: 'preview-posture-v1',
       posture: 'preview',
       authority: 'none',
       can_leave_preview: false,
@@ -2338,7 +2338,7 @@ it('keeps a refused Automatic confirmation as nothing changed', async () => {
   const http: ReviewHttp = {
     ...createHttp(),
     getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-      schema_version: 'shadow-posture-v1',
+      schema_version: 'preview-posture-v1',
       posture: 'preview',
       authority: 'none',
       can_leave_preview: false,
@@ -2355,7 +2355,7 @@ it('keeps a refused Automatic confirmation as nothing changed', async () => {
   await user.click(screen.getByRole('button', { name: 'Turn on Automatic' }))
 
   expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
-  expect(http.policyCommand).toHaveBeenCalledWith('shadow/confirm-automatic', undefined)
+  expect(http.policyCommand).toHaveBeenCalledWith('preview-mode/confirm-automatic', undefined)
 })
 
 it('names a provider-consensus title suspension by its destination (#1286)', async () => {

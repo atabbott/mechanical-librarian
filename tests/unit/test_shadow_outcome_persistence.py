@@ -6129,7 +6129,7 @@ def test_automatic_bootstrap_and_preview_replay_one_exact_set() -> None:
         )
         assert ((first, 10),) == repository.list_shadow_outcomes(50)
         history = repository.get_review_case_history(case_id, 50)
-        assert "shadow_preview_recorded" == history[0]["kind"]
+        assert "preview_recorded" == history[0]["kind"]
         assert "none" == history[0]["authority"]
         repository.close()
 
@@ -6248,9 +6248,7 @@ def test_shadow_history_orders_human_and_preview_events_by_time() -> None:
         # newer chronology merely because delivery repeats.
         repository.persist_shadow_outcome(case_id, 50)
         events = repository.get_review_case_history(case_id, 50)
-        shadow = [
-            value for value in events if value["kind"] == "shadow_preview_recorded"
-        ]
+        shadow = [value for value in events if value["kind"] == "preview_recorded"]
         assert [5] == [value["occurred_at"] for value in shadow]
         repository.close()
 
@@ -6328,10 +6326,10 @@ def test_history_orders_same_timestamp_human_and_cross_kind_events_stably() -> N
         assert first == second
         assert {
             "automatic_decision_recorded",
-            "shadow_preview_recorded",
+            "preview_recorded",
         }.issubset({event["kind"] for event in first})
         assert [event["kind"] for event in first[:2]] == [
-            "shadow_preview_recorded",
+            "preview_recorded",
             "automatic_decision_recorded",
         ]
         repository.close()
@@ -10645,7 +10643,9 @@ def test_policy_default_sample_route_reads_retained_ordinary_asin(
     web = next(context)
     try:
         web.login()
-        response = web.client.get("/api/v1/metadata-policy/shadow/outcomes?limit=10")
+        response = web.client.get(
+            "/api/v1/metadata-policy/preview-mode/outcomes?limit=10"
+        )
         assert response.status_code == 200
         assert response.json()["items"] == [
             {**json.loads(row[-1]), "evaluated_at": row[-2]}
