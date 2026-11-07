@@ -37,6 +37,16 @@ Reconciliation shows as indeterminate, never as a completion estimate. An
 automatic decision that matched the current value appears as **No change
 required** and is not pending work.
 
+A ledger row's result is history and never changes. A row can carry a note
+from current state under it, read for the returned page only and never
+cached, searched or filtered (#1711):
+
+- **Asked again**: an owner choice made before the book last came back for
+  review (its content returned, or a policy change brought the case back), so
+  it no longer counts and the field is asking again.
+- **Held back**: a planned automatic write while the posture is not Automatic;
+  it will not be written unless Automatic is turned back on.
+
 The Activity ledger is read-only. Activity offers no queue administration,
 blind retry or export. Its only actions are the existing server-checked
 consent, pause and recovery commands. Provider recovery phases are in
