@@ -39,43 +39,43 @@ const historyValue = (destination: TargetDestination, value: HistoryValueView | 
       ? languageName(value.value)
       : displayValue(value.value)
 const reviewerStatusWords = {
-  completed: 'completed',
-  failed: 'failed',
-  unavailable: 'was unavailable',
+  completed: 'looked at',
+  failed: 'failed on',
+  unavailable: 'was unavailable for',
 } as const
-const coverOwnerWords = {
-  accept: 'a proposed cover',
-  keep_current: 'the current cover',
-  reject: 'no cover change',
+const coverOwnerSentences = {
+  accept: 'You chose a proposed cover.',
+  keep_current: 'You kept the current cover.',
+  reject: 'You declined the cover change.',
 } as const
-const coverPolicyWords = {
-  recommended: 'a cover is recommended',
-  abstained: 'no cover is recommended',
+const coverPolicySentences = {
+  recommended: 'The policy recommends a cover.',
+  abstained: 'The policy recommends no cover.',
 } as const
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'description')
     return (
       <article className="diagnostic-entry">
-        <h3>Advised description · Authored content</h3>
+        <h3>Description advice</h3>
         <p>
           {item.engine} · {item.model}.{' '}
           {item.outcome === 'description_application'
             ? item.state === 'verified'
-              ? 'Applied and verified in the library.'
+              ? 'Written to the library and checked.'
               : item.state === 'no_change_required'
-                ? 'No change needed; the library already had this text.'
-                : `Guarded application: ${writeStateLabels[item.state].toLowerCase()}.`
+                ? 'No change needed. The library already had this text.'
+                : `Write ${writeStateLabels[item.state].toLowerCase()}.`
             : item.selected
               ? item.state === 'superseded'
-                ? 'This authored selection was superseded by a later decision.'
-                : 'Selected under the existing write requirements.'
+                ? 'Replaced by a later choice.'
+                : 'Chosen.'
               : `Advice ${writeStateLabels[item.state].toLowerCase()}.`}
         </p>
         {item.candidate ? (
           <p className="description-advice-text">{item.candidate.output.description}</p>
         ) : (
-          <p>No authored candidate was produced.</p>
+          <p>No description was written.</p>
         )}
       </article>
     )
@@ -83,19 +83,19 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
     const action =
       item.category === 'owner'
         ? item.outcome === 'accept'
-          ? 'Owner selected a proposed value.'
+          ? 'You chose a proposed value.'
           : item.outcome === 'keep_current'
-            ? 'Owner chose the current value.'
+            ? 'You kept the current value.'
             : item.outcome === 'owner_entered'
-              ? 'Owner entered a value.'
+              ? 'You entered a value.'
               : item.outcome === 'withdraw'
-                ? 'Owner withdrew the decision.'
-                : 'Owner declined the proposed change.'
+                ? 'You withdrew your choice.'
+                : 'You declined the proposed change.'
         : item.outcome === 'candidate'
-          ? 'Automatic policy selected a candidate.'
+          ? 'Automatic chose a proposed value.'
           : item.outcome === 'keep_current'
-            ? 'Automatic policy chose the current value.'
-            : 'Automatic policy left this field unchanged.'
+            ? 'Automatic kept the current value.'
+            : 'Automatic left this field unchanged.'
     return (
       <article className="diagnostic-entry">
         <h3>{destinationLabel(item.destination)}</h3>
@@ -105,7 +105,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : null}
         {isRetention(item) ? (
           <p className="diagnostic-value">
-            <span>Retained</span> {displayRetainedHistoryValue(item)}
+            <span>Kept</span> {displayRetainedHistoryValue(item)}
           </p>
         ) : item.category === 'owner' && item.outcome === 'withdraw' ? (
           // A withdrawal selects nothing, so it has no value to change to.
@@ -129,7 +129,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
     return (
       <article className="diagnostic-entry">
         <h3>Policy preview</h3>
-        <p>This read-only preview recorded no decision authority.</p>
+        <p>Nothing was changed.</p>
         {item.dispositions.length ? (
           <ul className="diagnostic-facts" aria-label="Preview outcomes">
             {item.dispositions.map((disposition) => (
@@ -142,49 +142,40 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : null}
       </article>
     )
+  // The heading says what happened; a sentence under it would only repeat it
+  // (#1765).
   if (item.category === 'transition')
     return (
       <article className="diagnostic-entry">
         <h3>{transitionLabels[item.outcome]}</h3>
-        <p>
-          {item.outcome === 'admitted'
-            ? 'This work entered the review queue.'
-            : item.outcome === 'superseded'
-              ? 'A newer review case replaced the previous one.'
-              : item.outcome === 'no_case'
-                ? 'No review case was needed for this work.'
-                : item.outcome === 'retired'
-                  ? 'This review case was retired.'
-                  : 'This work is no longer present in the retained library scan.'}
-        </p>
       </article>
     )
   return (
     <article className="diagnostic-entry">
       <h3>{coverHistoryLabels[item.outcome]}</h3>
       <p>
-        Visual review {reviewerStatusWords[item.reviewerStatus]}
-        {item.reviewerModel ? ` by ${coverReviewerLabel(item.reviewerModel)}` : ''} across{' '}
-        {String(item.candidateCount)} {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
+        The cover reviewer
+        {item.reviewerModel ? ` (${coverReviewerLabel(item.reviewerModel)})` : ''}{' '}
+        {reviewerStatusWords[item.reviewerStatus]} {String(item.candidateCount)}{' '}
+        {item.candidateCount === 1 ? 'cover' : 'covers'}.
       </p>
       {item.ownerOutcome ? (
         <p>
-          Owner-confirmed choice: {coverOwnerWords[item.ownerOutcome]}.
+          {coverOwnerSentences[item.ownerOutcome]}
           {item.ownerMatchedBook
-            ? ' This cover comes from the matched book; the recording is not confirmed.'
+            ? ' This cover is from the matched book and is not confirmed for this recording.'
             : item.ownerMatchUnconfirmed
-              ? ' Match not confirmed by automated evidence.'
-              : ''}{' '}
-          Recording a choice is separate from verified application.
+              ? ' No source confirmed the match.'
+              : ''}
         </p>
       ) : null}
-      {item.automaticOutcome ? <p>Automatic policy selected this cover.</p> : null}
+      {item.automaticOutcome ? <p>Automatic chose this cover.</p> : null}
       {item.supersedesAutomatic ? (
-        <p>This strictly better confirmed cover replaced the earlier automatic choice.</p>
+        <p>It replaced the earlier automatic choice with a clearly better confirmed cover.</p>
       ) : null}
-      {item.policyStatus ? <p>Policy outcome: {coverPolicyWords[item.policyStatus]}.</p> : null}
+      {item.policyStatus ? <p>{coverPolicySentences[item.policyStatus]}</p> : null}
       {item.policyReasons.length ? (
-        <ul className="diagnostic-limitations" aria-label="Cover policy limitations">
+        <ul className="diagnostic-limitations" aria-label="Policy reasons">
           {item.policyReasons.map((reason) => (
             <li key={reason}>
               {item.matchedBookOffered && reason === 'no_confirmed_candidates'
@@ -275,7 +266,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           {mediaKindLabels[data.target.mediaKind]}
         </p>
       </header>
-      <nav className="subviews" aria-label="Case diagnostics">
+      <nav className="subviews" aria-label="Evidence and history">
         <Link
           aria-current={search.subview === 'evidence' ? 'page' : undefined}
           params={{ reviewCaseId }}
@@ -297,21 +288,20 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
         <section className="diagnostic-sheet evidence-sheet" aria-label="Evidence">
           <header>
             <h2>Evidence</h2>
-            <p>Retained observations that informed this work’s review.</p>
           </header>
           {evidence.isPending ? (
             <p role="status">Loading evidence…</p>
           ) : evidence.isError ? (
             <p className="diagnostic-read-failure" role="alert">
-              Evidence could not be read safely.
+              Evidence could not be loaded. Reload the page to try again.
             </p>
           ) : (
             <>
               {missingLineageCount ? (
                 <p className="diagnostic-limitation" role="status">
-                  {String(missingLineageCount)} referenced{' '}
-                  {missingLineageCount === 1 ? 'observation is' : 'observations are'} no longer
-                  available. The evidence below is the retained portion only.
+                  {String(missingLineageCount)}{' '}
+                  {missingLineageCount === 1 ? 'source answer is' : 'source answers are'} no longer
+                  available. The rest is shown below.
                 </p>
               ) : null}
               <RecordingIdentityBasis
@@ -345,11 +335,11 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         </ul>
                       ) : evidence.hasNextPage ? (
                         <p className="diagnostic-complete">
-                          More retained observations may load below.
+                          Nothing from the sources yet. More may load below.
                         </p>
                       ) : (
                         <p className="diagnostic-complete">
-                          No retained observations for this field.
+                          Nothing from the sources for this field.
                         </p>
                       )}
                     </section>
@@ -365,7 +355,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   Load more evidence
                 </button>
               ) : (
-                <p className="diagnostic-complete">All retained evidence is shown.</p>
+                <p className="diagnostic-complete">All evidence is shown.</p>
               )}
               <details className="source-ledger">
                 <summary>Sources</summary>
@@ -378,30 +368,29 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         <b>{sourceStatusLabels[source.status]}</b>
                         <p>{source.reason}</p>
                         <small>
-                          {String(source.providerRequests)} bounded{' '}
+                          {String(source.providerRequests)}{' '}
                           {source.providerRequests === 1 ? 'request' : 'requests'}
                         </small>
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p>No provider outcomes were retained for this work.</p>
+                  <p>No source lookups are recorded for this work.</p>
                 )}
               </details>
             </>
           )}
         </section>
       ) : (
-        <section className="diagnostic-sheet" aria-label="Current-case history">
+        <section className="diagnostic-sheet" aria-label="History">
           <header>
             <h2>History</h2>
-            <p>Durable owner and automatic outcomes retained for this work.</p>
           </header>
           {history.isPending ? (
             <p role="status">Loading history…</p>
           ) : history.isError ? (
             <p className="diagnostic-read-failure" role="alert">
-              History could not be read safely.
+              History could not be loaded. Reload the page to try again.
             </p>
           ) : history.data.items.length ? (
             <div className="diagnostic-list">
@@ -419,7 +408,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
               ))}
             </div>
           ) : (
-            <p>No durable history has been retained for this work.</p>
+            <p>Nothing is recorded for this work yet.</p>
           )}
         </section>
       )}

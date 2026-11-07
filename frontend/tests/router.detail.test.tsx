@@ -372,7 +372,7 @@ describe('Library review ownership', () => {
     const user = userEvent.setup()
     renderRoute('/review/case-1?field=title&subview=evidence', { ...createHttp(), getEvidence })
     expect(await screen.findByText('Title: A Book')).toBeVisible()
-    expect(screen.getByText(/2 referenced observations are no longer available/u)).toBeVisible()
+    expect(screen.getByText(/2 source answers are no longer available/u)).toBeVisible()
     await user.click(screen.getByText('Sources'))
     expect(screen.getByText('No match')).toBeVisible()
     expect(screen.getByText('ISBN lookup')).toBeVisible()
@@ -569,7 +569,7 @@ describe('Library review ownership', () => {
     const title = await screen.findByRole('heading', { name: 'Title' })
     const titleChange = title.closest('article')
     if (!titleChange) throw new Error('title change history article required')
-    expect(titleChange).toHaveTextContent('Owner selected a proposed value.')
+    expect(titleChange).toHaveTextContent('You chose a proposed value.')
     expect(titleChange.parentElement?.querySelector('time')).toHaveAttribute(
       'datetime',
       new Date(1786000000 * 1000).toISOString(),
@@ -587,26 +587,26 @@ describe('Library review ownership', () => {
     expect(publisher).toHaveTextContent('To No value is recorded.')
     const reversal = screen.getByText('Applied candidate').closest('article')
     if (!reversal) throw new Error('keep current reversal history article required')
-    expect(reversal).toHaveTextContent('Owner chose the current value.')
+    expect(reversal).toHaveTextContent('You kept the current value.')
     expect(reversal).toHaveTextContent('From Applied candidate')
     expect(reversal).toHaveTextContent('To Original value')
-    expect(reversal).not.toHaveTextContent('Retained')
+    expect(reversal).not.toHaveTextContent('Kept')
     const keptOwner = screen.getByRole('heading', { name: 'Subtitle' }).closest('article')
     if (!keptOwner) throw new Error('same-valued owner keep current article required')
-    expect(keptOwner).toHaveTextContent('Owner chose the current value.')
-    expect(keptOwner).toHaveTextContent('Retained Existing subtitle')
+    expect(keptOwner).toHaveTextContent('You kept the current value.')
+    expect(keptOwner).toHaveTextContent('Kept Existing subtitle')
     expect(keptOwner).not.toHaveTextContent('From')
     expect(keptOwner).not.toHaveTextContent('To')
-    expect(screen.getAllByText('Retained')).toHaveLength(6)
+    expect(screen.getAllByText('Kept')).toHaveLength(6)
     const typedIdentical = screen.getByRole('heading', { name: 'Series' }).closest('article')
     if (!typedIdentical) throw new Error('typed identical history article required')
-    expect(typedIdentical).toHaveTextContent('Automatic policy chose the current value.')
+    expect(typedIdentical).toHaveTextContent('Automatic kept the current value.')
     expect(typedIdentical).toHaveTextContent('Existing series · 2')
     expect(typedIdentical).not.toHaveTextContent('From')
     expect(typedIdentical).not.toHaveTextContent('To')
     const rejected = screen.getByRole('heading', { name: 'ISBN' }).closest('article')
     if (!rejected) throw new Error('reject history article required')
-    expect(rejected).toHaveTextContent('Owner declined the proposed change.')
+    expect(rejected).toHaveTextContent('You declined the proposed change.')
     expect(rejected).toHaveTextContent('9780000000001')
     expect(rejected).not.toHaveTextContent('From')
     expect(rejected).not.toHaveTextContent('To')
@@ -620,37 +620,36 @@ describe('Library review ownership', () => {
     expect(retainedAbsence).toHaveTextContent('No value is recorded.')
     const keptAbsence = screen.getByRole('heading', { name: 'Publication date' }).closest('article')
     if (!keptAbsence) throw new Error('kept absence history article required')
-    expect(keptAbsence).toHaveTextContent('Retained No value is recorded.')
+    expect(keptAbsence).toHaveTextContent('Kept No value is recorded.')
     expect(keptAbsence).not.toHaveTextContent('From')
     expect(keptAbsence).not.toHaveTextContent('To')
     const unmatchedCandidate = screen
       .getByRole('heading', { name: 'Description' })
       .closest('article')
     if (!unmatchedCandidate) throw new Error('unmatched automatic candidate article required')
-    expect(unmatchedCandidate).not.toHaveTextContent('Retained')
+    expect(unmatchedCandidate).not.toHaveTextContent('Kept')
     expect(unmatchedCandidate).toHaveTextContent('From No value is recorded.')
     expect(unmatchedCandidate).toHaveTextContent('To No value is recorded.')
     expect(ignored).not.toHaveTextContent('Previous')
     expect(ignored).not.toHaveTextContent('New')
-    expect(screen.getByText(/Visual review completed across 2 candidates/u)).toBeVisible()
+    expect(screen.getByText(/The cover reviewer looked at 2 covers/u)).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Cover chosen' })).toBeVisible()
-    expect(
-      screen.getByText('Owner-confirmed choice: a proposed cover.', { exact: false }),
-    ).toBeVisible()
-    expect(screen.getByText('Policy outcome: a cover is recommended.')).toBeVisible()
+    expect(screen.getByText('You chose a proposed cover.', { exact: false })).toBeVisible()
+    expect(screen.getByText('The policy recommends a cover.')).toBeVisible()
     expect(screen.getByText('Confirmed covers are ranked in a fixed order')).toBeVisible()
     const preview = screen.getByRole('list', { name: 'Preview outcomes' })
     expect(preview).toHaveTextContent('Needs you7')
     expect(preview).toHaveTextContent('Not supported1')
     expect(screen.getByRole('heading', { name: 'Entered review' })).toBeVisible()
-    expect(screen.getByText('Automatic policy selected this cover.')).toBeVisible()
+    expect(screen.getByText('Automatic chose this cover.')).toBeVisible()
     expect(
       screen.getByText(
-        'This strictly better confirmed cover replaced the earlier automatic choice.',
+        'It replaced the earlier automatic choice with a clearly better confirmed cover.',
       ),
     ).toBeVisible()
-    expect(screen.getByText('This read-only preview recorded no decision authority.')).toBeVisible()
-    expect(screen.getByText('This work entered the review queue.')).toBeVisible()
+    expect(screen.getByText('Nothing was changed.')).toBeVisible()
+    // The transition's heading says it; no sentence repeats it (#1765).
+    expect(screen.queryByText('This work entered the review queue.')).toBeNull()
     expect(document.body).not.toHaveTextContent('<script>actionable</script>')
     expect(document.body).not.toHaveTextContent(/decision-|event-|candidate-|reference-/u)
     expect(document.querySelector('script')).toBeNull()
@@ -1631,19 +1630,17 @@ it.each(['evidence', 'history'])(
     expect(screen.queryByRole('article', { name: 'Advised description' })).toBeNull()
     if (subview === 'history') {
       expect(
-        await screen.findByText('Applied and verified in the library.', { exact: false }),
+        await screen.findByText('Written to the library and checked.', { exact: false }),
       ).toBeVisible()
       // The store's "stale" reads in the owner's words (#1542).
-      expect(screen.getByText('Guarded application: closed.', { exact: false })).toBeVisible()
+      expect(screen.getByText('Write closed.', { exact: false })).toBeVisible()
       expect(document.body.textContent).not.toMatch(/\bstale\b/iu)
       expect(
-        screen.getByText('This authored selection was superseded by a later decision.', {
+        screen.getByText('Replaced by a later choice.', {
           exact: false,
         }),
       ).toBeVisible()
-      expect(
-        screen.getAllByRole('heading', { name: 'Advised description · Authored content' }),
-      ).toHaveLength(4)
+      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(4)
     } else {
       await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
       expect(screen.queryByText(candidate.output.description)).toBeNull()
@@ -1679,8 +1676,8 @@ it('retains unconfirmed incumbent evidence in actual mapped owner history', asyn
     ),
   )
   renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
-  expect(await screen.findByText(/Owner-confirmed choice: the current cover\./u)).toHaveTextContent(
-    'Match not confirmed by automated evidence. Recording a choice is separate from verified application.',
+  expect(await screen.findByText(/You kept the current cover\./u)).toHaveTextContent(
+    'You kept the current cover. No source confirmed the match.',
   )
 })
 
@@ -1723,10 +1720,10 @@ it('says a chosen cover from the matched book leaves the recording unconfirmed (
     ),
   )
   renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
-  expect(await screen.findByText(/Owner-confirmed choice: a proposed cover\./u)).toHaveTextContent(
-    'This cover comes from the matched book; the recording is not confirmed. Recording a choice is separate from verified application.',
+  expect(await screen.findByText(/You chose a proposed cover\./u)).toHaveTextContent(
+    'You chose a proposed cover. This cover is from the matched book and is not confirmed for this recording.',
   )
   expect(screen.getByText('No cover is confirmed for this recording')).toBeVisible()
   expect(screen.queryByText('No cover is confirmed for this book')).toBeNull()
-  expect(screen.queryByText(/Match not confirmed by automated evidence/u)).toBeNull()
+  expect(screen.queryByText(/No source confirmed the match/u)).toBeNull()
 })

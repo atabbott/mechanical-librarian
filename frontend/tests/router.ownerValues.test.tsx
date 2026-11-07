@@ -518,8 +518,8 @@ describe('owner command labels', () => {
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
     const article = async (name: string) =>
       (await screen.findByRole('heading', { name })).closest('article')
-    expect(await article('Title')).toHaveTextContent('Owner entered a value.')
-    expect(await article('Subtitle')).toHaveTextContent('Owner withdrew the decision.')
+    expect(await article('Title')).toHaveTextContent('You entered a value.')
+    expect(await article('Subtitle')).toHaveTextContent('You withdrew your choice.')
   })
 })
 

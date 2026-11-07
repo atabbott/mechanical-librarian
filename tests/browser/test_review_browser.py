@@ -3479,11 +3479,13 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 selected_history = page.get_by_role(
                     "heading", name="Cover chosen"
                 ).locator("..")
-                selected_history.get_by_text("Visual review", exact=False).wait_for()
                 selected_history.get_by_text(
-                    "Owner-confirmed choice: a proposed cover.", exact=False
+                    "The cover reviewer", exact=False
                 ).wait_for()
-                assert "candidate" in selected_history.inner_text().lower()
+                selected_history.get_by_text(
+                    "You chose a proposed cover.", exact=False
+                ).wait_for()
+                assert re.search(r"\d+ covers?\.", selected_history.inner_text())
                 for identifier in (
                     "cover_consideration_",
                     "cover_ref_",
@@ -3574,7 +3576,7 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                     ".."
                 )
                 selected.get_by_text(
-                    "Owner-confirmed choice: a proposed cover.", exact=False
+                    "You chose a proposed cover.", exact=False
                 ).wait_for()
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
@@ -6239,7 +6241,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
 
                 page.get_by_role("link", name="History").click()
                 expect(
-                    page.get_by_text("Owner selected a proposed value.").first
+                    page.get_by_text("You chose a proposed value.").first
                 ).to_be_visible()
                 assert 0 == page.get_by_text(RECORDED_ONLY_REASON).count()
                 if chapter_runtime:
@@ -10338,20 +10340,18 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                     )
                 ).to_have_count(0)
                 expect(
-                    page.get_by_role(
-                        "heading", name="Advised description · Authored content"
-                    ).first
+                    page.get_by_role("heading", name="Description advice").first
                 ).to_be_visible()
                 if state == "automatic":
                     expect(
                         page.get_by_text(
-                            "Applied and verified in the library.", exact=False
+                            "Written to the library and checked.", exact=False
                         )
                     ).to_be_visible()
                 if state == "no_change":
                     expect(
                         page.get_by_text(
-                            "No change needed; the library already had this text.",
+                            "No change needed. The library already had this text.",
                             exact=False,
                         )
                     ).to_be_visible()
@@ -11198,8 +11198,8 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         ).to_be_focused()
         assert "genres" in _attention_destinations(page, case_id)
         page.get_by_role("link", name="History", exact=True).click()
-        expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
-        expect(page.get_by_text("Owner entered a value.")).to_be_visible()
+        expect(page.get_by_text("You withdrew your choice.")).to_be_visible()
+        expect(page.get_by_text("You entered a value.")).to_be_visible()
 
 
 def _choose_previous_title(page: Page, origin: str, case_id: str):

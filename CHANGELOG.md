@@ -135,6 +135,11 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- The review case page says what happened in your words: history reads "You
+  chose a proposed value." and "Automatic kept the current value." instead of
+  "Owner selected…" and "Automatic policy…", entries no longer repeat their
+  heading in a sentence, and Evidence and History drop "retained", "durable"
+  and "observations" (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
