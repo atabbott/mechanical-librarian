@@ -133,17 +133,17 @@ the name shown.
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
 `Preparation idle` and still offers Scan now and Pause. Pause stops new scans;
-deferred provider lookups keep their schedule. The popover fits the window
+source lookups already waiting keep their schedule. The popover fits the window
 below the masthead, scrolling inside itself when it must. `Escape` closes it and
 returns focus to its trigger. Pending commands are disabled, not removed, so
 focus stays put and a second press sends nothing. When a command's result
-cannot be confirmed, the popover shows the refreshed state, says the change may
-have been saved, and does not offer to try again.
+cannot be confirmed, the popover shows the refreshed state, says no answer came
+back, and does not offer to try again.
 
 Retry-shaped controls differ:
 
 - `Scan now` and `Retry` start a new preparation cycle for one library.
-- `Retry now` retries every deferred provider lookup in every library.
+- `Retry now` retries every waiting source lookup in every library.
 - Retrying a cover or description consideration asks the reviewer about that
   one item again.
 
@@ -152,10 +152,11 @@ no automatic retry ([provider recovery](../operations/provider-recovery.md)).
 
 Library and Settings share one provider notice. Each entry names a source, a
 library, the reason, how many lookups wait and when they retry. A refused key
-waits for Retry now, and an exhausted lane says no retry remains. Each entry
+has no automatic retry until the source is fixed, and an exhausted lane says no
+retry remains. Each entry
 links to Settings › Metadata sources. Retry now's outcome is announced beside
 it; a file-managed deployment shows the file instruction instead. With nothing
-deferred the notice takes no space.
+waiting the notice takes no space.
 
 A work whose preparation could not finish stays in Library as a
 non-interactive row, Preparation failed safely, with its title while the

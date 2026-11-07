@@ -11,7 +11,7 @@ import { reloadCurrentApplication } from '../chunkRecovery'
  */
 export const StaleBuildRead = ({ lead, ref }: { lead: string; ref?: Ref<HTMLButtonElement> }) => (
   <p className="stale-build-read">
-    {lead} Mechanical Librarian was updated. Reload to open the new version.{' '}
+    {lead}{' '}
     <button ref={ref} type="button" onClick={() => reloadCurrentApplication()}>
       Reload
     </button>

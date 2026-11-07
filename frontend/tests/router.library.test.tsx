@@ -197,10 +197,7 @@ it.each(['/library?lens=all', '/library?lens=all&q=needle'])(
       throw new BuildMismatchError()
     })
     renderRoute(path, { ...createHttp(), getLibrary })
-    const lead = await screen.findByText(
-      'Works were not loaded. Mechanical Librarian was updated.',
-      { exact: false },
-    )
+    const lead = await screen.findByText('Works were not loaded.', { exact: false })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     const list = document.querySelector<HTMLElement>('.library-work-list')
@@ -222,10 +219,7 @@ it('offers a reload for the selected work when only the Works read met a newer b
     }),
   }
   renderRoute('/library?lens=all&preview=case-1', http)
-  const lead = await screen.findByText(
-    'Selected work was not loaded. Mechanical Librarian was updated.',
-    { exact: false },
-  )
+  const lead = await screen.findByText('Selected work was not loaded.', { exact: false })
   expect(lead).toBeVisible()
   expect(lead).not.toHaveAttribute('role')
   expect(screen.queryByText(/Selected work could not be loaded\./u)).toBeNull()
@@ -251,7 +245,7 @@ it('moves focus to Reload when a selected-work retry meets a newer build (#1288)
   await user.click(within(failure).getByRole('button', { name: 'Try again' }))
   // The retry removes Try again; the failed read focuses the control that
   // replaces it, which on a newer build is the reload.
-  await screen.findByText('Selected work was not loaded. Mechanical Librarian was updated.', {
+  await screen.findByText('Selected work was not loaded.', {
     exact: false,
   })
   const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
@@ -293,7 +287,7 @@ it('moves focus to Reload when both selected-work reads meet a newer build, the 
   await waitFor(() => expect(http.getAttention).toHaveBeenCalledTimes(2))
   await screen.findByText('Loading selected work…')
   releaseWorks()
-  await screen.findByText('Selected work was not loaded. Mechanical Librarian was updated.', {
+  await screen.findByText('Selected work was not loaded.', {
     exact: false,
   })
   const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
@@ -318,7 +312,7 @@ it('moves focus to Reload when a selected detail retry meets a newer build (#128
   const failure = await screen.findByText(/Selected work could not be loaded\./u)
   retried = true
   await user.click(within(failure).getByRole('button', { name: 'Try again' }))
-  await screen.findByText('Selected work was not loaded. Mechanical Librarian was updated.', {
+  await screen.findByText('Selected work was not loaded.', {
     exact: false,
   })
   const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
@@ -8808,10 +8802,7 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
-    const lead = await within(rail).findByText(
-      'Attention was not loaded. Mechanical Librarian was updated.',
-      { exact: false },
-    )
+    const lead = await within(rail).findByText('Attention was not loaded.', { exact: false })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     expect(within(rail).getByRole('button', { name: 'Reload' })).toBeVisible()
@@ -8872,10 +8863,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
     await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
-    const lead = await within(rail).findByText(
-      'More attention was not loaded. Mechanical Librarian was updated.',
-      { exact: false },
-    )
+    const lead = await within(rail).findByText('More attention was not loaded.', { exact: false })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     expect(within(rail).getByRole('button', { name: 'Reload' })).toBeVisible()
@@ -8916,7 +8904,7 @@ describe('Library route', () => {
     const alert = await within(rail).findByRole('alert')
     expect(alert).toHaveTextContent(/^More attention could not be loaded\. Try again$/u)
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeVisible()
-    expect(within(rail).queryByText(/Mechanical Librarian was updated/u)).toBeNull()
+    expect(within(rail).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
   it.each(['Close', 'toggle', 'Escape'] as const)(
@@ -13450,7 +13438,7 @@ describe('library provider throttling notice (#1282)', () => {
     }).format(tomorrow)
     expect(items.map((item) => item.querySelector('span')?.textContent)).toEqual([
       `Google Books · Synthetic ebooks: It is limiting requests. 214 lookups waiting. Next automatic retry ${clock(today)}.`,
-      'Hardcover · Synthetic ebooks: It refused the API key. 1 lookup waiting. Press Retry now once the source is fixed.',
+      'Hardcover · Synthetic ebooks: It refused the API key. 1 lookup waiting. No automatic retry until the source is fixed.',
       `Open Library · Synthetic audiobooks with a long library name: It did not answer. ${(10_000).toLocaleString()} lookups waiting. No automatic retry remains.`,
       `Google Books · Second shelf: Its request quota is used up. 3 lookups waiting. Next automatic retry ${day}, ${clock(tomorrow)}.`,
       'iTunes · Synthetic ebooks: It is limiting requests. 214 lookups waiting. Retrying now.',
@@ -14505,10 +14493,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       },
     )
     if (!footer) throw new Error('completion footer is required')
-    const lead = await within(footer).findByText(
-      'The next attention work was not loaded. Mechanical Librarian was updated.',
-      { exact: false },
-    )
+    const lead = await within(footer).findByText('The next attention work was not loaded.', {
+      exact: false,
+    })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     expect(within(footer).getByRole('button', { name: 'Reload' })).toBeVisible()
@@ -14532,7 +14519,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(
       within(footer).getByRole('button', { name: 'Try finding next work again' }),
     ).toBeVisible()
-    expect(within(footer).queryByText(/Mechanical Librarian was updated/u)).toBeNull()
+    expect(within(footer).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
   it('V5: the default landing and the summary share one request', async () => {
@@ -14786,10 +14773,9 @@ describe('a focused field decision (#1519)', () => {
       }),
     })
     const region = await screen.findByRole('region', { name: 'Recorded observations' })
-    const lead = await within(region).findByText(
-      'The observations were not loaded. Mechanical Librarian was updated.',
-      { exact: false },
-    )
+    const lead = await within(region).findByText('The observations were not loaded.', {
+      exact: false,
+    })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     expect(within(region).getByRole('button', { name: 'Reload' })).toBeVisible()

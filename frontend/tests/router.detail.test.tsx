@@ -676,7 +676,7 @@ describe('Library review ownership', () => {
 
       expect(
         await screen.findByRole('heading', {
-          name: 'This diagnostic case is no longer current.',
+          name: 'This review case is out of date',
         }),
       ).toBeVisible()
       expect(screen.queryByRole('heading', { name: 'Evidence' })).toBeNull()

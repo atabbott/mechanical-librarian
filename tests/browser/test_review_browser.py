@@ -12951,7 +12951,7 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 )
                 # File-managed settings: the instruction, never a command.
                 expect(notice).to_contain_text(
-                    "raise provider_recovery_generation by one there"
+                    "raise provider_recovery_generation by one in /data/config.json"
                 )
                 expect(notice.get_by_role("button")).to_have_count(0)
                 # The instruction keeps its 0.7rem separation from the list

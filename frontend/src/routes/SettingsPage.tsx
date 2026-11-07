@@ -338,7 +338,6 @@ export default function SettingsPage() {
     return (
       <section className="settings-state" data-route-focus tabIndex={-1}>
         <h1>Settings were not loaded</h1>
-        <p>Mechanical Librarian was updated. Reload to open the new version.</p>
         <button type="button" onClick={() => reloadCurrentApplication()}>
           Reload
         </button>

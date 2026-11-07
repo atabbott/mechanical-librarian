@@ -651,7 +651,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 page.get_by_text(
                     "Library connection failed", exact=True
                 ).first.wait_for()
-                notice = page.get_by_label("Library connection")
+                notice = page.get_by_label("Library connection", exact=True)
                 check = notice.get_by_role("button", name="Check connection again")
                 expect(check).to_be_visible()
                 assert "primary" not in notice.inner_text()
@@ -704,7 +704,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.get_by_text(
                         "Library connection recovered", exact=True
                     ).wait_for()
-                    recovered = page.get_by_label("Library connection")
+                    recovered = page.get_by_label("Library connection", exact=True)
                     capture_visual_proof("connection-recovered")
                     for width in (1440, 900, 390):
                         page.set_viewport_size({"width": width, "height": 900})
@@ -716,7 +716,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
                     page.goto("https://react-platform.invalid/library?lens=all")
                     page.get_by_label("Library controls").wait_for()
-                    expect(page.get_by_label("Library connection")).to_have_count(0)
+                    expect(
+                        page.get_by_label("Library connection", exact=True)
+                    ).to_have_count(0)
 
                     connection_state = "paused"
                     page.goto("https://react-platform.invalid/library?lens=all")
@@ -837,7 +839,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     controls = ledger.locator(".cm-activity-tools")
                     filters = controls.locator(".cm-activity-filters")
                     first_row = ledger.locator("article").first
-                    notice = page.get_by_label("Library connection")
+                    notice = page.get_by_label("Library connection", exact=True)
                     for locator in (
                         heading,
                         ledger_heading,
@@ -976,7 +978,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     connection_state = "paused"
                     page.reload()
                     page.get_by_role("heading", name="Activity ledger").wait_for()
-                    page.get_by_label("Library connection").get_by_role(
+                    page.get_by_label("Library connection", exact=True).get_by_role(
                         "button", name="Check connection again"
                     ).click()
                     page.get_by_text(
@@ -2252,9 +2254,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/review/case-stale?lens=no_attention_needed&subview=history&field=cover"
         )
-        page.get_by_role(
-            "heading", name="This diagnostic case is no longer current."
-        ).wait_for()
+        page.get_by_role("heading", name="This review case is out of date").wait_for()
         stale_route = page.locator(".diagnostic-route")
         stale_back = page.get_by_role("link", name="Back to work", exact=True)
         assert stale_route.locator(":scope > *").first.evaluate(
@@ -2636,9 +2636,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).click()
         assert projected_context.evaluate("node => node.open") is False
         page.get_by_role("button", name="Sign out").click()
-        page.get_by_text(
-            "Changes made in this tab are not saved", exact=False
-        ).wait_for()
+        page.get_by_text("This tab cannot save changes", exact=False).wait_for()
         fail_policy_persistently = True
         stage[0] = "policy:asset-failure-recovery"
         page.goto("https://react-platform.invalid/policy?section=identity")
@@ -3227,7 +3225,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         )
         expect(entries.nth(1)).to_contain_text(
             "Hardcover · Synthetic ebooks: It refused the API key. "
-            "1 lookup waiting. Press Retry now once the source is fixed."
+            "1 lookup waiting. No automatic retry until the source is fixed."
         )
         expect(entries.nth(2)).to_contain_text(
             "Open Library · Synthetic audiobooks with a long library name: It did "
@@ -3273,10 +3271,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
 
         # The second press is stale: the alert says so and nothing moves focus.
         page.keyboard.press("Enter")
-        expect(alert).to_have_text(
-            "Retry now was already pressed elsewhere. The notice now shows the "
-            "current state."
-        )
+        expect(alert).to_have_text("Retry now was already pressed elsewhere.")
         assert len(retries) == 2, retries
         expect(status).to_have_text("")
         expect(retry).to_be_focused()

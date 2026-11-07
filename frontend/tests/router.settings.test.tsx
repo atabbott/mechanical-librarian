@@ -2434,9 +2434,8 @@ it('offers a reload, not another try, when settings meet a newer build', async (
   renderRoute('/settings', http)
 
   expect(await screen.findByRole('heading', { name: 'Settings were not loaded' })).toBeVisible()
-  expect(
-    screen.getByText('Mechanical Librarian was updated. Reload to open the new version.'),
-  ).toBeVisible()
+  // The shell notice states the build mismatch; the page does not repeat it.
+  expect(screen.queryByText(/Mechanical Librarian was updated/u)).toBeNull()
   expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
   expect(screen.queryByText('Settings are unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
@@ -2450,12 +2449,7 @@ it('offers a reload, not another try, when reviewer access meets a newer build',
   })
   renderRoute('/settings?group=reviewer', http)
 
-  expect(
-    await screen.findByText(
-      'Reviewer access was not loaded. Mechanical Librarian was updated. Reload to open the new version.',
-      { exact: false },
-    ),
-  ).toBeVisible()
+  expect(await screen.findByText('Reviewer access was not loaded.', { exact: false })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
   expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()

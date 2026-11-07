@@ -632,7 +632,7 @@ describe('Application shell', () => {
     expect(screen.getByText(wholeText('1 of 2 checked · 0 ready to browse'))).toBeVisible()
     expect(
       screen.getByText(
-        'Scan now and Retry both prepare this library again, including the books that could not finish.',
+        'Scan now prepares a library again, including the books that could not finish.',
       ),
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Close' }))
@@ -1534,11 +1534,8 @@ describe('Application shell', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByRole('heading', { name: 'Activity was not loaded' })).toBeVisible()
-    expect(
-      screen.getByText('Mechanical Librarian was updated. Reload to open the new version.'),
-    ).not.toHaveAttribute('role')
     // The shell notice states the build mismatch; the route does not repeat it.
-    expect(screen.queryByRole('heading', { name: 'Mechanical Librarian was updated.' })).toBeNull()
+    expect(screen.queryByText(/Mechanical Librarian was updated/u)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     const reload = vi.fn()
     const { href, origin, pathname, search } = window.location

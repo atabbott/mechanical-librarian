@@ -415,14 +415,15 @@ export const ConnectionNotice = ({
   const condition = data?.connections.find((item) => item.state !== 'recovered') ?? recovered
   if (!condition) return null
   const paused = condition.state === 'recovered' ? 0 : condition.affected
-  const title =
-    condition.state === 'checking'
+  const title = data?.recovery_required
+    ? 'Preparation stopped'
+    : condition.state === 'checking'
       ? 'Checking library connection'
       : condition.state === 'recovered'
         ? 'Library connection recovered'
         : 'Library connection failed'
   const copy = data?.recovery_required
-    ? 'Preparation stopped. Restart the Mechanical Librarian service to resume it. Prepared books can still be reviewed.'
+    ? 'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
     : condition.state === 'checking'
       ? 'Preparation is paused until the check finishes.'
       : condition.state === 'recovered'
@@ -593,7 +594,7 @@ const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
   entry.state === 'checking'
     ? 'Retrying now.'
     : entry.state === 'dormant'
-      ? 'Press Retry now once the source is fixed.'
+      ? 'No automatic retry until the source is fixed.'
       : entry.state === 'exhausted'
         ? 'No automatic retry remains.'
         : entry.next_retry_at === null || entry.next_retry_at * 1000 <= now.getTime()
@@ -881,8 +882,8 @@ export const PreparationActivity = () => {
           <h2>{data.recovery_required ? 'Preparation stopped' : 'Background activity'}</h2>
           {data.recovery_required ? (
             <p role="status">
-              Restart the Mechanical Librarian service to resume preparation. Reloading this page or
-              scanning again does not restart it. Prepared books can still be reviewed.
+              Restart the Mechanical Librarian service to resume preparation. Prepared books can
+              still be reviewed.
             </p>
           ) : null}
           {data.libraries.map((item) => (
@@ -967,20 +968,19 @@ export const PreparationActivity = () => {
                   Retry
                 </button>
               ) : null}
-              {/*
-               * Both controls call the same operation -- a new library cycle --
-               * and the recovery schedule they do not control is documented in
-               * `docs/operations/provider-recovery.md`. This states what they
-               * do; it decides nothing.
-               */}
-              {!data.recovery_required ? (
-                <small className="activity-backup-note">
-                  Scan now and Retry both prepare this library again, including the books that could
-                  not finish.
-                </small>
-              ) : null}
             </article>
           ))}
+          {/*
+           * Scan now and Retry call the same operation, a new library cycle; the
+           * recovery schedule they do not control is documented in
+           * `docs/operations/provider-recovery.md`. Said once, below the list,
+           * because Retry shows only on a library whose run had failures.
+           */}
+          {!data.recovery_required ? (
+            <small className="activity-backup-note">
+              Scan now prepares a library again, including the books that could not finish.
+            </small>
+          ) : null}
           <button
             type="button"
             aria-disabled={data.recovery_required || action.isPending}
@@ -1249,7 +1249,7 @@ const Shell = () => {
       {mismatch ? (
         <section className="build-mismatch" role="alert">
           <strong>Mechanical Librarian was updated.</strong>
-          <span>Reload to keep working. Changes made in this tab are not saved until you do.</span>
+          <span>Reload to keep working. This tab cannot save changes until it reloads.</span>
           <button onClick={() => window.location.reload()}>Reload now</button>
         </section>
       ) : null}
@@ -1283,9 +1283,8 @@ const RouteFailure = ({
   // reload brings this tab onto the build the server is running.
   return error instanceof BuildMismatchError ? (
     <section className="route-state">
+      {/* The shell's build notice is the alert and says why; this only names the route. */}
       <h1>{title} was not loaded</h1>
-      {/* The shell's build notice is the alert; this only names the route. */}
-      <p>Mechanical Librarian was updated. Reload to open the new version.</p>
       <button onClick={() => reloadCurrentApplication()}>Reload</button>
     </section>
   ) : error instanceof ChunkRecoveryError && error.exhausted ? (
@@ -1297,7 +1296,11 @@ const RouteFailure = ({
   ) : (
     <section className="route-state">
       <h1>{title} could not be loaded</h1>
-      <p role="alert">If trying again does not help, restart the Mechanical Librarian service.</p>
+      <p role="alert">
+        {error instanceof ChunkRecoveryError
+          ? error.message
+          : 'If trying again does not help, restart the Mechanical Librarian service.'}
+      </p>
       <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
     </section>
   )
@@ -1363,7 +1366,7 @@ const DiagnosticRouteComponent = () => {
       ? 'This work has no review case.'
       : detail.error instanceof ApiError && detail.error.code === 'stale'
         ? 'This review case is out of date. Go back to the work to open the current one.'
-        : 'This review case could not be read.'
+        : 'Reload the page. If it still fails, restart the Mechanical Librarian service.'
   return (
     <div className="diagnostic-route" aria-busy={detail.isPlaceholderData || undefined}>
       <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>

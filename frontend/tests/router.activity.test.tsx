@@ -1534,10 +1534,7 @@ describe('Activity route', () => {
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     expect(
-      await screen.findByText(
-        'Recorded transitions were not loaded. Mechanical Librarian was updated.',
-        { exact: false },
-      ),
+      await screen.findByText('Recorded transitions were not loaded.', { exact: false }),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(
@@ -1571,10 +1568,9 @@ describe('Activity route', () => {
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     await user.click(await screen.findByRole('button', { name: 'Load more transitions' }))
-    const lead = await screen.findByText(
-      'More recorded transitions were not loaded. Mechanical Librarian was updated.',
-      { exact: false },
-    )
+    const lead = await screen.findByText('More recorded transitions were not loaded.', {
+      exact: false,
+    })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
