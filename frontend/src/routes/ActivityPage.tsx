@@ -8,14 +8,12 @@ import {
   ApiError,
   BuildMismatchError,
   CsrfRenewedError,
-  displayValue,
   sessionRefreshedCopy,
 } from '../api/http'
 import type {
   ActivityCommandPath,
   ActivityEventView,
   ActivityLibraryView,
-  ActivityPermissionReadinessView,
   ActivitySearch,
   ActivityView,
   CapabilityState,
@@ -46,6 +44,8 @@ import {
 import { categoryLabel, dayHeading, stateLabel } from '../activityLabels'
 import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
 import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
+import { ActivityPermissionCheck, readinessUnavailableCopy } from './ActivityPermissionCheck'
+import type { PermissionCheck } from './ActivityPermissionCheck'
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
 // rather than re-deriving `unknown` shapes a second time (#636).
@@ -60,18 +60,9 @@ const capabilityLabel = (state: CapabilityState, consented: boolean) =>
         connection_unavailable: 'Connection needs checking',
         not_ready: 'Not ready yet',
       }[state]
-// A permission draft is the readiness check and the ticked libraries, kept
-// against the consent basis it was checked on (#1279).
-interface PermissionCheck extends ActivityPermissionReadinessView {
-  readonly policyId: string
-  readonly basis: string
-}
 // Raised by the verification read made on Confirm, before any grant is sent.
 class ConsentBasisChanged extends Error {}
 class ConsentBasisUnavailable extends Error {}
-const basisChangedCopy = 'Your library settings changed. Review the permissions again.'
-const readinessUnavailableCopy =
-  'Permission readiness is unavailable. No permission was granted. Try again.'
 const typeOptions = [
   { id: 'all', label: 'All' },
   { id: 'review', label: 'Owner choices' },
@@ -1211,41 +1202,16 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               Each write is checked before it starts, verified afterwards, and recorded durably.
             </p>
           </div>
-          <p role="status">
-            {discarded
-              ? basisChangedCopy
-              : permissionRequest === null
-                ? 'Permission readiness has not been checked, or the library changed. Check again before selecting destinations.'
-                : permissions.isFetching
-                  ? 'Checking backup readiness and write permissions…'
-                  : permissions.isError
-                    ? readinessUnavailableCopy
-                    : permission?.backup_ready === null
-                      ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
-                      : permission?.backup_ready === false
-                        ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
-                        : 'Backup readiness checked. Review the included and excluded destinations.'}
-          </p>
-          {/* Busy, not disabled: a disabled button would drop a keyboard owner's focus to <body>. */}
-          <button
-            ref={checkButton}
-            type="button"
-            onClick={checking ? undefined : checkPermissions}
-            aria-disabled={checking || undefined}
-          >
-            {permissionRequest === null
-              ? 'Check write permissions'
-              : permissions.isError || permission?.backup_ready === null
-                ? 'Retry permission check'
-                : 'Check again'}
-          </button>
-          {permission?.example ? (
-            <p>
-              Example: {destinationLabel(permission.example.destination)} for{' '}
-              {names.name(permission.example.library)} — {displayValue(permission.example.before)} →{' '}
-              {displayValue(permission.example.after)}
-            </p>
-          ) : null}
+          <ActivityPermissionCheck
+            discarded={Boolean(discarded)}
+            requested={permissionRequest !== null}
+            permissions={permissions}
+            permission={permission}
+            checking={checking}
+            checkButton={checkButton}
+            check={checkPermissions}
+            libraryName={names.name}
+          />
           {configured.map((library) => {
             const name = library.library
             const state = capability(name)?.state ?? 'not_ready'
