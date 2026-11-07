@@ -130,11 +130,10 @@ leave them.
   declines to fill a field (#1745), are measured but not ranked.
   [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
   keeps that gate, and the [A6 analysis](automatic-decision-abstention.md)
-  measures what declining costs. Row A3 stays ranked with its score.
+  measures what declining costs. Row A3 stays ranked;
   [ADR-0097](../architecture/decisions/0097-keep-the-bibliographic-combination-gate.md)
-  keeps that gate, and the
-  [A3 analysis](bibliographic-combination-gate.md) says what the gate alone
-  costs.
+  keeps it, and the [A3 analysis](bibliographic-combination-gate.md)
+  measures its own cost.
   A7 is listed last, out of scope.
 - **Attention per case.** Attention follows the
   [per-case definition](../operations/cold-start-report.md#attention-per-case).
@@ -279,15 +278,15 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Follow-ons.** No row is filed. T1 was measured under
-  [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744)
-  (1,332 actionable fields), A6 under
-  [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745)
-  (ADR-0092), A2 under
-  [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747)
-  (135) and A3 under
-  [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746)
-  (333, ADR-0097). All four were kept.
+- **Follow-ons.** No row is filed. T1
+  ([#1744](https://github.com/atabbott/mechanical-librarian/issues/1744),
+  1,332 actionable fields), A6
+  ([#1745](https://github.com/atabbott/mechanical-librarian/issues/1745),
+  ADR-0092), A2
+  ([#1747](https://github.com/atabbott/mechanical-librarian/issues/1747),
+  135) and A3
+  ([#1746](https://github.com/atabbott/mechanical-librarian/issues/1746),
+  333, ADR-0097) were measured and kept.
 - **W9** was re-scoped under
   [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) to the
   series identity match, and kept. Its earlier count was series fields the
@@ -308,9 +307,8 @@ The origin ADRs are
   1,141) and all of A6a's (80) are stale: a later election decides them.
 - **Dispositions.** `kept` rows stay as they are. `kept (#1744)`,
   `kept (ADR-0092)`, `kept (#1747)`, `kept (ADR-0097)` and `kept (#1748)`
-  were decided after measurement under #1744, #1745, #1747, #1746 and
-  #1748. Rows an issue already covers link it: W1, W5 and the
-  cover-identity part of C1 (#1355), I3 (#1356,
+  were decided after measurement (#1744 to #1748). Rows an issue already
+  covers link it: W1, W5 and the cover-identity part of C1 (#1355), I3 (#1356,
   closed after measurement), C4's EPUB `invalid_declaration` part (#1357,
   closed) and C2's work-search records (#1380). A filed follow-on's row gets
   its issue number by re-running the script with `--follow-on ID=ISSUE`.
