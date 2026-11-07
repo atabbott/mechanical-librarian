@@ -79,6 +79,12 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** A value that only one source suggests, with
+  nothing else to confirm it, such as a different publisher or title from one
+  catalogue, no longer asks you. The book's page says only one source suggests
+  it, and you can still choose it there. A field set to Ask me still asks
+  (#1310).
+
 - **Clean rebuild required.** When your setting for descriptions or genres
   only fills empty fields (including Visible Google text), a book that already
   has a usable description or genre list keeps it without asking you; you can

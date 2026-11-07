@@ -1224,9 +1224,10 @@ def test_login_case_evidence_history_and_logout_round_trip(
         for context in contexts
         for observation in context["evidence"]
     )
-    assert "insufficient_independent_corroboration" in title["notices"]
-    assert [] == contexts[0]["limitations"]
-    assert ["insufficient_independent_corroboration"] == contexts[1]["limitations"]
+    # The fixture's opening matter and a provider propose different titles,
+    # so the choice asks (#1310).
+    assert "competing_evidence" in title["notices"]
+    assert all(context["limitations"] == [] for context in contexts)
     assert not detail.json()["fields"][-1]["needs_attention"]
     assert "model_advice" not in detail.json()
     evidence = web.client.get(
