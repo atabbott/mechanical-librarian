@@ -11778,7 +11778,11 @@ describe('Library route', () => {
     // The notice reads the narrow consent read, never Activity history (#1236).
     expect(http.getActivity).not.toHaveBeenCalled()
     // Preparation still running does not withdraw the action.
-    expect(screen.getByText(/Preparation continues meanwhile\./u)).toBeVisible()
+    expect(
+      screen.getByText(
+        'Nothing is written until you give permission. Preparation continues meanwhile.',
+      ),
+    ).toBeVisible()
     // The Attention decision and status share one toolbar, toggle first, so
     // focus order matches the visual order at every width (#1013).
     const controls = document.querySelector('header[aria-label="Library controls"]')
