@@ -279,7 +279,7 @@ The origin ADRs are
   [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744)
   (1,332 actionable fields), A6 under
   [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745)
-  (ADR-0092; its rows are unranked) and A2 under
+  (ADR-0092) and A2 under
   [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747)
   (135); all three were kept.
 - **Identity precision is not a case for loosening.** Where the controls can
