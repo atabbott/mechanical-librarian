@@ -39,6 +39,17 @@ brackets are GitHub issues.
   previewing its impact, neither of which changes anything, it now says the
   validation failed or the preview is unavailable, instead of a general
   uncertain message (#1731).
+- When the browser loses the answer to validating a policy draft or previewing
+  its impact, it now says the validation failed or the preview could not be
+  shown, not that a change is uncertain. The preview message now says nothing
+  else changed (#1754).
+- Resuming automatic handling now shows when fresh checks were requested, also
+  after a reload. An unconfirmed request is shown as a warning that says
+  whether the reloaded work shows the checks as requested, and that requesting
+  again is safe (#1755).
+- A page that cannot load now says in plain words what went wrong and what to
+  do, instead of an API status and code; those are under Technical detail
+  (#1756).
 - The policy preview-mode API now says preview instead of shadow:
   `/api/v1/metadata-policy/shadow`, `…/shadow/enter`,
   `…/shadow/confirm-automatic`, `…/shadow/leave-preview` and
