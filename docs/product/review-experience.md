@@ -475,7 +475,8 @@ Usable advice grants no write
 ## Words and values
 
 Copy orients, explains a real consequence, resolves a status or gives a next
-step; otherwise it is omitted. The owner never reads a code as words: an
+step; otherwise it is omitted. Its voice is the one `DESIGN.md` states under
+Voice. The owner never reads a code as words: an
 unknown code is refused, not sentence-cased. Acronyms stay capitalised,
 languages read by name with their tag ("English (en)"), and sizes use MB.
 Times are relative within the past hour, the clock time today, and the date
