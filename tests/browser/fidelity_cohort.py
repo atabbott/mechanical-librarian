@@ -390,6 +390,7 @@ def _field(
     automatic_decision: dict[str, object] | None = None,
     manual_hold: bool = False,
     manual_return_requested: bool = False,
+    manual_return_failed: bool = False,
     notices: list[str] | None = None,
     provenance: list[str] | None = None,
     corroboration_sources: list[str] | None = None,
@@ -476,6 +477,7 @@ def _field(
         "needs_attention": needs_attention,
         "manual_hold": manual_hold,
         "manual_return_requested": manual_return_requested,
+        "manual_return_failed": manual_return_failed,
         "manual_required": needs_attention,
         "navigation_role": navigation_role
         or ("attention" if needs_attention else "inspect"),

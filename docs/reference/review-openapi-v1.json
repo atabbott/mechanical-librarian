@@ -10201,6 +10201,10 @@
             "title": "Manual Required",
             "type": "boolean"
           },
+          "manual_return_failed": {
+            "title": "Manual Return Failed",
+            "type": "boolean"
+          },
           "manual_return_requested": {
             "title": "Manual Return Requested",
             "type": "boolean"
@@ -10283,6 +10287,7 @@
           "automatic_selection_sources",
           "manual_hold",
           "manual_return_requested",
+          "manual_return_failed",
           "manual_required",
           "needs_attention",
           "navigation_role",

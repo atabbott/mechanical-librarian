@@ -267,6 +267,9 @@ class CurrentReviewCaseSnapshot:
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
+    # Held destinations whose requested checks finished with failures. The
+    # hold stays and nothing retries those checks, so the owner can ask again.
+    return_failed_destinations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1256,6 +1259,8 @@ class InspectCurrentReviewCase:
             # the field says it was requested, also after a reload (#1755).
             "manual_return_requested": manual_hold
             and destination in snapshot.return_requested_destinations,
+            "manual_return_failed": manual_hold
+            and destination in snapshot.return_failed_destinations,
             "classification": classification.state,
             "classification_reason": classification.reason,
             "editable": classification.editable and has_owner_action,

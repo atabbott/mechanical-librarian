@@ -329,15 +329,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (review_case_id,),
                     )
                 ),
-                return_requested_destinations=tuple(
-                    row[0]
-                    for row in self._connection.execute(
-                        "SELECT destination FROM field_effect_manual_holds "
-                        "WHERE review_case_id=? AND active=1 AND "
-                        "json_type(document,'$.pending_return')='object' "
-                        "ORDER BY destination",
-                        (review_case_id,),
-                    )
+                return_requested_destinations=self._return_destinations(
+                    review_case_id, failed=False
+                ),
+                return_failed_destinations=self._return_destinations(
+                    review_case_id, failed=True
                 ),
                 previous_values=self._previous_field_values(
                     report.target.connection,
@@ -346,6 +342,27 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ),
             )
         return snapshot
+
+    def _return_destinations(
+        self, review_case_id: str, *, failed: bool
+    ) -> tuple[str, ...]:
+        # A requested return is outstanding while its scan can still finish.
+        # A scan that finished with failures keeps the hold, and nothing
+        # retries it, so that request reads as failed: the owner asks again,
+        # which requeues the scan (#1755).
+        return tuple(
+            row[0]
+            for row in self._connection.execute(
+                "SELECT hold.destination FROM field_effect_manual_holds hold "
+                "JOIN review_preparation_scans scan "
+                "ON scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
+                "WHERE hold.review_case_id=? AND hold.active=1 AND "
+                "json_type(hold.document,'$.pending_return')='object' AND "
+                "(scan.state='completed_with_failures')=? "
+                "ORDER BY hold.destination",
+                (review_case_id, int(failed)),
+            )
+        )
 
     def _current_generation_decisions(
         self, decision_documents: tuple[str, ...]

@@ -658,6 +658,9 @@ export interface ReviewFieldView {
   // A return to automatic handling was requested; the hold stays until the
   // requested checks finish (#1755).
   manualReturnRequested: boolean
+  // The requested checks finished with failures; the hold stays and nothing
+  // retries them, so the owner can request them again.
+  manualReturnFailed: boolean
   currentValue: string
   currentRaw: unknown
   proposedValues: readonly ResponseSchema<'_ProposedValue'>[]
@@ -2708,6 +2711,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   needsAttention: field.needs_attention,
   manualHold: field.manual_hold,
   manualReturnRequested: field.manual_return_requested,
+  manualReturnFailed: field.manual_return_failed,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
   // name, rather than one word for both (#1286).

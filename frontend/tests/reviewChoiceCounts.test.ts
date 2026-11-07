@@ -23,6 +23,7 @@ const field = (coverConsideration: NonNullable<Field['coverConsideration']> | nu
   humanDecision: null,
   manualHold: false,
   manualReturnRequested: false,
+  manualReturnFailed: false,
   needsAttention: true,
   navigationRole: 'attention',
   notices: [],

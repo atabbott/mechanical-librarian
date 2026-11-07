@@ -1177,6 +1177,75 @@ describe('Library review ownership', () => {
     expect(returnToAutomatic).not.toHaveBeenCalled()
   })
 
+  // Requested checks that finished with failures keep the hold, and nothing
+  // retries them, so the case offers the request again with one short line.
+  const F0 =
+    "The fresh checks didn't finish, so manual handling remains. Choose Resume automatic handling to request them again."
+  it('offers fresh checks again when the requested ones finished with failures', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    const returnToAutomatic = vi.fn(async () => undefined)
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...field, manualHold: true, manualReturnFailed: true }],
+      })),
+      returnToAutomatic,
+    })
+    const trigger = await screen.findByRole('button', { name: 'Resume automatic handling' })
+    expect(trigger).not.toHaveAttribute('aria-disabled', 'true')
+    const line = screen.getByText(F0)
+    expect(line).toHaveClass('automatic-handling-result', 'is-error')
+    expect(screen.queryByRole('alert')).toBeNull()
+    await user.click(trigger)
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(await screen.findByText(S0)).toBeVisible()
+    expect(returnToAutomatic).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
+  })
+
+  it('lets a reread after a requested return show that its checks failed', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    let phase: 'held' | 'requested' | 'failed' = 'held'
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...field,
+            manualHold: true,
+            manualReturnRequested: phase === 'requested',
+            manualReturnFailed: phase === 'failed',
+          },
+        ],
+      })),
+      returnToAutomatic: vi.fn(async () => {
+        phase = 'requested'
+      }),
+    })
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(await screen.findByText(S0)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
+    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(screen.queryByText(F0)).toBeNull()
+    phase = 'failed'
+    await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
+    expect(await screen.findByText(F0)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Resume automatic handling' })).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+  })
+
   it('shows a failed fresh-check request as an alert in the danger tone', async () => {
     const user = userEvent.setup()
     const field = detail.fields[0]

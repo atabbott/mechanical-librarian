@@ -589,6 +589,7 @@ def test_the_holding_case_shows_a_requested_return_until_it_is_released(
 ) -> None:
     store, token = held
     assert _held_and_requested(store) == (True, False)
+    assert _field(store, "genres")["manual_return_failed"] is False
     _request_return(store, token)
     assert _held_and_requested(store) == (True, True)
     assert store.repository.clear_field_effect_manual_hold(
@@ -638,6 +639,43 @@ def test_requesting_a_return_again_on_the_same_hold_is_safe(
     assert document["decision_id"] == token
     assert _hold(store) == token
     assert _held_and_requested(store) == (True, True)
+
+
+# A requested scan that finishes with failures keeps the hold, and nothing
+# retries it. The case must stop saying "requested", so the owner can ask
+# again; asking again requeues that scan and reads as requested (#1755).
+def test_a_requested_return_whose_checks_fail_can_be_requested_again(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    scan_id, _ = _request_return(store, token)
+    field = _field(store, "genres")
+    assert (field["manual_return_requested"], field["manual_return_failed"]) == (
+        True,
+        False,
+    )
+    store.repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures' "
+        "WHERE scan_id=?",
+        (scan_id,),
+    )
+    store.repository._connection.commit()
+    field = _field(store, "genres")
+    assert field["manual_hold"] is True
+    assert (field["manual_return_requested"], field["manual_return_failed"]) == (
+        False,
+        True,
+    )
+    again, _ = _request_return(store, token)
+    assert again == scan_id
+    assert store.repository._connection.execute(
+        "SELECT state FROM review_preparation_scans WHERE scan_id=?", (scan_id,)
+    ).fetchone() == ("queued",)
+    field = _field(store, "genres")
+    assert (field["manual_return_requested"], field["manual_return_failed"]) == (
+        True,
+        False,
+    )
 
 
 def test_a_pending_return_reaches_an_earlier_case_that_recurs(

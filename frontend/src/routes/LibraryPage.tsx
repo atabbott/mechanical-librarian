@@ -456,8 +456,8 @@ export default function LibraryPage({
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error' | 'refreshed' | 'uncertain'>>
   >({})
-  // How often the case read had answered when a request could not be
-  // confirmed, so only a reread after it settles the uncertainty (#1755).
+  // How often the case read had answered when a request answered or could
+  // not be confirmed, so only a reread after it settles the result (#1755).
   const [automaticReloadBaselines, setAutomaticReloadBaselines] = useState<
     Readonly<Record<string, number>>
   >({})
@@ -1157,31 +1157,55 @@ export default function LibraryPage({
   const automaticResult = selectedAutomaticKey
     ? (automaticResults[selectedAutomaticKey] ?? null)
     : null
+  // Whether the case has been reread since this field's last request answered
+  // (or failed to). Until then the request's own answer stands (#1755).
+  const automaticBaseline = selectedAutomaticKey
+    ? automaticReloadBaselines[selectedAutomaticKey]
+    : undefined
+  const automaticAnswered = queryClient.getQueryState(
+    detailQuery(http, selectedReviewCaseId).queryKey,
+  )?.dataUpdateCount
+  const automaticCaseReread =
+    automaticBaseline !== undefined &&
+    automaticAnswered !== undefined &&
+    automaticAnswered > automaticBaseline
   // A requested return keeps the hold until its checks finish; the case says
-  // so, so a reload still reads as requested (#1755).
+  // so, so a reload still reads as requested. Once the case is reread, it
+  // decides: checks that finished with failures can be requested again.
+  const automaticFreshSuccess = automaticResult === 'success' && !automaticCaseReread
   const automaticCompletedForSelected =
-    automaticResult === 'success' || selected?.manualReturnRequested === true
+    automaticFreshSuccess || selected?.manualReturnRequested === true
+  const automaticReturnFailed = !automaticFreshSuccess && selected?.manualReturnFailed === true
   // An unconfirmed request resolves from the case reread after it: requested
   // or not. Until then it is reloading. A reread that fails replaces the work
   // with its own failure and Try again (#1288), whose reread settles it.
-  const automaticReload = (() => {
-    if (automaticResult !== 'uncertain' || !selectedAutomaticKey) return null
-    const baseline = automaticReloadBaselines[selectedAutomaticKey]
-    const answered = queryClient.getQueryState(
-      detailQuery(http, selectedReviewCaseId).queryKey,
-    )?.dataUpdateCount
-    // A reread that answered after the baseline settles it; a later
-    // background reread keeps the answer shown.
-    if (baseline === undefined || answered === undefined || answered <= baseline) return 'reloading'
-    return selected?.manualReturnRequested === true ? 'requested' : 'not-requested'
-  })()
-  const automaticShown = automaticReload === 'requested' ? 'success' : automaticResult
+  // A later background reread keeps the answer shown.
+  const automaticReload =
+    automaticResult !== 'uncertain' || !selectedAutomaticKey
+      ? null
+      : !automaticCaseReread
+        ? 'reloading'
+        : selected?.manualReturnRequested === true
+          ? 'requested'
+          : 'not-requested'
+  const automaticShown =
+    automaticReload === 'requested'
+      ? 'success'
+      : automaticResult === 'success' && !automaticCompletedForSelected
+        ? null
+        : automaticResult
   const returnAutomatic = useMutation({
     mutationFn: ({ destination }: { destination: string; key: string }) =>
       http.returnToAutomatic(selectedReviewCaseId, destination),
     retry: false,
     onSuccess: (_value, request) => {
       setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
+      // A later reread of the case takes over from this answer, so checks
+      // that then finish with failures can be requested again.
+      const answered =
+        queryClient.getQueryState(detailQuery(http, selectedReviewCaseId).queryKey)
+          ?.dataUpdateCount ?? 0
+      setAutomaticReloadBaselines((current) => ({ ...current, [request.key]: answered }))
     },
     onError: (error, request) => {
       const uncertain = uncertainWriteOutcome(error)
@@ -2868,6 +2892,12 @@ export default function LibraryPage({
                             <p>
                               An earlier owner decision is pausing automatic handling until you
                               choose Resume automatic handling.
+                            </p>
+                          ) : null}
+                          {automaticReturnFailed ? (
+                            <p className="automatic-handling-result is-error">
+                              The fresh checks didn't finish, so manual handling remains. Choose
+                              Resume automatic handling to request them again.
                             </p>
                           ) : null}
                           <button

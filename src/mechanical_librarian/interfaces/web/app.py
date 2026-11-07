@@ -681,6 +681,7 @@ class _ReviewField(_ClosedModel):
     automatic_selection_sources: list[str]
     manual_hold: bool
     manual_return_requested: bool
+    manual_return_failed: bool
     manual_required: bool
     needs_attention: bool
     navigation_role: Literal["attention", "inspect"]
