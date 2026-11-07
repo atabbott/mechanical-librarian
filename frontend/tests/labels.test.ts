@@ -159,7 +159,7 @@ describe('owner labels (#1286)', () => {
 
   it('reads an unknown cover note as one neutral sentence, never as its code', () => {
     expect(coverNoteLabel('source_timeout')).toBe('The source did not answer in time')
-    expect(coverNoteLabel('a_future_reason')).toBe('Another cover safeguard applies')
+    expect(coverNoteLabel('a_future_reason')).toBe('Another cover rule applies')
   })
 
   it.each([

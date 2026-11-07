@@ -538,7 +538,7 @@ def test_every_stage_bucket_is_named_in_owner_reading_order(
 def test_waiting_is_split_into_the_reasons_an_owner_can_act_on(
     writes: ReviewWebContext[FakeReviewRepository],
 ) -> None:
-    """`46 Waiting safely` is four different next steps, and this separates them."""
+    """`46 Waiting to retry` is four different next steps, and this separates them."""
     writes.login()
 
     waiting = writes.client.get("/api/v1/activity").json()["waiting"]

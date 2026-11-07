@@ -93,6 +93,13 @@ brackets are GitHub issues.
   change now answers with its saved view (#1571).
 - Closing the Attention queue with its toolbar toggle keeps focus on the
   toggle, as Close and Escape do (#1566).
+- The shared status and reason words read plainly and the same on every
+  screen. Activity and History say Failed, Waiting to retry, Closed, Replaced
+  and Stopped instead of "failed safely" and the like; comparison conditions
+  say "sources" instead of "providers" and put the request to choose in its
+  own sentence; source statuses, preview outcomes, evidence roles and reviewer
+  errors drop internal words; and the policy preview gives each automatic
+  refusal the same sentence the review case gives it (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
