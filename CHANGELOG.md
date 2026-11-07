@@ -29,6 +29,9 @@ brackets are GitHub issues.
 - A change waiting for Audiobookshelf to come back now closes when a rescan
   replaces or retires its review case, or the work leaves the library, instead
   of waiting for good, and a cover's restore point is removed (#1658).
+- When the browser cannot read a decision's confirmation, it now says the
+  outcome is uncertain and reloads the case instead of offering Try the same
+  decision again, which would read the same confirmation (#1688).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
