@@ -3084,3 +3084,152 @@ describe('Policy keyboard focus (#1288)', () => {
     expect(review).toHaveAccessibleDescription(/write permission/iu)
   })
 })
+
+// A tab left on the previous build: a read or save that meets the newer build
+// offers the reload instead of a retry that cannot succeed, and a retry hands
+// focus to what replaced its control (#1742).
+describe('Description preferences on an earlier build (#1742)', () => {
+  const reloadName = 'Reload the current application'
+  const staleLead = (region: HTMLElement, lead: string) => {
+    const element = within(region).getByText(lead, { exact: false })
+    expect(element).not.toHaveAttribute('role')
+    expect(element.closest('[role="alert"]')).toBeNull()
+    return element
+  }
+
+  it('offers the reload when the first read meets a newer build', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => {
+      throw new BuildMismatchError()
+    })
+    renderRoute('/policy?section=curation', http)
+    const region = await screen.findByRole('region', { name: 'Description advice' })
+    await within(region).findByRole('button', { name: reloadName })
+    expect(
+      staleLead(
+        region,
+        'Description preferences were not loaded. This tab is running an earlier build.',
+      ),
+    ).toBeVisible()
+    expect(within(region).queryByRole('button', { name: 'Retry preferences' })).toBeNull()
+    expect(within(region).queryByText('Description preferences are unavailable.')).toBeNull()
+  })
+
+  it.each(['mismatch', 'success'] as const)(
+    'moves focus to what replaces Retry preferences after a %s',
+    async (outcome) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      let reads = 0
+      http.getSettings = vi.fn(async () => {
+        reads += 1
+        if (reads === 1) throw new ApiError(503, 'settings_unavailable')
+        if (outcome === 'mismatch') throw new BuildMismatchError()
+        return view()
+      })
+      renderRoute('/policy?section=curation', http)
+      const region = await screen.findByRole('region', { name: 'Description advice' })
+      // An ordinary failure keeps its alert and retry.
+      const alert = await within(region).findByRole('alert')
+      expect(alert).toHaveTextContent('Description preferences are unavailable.')
+      await user.click(within(alert).getByRole('button', { name: 'Retry preferences' }))
+      if (outcome === 'mismatch') {
+        const reload = await within(region).findByRole('button', { name: reloadName })
+        await waitFor(() => expect(reload).toHaveFocus())
+        staleLead(region, 'Description preferences were not loaded.')
+      } else {
+        await within(region).findByRole('group', { name: 'Remove marketing material' })
+        await waitFor(() =>
+          expect(within(region).getByRole('heading', { name: 'Description advice' })).toHaveFocus(),
+        )
+      }
+      expect(document.body).not.toHaveFocus()
+    },
+  )
+
+  const editMarketing = async (region: HTMLElement) => {
+    const marketing = await within(region).findByRole('group', {
+      name: 'Remove marketing material',
+    })
+    await userEvent.setup().click(within(marketing).getByRole('button', { name: 'Off' }))
+  }
+
+  it('holds Save and offers the reload when a save meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+      throw new BuildMismatchError()
+    })
+    renderRoute('/policy?section=curation', http)
+    const region = await screen.findByRole('region', { name: 'Description advice' })
+    await editMarketing(region)
+    const save = within(region).getByRole('button', { name: 'Save description preferences' })
+    await user.click(save)
+    await within(region).findByRole('button', { name: reloadName })
+    staleLead(
+      region,
+      'Description preferences were not saved. This tab is running an earlier build.',
+    )
+    expect(
+      within(region).queryByRole('button', { name: 'Reload description preferences' }),
+    ).toBeNull()
+    expect(within(region).queryByRole('alert')).toBeNull()
+    expect(save).toHaveAttribute('aria-disabled', 'true')
+    await user.click(save)
+    expect(http.writeSettings).toHaveBeenCalledOnce()
+  })
+
+  it('says the preferences were not reloaded when the reload after an uncertain save meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let saved = false
+    http.getSettings = vi.fn(async () => {
+      if (saved) throw new BuildMismatchError()
+      return view()
+    })
+    http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+      saved = true
+      throw new ApiError(503, 'settings_unavailable')
+    })
+    renderRoute('/policy?section=curation', http)
+    const region = await screen.findByRole('region', { name: 'Description advice' })
+    await editMarketing(region)
+    await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
+    await within(region).findByRole('button', { name: reloadName })
+    staleLead(
+      region,
+      'Description preferences could not be confirmed, and the saved preferences were not reloaded. This tab is running an earlier build.',
+    )
+    expect(within(region).queryByText(/were reloaded/u)).toBeNull()
+    expect(
+      within(region).queryByText('Saved preferences could not be loaded.', { exact: false }),
+    ).toBeNull()
+    expect(within(region).queryByRole('alert')).toBeNull()
+  })
+
+  it('moves focus to the reload when the owner reloads refused preferences on an earlier build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let refused = false
+    http.getSettings = vi.fn(async () => {
+      if (refused) throw new BuildMismatchError()
+      return view()
+    })
+    http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+      refused = true
+      throw new ApiError(409, 'stale')
+    })
+    renderRoute('/policy?section=curation', http)
+    const region = await screen.findByRole('region', { name: 'Description advice' })
+    await editMarketing(region)
+    await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
+    await user.click(
+      await within(region).findByRole('button', { name: 'Reload description preferences' }),
+    )
+    const reload = await within(region).findByRole('button', { name: reloadName })
+    staleLead(region, 'Saved preferences were not loaded. This tab is running an earlier build.')
+    await waitFor(() => expect(reload).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  })
+})
