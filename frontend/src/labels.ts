@@ -16,7 +16,7 @@ import type {
   ReviewerFailureCode,
   ReviewerState,
   ScanState,
-  ShadowDisposition,
+  PreviewDisposition,
   SuspensionReason,
   TargetDestination,
   TransitionOutcome,
@@ -353,7 +353,7 @@ export const writeStateLabels = {
   no_change_required: 'No change required',
 } satisfies Record<DescriptionState, string>
 
-export const shadowDispositionLabels = {
+export const previewDispositionLabels = {
   abstention: 'No automatic choice',
   candidate: 'Automatic choice',
   conflict: 'Conflicting evidence',
@@ -361,7 +361,7 @@ export const shadowDispositionLabels = {
   keep_current: 'Keep current',
   manual: 'Owner review',
   unsupported: 'Unsupported',
-} satisfies Record<ShadowDisposition, string>
+} satisfies Record<PreviewDisposition, string>
 
 export const transitionLabels = {
   admitted: 'Entered review',

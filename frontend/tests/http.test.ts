@@ -17,7 +17,7 @@ import {
   decisionProjection,
   historyCoverItem,
   historyDecisionItem,
-  historyShadowItem,
+  historyPreviewItem,
   library,
   libraryWork,
   policyPreview,
@@ -68,7 +68,7 @@ import type {
   RoutablePath,
   SettingsView,
   SettingsWrite,
-  ShadowPostureView,
+  PreviewPostureView,
   Unrouted,
 } from '../src/api/http'
 import type { components } from '../src/generated/review-api'
@@ -1581,7 +1581,7 @@ describe('ReviewApiClient', () => {
       await expect(readHistory(invalid)).rejects.toThrow(ApiError)
     // Every closed history code is refused by name outside its set (#1286 C6).
     const [human, automatic, transition] = items
-    const preview = historyShadowItem({ occurred_at: 4, dispositions: { abstention: 1 } })
+    const preview = historyPreviewItem({ occurred_at: 4, dispositions: { abstention: 1 } })
     expect((await readHistory({ ...payload, items: [preview] })).items[0]).toMatchObject({
       category: 'preview',
       dispositions: [{ count: 1, outcome: 'abstention' }],
@@ -4369,13 +4369,13 @@ describe('central response decoding (#1685)', () => {
     ],
     [
       'GET /api/v1/metadata-policy/preview-mode',
-      (client: ReviewApiClient) => client.getShadowPosture(),
+      (client: ReviewApiClient) => client.getPreviewPosture(),
       { schema_version: 'preview-posture-v1' },
       '/authority',
     ],
     [
       'GET /api/v1/metadata-policy/preview-mode/outcomes',
-      (client: ReviewApiClient) => client.getShadowSample(),
+      (client: ReviewApiClient) => client.getPreviewSample(),
       { schema_version: 'preview-outcome-sample-v1' },
       '/authority',
     ],
@@ -5432,10 +5432,10 @@ describe('policy command types (#1729)', () => {
         'automatic-safety/pause' | 'automatic-safety/recover' | 'automatic-safety/suspend'
       >
     >().toEqualTypeOf<AutomaticSafetyView>()
-    expectTypeOf<PolicyCommandAnswer<'preview-mode/enter'>>().toEqualTypeOf<ShadowPostureView>()
+    expectTypeOf<PolicyCommandAnswer<'preview-mode/enter'>>().toEqualTypeOf<PreviewPostureView>()
     expectTypeOf<
       PolicyCommandAnswer<'preview-mode/confirm-automatic'>
-    >().toEqualTypeOf<ShadowPostureView>()
+    >().toEqualTypeOf<PreviewPostureView>()
     expectTypeOf<
       PolicyCommandAnswer<'transitions/transition-1/acknowledge'>
     >().toEqualTypeOf<PolicyTransitionView>()
@@ -5444,7 +5444,7 @@ describe('policy command types (#1729)', () => {
     >().toEqualTypeOf<PolicyTransitionView>()
     // A union of paths answers the union of their answers.
     expectTypeOf<PolicyCommandAnswer<'validate' | 'preview-mode/enter'>>().toEqualTypeOf<
-      PolicyStateView | ShadowPostureView
+      PolicyStateView | PreviewPostureView
     >()
   })
 

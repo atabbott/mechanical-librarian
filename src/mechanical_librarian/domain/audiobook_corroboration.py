@@ -32,7 +32,6 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ALTERNATIVE_ADMISSION_BASES,
-    ASSERTED_ASIN_BASES,
     AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
@@ -68,6 +67,7 @@ from mechanical_librarian.domain.metadata_report import (
     companion_work_payload,
     discovery_lane_identity,
     duration_milliseconds,
+    local_identifier_asins,
     plan_alternative_discovery_title,
     provider_candidate_exact_work_identity_admission,
     provider_candidate_identity_title_claims,
@@ -1096,24 +1096,6 @@ def candidate_recording_runtime_veto(
     )
 
 
-def _local_identifier_asins(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
-    """Return the canonical ASINs the item's own surfaces carry.
-
-    A target assertion is deliberately not one of them, and neither is an
-    admission carried from an earlier preparation (#1316). The tag, the
-    sidecar, and the path were read off the recording; the other two were
-    stated about it, and ADR-0061 keeps those apart everywhere identity is at
-    stake.
-    """
-    return frozenset(
-        value
-        for claim in local_claims
-        if claim.kind is ClaimKind.ASIN
-        and claim.basis not in ASSERTED_ASIN_BASES
-        and (value := canonical_asin(claim.canonical)) is not None
-    )
-
-
 def _unambiguous_candidate_asin(candidate: ProviderCandidate) -> str | None:
     """A chapter source must identify one valid recording without alias conflict."""
     identifiers = tuple(
@@ -1235,7 +1217,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
         raise CorroborationValueError("provider observation is invalid")
     if _stated_runtime_admitted(report) or report.audio is None:
         return None
-    if len(_local_identifier_asins(report.local_claims)) > 1:
+    if len(local_identifier_asins(report.local_claims)) > 1:
         return None
     audio = report.audio
     if not audio.chapters:
@@ -1324,7 +1306,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 retained = bool(observation.input_references) and (
                     observation.query_kind is ProviderQueryKind.WORK
                     or observation.query_kind is ProviderQueryKind.ASIN
-                    and _local_identifier_asins(
+                    and local_identifier_asins(
                         tuple(
                             claim
                             for claim in report.local_claims
@@ -2218,7 +2200,7 @@ def admitted_recording_asin(report: MetadataReport) -> str | None:
     """
     if type(report) is not MetadataReport:
         raise CorroborationValueError("provider observation is invalid")
-    if report.audio is None or _local_identifier_asins(report.local_claims):
+    if report.audio is None or local_identifier_asins(report.local_claims):
         return None
     admitted_candidates = _admitted_candidates(report)
     asin = _carried_or_admitted_asin(report, admitted_candidates)
@@ -2387,7 +2369,7 @@ def asin_lane_admission_basis_replays(
     if value == TARGET_ADMISSION_BASIS:
         corroboration = recording_corroboration(target.fields)
         return (
-            queried in _local_identifier_asins(local_claims)
+            queried in local_identifier_asins(local_claims)
             or work_admitted
             or _chapter_candidate_support(
                 candidate,

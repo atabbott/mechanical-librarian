@@ -110,7 +110,7 @@ describe('Application shell', () => {
     })
     await waitFor(() => expect(librarySignal?.aborted).toBe(true))
     expect(http.getPolicyState).toHaveBeenCalled()
-    expect(http.getShadowPosture).toHaveBeenCalled()
+    expect(http.getPreviewPosture).toHaveBeenCalled()
     expect(http.getAutomaticSafety).toHaveBeenCalled()
   })
 

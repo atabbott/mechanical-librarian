@@ -31,7 +31,7 @@ import {
   decisionAcknowledgement,
   historyCoverItem,
   historyDecisionItem,
-  historyShadowItem,
+  historyPreviewItem,
   library,
   libraryWork,
   policyPreview,
@@ -737,7 +737,7 @@ builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
   caseHistory({
     items: [
       { checkpoint: 1, kind: 'admitted', reason: 'actionable', transition_id: 'transition-1' },
-      historyShadowItem({ dispositions: { candidate: 1 } }),
+      historyPreviewItem({ dispositions: { candidate: 1 } }),
       historyDecisionItem({
         destination: 'authors',
         previous_value: { kind: 'text', value: 'Old' },
@@ -1204,8 +1204,8 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/activity/consent-state': (c) => client(c).getActivityConsent(),
   'GET /api/v1/activity/permission-readiness': (c) => client(c).getActivityPermissionReadiness(),
   'GET /api/v1/metadata-policy/state': (c) => client(c).getPolicyState(),
-  'GET /api/v1/metadata-policy/preview-mode': (c) => client(c).getShadowPosture(),
-  'GET /api/v1/metadata-policy/preview-mode/outcomes': (c) => client(c).getShadowSample(),
+  'GET /api/v1/metadata-policy/preview-mode': (c) => client(c).getPreviewPosture(),
+  'GET /api/v1/metadata-policy/preview-mode/outcomes': (c) => client(c).getPreviewSample(),
   'GET /api/v1/metadata-policy/transition': (c) => client(c).getPolicyTransition(),
   'GET /api/v1/metadata-policy/automatic-safety': (c) => client(c).getAutomaticSafety(),
   'POST /api/v1/metadata-policy/activate': (c) =>

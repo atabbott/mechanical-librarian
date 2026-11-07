@@ -18,8 +18,8 @@ import type {
   PolicyStateView,
   PreparationView,
   ReviewHttp,
-  ShadowPostureView,
-  ShadowSampleView,
+  PreviewPostureView,
+  PreviewSampleView,
 } from '../src/api/http'
 import { mapActivity, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
 import { responseDecoders } from '../src/generated/review-decoders'
@@ -400,7 +400,7 @@ export const createHttp = (): ReviewHttp => ({
     rich_qualification: [],
     audiobook_qualification: inertAudiobookQualification,
   })),
-  getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+  getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
     schema_version: 'preview-posture-v1',
     posture: 'review',
     authority: 'none',
@@ -411,7 +411,7 @@ export const createHttp = (): ReviewHttp => ({
     global_suspension: null,
     category_suspensions: {},
   })),
-  getShadowSample: vi.fn(async (): Promise<ShadowSampleView> => ({
+  getPreviewSample: vi.fn(async (): Promise<PreviewSampleView> => ({
     schema_version: 'preview-outcome-sample-v1',
     authority: 'none',
     items: [],

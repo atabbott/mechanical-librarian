@@ -3929,6 +3929,69 @@ def companion_stated_isbn(companion: CompanionEbook | None) -> str | None:
     )
 
 
+# One audiobook plan asks at most this many provider queries; a plan that
+# would ask more carries no lane at all.
+MAX_PROVIDER_DISCOVERY_QUERIES = 9
+# An audiobook carries far fewer identifier surfaces than an EPUB does, and
+# each distinct ASIN costs one product lookup per marketplace tried, so the
+# ASIN fan-out is bounded tighter than the ISBN one.
+MAX_ASIN_DISCOVERY_LANES = 4
+
+
+def local_identifier_asins(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
+    """Return the canonical ASINs the item's own surfaces carry.
+
+    A target assertion is deliberately not one of them, and neither is an
+    admission carried from an earlier preparation (#1316). The tag, the
+    sidecar, and the path were read off the recording; the other two were
+    stated about it, and ADR-0061 keeps those apart everywhere identity is at
+    stake.
+    """
+    return frozenset(
+        value
+        for claim in local_claims
+        if claim.kind is ClaimKind.ASIN
+        and claim.basis not in ASSERTED_ASIN_BASES
+        and (value := canonical_asin(claim.canonical)) is not None
+    )
+
+
+def planned_companion_isbn_lane(
+    fields: tuple[TargetField, ...],
+    local_claims: tuple[LocalClaim, ...],
+    discovery_titles: tuple[AudioDiscoveryTitle, ...],
+    companion: CompanionEbook | None,
+) -> CompanionIsbnLanePayload | None:
+    """Return the companion ISBN lane an audiobook plan carries, or `None`.
+
+    The one budget rule the plan applies and a report replays (#1724). The
+    lane is added beside the recording's own lanes only where the query
+    budget still has room after them: one lookup per local identifier ASIN,
+    or else the plan's WORK ladders with the asserted lane's leading-number
+    rung. A plan whose ASINs overflow carries no lane at all.
+    """
+    lane = companion_isbn_lane(companion)
+    if lane is None:
+        return None
+    asins = local_identifier_asins(local_claims)
+    if len(asins) > MAX_ASIN_DISCOVERY_LANES:
+        return None
+    base = len(asins) or sum(
+        len(
+            work_query_ladder(
+                payload.title,
+                payload.authors,
+                audiobook=True,
+                leading_number=payload.title_basis is None,
+            )
+        )
+        for payload in work_discovery_lane_payloads(
+            fields, local_claims, discovery_titles, companion
+        )
+    )
+    return lane if base + 1 <= MAX_PROVIDER_DISCOVERY_QUERIES else None
+
+
 def companion_isbn_claims(
     companion: CompanionEbook | None,
 ) -> tuple[LocalClaim, ...]:
@@ -4851,16 +4914,27 @@ class MetadataReport:
         """Replay what an audiobook's companion EPUB contributed (#1468).
 
         Its ISBN lane is the one the companion plans, at Hardcover alone, and
-        keeps only the books the companion rule keeps. A companion claim
-        stands behind no other ISBN lane; the WORK lanes it asks are replayed
-        with the plan's other WORK lanes.
+        keeps only the books the companion rule keeps. Where the plan's budget
+        had room for it, every Hardcover observation carries it, whatever its
+        status (#1724); where it had none, no observation may. A companion
+        claim stands behind no other ISBN lane; the WORK lanes it asks are
+        replayed with the plan's other WORK lanes.
         """
         companion_references = (
             set()
             if self.companion is None
             else {claim.reference for claim in self.companion.claims}
         )
-        planned = companion_isbn_lane(self.companion) if is_audio else None
+        planned = (
+            planned_companion_isbn_lane(
+                self.target.fields,
+                self.local_claims,
+                self.audio.discovery_titles,
+                self.companion,
+            )
+            if is_audio and self.audio is not None
+            else None
+        )
         title_values = {field.destination: field.value for field in self.target.fields}
         authors_value = title_values.get(TargetDestination.AUTHORS)
         authors = (
@@ -4906,6 +4980,14 @@ class MetadataReport:
                     != kept
                 ):
                     raise ReportValueError("provider companion books are invalid")
+            if (
+                planned is not None
+                and provider.authority in COMPANION_ISBN_AUTHORITIES
+                and not any(
+                    lane.identity == planned.identity for lane in provider.lanes
+                )
+            ):
+                raise ReportValueError("provider companion lane is missing")
 
     def __post_init__(self) -> None:
         if (
@@ -8384,6 +8466,10 @@ __all__ = [
     "companion_stated_isbn",
     "companion_isbn_lane",
     "companion_title_reference",
+    "local_identifier_asins",
+    "MAX_ASIN_DISCOVERY_LANES",
+    "MAX_PROVIDER_DISCOVERY_QUERIES",
+    "planned_companion_isbn_lane",
 ]
 
 

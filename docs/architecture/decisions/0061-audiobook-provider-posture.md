@@ -261,6 +261,17 @@ to `identifier_suppresses_discovery` and needs its own decision. None of it is a
 claim or a proposed value. This is `metadata-report-v69`, a clean rebuild
 under ADR-0013.
 
+**Clause 9 amendment (#1724).** Replay requires the companion ISBN lane
+wherever the plan carried it: every Hardcover observation in a report whose
+plan had budget room for the lane carries it, whatever its status, lane-less
+observations included, and no observation carries it where the plan had no
+room (a local ASIN overflow or an exhausted budget). One domain rule,
+`planned_companion_isbn_lane`, decides room for both the plan and replay, so
+they cannot drift. This is a stricter replay of `metadata-report-v69`, not a
+new schema, and needs no clean rebuild: the lane and v69 landed together, and
+every v69 producer (the adapter, a fault, a disabled binding and a retry
+merge) records it.
+
 ## Ebook dispatch set (#1486)
 
 Ebook preparation dispatches only to the connected providers named in
