@@ -39,9 +39,11 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetFacts,
+    _companion_from_data,
     _cover_source_from_data,
     _provider_lane_dispatch_from_data,
     _request_accounting,
+    companion_isbn_lane,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -196,6 +198,9 @@ class ProviderLaneFacts:
     # Work-identity admission refused every product the lane found, which an
     # ebook lane states by its diagnostics alone (#1499).
     identity_refused: bool = False
+    # The ISBN lane an audiobook's companion EPUB planned (#1468), so Sources
+    # can say where the ISBN came from (#1723).
+    companion_isbn: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +242,8 @@ class CaseBrowseFacts:
 
 def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]:
     """State a parsed report's provider lanes in the browse vocabulary."""
+    companion = companion_isbn_lane(report.companion)
+    companion_identity = None if companion is None else companion.identity
     return tuple(
         ProviderLaneFacts(
             provider.authority,
@@ -251,14 +258,23 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
                 value.category is FailureCategory.WORK_IDENTITY_REFUSED
                 for value in diagnostics
             ),
+            identity is not None and identity == companion_identity,
         )
         for provider in report.providers
-        for kind, status, dispatch, diagnostics in (
+        for kind, status, dispatch, diagnostics, identity in (
             tuple(
-                (lane.kind, lane.status, lane.dispatch, lane.diagnostics)
+                (lane.kind, lane.status, lane.dispatch, lane.diagnostics, lane.identity)
                 for lane in provider.lanes
             )
-            or ((provider.query_kind, provider.status, None, provider.diagnostics),)
+            or (
+                (
+                    provider.query_kind,
+                    provider.status,
+                    None,
+                    provider.diagnostics,
+                    None,
+                ),
+            )
         )
     )
 
@@ -303,6 +319,8 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
             or type(providers) is not list
         ):
             raise ValueError
+        companion = companion_isbn_lane(_companion_from_data(report["companion"]))
+        companion_identity = None if companion is None else companion.identity
         lanes: list[ProviderLaneFacts] = []
         for provider in providers:
             authority = provider["authority"]
@@ -327,11 +345,14 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     _names_category(
                         lane["diagnostics"], FailureCategory.WORK_IDENTITY_REFUSED
                     ),
+                    companion_identity is not None
+                    and lane["identity"] == companion_identity,
                 )
                 for lane in provider["lanes"]
             ]
             if any(
-                lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _, _, _, _ in pairs
+                lane_kind not in PROVIDER_LANE_KINDS
+                for lane_kind, _, _, _, _, _ in pairs
             ):
                 raise ValueError
             lanes.extend(
@@ -343,14 +364,16 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     dispatch,
                     fault,
                     refused,
+                    companion_lane,
                 )
-                for value, state, dispatch, fault, refused in pairs
+                for value, state, dispatch, fault, refused, companion_lane in pairs
                 or [
                     (
                         kind,
                         status,
                         None,
                         _adapter_faulted(provider["diagnostics"]),
+                        False,
                         False,
                     )
                 ]

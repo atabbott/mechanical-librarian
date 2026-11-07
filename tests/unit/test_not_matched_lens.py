@@ -610,7 +610,7 @@ def test_the_served_lens_agrees_with_the_store_double(
     served = web.client.get("/api/v1/library?lens=not_matched")
     assert served.status_code == 200, served.text
     body = served.json()
-    assert body["schema_version"] == "review-library-v4"
+    assert body["schema_version"] == "review-library-v5"
     assert body["lens"] == "not_matched"
     assert body["counts"]["not_matched"] == 3
     assert {item["item"]: item["summary"]["state"] for item in body["items"]} == {

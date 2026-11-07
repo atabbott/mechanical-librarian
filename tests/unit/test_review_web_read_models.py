@@ -1613,7 +1613,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         ],
     }
     report = SimpleNamespace(
-        audio=None, local_claims=(), providers=(), to_data=lambda: data
+        audio=None, companion=None, local_claims=(), providers=(), to_data=lambda: data
     )
     cases = InspectCurrentReviewCase(Mock())
     with patch.object(cases, "_read", return_value=(detail, report, ())):
@@ -1663,7 +1663,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         )
 
     assert first["next_cursor"] == reopened["next_cursor"]
-    assert first["schema_version"] == "review-case-evidence-v4"
+    assert first["schema_version"] == "review-case-evidence-v5"
     assert first["missing_lineage_count"] == 0
     assert first["source_ledger"] == []
     assert partial["missing_lineage_count"] == 1
@@ -2534,7 +2534,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v5"
+    assert body["schema_version"] == "review-report-detail-v6"
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",
@@ -2605,7 +2605,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["schema_version"] == "review-report-detail-v5"
+    assert body["schema_version"] == "review-report-detail-v6"
     assert len(body["media_health"]) == 1
     stated = body["media_health"][0]
     assert stated["kind"] == "runtime_short_of_provider"
@@ -3170,7 +3170,7 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
     basis = response.json()["recording_identity_basis"]
     assert (basis is None) is omitted
     assert _report_detail(report.to_data(), report)["recording_identity_basis"] == basis
-    assert response.json()["schema_version"] == "review-case-detail-v6"
+    assert response.json()["schema_version"] == "review-case-detail-v7"
     if basis is not None:
         assert basis == {
             "basis": "chapter_runtime_and_structure",
@@ -3182,6 +3182,112 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
         )
         assert basis["candidate"] in {c.identity for c in observation.candidates}
         assert not any(f["automatic_decision"] for f in response.json()["fields"])
+
+
+def test_an_alternative_admission_is_attributed_in_case_and_report(web) -> None:
+    """How the matched recording was found reaches both details (#1723)."""
+    from mechanical_librarian.application.review_web import _report_detail
+    from mechanical_librarian.interfaces.web.app import (
+        _CaseDetailResponse,
+        _ReportDetailResponse,
+    )
+    from tests.unit.test_recording_admission_basis import _companion_report
+
+    report = _companion_report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            _CloseRecordingRepository(case, report),
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+        ),
+        base_url="https://review.test",
+    )
+    web.login()
+    response = web.client.get(f"/api/v1/review-cases/{case.review_case_id}")
+    assert response.status_code == 200
+    body = response.json()
+    expected = {
+        "basis": "companion_isbn_work",
+        "searched": {"title": None, "authors": None, "isbn": "9780306406157"},
+        "provider": "enrichment",
+        "candidate": "enrichment-B0LINKED01",
+    }
+    assert body["schema_version"] == "review-case-detail-v7"
+    assert body["recording_admission_basis"] == expected
+    assert body["recording_identity_basis"] is None
+    assert body["audiobook_review_scope"] == "recording"
+    detail = _report_detail(report.to_data(), report)
+    assert detail["recording_admission_basis"] == expected
+    assert detail["schema_version"] == "review-report-detail-v6"
+
+    # The scope validators refuse a basis the scope cannot carry, and the two
+    # notes together.
+    chapter = {
+        "basis": "chapter_runtime_and_structure",
+        "provider": "enrichment",
+        "candidate": "enrichment-B0LINKED01",
+    }
+    _CaseDetailResponse.model_validate(body)
+    for changed in (
+        {"audiobook_review_scope": "work"},
+        {"audiobook_review_scope": None},
+        {"recording_identity_basis": chapter},
+    ):
+        with pytest.raises(ValidationError):
+            _CaseDetailResponse.model_validate({**body, **changed})
+    report_body = web.client.get(
+        "/api/v1/library/report?connection=primary&library=audio&item=item-1"
+    ).json()
+    assert report_body["schema_version"] == "review-report-detail-v6"
+    assert report_body["recording_admission_basis"] == expected
+    _ReportDetailResponse.model_validate(report_body)
+    for changed in (
+        {"audiobook_review_scope": "work"},
+        {"recording_identity_basis": chapter},
+    ):
+        with pytest.raises(ValidationError):
+            _ReportDetailResponse.model_validate({**report_body, **changed})
+
+
+@pytest.mark.parametrize(
+    "searched",
+    (
+        {"title": None, "authors": None, "isbn": None},
+        {"title": "Dune", "authors": None, "isbn": "9780306406157"},
+        {"title": None, "authors": ["Ada Author"], "isbn": "9780306406157"},
+        {"title": "Dune", "authors": [], "isbn": None},
+        {"title": None, "authors": None, "isbn": "978-0306406157"},
+        {"title": None, "authors": None, "isbn": "080442957x"},
+    ),
+)
+def test_recording_admission_search_shape_is_closed(searched) -> None:
+    from mechanical_librarian.interfaces.web.app import _RecordingAdmissionBasis
+
+    value = {"basis": "path_leaf", "provider": "audible", "candidate": "product-1"}
+    _RecordingAdmissionBasis.model_validate(
+        {**value, "searched": {"title": "Dune", "authors": None, "isbn": None}}
+    )
+    _RecordingAdmissionBasis.model_validate(
+        {
+            **value,
+            "basis": "companion_isbn_work",
+            "searched": {"title": None, "authors": None, "isbn": "080442957X"},
+        }
+    )
+    with pytest.raises(ValidationError):
+        _RecordingAdmissionBasis.model_validate({**value, "searched": searched})
+    with pytest.raises(ValidationError):
+        _RecordingAdmissionBasis.model_validate(
+            {**value, "basis": "target", "searched": {"title": "Dune"}}
+        )
 
 
 @pytest.mark.parametrize(

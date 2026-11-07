@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Final, cast
+from typing import Final, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
@@ -31,8 +31,13 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     narrator_cast_disjoint,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ALTERNATIVE_ADMISSION_BASES,
+    AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    COMPANION_ISBN_WORK_BASIS,
+    COMPANION_WORK_BASIS,
+    TARGET_ADMISSION_BASIS,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -51,16 +56,24 @@ from mechanical_librarian.domain.metadata_report import (
     RecordingCorroboration,
     RecordingLookupHint,
     TargetDestination,
+    TargetFacts,
     TargetFieldState,
+    alternative_lane_identity,
+    candidate_admission_basis,
     candidate_asins,
     canonical_asin,
     companion_isbn_lane,
+    companion_stated_isbn,
+    companion_work_payload,
     discovery_lane_identity,
     duration_milliseconds,
     local_identifier_asins,
+    plan_alternative_discovery_title,
     provider_candidate_exact_work_identity_admission,
     provider_candidate_identity_title_claims,
+    recording_corroboration,
     recording_variant_conflict,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -1017,6 +1030,11 @@ __all__ = [
     "carried_asin_precedence",
     "target_current_asin",
     "verified_carried_asin",
+    "AdmissionSearched",
+    "RecordingAdmissionBasis",
+    "asin_lane_admission_basis_replays",
+    "lane_queried_asin",
+    "recording_admission_basis",
 ]
 
 
@@ -2294,3 +2312,193 @@ def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]
         and _tight_recording(candidate, report.local_claims)
         and not narrator_cast_disjoint(narrators, _candidate_narrators(candidate))
     )
+
+
+def lane_queried_asin(
+    lane: ProviderLaneObservation, asins: tuple[str, ...]
+) -> str | None:
+    """Name the ASIN one product lane looked up, among the ones offered."""
+    return _queried_asin(lane, asins)
+
+
+def asin_lane_admission_basis_replays(
+    value: str,
+    lane: ProviderLaneObservation,
+    candidate: ProviderCandidate,
+    *,
+    target: TargetFacts,
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None,
+    providers: tuple[ProviderObservation, ...],
+    companion: CompanionEbook | None,
+    library_languages: tuple[str, ...],
+) -> bool:
+    """Whether one ASIN lane's stated route replays from the report (#1723).
+
+    Every route is read against the lane's own queried ASIN. `target` stands
+    when some target route admits: an independent local ASIN, exact
+    admission against the target's title and authors, chapter support, or
+    the corroborated rule on the carried lane, read ignoring the retry flag
+    the report does not keep. An alternative value must be the first of the
+    five alternative routes that replays, on a product the target's own
+    title and authors do not admit.
+    """
+    asins = tuple(
+        sorted(
+            {
+                asin
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.ASIN
+                and claim.state is FieldState.VALID
+                and (asin := canonical_asin(claim.value)) is not None
+            }
+        )
+    )
+    queried = _queried_asin(lane, asins)
+    if queried is None or audio is None:
+        return False
+    work = target_work_identity_context(target)
+    carried = carried_asin_claim(local_claims)
+    carried_lane = carried is not None and carried.canonical == queried
+    work_admitted = (
+        work is not None
+        and provider_candidate_exact_work_identity_admission(
+            candidate, work[0], work[1], audiobook=True
+        ).admitted
+    )
+    if value == TARGET_ADMISSION_BASIS:
+        corroboration = recording_corroboration(target.fields)
+        return (
+            queried in local_identifier_asins(local_claims)
+            or work_admitted
+            or _chapter_candidate_support(
+                candidate,
+                audio,
+                local_claims,
+                None if work is None else work[0],
+                () if work is None else work[1],
+                queried,
+                library_languages,
+            )
+            or (
+                carried_lane
+                and work is not None
+                and corroboration is not None
+                and corroborated_recording_candidate(
+                    (candidate,),
+                    work[0],
+                    work[1],
+                    local_claims,
+                    corroboration,
+                    library_languages,
+                )
+                is not None
+            )
+        )
+    if value not in ALTERNATIVE_ADMISSION_BASES or work_admitted:
+        return False
+    linked = queried in companion_linked_asins(
+        local_claims, audio, providers, companion
+    ) and not candidate_narrator_disjoint(candidate, local_claims)
+    if value == COMPANION_ISBN_WORK_BASIS or linked:
+        return value == COMPANION_ISBN_WORK_BASIS and linked
+    identity = alternative_lane_identity(
+        plan_alternative_discovery_title(
+            target.fields, audio.discovery_titles, companion
+        ),
+        work,
+        companion,
+    )
+    if identity is None:
+        return False
+    title, authors, basis = identity
+    return (
+        basis == value
+        and (basis not in AUDIO_DISCOVERY_TITLE_BASES or carried_lane)
+        and provider_candidate_exact_work_identity_admission(
+            candidate, title, authors, audiobook=True
+        ).admitted
+    )
+
+
+class AdmissionSearched(TypedDict):
+    """What an alternative route searched with, as the owner is shown it."""
+
+    title: str | None
+    authors: list[str] | None
+    isbn: str | None
+
+
+class RecordingAdmissionBasis(TypedDict):
+    """How the matched recording was found when its title differs (#1723)."""
+
+    basis: str
+    searched: AdmissionSearched
+    provider: str
+    candidate: str
+
+
+def recording_admission_basis(
+    report: MetadataReport,
+) -> RecordingAdmissionBasis | None:
+    """Say which alternative route found the runtime-admitted recording (#1723).
+
+    It reads only where a stated runtime admitted a recording: the admitted
+    products, less those the carried edition's precedence withholds. When any
+    of them was kept on the target's own identity, the provider title is the
+    one the owner already sees and nothing is said. Otherwise the first route
+    in the total order is named, with what it searched and the first product
+    in report order that it found.
+    """
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    if report.audio is None or not _stated_runtime_admitted(report):
+        return None
+    withheld = carried_asin_precedence(report)
+    selected = tuple(
+        (observation, candidate, candidate_admission_basis(observation, candidate))
+        for observation, candidate in _admitted_candidates(report)
+        if (observation.provider, candidate.identity) not in withheld
+    )
+    if not selected or any(
+        basis is None or basis == TARGET_ADMISSION_BASIS for _, _, basis in selected
+    ):
+        return None
+    winning = next(
+        value
+        for value in ALTERNATIVE_ADMISSION_BASES
+        if any(basis == value for _, _, basis in selected)
+    )
+    observation, candidate = next(
+        (observation, candidate)
+        for observation, candidate, basis in selected
+        if basis == winning
+    )
+    searched: AdmissionSearched
+    if winning == COMPANION_ISBN_WORK_BASIS:
+        isbn = companion_stated_isbn(report.companion)
+        if isbn is None:
+            return None
+        searched = {"title": None, "authors": None, "isbn": isbn}
+    elif winning == COMPANION_WORK_BASIS:
+        payload = companion_work_payload(report.companion)
+        if payload is None:
+            return None
+        searched = {
+            "title": payload.title,
+            "authors": list(payload.authors),
+            "isbn": None,
+        }
+    else:
+        first = plan_alternative_discovery_title(
+            report.target.fields, report.audio.discovery_titles, report.companion
+        )
+        if first is None or first.basis != winning:
+            return None
+        searched = {"title": first.title, "authors": None, "isbn": None}
+    return {
+        "basis": winning,
+        "searched": searched,
+        "provider": observation.provider,
+        "candidate": candidate.identity,
+    }

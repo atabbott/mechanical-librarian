@@ -97,6 +97,7 @@ export const library: LibraryView = {
 
 export const detail: CaseDetailView = {
   recordingIdentityBasis: null,
+  recordingAdmissionBasis: null,
   audiobookReviewScope: null,
   id: 'case-1',
   current: true,
