@@ -29,6 +29,7 @@ from tests.unit.test_admission_rule_ledger import (
     Sentinels,
     _arguments,
     _database,
+    _no_series,
     _run,
     _strings,
     _test_vocabulary,
@@ -675,6 +676,7 @@ def _breakdown_run(tmp_path: Path, *extra: str) -> tuple[int, str, str]:
         stderr=stderr,
         ancestry=lambda _commit, _revision: True,
         attention=lambda _root, _db: ledger.AttentionProbe((), 0, 0, SCALAR, True),
+        series_replay=_no_series,
         decision_replay=_replay(text, database, identities),
     )
     return code, stdout.getvalue(), stderr.getvalue()

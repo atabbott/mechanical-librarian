@@ -2433,13 +2433,10 @@ it('offers a reload, not another try, when settings meet a newer build', async (
   })
   renderRoute('/settings', http)
 
-  expect(await screen.findByRole('heading', { name: 'Settings were not loaded.' })).toBeVisible()
-  expect(
-    screen.getByText(
-      'This tab is running an earlier build. Reload to open it in the current application.',
-    ),
-  ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Settings were not loaded' })).toBeVisible()
+  // The shell notice states the build mismatch; the page does not repeat it.
+  expect(screen.queryByText(/Mechanical Librarian was updated/u)).toBeNull()
+  expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
   expect(screen.queryByText('Settings are unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
@@ -2452,13 +2449,8 @@ it('offers a reload, not another try, when reviewer access meets a newer build',
   })
   renderRoute('/settings?group=reviewer', http)
 
-  expect(
-    await screen.findByText(
-      'Reviewer access was not loaded. This tab is running an earlier build. Reload to open it in the current application.',
-      { exact: false },
-    ),
-  ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(await screen.findByText('Reviewer access was not loaded.', { exact: false })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
   expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
@@ -3627,7 +3619,7 @@ describe('settings provider throttling (#1282)', () => {
     renderRoute('/settings', http)
     expect(
       await screen.findByText(
-        'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+        'To retry, raise provider_recovery_generation by one in /data/config.json and restart the service.',
       ),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull()

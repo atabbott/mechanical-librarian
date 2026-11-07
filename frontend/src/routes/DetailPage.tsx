@@ -259,8 +259,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   if (!data.current)
     return (
       <section className="diagnostic-state diagnostic-limitation" data-route-focus tabIndex={-1}>
-        <h1>This diagnostic case is no longer current.</h1>
-        <p>Library remains the authority for the current work and its available diagnostics.</p>
+        <h1>This review case is out of date</h1>
+        <p>Go back to the work to open the current one.</p>
       </section>
     )
   return (

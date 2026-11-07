@@ -63,6 +63,12 @@ type PolicyMutation =
   | { action: 'activate'; body: PolicyActivationRequest }
   | { action: PolicyCommandPath; body?: PolicyCommandBody<PolicyCommandPath> }
 
+// "a, b or c": one comma list, never a chain of "or".
+const plainList = (items: readonly string[], last: 'or' | 'and') =>
+  items.length < 2
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} ${last} ${items.at(-1) ?? ''}`
+
 const Check = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24">
     <path d="m5 12 4 4L19 7" />
@@ -240,12 +246,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           message:
             'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
         })
-      else if (error instanceof AmbiguousMutationError)
-        setStatus({
-          tone: 'warning',
-          message:
-            'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
-        })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })
       else if (error instanceof ApiError && error.status === 422)
@@ -257,7 +257,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'error',
           message:
-            'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+            "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
         })
       else if (phase === 'drafts')
         setStatus({
@@ -268,8 +268,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       else
         setStatus({
           tone: 'error',
-          message:
-            'The complete draft could not be validated. Nothing was saved or activated; try again.',
+          message: "The draft couldn't be validated. Nothing was saved. Try again.",
         })
     }
   }
@@ -412,7 +411,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       ? ('Policy change' as const)
                       : ('No policy change' as const),
                     detail: field.changed
-                      ? `${policyDestinationLabels[field.active_destination]}: ${before.detail} → ${policyDestinationLabels[field.draft_destination]}: ${projected.detail}`
+                      ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail.replace(/[^.]$/u, '$&.')}`
                       : projected.detail,
                     technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
                   },
@@ -452,44 +451,60 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       media === 'ebook' ? data.state.rich_qualification : data.state.audiobook_qualification
     ).filter((entry) => entry.field === field.key && entry.option === option)
     const available = entries.filter((entry) => entry.automatic_available)
-    if (!available.length) return 'No automatic effect — owner review required'
+    // Each value is a sentence with no label of its own, so it reads
+    // plainly after "Ebooks:" and "Automatic." (#1760).
+    if (!available.length) return 'No automatic effect. Needs you.'
     if (media === 'ebook' && field.key === 'cover_order')
       return option === 'replace_if_strictly_better'
-        ? 'Fill empty only — confirmed covers are preserved'
-        : 'Fill empty or replace only with a confirmed strict-rank upgrade'
+        ? 'Fill empty only. Confirmed covers are kept.'
+        : 'Fill empty, or replace only with a confirmed better cover.'
     if (media === 'audiobook' && field.key === 'cover_order')
-      return 'Replace a small incumbent only with a materially larger confirmed cover'
-    if (field.key === 'language_rendering') return operationScopeLabels.fill_or_respell
+      return 'Replace a small current cover only with a clearly larger confirmed one.'
+    if (field.key === 'language_rendering') return `${operationScopeLabels.fill_or_respell}.`
     const grouped = new Map<TargetDestination, string[]>()
     for (const entry of available) {
       if ('operation_scope' in entry)
-        return entry.operation_scope === 'fill'
-          ? 'Fill empty only'
-          : operationScopeLabels[entry.operation_scope]
+        return `${entry.operation_scope === 'fill' ? 'Fill empty only' : operationScopeLabels[entry.operation_scope]}.`
       const operations = grouped.get(entry.destination) ?? []
       operations.push(operationWords[entry.operation])
       grouped.set(entry.destination, operations)
     }
-    const operations = [...grouped]
-      .map(([destination, values]) => `${destinationLabel(destination)}: ${values.join(', ')}`)
-      .join(' · ')
-    return media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
-      ? `${operations} · Narrators: no automatic effect`
-      : operations
+    // One sentence per set of operations, with the fields as its object:
+    // "Fill empty, keep current or replace authors and narrators." A lone
+    // fill reads "Fill tags if empty.", right for one field or many (#1760).
+    const byOperations = new Map<string, { operations: string[]; fields: string[] }>()
+    for (const [destination, operations] of grouped) {
+      const key = operations.join('|')
+      const label = destinationLabel(destination)
+      const field = label === label.toUpperCase() ? label : label.toLowerCase()
+      const group = byOperations.get(key) ?? { operations, fields: [] }
+      group.fields.push(field)
+      byOperations.set(key, group)
+    }
+    const sentences = [...byOperations.values()].map(({ operations, fields }) => {
+      const text =
+        operations.length === 1 && operations[0] === 'fill empty'
+          ? `fill ${plainList(fields, 'and')} if empty`
+          : `${plainList(operations, 'or')} ${plainList(fields, 'and')}`
+      return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`
+    })
+    if (media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical')
+      sentences.push('No automatic effect on narrators.')
+    return sentences.join(' ')
   }
 
   const mediaBehavior = (field: FieldDefinition, option: string, media: 'ebook' | 'audiobook') => {
     const destination =
       draft.destinations[field.key] ?? fieldDefaults[field.key]?.destination ?? 'ask'
     const eligibility = mediaQualification(field, option, media)
-    if (destination === 'automatic') return `Automatic — ${eligibility}`
+    if (destination === 'automatic') return `Automatic. ${eligibility}`
     const selected =
       destination === 'ignore'
-        ? 'Ignored — no metadata action'
+        ? 'Ignored. This field is left alone.'
         : destination === 'ask'
-          ? 'Ask me — owner choice required'
-          : 'Unavailable — no metadata action'
-    return `${selected}. Automatic eligibility if selected: ${eligibility}`
+          ? 'Ask me. Your choice.'
+          : 'Unavailable. This field is left alone.'
+    return `${selected} If set to Automatic: ${eligibility}`
   }
 
   const impactTotals = useMemo(
@@ -644,19 +659,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Review the unchanged preview before making this draft active.'
         : stage === 'preview'
-          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved; activate to keep it — reloading starts from the active policy.`
+          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved. Activate to keep it. Reloading starts from the active policy.`
           : stage === 'validating'
             ? 'Checking every chapter, where Automatic may decide, and which libraries the policy covers.'
             : draftDisplay.changed
               ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.`
-              : 'Change any field to create a new draft — validation always covers the whole policy.'
+              : 'Change any field to create a new draft.'
 
   return (
     <div className="cm-policy-route" data-route-focus tabIndex={-1}>
       <header className="cm-page-heading">
         <div>
           <h1>Library policy</h1>
-          <p>Choose how metadata is stored and when you want to review it.</p>
         </div>
       </header>
       <div className="cm-policy-editor" ref={editorRef}>
@@ -742,10 +756,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                             .map((entry) => (
                               <li key={entry.identity} data-qualification-identity={entry.identity}>
                                 {destinationLabel(entry.destination)}:{' '}
-                                {audiobookOperationLabels[entry.operation]} —{' '}
+                                {audiobookOperationLabels[entry.operation]}.{' '}
                                 {entry.automatic_available
-                                  ? 'Automatic available'
-                                  : 'Review required'}
+                                  ? 'Automatic available.'
+                                  : 'Review required.'}
                               </li>
                             ))}
                         </ul>
@@ -1038,9 +1052,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <ul>
                   {changedFields.map((field) => (
                     <li key={field.key}>
-                      <strong>{field.label}:</strong> Ebook libraries —{' '}
-                      {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}; Audiobook
-                      libraries —{' '}
+                      <strong>{field.label}</strong>
+                      <br />
+                      Ebooks: {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}
+                      <br />
+                      Audiobooks:{' '}
                       {mediaBehavior(field, draft.options[field.key] ?? '', 'audiobook')}
                     </li>
                   ))}
