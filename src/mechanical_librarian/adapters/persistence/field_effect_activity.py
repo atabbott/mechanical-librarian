@@ -3149,7 +3149,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 planned.append(event_id)
         try:
             return self._activity_page_notes_once(decisions, planned)
-        except sqlite3.OperationalError as error:
+        except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
     def _activity_page_notes_once(
