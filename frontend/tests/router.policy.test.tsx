@@ -2887,6 +2887,54 @@ describe('Policy keyboard focus (#1288)', () => {
     expect(validate).toHaveTextContent('Validate and preview')
   })
 
+  // The API gives a transition id no pattern, so the page encodes it as every
+  // other path hole is encoded; a raw `/` or `?` would name another route.
+  it('encodes the transition id in its retry and dismiss paths', async () => {
+    const user = userEvent.setup()
+    const transition = {
+      schema_version: 'metadata-policy-transition-v1' as const,
+      transition_id: 'policy/transition?2',
+      from_policy_id: 'policy-a',
+      to_policy_id: 'policy-b',
+      generation: 2,
+      state: 'completed_with_failures',
+      completed: 9,
+      total: 11,
+      failed: 2,
+      acknowledged: false,
+      origin: 'activation',
+    }
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(transition))
+    const transport = new ReviewApiClient({
+      buildIdentity: 'a'.repeat(64),
+      csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+      fetch: fetchMock,
+    })
+    const policyCommand = vi.fn(async (path: string) => sendThrough(transport, path))
+    renderRoute('/policy', {
+      ...createHttp(),
+      getPolicyTransition: vi.fn(async () => transition as never),
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+    })
+    await user.click(await screen.findByRole('button', { name: 'Retry failed reconciliation' }))
+    await waitFor(() => expect(policyCommand).toHaveBeenCalledOnce())
+    await user.click(await screen.findByRole('button', { name: 'Dismiss update' }))
+    await waitFor(() => expect(policyCommand).toHaveBeenCalledTimes(2))
+    expect(policyCommand.mock.calls.map(([path]) => path)).toEqual([
+      'transitions/policy%2Ftransition%3F2/retry',
+      'transitions/policy%2Ftransition%3F2/acknowledge',
+    ])
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/metadata-policy/transitions/policy%2Ftransition%3F2/retry',
+      '/api/v1/metadata-policy/transitions/policy%2Ftransition%3F2/acknowledge',
+    ])
+    // Both answers decode as the transition, so neither write is uncertain.
+    expect(
+      await screen.findByText('Policy state updated from the authoritative server.'),
+    ).toBeVisible()
+    expect(screen.queryByText(/could not be confirmed/u)).toBeNull()
+  })
+
   it('keeps focus through a reconciliation retry, then moves it to the transition notice', async () => {
     const user = userEvent.setup()
     let release: () => void = () => undefined

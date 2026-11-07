@@ -1217,7 +1217,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 aria-disabled={command.isPending || undefined}
                 onClick={() => {
                   if (!command.isPending)
-                    void runAuxiliary(`transitions/${activationNotice.transition_id}/retry`)
+                    void runAuxiliary(
+                      `transitions/${encodeURIComponent(activationNotice.transition_id)}/retry`,
+                    )
                 }}
               >
                 Retry failed reconciliation
@@ -1227,7 +1229,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               <button
                 disabled={command.isPending}
                 onClick={() =>
-                  void runAuxiliary(`transitions/${activationNotice.transition_id}/acknowledge`)
+                  void runAuxiliary(
+                    `transitions/${encodeURIComponent(activationNotice.transition_id)}/acknowledge`,
+                  )
                 }
               >
                 Dismiss update
