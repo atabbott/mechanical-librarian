@@ -1,4 +1,4 @@
-import type { ActivityCategory } from './api/http'
+import type { ActivityCategory, ActivityEventView } from './api/http'
 import { formatDay } from './dates'
 import { writeStateLabels } from './labels'
 // The words the Activity ledger reads in.
@@ -56,6 +56,19 @@ export const categoryLabel: Record<ActivityCategory, string> = {
   automatic: 'Automatic choice',
   policy: 'Policy change',
   recovery: 'Recovery',
+}
+// What current state adds beside a row's recorded result (#1711). The result
+// stays true history; the note says what the owner needs to know now. The
+// short word fits the result column, and Details carries the sentence.
+export type ActivityNote = NonNullable<ActivityEventView['note']>
+export const noteLabel: Record<ActivityNote, string> = {
+  asked_again: 'Asked again',
+  held_back: 'Held back',
+}
+export const noteSentence: Record<ActivityNote, string> = {
+  asked_again:
+    'Asked again: this choice was made before the book last came back for review, so it no longer counts and the field is asking you again.',
+  held_back: "Held back: Automatic is off, so this won't be written unless you turn it back on.",
 }
 // A ledger day heading; each row under it states only its time.
 export const dayHeading = (value: number | null) =>

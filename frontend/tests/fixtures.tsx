@@ -224,6 +224,7 @@ export const activity = (
         diagnostic: null,
         failure: null,
         library: 'books',
+        note: null,
         occurred_at: 1785742465,
         origin: 'human',
         state: 'verified',

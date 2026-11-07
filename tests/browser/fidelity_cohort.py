@@ -1555,6 +1555,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 if work == "The Glass Orchard"
                 else None,
                 "failure": failure or None,
+                "note": None,
             }
             for index, (
                 work,

@@ -87,6 +87,57 @@ describe('Activity route', () => {
     expect(screen.queryByText('Cover advice failed safely')).toBeNull()
   })
 
+  it('notes beside a row what current state adds to its result (#1711)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({
+        events: [
+          { event_id: 'owner-asked-again', note: 'asked_again', work_label: 'Asked Again Work' },
+          {
+            event_id: 'automatic-held',
+            event_type: 'metadata',
+            category: 'automatic',
+            origin: 'automatic_policy',
+            state: 'planned',
+            note: 'held_back',
+            work_label: 'Held Back Work',
+          },
+          { event_id: 'plain', work_label: 'Plain Work' },
+        ],
+      }),
+    )
+    renderRoute('/activity', http)
+    const row = async (label: string) => {
+      const article = (await screen.findByText(label)).closest('article')
+      if (!article) throw new Error(`Expected the ${label} row`)
+      return article
+    }
+    const asked = await row('Asked Again Work')
+    const held = await row('Held Back Work')
+    const plain = await row('Plain Work')
+    // The recorded result stays; the note sits under it.
+    expect(within(asked).getByText('Asked again')).toBeVisible()
+    expect(within(held).getByText('Held back')).toBeVisible()
+    expect(within(plain).queryByText(/Asked again|Held back/u)).toBeNull()
+    // Details carries the sentence, and the disclosure names the note.
+    await user.click(within(held).getByRole('button', { name: /held back/u }))
+    expect(
+      within(held).getByText(
+        "Held back: Automatic is off, so this won't be written unless you turn it back on.",
+      ),
+    ).toBeVisible()
+    await user.click(within(asked).getByRole('button', { name: /asked again/u }))
+    expect(
+      within(asked).getByText(
+        'Asked again: this choice was made before the book last came back for review, so it no longer counts and the field is asking you again.',
+      ),
+    ).toBeVisible()
+    expect(
+      within(plain).getByRole('button', { name: /^Details for ISBN, Plain Work, / }),
+    ).toBeVisible()
+  })
+
   it('retains authored preparation provenance without offering another choice interface', async () => {
     const user = userEvent.setup()
     const http = createHttp()
