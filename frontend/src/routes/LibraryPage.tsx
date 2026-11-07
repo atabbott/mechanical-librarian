@@ -78,6 +78,7 @@ import {
 import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
 import {
   AsinAutomaticStatement,
@@ -456,13 +457,6 @@ export default function LibraryPage({
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error' | 'refreshed' | 'uncertain'>>
   >({})
-  const staleCoverRecoveryButton = useRef<HTMLButtonElement>(null)
-  const [staleCoverReview, setStaleCoverReview] = useState<{
-    caseId: string
-    title: string
-    failed: boolean
-    loading: boolean
-  } | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -1048,7 +1042,7 @@ export default function LibraryPage({
     },
     onRecorded: (caseId, destination) => {
       if (destination !== 'cover') return
-      setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
+      staleCover.clear(caseId)
     },
     onStale: async (command) => {
       if (ownerOutcome(command.outcome)) {
@@ -1081,70 +1075,25 @@ export default function LibraryPage({
         setSuccessorPending(null)
       }
       if (selected?.destination === 'cover') {
-        setStaleCoverReview({
-          caseId: selectedReviewCaseId,
-          title: selectedIdentityRef.current?.title ?? 'Cover comparison',
-          failed: false,
-          loading: false,
-        })
+        staleCover.open(
+          selectedReviewCaseId,
+          selectedIdentityRef.current?.title ?? 'Cover comparison',
+        )
         return
       }
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
-  const reviewCurrentCoverComparison = async () => {
-    const stale = staleCoverReview
-    if (!stale || stale.loading) return
-    setStaleCoverReview({ ...stale, failed: false, loading: true })
-    try {
-      await controller.settle()
-      const successor = await http.getCaseSuccessor(stale.caseId)
-      const currentCaseId = successor ?? stale.caseId
-      const currentDetail = await http.getCaseDetail(currentCaseId)
-      const currentCover = currentDetail.fields.find(
-        (field) => field.destination === 'cover' && field.coverConsideration !== null,
-      )
-      if (!currentDetail.current || currentCover === undefined) throw new Error('stale cover')
-      if (successor !== null) setReconciledSuccessorIdentity(currentCaseId)
-      await navigate({
-        replace: true,
-        search: (current) =>
-          current.preview === stale.caseId
-            ? { ...current, preview: currentCaseId, field: 'cover' }
-            : current,
-      })
-      setStaleCoverReview(null)
-    } catch {
-      setStaleCoverReview({ ...stale, failed: true, loading: false })
-    }
-  }
-  const staleCoverCaseId = staleCoverReview?.caseId
-  const staleCoverIdentityAvailable = Boolean(displayedIdentity)
-  useEffect(() => {
-    if (!staleCoverCaseId) return
-    const frame = requestAnimationFrame(() => {
-      if (document.activeElement === document.body) staleCoverRecoveryButton.current?.focus()
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [staleCoverCaseId, staleCoverIdentityAvailable])
-  const staleCoverNotice =
-    staleCoverReview?.caseId === selectedReviewCaseId ? (
-      <aside className="comparison-notice" role="alert">
-        {!displayedIdentity || detail.isError ? <h2>{staleCoverReview.title}</h2> : null}
-        <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
-        {staleCoverReview.failed ? (
-          <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>
-        ) : null}
-        <button
-          type="button"
-          ref={staleCoverRecoveryButton}
-          disabled={staleCoverReview.loading}
-          onClick={() => void reviewCurrentCoverComparison()}
-        >
-          {staleCoverReview.loading ? 'Loading current comparison…' : 'Review current comparison'}
-        </button>
-      </aside>
-    ) : null
+  const staleCover = useStaleCoverReview({
+    http,
+    settle: () => controller.settle(),
+    navigate,
+    selectedReviewCaseId,
+    setReconciledSuccessorIdentity,
+    identityShown: Boolean(displayedIdentity),
+    detailFailed: detail.isError,
+  })
+  const staleCoverNotice = staleCover.notice
   const selectedAutomaticKey = selected
     ? `${selectedReviewCaseId}:${selected.destination}:${selected.targetFingerprint}`
     : null
