@@ -346,22 +346,22 @@ only formats.
 A supported first book may share its title with its series. The canvas then
 keeps the title and offers series name and position separately.
 
-When the matched recording was found by a title other than the audiobook's
-own, a note says how, at the top of the Evidence page, in Recorded evidence and
-in Library's Whole-work context. The section is named "How this recording was
-matched", quotes what was searched, and offers the Recording source as the
-chapter note does (#1723):
+When Mechanical Librarian found the matched recording by a title other than
+the audiobook's own, a note says how, at the top of the Evidence page, in
+Recorded evidence and in Library's Whole-work context. The section is named
+"How this recording was matched", quotes what was searched, and offers the
+Recording source as the chapter note does (#1723):
 
-- "The matched recording was found by searching with “…”, read from this
-  folder's name, which differs from this audiobook's title."
-- "The matched recording was found by searching with “…”, read from the title
-  tag in this audiobook's audio file, which differs from this audiobook's
-  title."
-- "The matched recording was found by searching with “…”, the title of the EPUB
-  in this folder, which differs from this audiobook's title."
-- "The matched recording was found by searching with the title and author(s) of
-  the EPUB in this folder, “…” by …, because this audiobook's own title or
-  author is missing or incomplete."
+- "Mechanical Librarian found the matched recording by searching with “…”,
+  read from this folder's name, which differs from this audiobook's title."
+- "Mechanical Librarian found the matched recording by searching with “…”,
+  read from the title tag in this audiobook's audio file, which differs from
+  this audiobook's title."
+- "Mechanical Librarian found the matched recording by searching with “…”, the
+  title of the EPUB in this folder, which differs from this audiobook's title."
+- "Mechanical Librarian found the matched recording by searching with the title
+  and author(s) of the EPUB in this folder, “…” by …, because this audiobook's
+  own title or author is missing or incomplete."
 - "Hardcover lists the matched recording as an audio edition of the book with
   ISBN …, which is stated in the EPUB in this folder."
 

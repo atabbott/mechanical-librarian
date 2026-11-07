@@ -33,6 +33,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
+    TARGET_ADMISSION_BASIS,
     ClaimKind,
     Comparison,
     ComparisonMethod,
@@ -43,6 +44,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     ReportValueError,
     TargetDestination,
+    candidate_admission_basis,
+    edition_marketplace_evidence,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -2932,4 +2935,22 @@ def test_an_ebook_plan_with_only_an_isbn_lane_is_insufficient_input() -> None:
     assert () == observation.input_references
     assert ((claim.reference,),) == tuple(
         lane.input_references for lane in observation.lanes
+    )
+
+
+def test_an_asin_lane_states_how_it_kept_each_marketplace_product() -> None:
+    """The real adapter qualifies its ASIN lane, so every kept product with
+    marketplace evidence carries a value into the report (#1723)."""
+    _seen, handle = _recorder(default=_json(payload("audible_lookup")))
+    observation = _provider(handle).observe(asin_plan()).observation
+
+    kept = tuple(
+        candidate
+        for candidate in observation.candidates
+        if edition_marketplace_evidence(candidate)
+    )
+    assert kept
+    assert all(
+        TARGET_ADMISSION_BASIS == candidate_admission_basis(observation, candidate)
+        for candidate in kept
     )

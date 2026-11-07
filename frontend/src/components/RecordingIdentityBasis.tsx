@@ -29,29 +29,30 @@ function admissionSentence(value: RecordingAdmissionBasisView) {
     case 'path_leaf':
       return (
         <>
-          The matched recording was found by searching with “{title}”, read from this folder’s name,
-          which differs from this audiobook’s title. {runningTime}
+          Mechanical Librarian found the matched recording by searching with “{title}”, read from
+          this folder’s name, which differs from this audiobook’s title. {runningTime}
         </>
       )
     case 'title_tag':
       return (
         <>
-          The matched recording was found by searching with “{title}”, read from the title tag in
-          this audiobook’s audio file, which differs from this audiobook’s title. {runningTime}
+          Mechanical Librarian found the matched recording by searching with “{title}”, read from
+          the title tag in this audiobook’s audio file, which differs from this audiobook’s title.{' '}
+          {runningTime}
         </>
       )
     case 'companion_title':
       return (
         <>
-          The matched recording was found by searching with “{title}”, the title of the EPUB in this
-          folder, which differs from this audiobook’s title. {runningTime}
+          Mechanical Librarian found the matched recording by searching with “{title}”, the title of
+          the EPUB in this folder, which differs from this audiobook’s title. {runningTime}
         </>
       )
     case 'companion_work': {
       const authors = value.searched.authors ?? []
       return (
         <>
-          The matched recording was found by searching with the title and{' '}
+          Mechanical Librarian found the matched recording by searching with the title and{' '}
           {authors.length > 1 ? 'authors' : 'author'} of the EPUB in this folder, “{title}” by{' '}
           <bdi>{new Intl.ListFormat('en', { type: 'conjunction' }).format(authors)}</bdi>, because
           this audiobook’s own title or author is missing or incomplete. {runningTime}

@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_PROVIDER_CHAPTER_DURATIONS,
+    TARGET_ADMISSION_BASIS,
     ClaimKind,
     Comparison,
     ComparisonMethod,
@@ -36,6 +37,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetSeries,
+    candidate_admission_basis,
+    edition_marketplace_evidence,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -1000,3 +1003,21 @@ def test_malformed_recording_title_survives_report_proposal_and_packet() -> None
         for claim in observation.candidates[0].claims
     )
     assert len(restored.providers) == 2
+
+
+def test_an_asin_lane_states_how_it_kept_each_marketplace_product() -> None:
+    """The real adapter qualifies its ASIN lane, so every kept product with
+    marketplace evidence carries a value into the report (#1723)."""
+    _seen, handle = _recorder()
+    observation = _provider(handle).observe(asin_plan()).observation
+
+    kept = tuple(
+        candidate
+        for candidate in observation.candidates
+        if edition_marketplace_evidence(candidate)
+    )
+    assert kept
+    assert all(
+        TARGET_ADMISSION_BASIS == candidate_admission_basis(observation, candidate)
+        for candidate in kept
+    )

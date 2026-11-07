@@ -36,17 +36,17 @@ describe('the admission sentence', () => {
     [
       'path_leaf',
       'Dune',
-      `The matched recording was found by searching with “Dune”, read from this folder’s name, which differs from this audiobook’s title. ${running}`,
+      `Mechanical Librarian found the matched recording by searching with “Dune”, read from this folder’s name, which differs from this audiobook’s title. ${running}`,
     ],
     [
       'title_tag',
       'Dune Messiah',
-      `The matched recording was found by searching with “Dune Messiah”, read from the title tag in this audiobook’s audio file, which differs from this audiobook’s title. ${running}`,
+      `Mechanical Librarian found the matched recording by searching with “Dune Messiah”, read from the title tag in this audiobook’s audio file, which differs from this audiobook’s title. ${running}`,
     ],
     [
       'companion_title',
       'Children of Dune',
-      `The matched recording was found by searching with “Children of Dune”, the title of the EPUB in this folder, which differs from this audiobook’s title. ${running}`,
+      `Mechanical Librarian found the matched recording by searching with “Children of Dune”, the title of the EPUB in this folder, which differs from this audiobook’s title. ${running}`,
     ],
   ] as const)('reads %s with the searched text quoted', (basis, title, sentence) => {
     const section = renderNote(admission(basis, { title }))
@@ -60,7 +60,7 @@ describe('the admission sentence', () => {
       admission('companion_work', { title: 'Companion Title', authors: ['Ada Author'] }),
     )
     expect(section).toHaveTextContent(
-      'The matched recording was found by searching with the title and author of the EPUB in this folder, “Companion Title” by Ada Author, because this audiobook’s own title or author is missing or incomplete. Its running time closely matches this audiobook’s.',
+      'Mechanical Librarian found the matched recording by searching with the title and author of the EPUB in this folder, “Companion Title” by Ada Author, because this audiobook’s own title or author is missing or incomplete. Its running time closely matches this audiobook’s.',
     )
   })
 
