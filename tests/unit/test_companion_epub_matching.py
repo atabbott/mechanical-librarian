@@ -600,6 +600,32 @@ def test_a_report_keeps_the_companion_book_its_editions_link() -> None:
     assert MetadataReport.from_json(report.to_json()) == report
 
 
+def test_no_proposal_carries_a_companion_value() -> None:
+    """The companion finds the book; none of its values is offered (#1468).
+
+    Two companions that differ in title and creators give the same results:
+    nothing the proposal set offers or reasons from reads them.
+    """
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    def results(companion: CompanionEbook) -> tuple[object, str]:
+        report = _companion_report(
+            companion,
+            (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),),
+            book=_book("A Different Title"),
+        )
+        proposal_set = evaluate_report(report)
+        return proposal_set.to_data()["results"], proposal_set.to_json()
+
+    first, text = results(
+        _companion(title="Only In The Epub", creators=("Ada Author", "Epub Editor"))
+    )
+    second, _ = results(_companion(title="Another Epub Title"))
+    assert first and first == second
+    for value in ("Only In The Epub", "Epub Editor", _ISBN):
+        assert value not in text
+
+
 def test_a_report_refuses_a_companion_book_that_is_not_this_work() -> None:
     """Neither this work by title and authors, nor linked by an edition."""
     with pytest.raises(ReportValueError, match="companion books"):

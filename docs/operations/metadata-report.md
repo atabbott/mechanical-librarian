@@ -153,8 +153,9 @@ book's audio editions against the file
 ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md),
 [ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
 An Audible product listed as one of those counted editions is that book's work
-even when its title differs, and is kept only as the recording the running
-time and narrators corroborate. The companion's title is the first
+even when its title differs. It is kept only as the recording when its
+running time corroborates the file, and a narrator list that conflicts with
+the file's refuses it. The companion's title is the first
 alternative search title, with basis `companion_title`, unless it folds to the
 target's own title. When the target has no complete title and author set, the
 companion's title and author creators are the search, basis `companion_work`.
