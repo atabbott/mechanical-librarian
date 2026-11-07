@@ -62,8 +62,10 @@ Each field under `fields` has a `method`:
 | `not_measured` | `cover` | Nothing yet: covers have no identity check (`no_identity_basis`). |
 
 Your current series or year is not used when this database records Mechanical
-Librarian writing it (`reference_written_by_librarian`), since it would then
-agree with itself. Writes recorded only in an earlier database cannot be seen:
+Librarian writing it, or possibly writing it (`reference_written_by_librarian`),
+since it would then agree with itself. That includes a write still in progress
+or awaiting retry, and any write whose history reached the target even if it
+later went stale or was abandoned. Writes recorded only in an earlier database cannot be seen:
 if an earlier install may have filled the library's series or dates, confirm
 they are yours before trusting the comparison.
 

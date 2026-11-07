@@ -1013,3 +1013,68 @@ def test_an_owner_value_the_librarian_wrote_is_no_reference(tmp_path: Path) -> N
         0,
         {},
     )
+
+
+def test_a_possibly_landed_librarian_write_is_no_reference(tmp_path: Path) -> None:
+    """A retryable write, or one whose history reached applying, may have landed.
+
+    A write that lands but raises is persisted as retryable, and a later stale
+    or abandoned state does not prove an earlier applying write never landed.
+    """
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    owner: dict[TargetDestination, _Current] = {
+        TargetDestination.SERIES: _series("Tidewater", "2"),
+        TargetDestination.PUBLISHED_DATE: "2001",
+    }
+    for item in ("written", "untouched"):
+        _publish(
+            repository,
+            _report(
+                item,
+                _recording(),
+                _hardcover(
+                    {"series": "Tidewater", "position": "2", "release_date": "2001"}
+                ),
+                current=owner,
+            ),
+        )
+    repository.close()
+    connection = sqlite3.connect(database)
+    with connection:
+        for index, (destination, state) in enumerate(
+            (("series", "retryable"), ("publishedDate", "abandoned"))
+        ):
+            plan_id = "effect_plan_" + f"{index:x}" * 64
+            connection.execute(
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+                "library_name,work_id,destination,state,attempt,updated_at,document) "
+                "VALUES(?,?,?,?,?,?,?,1,1,'{}')",
+                (
+                    plan_id,
+                    "decision",
+                    "primary",
+                    "audio",
+                    "written",
+                    destination,
+                    state,
+                ),
+            )
+        connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,"
+            "occurred_at,document) VALUES(?,?,1,'applying',1,'{}')",
+            ("effect_event_" + "1" * 64, "effect_plan_" + "1" * 64),
+        )
+    connection.close()
+
+    report = _measure(database)
+
+    assert _counts(_provider(report, "series", "hardcover"))[:4] == (
+        1,
+        1,
+        0,
+        {"reference_written_by_librarian": 1},
+    )
+    assert _counts(_provider(report, "publishedDate", "hardcover"))[3] == {
+        "reference_written_by_librarian": 1
+    }

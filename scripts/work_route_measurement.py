@@ -134,12 +134,20 @@ _DECISIONS_SQL = (
     + ",".join(f"'{name}'" for name in OWNER_LABELLED_FIELDS)
     + ") ORDER BY hd.ordinal"
 )
-# The fields this store records the Librarian writing, or still writing: a
-# current value it wrote is no independent reference.
+# The fields this store records the Librarian writing, or possibly writing: a
+# current value it wrote is no independent reference. An effect counts while it
+# is claimed, applying, reconciling, retryable (a write that landed but raised
+# is retryable) or verified, and also whenever its audit history ever reached
+# applying, since a later stale, superseded or abandoned state does not prove
+# the earlier write never landed.
 _WRITTEN_SQL = (
-    "SELECT DISTINCT connection_name,library_name,work_id,destination "
-    "FROM field_effects WHERE state IN ('verified','applying','reconciling') "
-    "AND destination IN ('series','publishedDate','publishedYear')"
+    "SELECT DISTINCT effect.connection_name,effect.library_name,effect.work_id,"
+    "effect.destination FROM field_effects effect "
+    "WHERE effect.destination IN ('series','publishedDate','publishedYear') "
+    "AND (effect.state IN ('claimed','applying','reconciling','retryable','verified') "
+    "OR EXISTS (SELECT 1 FROM field_effect_events event "
+    "WHERE event.plan_id=effect.plan_id AND event.kind IN "
+    "('applying','reconciling','retryable','verified')))"
 )
 _POSITION = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?")
 
