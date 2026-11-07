@@ -10,6 +10,7 @@ import type {
   ReviewerAccessView,
   ReviewerReason,
 } from '../api/http'
+import { focusAfterRetry } from '../focusAfterRetry'
 import { failureCopy, useReviewerAccess } from '../reviewerAccess'
 import type { ReviewerAccessController } from '../reviewerAccess'
 import { useRef, useState } from 'react'
@@ -174,7 +175,7 @@ function CodexSignIn({
   return (
     <div className="settings-field-row">
       <div>
-        <h3>Shared Codex sign-in</h3>
+        <h3 tabIndex={-1}>Shared Codex sign-in</h3>
         <p>
           One sign-in serves cover observations and description advice. Select each task separately
           below.
@@ -514,12 +515,26 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const { query, deviceQuery, mutation, mutationFailure, waiting, accessRetryTrigger } = access
   if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
   if (query.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Reviewer access was not loaded." />
+    return <StaleBuildRead lead="Reviewer access was not loaded." ref={accessRetryTrigger} />
   if (query.isError)
     return (
       <div role="alert" className="settings-reviewer-unavailable">
         <p>Reviewer access is unavailable.</p>
-        <button ref={accessRetryTrigger} type="button" onClick={() => void query.refetch()}>
+        <button
+          ref={accessRetryTrigger}
+          type="button"
+          onClick={() =>
+            void query
+              .refetch()
+              .then((result) =>
+                focusAfterRetry(() =>
+                  result.isSuccess
+                    ? document.querySelector<HTMLElement>('.settings-reviewer h3')
+                    : accessRetryTrigger.current,
+                ),
+              )
+          }
+        >
           Try again
         </button>
       </div>

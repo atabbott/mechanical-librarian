@@ -581,6 +581,96 @@ describe('owner settings route', () => {
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
+  describe('an uncertain save on an earlier build (#1742)', () => {
+    const reloadName = 'Reload the current application'
+    const lead =
+      'Save outcome is uncertain and Settings were not reloaded. This tab is running an earlier build.'
+    const saveUncertain = async (http: ReturnType<typeof createHttp>) => {
+      const user = userEvent.setup()
+      http.writeSettings = vi.fn(async () => {
+        throw new ApiError(503, 'settings_unavailable')
+      })
+      renderRoute('/settings?group=connection', http)
+      const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+      await waitFor(() =>
+        expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+          'data-restored-path',
+          '/settings',
+        ),
+      )
+      await user.clear(endpoint)
+      await user.type(endpoint, 'https://submitted.invalid')
+      await user.click(screen.getByRole('button', { name: 'Save settings' }))
+      return user
+    }
+    const expectStale = async () => {
+      const reload = await screen.findByRole('button', { name: reloadName })
+      const element = screen.getByText(lead, { exact: false })
+      expect(element).not.toHaveAttribute('role')
+      expect(element.closest('[role="alert"]')).toBeNull()
+      await waitFor(() => expect(reload).toHaveFocus())
+      expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Retry settings reload' })).toBeNull()
+      expect(screen.queryByText(/could not be reloaded/u)).toBeNull()
+    }
+
+    it('offers the reload when the reconciling read meets a newer build', async () => {
+      const http = createHttp()
+      http.getSettings = vi
+        .fn()
+        .mockResolvedValueOnce(view())
+        .mockRejectedValue(new BuildMismatchError())
+      await saveUncertain(http)
+      await expectStale()
+      expect(http.writeSettings).toHaveBeenCalledOnce()
+    })
+
+    it('moves focus to the reload when Retry settings reload meets a newer build', async () => {
+      const http = createHttp()
+      http.getSettings = vi
+        .fn()
+        .mockResolvedValueOnce(view())
+        .mockRejectedValueOnce(new ApiError(503, 'settings_unavailable'))
+        .mockRejectedValue(new BuildMismatchError())
+      const user = await saveUncertain(http)
+      await user.click(await screen.findByRole('button', { name: 'Retry settings reload' }))
+      await expectStale()
+    })
+  })
+
+  it('offers the reload, not a rebase, when a save meets a newer build (#1742)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async () => {
+      throw new BuildMismatchError()
+    })
+    renderRoute('/settings?group=connection', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await waitFor(() =>
+      expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/settings',
+      ),
+    )
+    await user.clear(endpoint)
+    await user.type(endpoint, 'https://submitted.invalid')
+    const reads = vi.mocked(http.getSettings).mock.calls.length
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    const reload = await screen.findByRole('button', { name: 'Reload the current application' })
+    const element = screen.getByText(
+      'Settings were not saved. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(element).not.toHaveAttribute('role')
+    expect(element.closest('[role="alert"]')).toBeNull()
+    await waitFor(() => expect(reload).toHaveFocus())
+    expect(screen.queryByText(/Settings changed elsewhere/u)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+    expect(vi.mocked(http.getSettings).mock.calls.length).toBe(reads)
+    expect(http.writeSettings).toHaveBeenCalledOnce()
+  })
+
   it('associates every editable validation family with its named field', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -2462,6 +2552,34 @@ it('offers a reload, not another try, when reviewer access meets a newer build',
   expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
+
+it.each(['mismatch', 'success'] as const)(
+  'moves focus to what replaces the reviewer access Try again after a %s (#1742)',
+  async (outcome) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    let reads = 0
+    http.getReviewerAccess = vi.fn(async () => {
+      reads += 1
+      if (reads === 1) throw new ApiError(503, 'unavailable')
+      if (outcome === 'mismatch') throw new BuildMismatchError()
+      return reviewerView
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const alert = (await screen.findByText('Reviewer access is unavailable.')).closest<HTMLElement>(
+      '[role="alert"]',
+    )
+    if (!alert) throw new Error('the reviewer access alert is required')
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+    const target =
+      outcome === 'mismatch'
+        ? await screen.findByRole('button', { name: 'Reload the current application' })
+        : await screen.findByRole('heading', { name: 'Shared Codex sign-in' })
+    await waitFor(() => expect(target).toHaveFocus())
+    expect(globalThis.document.body).not.toHaveFocus()
+  },
+)
 
 // The disclosure writes nothing: an answer it cannot read keeps the setup
 // copy, though the client reports it as uncertain (#1690).
