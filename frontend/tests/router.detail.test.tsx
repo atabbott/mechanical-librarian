@@ -373,6 +373,9 @@ describe('Library review ownership', () => {
     renderRoute('/review/case-1?field=title&subview=evidence', { ...createHttp(), getEvidence })
     expect(await screen.findByText('Title: A Book')).toBeVisible()
     expect(screen.getByText(/2 source answers are no longer available/u)).toBeVisible()
+    // Fields with nothing from the sources are left out, not captioned.
+    expect(screen.queryByText(/Nothing from the sources/u)).toBeNull()
+    expect(document.querySelectorAll('.evidence-field h3').length).toBe(1)
     await user.click(screen.getByText('Sources'))
     expect(screen.getByText('No match')).toBeVisible()
     expect(screen.getByText('ISBN lookup')).toBeVisible()
@@ -388,6 +391,24 @@ describe('Library review ownership', () => {
       expect.any(AbortSignal),
       'foreground',
     )
+  })
+
+  it.each([
+    [undefined, 'Nothing from the sources for this work.'],
+    ['next-page', 'Nothing from the sources yet. More may load below.'],
+  ])('says once that the sources gave nothing (cursor %s)', async (nextCursor, line) => {
+    const getEvidence = vi.fn<ReviewHttp['getEvidence']>(async () => ({
+      items: [],
+      missingLineageCount: 0,
+      ...(nextCursor ? { nextCursor } : {}),
+      sourceLedger: [],
+    }))
+    renderRoute('/review/case-1?field=title&subview=evidence', { ...createHttp(), getEvidence })
+    expect(await screen.findByText(line)).toBeVisible()
+    expect(screen.getAllByText(/Nothing from the sources/u)).toHaveLength(1)
+    expect(document.querySelector('.evidence-field')).toBeNull()
+    expect(screen.queryByText('All evidence is shown.')).toBeNull()
+    expect(screen.queryByText('Sources')).toBeNull()
   })
 
   it('shows retained conflicting identifiers as observations without offering choices', async () => {
@@ -574,7 +595,8 @@ describe('Library review ownership', () => {
       'datetime',
       new Date(1786000000 * 1000).toISOString(),
     )
-    expect(screen.getByText('Time not recorded')).toBeVisible()
+    // An entry with no recorded time shows no time line at all.
+    expect(screen.queryByText('Time not recorded')).toBeNull()
     expect(screen.getByText('<script>previous</script>')).toBeVisible()
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
     const language = screen.getByRole('heading', { name: 'Language' }).closest('article')
@@ -1588,6 +1610,7 @@ it.each(['evidence', 'history'])(
           model: candidate.model,
           candidate,
           selected: false,
+          chosenBy: null,
         },
         {
           category: 'description' as const,
@@ -1598,6 +1621,40 @@ it.each(['evidence', 'history'])(
           model: candidate.model,
           candidate,
           selected: true,
+          chosenBy: 'owner' as const,
+        },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
+          outcome: 'description_selected',
+          state: 'succeeded' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: true,
+          chosenBy: 'owner' as const,
+        },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
+          outcome: 'description_selected',
+          state: 'succeeded' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: true,
+          chosenBy: 'automatic' as const,
+        },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
+          outcome: 'description_application',
+          state: 'failed' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: false,
+          chosenBy: null,
         },
         {
           category: 'description' as const,
@@ -1608,6 +1665,7 @@ it.each(['evidence', 'history'])(
           model: candidate.model,
           candidate,
           selected: false,
+          chosenBy: null,
         },
         {
           category: 'description' as const,
@@ -1618,6 +1676,7 @@ it.each(['evidence', 'history'])(
           model: candidate.model,
           candidate,
           selected: false,
+          chosenBy: null,
         },
       ],
     }))
@@ -1633,14 +1692,22 @@ it.each(['evidence', 'history'])(
         await screen.findByText('Written to the library and checked.', { exact: false }),
       ).toBeVisible()
       // The store's "stale" reads in the owner's words (#1542).
-      expect(screen.getByText('Write closed.', { exact: false })).toBeVisible()
+      expect(
+        screen.getByText('The write was closed before it finished.', { exact: false }),
+      ).toBeVisible()
       expect(document.body.textContent).not.toMatch(/\bstale\b/iu)
+      // Each write state reads as a sentence, and a choice names who made it.
+      expect(screen.getByText('The write failed.', { exact: false })).toBeVisible()
+      expect(screen.getByText('Advice was written.', { exact: false })).toBeVisible()
+      expect(screen.getByText('You chose this description.', { exact: false })).toBeVisible()
+      expect(screen.getByText('Automatic chose this description.', { exact: false })).toBeVisible()
+      expect(document.body.textContent).not.toMatch(/Write (closed|failed)\./u)
       expect(
         screen.getByText('Replaced by a later choice.', {
           exact: false,
         }),
       ).toBeVisible()
-      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(4)
+      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(7)
     } else {
       await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
       expect(screen.queryByText(candidate.output.description)).toBeNull()

@@ -2151,7 +2151,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert load_more.bounding_box()["height"] >= 44
         load_more.click()
         expect(load_more).to_have_count(0)
-        assert page.locator(".diagnostic-entry").count() == 7
+        # Only the fields the sources said something about are listed.
+        assert page.locator(".diagnostic-entry").count() == 3
+        assert "Nothing from the sources" not in route.inner_text()
         nav = page.get_by_role("navigation", name="Evidence and history")
 
         def assert_diagnostic_layout(active_page: str) -> None:

@@ -6,6 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { MediaHealth } from '../components/MediaHealth'
 import type {
   CaseDetailView,
+  DescriptionState,
   EvidenceView,
   HistoryValueView,
   HistoryView,
@@ -27,7 +28,6 @@ import {
   previewDispositionLabels,
   sourceStatusLabels,
   transitionLabels,
-  writeStateLabels,
 } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
@@ -43,6 +43,33 @@ const reviewerStatusWords = {
   failed: 'failed on',
   unavailable: 'was unavailable for',
 } as const
+// A description write's state as a sentence. "verified" and
+// "no_change_required" have their own sentences below.
+const descriptionWriteSentences = {
+  requested: 'The write was requested.',
+  running: 'The write is in progress.',
+  succeeded: 'The write finished.',
+  failed: 'The write failed.',
+  interrupted: 'The write was interrupted.',
+  planned: 'The write is planned.',
+  claimed: 'The write is being prepared.',
+  applying: 'The write is in progress.',
+  reconciling: 'The write is being checked.',
+  retryable: 'The write will be tried again.',
+  verified: 'Written to the library and checked.',
+  stale: 'The write was closed before it finished.',
+  superseded: 'The write was replaced by a later choice.',
+  abandoned: 'The write was stopped.',
+  no_change_required: 'No change needed. The library already had this text.',
+} satisfies Record<DescriptionState, string>
+// Advice events only ever carry the advice run's states.
+const descriptionAdviceSentences: Partial<Record<DescriptionState, string>> = {
+  requested: 'Advice was requested.',
+  running: 'Advice is being written.',
+  succeeded: 'Advice was written.',
+  failed: 'Advice could not be written.',
+  interrupted: 'Advice was interrupted.',
+}
 const coverOwnerSentences = {
   accept: 'You chose a proposed cover.',
   keep_current: 'You kept the current cover.',
@@ -61,16 +88,14 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         <p>
           {item.engine} · {item.model}.{' '}
           {item.outcome === 'description_application'
-            ? item.state === 'verified'
-              ? 'Written to the library and checked.'
-              : item.state === 'no_change_required'
-                ? 'No change needed. The library already had this text.'
-                : `Write ${writeStateLabels[item.state].toLowerCase()}.`
+            ? descriptionWriteSentences[item.state]
             : item.selected
               ? item.state === 'superseded'
                 ? 'Replaced by a later choice.'
-                : 'Chosen.'
-              : `Advice ${writeStateLabels[item.state].toLowerCase()}.`}
+                : item.chosenBy === 'automatic'
+                  ? 'Automatic chose this description.'
+                  : 'You chose this description.'
+              : (descriptionAdviceSentences[item.state] ?? 'Advice was recorded.')}
         </p>
         {item.candidate ? (
           <p className="description-advice-text">{item.candidate.output.description}</p>
@@ -107,12 +132,8 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <p className="diagnostic-value">
             <span>Kept</span> {displayRetainedHistoryValue(item)}
           </p>
-        ) : item.category === 'owner' && item.outcome === 'withdraw' ? (
-          // A withdrawal selects nothing, so it has no value to change to.
-          <p className="diagnostic-value">
-            <span>Outcome</span> Withdrawn
-          </p>
-        ) : (
+        ) : item.category === 'owner' && item.outcome === 'withdraw' ? // sentence above says it. // A withdrawal selects nothing, so it has no value to change to; the
+        null : (
           <>
             <p className="diagnostic-value">
               <span>From</span> {historyValue(item.destination, item.previousValue)}
@@ -246,6 +267,17 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   })
   const observations = evidence.data?.pages.flatMap((page) => page.items) ?? []
   const sourceLedger = evidence.data?.pages[0]?.sourceLedger ?? []
+  const evidenceFields = data.fields
+    .map((field) => ({
+      field,
+      fieldObservations: observations.filter((item) =>
+        item.destinations.includes(field.destination),
+      ),
+    }))
+    .filter(
+      ({ field, fieldObservations }) =>
+        fieldObservations.length > 0 || field.automaticWithheldReason !== null,
+    )
   const missingLineageCount = evidence.data?.pages[0]?.missingLineageCount ?? 0
   if (!data.current)
     return (
@@ -311,12 +343,11 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                 offered={data.fields.filter(railOffers).map((field) => field.destination)}
               />
               {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
-              <div className="diagnostic-list evidence-fields">
-                {data.fields.map((field) => {
-                  const fieldObservations = observations.filter((item) =>
-                    item.destinations.includes(field.destination),
-                  )
-                  return (
+              {/* A field with nothing from the sources is left out; when every
+                  field is empty, one line says so. */}
+              {evidenceFields.length ? (
+                <div className="diagnostic-list evidence-fields">
+                  {evidenceFields.map(({ field, fieldObservations }) => (
                     <section className="diagnostic-entry evidence-field" key={field.destination}>
                       <h3>{destinationLabel(field.destination)}</h3>
                       {field.automaticWithheldReason ? (
@@ -333,19 +364,17 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                             </li>
                           ))}
                         </ul>
-                      ) : evidence.hasNextPage ? (
-                        <p className="diagnostic-complete">
-                          Nothing from the sources yet. More may load below.
-                        </p>
-                      ) : (
-                        <p className="diagnostic-complete">
-                          Nothing from the sources for this field.
-                        </p>
-                      )}
+                      ) : null}
                     </section>
-                  )
-                })}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="diagnostic-complete">
+                  {evidence.hasNextPage
+                    ? 'Nothing from the sources yet. More may load below.'
+                    : 'Nothing from the sources for this work.'}
+                </p>
+              )}
               {evidence.hasNextPage ? (
                 <button
                   className="diagnostic-load-more"
@@ -354,12 +383,12 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                 >
                   Load more evidence
                 </button>
-              ) : (
+              ) : evidenceFields.length ? (
                 <p className="diagnostic-complete">All evidence is shown.</p>
-              )}
-              <details className="source-ledger">
-                <summary>Sources</summary>
-                {sourceLedger.length ? (
+              ) : null}
+              {sourceLedger.length ? (
+                <details className="source-ledger">
+                  <summary>Sources</summary>
                   <ul>
                     {sourceLedger.map((source, index) => (
                       <li key={`${source.provider}-${source.laneKind}-${String(index)}`}>
@@ -374,10 +403,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <p>No source lookups are recorded for this work.</p>
-                )}
-              </details>
+                </details>
+              ) : null}
             </>
           )}
         </section>
@@ -396,9 +423,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
             <div className="diagnostic-list">
               {history.data.items.map((item, index) => (
                 <div key={index}>
-                  {item.occurredAt === null ? (
-                    <small>Time not recorded</small>
-                  ) : (
+                  {item.occurredAt === null ? null : (
                     <time dateTime={new Date(item.occurredAt * 1000).toISOString()}>
                       <RecordedTime seconds={item.occurredAt} />
                     </time>

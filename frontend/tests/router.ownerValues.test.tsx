@@ -952,7 +952,9 @@ describe('owner review fixes', () => {
     }))
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
     const article = (await screen.findByRole('heading', { name: 'Title' })).closest('article')
-    expect(article).toHaveTextContent('Withdrawn')
+    expect(article).toHaveTextContent('You withdrew your choice.')
+    // The sentence says it; no Outcome row repeats it.
+    expect(article).not.toHaveTextContent('Outcome')
     expect(article).not.toHaveTextContent('No value is recorded.')
   })
 
