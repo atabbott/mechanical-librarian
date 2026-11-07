@@ -15223,6 +15223,37 @@ describe('a focused field decision (#1519)', () => {
     },
   )
 
+  it('moves focus to the workspace when a successful Retry observations leaves none to show (#1742)', async () => {
+    const user = userEvent.setup()
+    let reads = 0
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+        reads += 1
+        if (reads === 1) throw new ApiError(503, 'unavailable')
+        // Every observation belongs to another field, so the section goes (#1519).
+        return {
+          items: [
+            {
+              destinations: ['cover'],
+              observation: 'Cover: front',
+              role: 'external_observation',
+              source: 'Open Library',
+            },
+          ],
+          missingLineageCount: 0,
+          sourceLedger: [],
+        }
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    await user.click(await within(region).findByRole('button', { name: 'Retry observations' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Recorded observations' })).toBeNull(),
+    )
+    await waitFor(() => expect(document.querySelector('.workspace-detail')).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  })
+
   it('keeps Load more observations focusable while it reads (#1742)', async () => {
     const user = userEvent.setup()
     let release: () => void = () => undefined

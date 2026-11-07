@@ -160,7 +160,12 @@ export function RecordedFieldObservations({
               retryInPlace(
                 () => heading.current,
                 () => (nextPage ? evidence.fetchNextPage() : evidence.refetch()),
-                (result) => (result.isSuccess ? heading.current : observationsRetry.current),
+                (result) =>
+                  result.isSuccess
+                    ? // A read that leaves this field nothing to show removes the
+                      // section (#1519): the workspace holds focus instead.
+                      (heading.current ?? document.querySelector<HTMLElement>('.workspace-detail'))
+                    : observationsRetry.current,
               )
             }}
           >
