@@ -2170,6 +2170,15 @@ def test_only_the_active_policy_generation_settles_a_field(tmp_path: Path) -> No
     )
     assert code == 0, stderr
     assert _automatic(_snapshot(_rows(stdout)["A2"], "snap-a")) == (1, 0, 0)
+    # After a policy change and before the new generation decides, the earlier
+    # generation's decision is not the newest active one: nothing is settled.
+    stale = Fixture(text, "v26-like")
+    _competing(stale, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
+    stale.decide("title", "keep_current", generation=1)
+    database = _database(tmp_path / "s.sqlite3", "v26-like", [stale], generation=2)
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    assert _automatic(_snapshot(_rows(stdout)["A2"], "snap-a")) == (0, 0, 0)
     # Without a policy state no active generation can be read: the one stored
     # decision counts.
     single = Fixture(text, "v26-like")
