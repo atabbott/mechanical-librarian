@@ -558,7 +558,7 @@ describe('owner review fixes', () => {
     )
     expect(
       await screen.findByText(
-        'An earlier owner decision is pausing automatic handling until you choose Resume automatic handling.',
+        'Automatic stays off for this field until you choose Resume automatic handling.',
       ),
     ).toBeVisible()
     expect(document.querySelector('[aria-pressed="true"]')).toBeNull()

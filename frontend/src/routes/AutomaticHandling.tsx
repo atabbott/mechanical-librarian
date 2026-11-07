@@ -42,16 +42,15 @@ export const AutomaticHandlingPanel = ({
         <>
           <h4>Automatic handling is paused for this field</h4>
           <p>
-            The recorded value remains. Fresh checks are requested first; automatic policy may
-            manage later qualified changes.
+            Your value stays until fresh checks finish. Then Automatic can change this field again.
           </p>
           {automaticShown === 'success' ? (
             <p className="automatic-handling-result is-success" role="status">
-              Fresh checks requested. Manual handling remains until they complete.
+              Fresh checks requested. Your value stays until they finish.
             </p>
           ) : automaticShown === 'error' ? (
             <p className="automatic-handling-result is-error" role="alert">
-              Fresh checks could not be requested. Manual handling is unchanged.
+              Fresh checks could not be requested. Choose Resume after fresh checks to try again.
             </p>
           ) : automaticShown === 'uncertain' ? (
             // A warning, not an error: requesting again does no harm (#1755).
@@ -99,10 +98,7 @@ export const AutomaticHandlingPanel = ({
       ) : (
         <>
           {selected.humanDecision === null ? (
-            <p>
-              An earlier owner decision is pausing automatic handling until you choose Resume
-              automatic handling.
-            </p>
+            <p>Automatic stays off for this field until you choose Resume automatic handling.</p>
           ) : null}
           {automaticReturnFailed ? (
             // The earlier-decision line already names the

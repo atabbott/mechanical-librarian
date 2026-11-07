@@ -967,9 +967,7 @@ describe('Library review ownership', () => {
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     settleRequest?.()
     expect(
-      await screen.findByText(
-        'Fresh checks requested. Manual handling remains until they complete.',
-      ),
+      await screen.findByText('Fresh checks requested. Your value stays until they finish.'),
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
     expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
@@ -995,7 +993,9 @@ describe('Library review ownership', () => {
     await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
     expect(
-      await screen.findByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      await screen.findByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeVisible()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeEnabled()
@@ -1006,7 +1006,7 @@ describe('Library review ownership', () => {
   const U1 = 'No answer came back. Reloading this work to check…'
   const U2 =
     "No answer came back. This work doesn't show fresh checks as requested. Request them again."
-  const S0 = 'Fresh checks requested. Manual handling remains until they complete.'
+  const S0 = 'Fresh checks requested. Your value stays until they finish.'
   const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
@@ -1051,7 +1051,9 @@ describe('Library review ownership', () => {
     expect(warning).toHaveClass('automatic-handling-result', 'is-uncertain')
     expect(screen.queryByRole('alert')).toBeNull()
     expect(
-      screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      screen.queryByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeNull()
     await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
     // Focus returns to the panel while the case is still reloading, so
@@ -1302,7 +1304,7 @@ describe('Library review ownership', () => {
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
     const error = await screen.findByRole('alert')
     expect(error).toHaveTextContent(
-      'Fresh checks could not be requested. Manual handling is unchanged.',
+      'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
     )
     expect(error).toHaveClass('automatic-handling-result', 'is-error')
   })
@@ -1339,12 +1341,12 @@ describe('Library review ownership', () => {
     await screen.findByRole('heading', { name: 'Which authors should this work use?' })
     await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
     expect(
-      screen.queryByText('Fresh checks requested. Manual handling remains until they complete.'),
+      screen.queryByText('Fresh checks requested. Your value stays until they finish.'),
     ).toBeNull()
     resolveRequest?.()
     await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
     expect(
-      screen.queryByText('Fresh checks requested. Manual handling remains until they complete.'),
+      screen.queryByText('Fresh checks requested. Your value stays until they finish.'),
     ).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Title/u }))
     await screen.findByRole('heading', { name: 'Which title should this work use?' })
@@ -1388,13 +1390,17 @@ describe('Library review ownership', () => {
     rejectRequest?.(new Error('offline'))
     await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
     expect(
-      screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      screen.queryByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Title/u }))
     await screen.findByRole('heading', { name: 'Which title should this work use?' })
     await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
     expect(
-      await screen.findByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      await screen.findByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
   })

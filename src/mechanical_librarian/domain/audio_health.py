@@ -446,9 +446,9 @@ def _chapter_observations(
                 # two bare chapter numbers that disagree read as a muddle
                 # rather than as the comparison that was actually made.
                 if ordinal > stated_ordinal:
-                    observed += ", aligned past this recording's first chapter"
+                    observed += ", aligned past this recording’s first chapter"
                 elif stated_ordinal > ordinal:
-                    expected += ", aligned past the edition's first chapter"
+                    expected += ", aligned past the edition’s first chapter"
             stated.append(
                 AudioHealthObservation(
                     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH,

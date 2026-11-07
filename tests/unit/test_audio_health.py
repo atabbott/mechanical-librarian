@@ -396,7 +396,7 @@ def test_a_diverged_chapter_vector_is_a_mismatch() -> None:
             # and the statement says which end was skipped.
             (100, 200, 300, 400),
             "4 embedded chapters; chapter 2 runs 3 min 20 s, aligned past this "
-            "recording's first chapter",
+            "recording’s first chapter",
             "2 chapters stated by the matched edition; chapter 1 runs 8 h 5 min",
             id="counts-and-a-cut",
         ),
@@ -454,7 +454,7 @@ def test_a_chapter_discrepancy_stays_within_the_projection_bound() -> None:
     stated = health[0]
     assert stated.observed == (
         f"{MAX_CHAPTERS} embedded chapters; chapter 1023 runs 9 min 50 s, aligned past "
-        "this recording's first chapter"
+        "this recording’s first chapter"
     )
     assert stated.expected == (
         f"{MAX_PROVIDER_CHAPTER_DURATIONS} chapters stated by the matched edition; "
@@ -487,7 +487,7 @@ def test_a_diverging_cut_is_named_under_the_alignment_the_gate_would_choose() ->
     stated = health[0]
     assert stated.observed == (
         "6 embedded chapters; chapter 4 runs 5 min 50 s, aligned past this "
-        "recording's first chapter"
+        "recording’s first chapter"
     )
     assert stated.expected == (
         "5 chapters stated by the matched edition; chapter 3 runs 5 min"
