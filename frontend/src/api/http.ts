@@ -41,6 +41,7 @@ type CoverConsiderationDto = ResponseSchema<'_CoverConsiderationResponse'>
 type ProviderOutcomeDto = ResponseSchema<'_ProviderOutcome'>
 type MediaHealthDto = ResponseSchema<'_MediaHealthObservation'>
 type RecordingIdentityBasisDto = ResponseSchema<'_RecordingIdentityBasis'>
+type RecordingAdmissionBasisDto = ResponseSchema<'_RecordingAdmissionBasis'>
 type DecisionAcknowledgementDto =
   | ResponseSchema<'_DecisionAcknowledgement'>
   | ResponseSchema<'_DescriptionSelectionAcknowledgement'>
@@ -194,6 +195,8 @@ export interface PolicySearch {
 }
 
 export interface ProviderOutcomeView {
+  // The companion EPUB's ISBN lane (#1723).
+  companionIsbn: boolean
   providerRequests: number
   laneKind: ProviderQueryKind
   provider: string
@@ -532,8 +535,21 @@ export interface RecordingIdentityBasisView {
   provider: string
   candidate: string
 }
+// How the matched recording was found when its title differs from this
+// audiobook's (#1723): the route, what it searched with, and the product.
+export interface RecordingAdmissionBasisView {
+  basis: 'companion_isbn_work' | 'companion_work' | 'companion_title' | 'path_leaf' | 'title_tag'
+  searched: {
+    title: string | null
+    authors: readonly string[] | null
+    isbn: string | null
+  }
+  provider: string
+  candidate: string
+}
 export interface ReportDetailView {
   recordingIdentityBasis: RecordingIdentityBasisView | null
+  recordingAdmissionBasis: RecordingAdmissionBasisView | null
   audiobookReviewScope: 'work' | 'recording' | null
   chapters: readonly ReportChapterView[]
   chaptersTruncated: boolean
@@ -750,6 +766,7 @@ export interface CoverConsiderationView {
 }
 export interface CaseDetailView {
   recordingIdentityBasis: RecordingIdentityBasisView | null
+  recordingAdmissionBasis: RecordingAdmissionBasisView | null
   audiobookReviewScope: 'work' | 'recording' | null
   id: string
   current: boolean
@@ -2332,6 +2349,7 @@ const mapMediaHealth = (value: readonly MediaHealthDto[]): MediaHealthObservatio
   }))
 
 const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => ({
+  companionIsbn: value.companion_isbn,
   providerRequests: value.provider_requests,
   laneKind: value.lane_kind,
   provider: value.provider,
@@ -2432,19 +2450,38 @@ export const mapActivity = (value: ActivityDto): ActivityDisplayView => {
 }
 
 // The decoder holds each member; a review scope must agree with the media kind
-// and the recording basis beside it (ADR-0091).
+// and the recording bases beside it (ADR-0091). A running-time match leaves no
+// chapter basis, so the two notes never meet (#1723).
 const mapAudiobookReviewScope = (
   value: 'work' | 'recording' | null,
   mediaKind: MediaKind,
   basis: RecordingIdentityBasisDto | null,
+  admission: RecordingAdmissionBasisDto | null,
 ): 'work' | 'recording' | null => {
   if (
     (!['m4b', 'm4a', 'mp3'].includes(mediaKind) && value !== null) ||
-    (basis !== null && value !== 'recording')
+    ((basis !== null || admission !== null) && value !== 'recording') ||
+    (basis !== null && admission !== null)
   )
     throw new ApiError(502, 'inconsistent_audiobook_review_scope')
   return value
 }
+
+const mapRecordingAdmissionBasis = (
+  value: RecordingAdmissionBasisDto | null,
+): RecordingAdmissionBasisView | null =>
+  value === null
+    ? null
+    : {
+        basis: value.basis,
+        searched: {
+          title: value.searched.title,
+          authors: value.searched.authors,
+          isbn: value.searched.isbn,
+        },
+        provider: value.provider,
+        candidate: value.candidate,
+      }
 
 // The report detail, the works list and the case detail are decoded centrally
 // (#1686, #1688), so their mappers only rename; the audiobook scope keeps the
@@ -2473,10 +2510,12 @@ export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
   libraryDisplayName: value.library_display_name ?? value.library,
   mediaHealth: mapMediaHealth(value.media_health),
   recordingIdentityBasis: value.recording_identity_basis,
+  recordingAdmissionBasis: mapRecordingAdmissionBasis(value.recording_admission_basis),
   audiobookReviewScope: mapAudiobookReviewScope(
     value.audiobook_review_scope,
     value.media_kind,
     value.recording_identity_basis,
+    value.recording_admission_basis,
   ),
   mediaKind: value.media_kind,
   providerSources: value.provider_sources.map(mapProviderOutcome),
@@ -2645,10 +2684,12 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
     comparisonNotices: value.comparison_notices,
     mediaHealth: mapMediaHealth(value.media_health),
     recordingIdentityBasis: value.recording_identity_basis,
+    recordingAdmissionBasis: mapRecordingAdmissionBasis(value.recording_admission_basis),
     audiobookReviewScope: mapAudiobookReviewScope(
       value.audiobook_review_scope,
       target.media_kind,
       value.recording_identity_basis,
+      value.recording_admission_basis,
     ),
     writesConsented: value.writes_consented,
     fields: value.fields.map(mapReviewField),

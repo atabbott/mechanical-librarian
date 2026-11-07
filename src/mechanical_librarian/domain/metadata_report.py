@@ -96,7 +96,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v69"
+REPORT_SCHEMA = "metadata-report-v70"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1220,6 +1220,24 @@ DISCOVERY_TITLE_BASES = (COMPANION_TITLE_BASIS, *AUDIO_DISCOVERY_TITLE_BASES)
 # keeps only a recording the runtime band corroborates.
 COMPANION_WORK_BASIS = "companion_work"
 LANE_TITLE_BASES = (*DISCOVERY_TITLE_BASES, COMPANION_WORK_BASIS)
+# How one lane kept a product as the recording (#1723). `target` is the
+# target's own identity: the asserted WORK lane, or an ASIN lane's
+# independent, work-admitted, chapter-supported or corroborated route. The
+# others name the alternative identity the lane admitted it on.
+TARGET_ADMISSION_BASIS = "target"
+# The companion ISBN's own book lists the product as an audio edition (#1468).
+COMPANION_ISBN_WORK_BASIS = "companion_isbn_work"
+# The one total order of the alternative routes: the strongest checkable link
+# first. Build, derivation, read and measurement all use it.
+ALTERNATIVE_ADMISSION_BASES = (
+    COMPANION_ISBN_WORK_BASIS,
+    COMPANION_WORK_BASIS,
+    COMPANION_TITLE_BASIS,
+    *AUDIO_DISCOVERY_TITLE_BASES,
+)
+RECORDING_ADMISSION_BASES = frozenset(
+    {TARGET_ADMISSION_BASIS, *ALTERNATIVE_ADMISSION_BASES}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2487,15 +2505,24 @@ class ProviderLaneCandidate:
     reference: str
     edition_identity: str
     work_identity: str
+    # How this lane kept the product as the recording (#1723): set only where
+    # this lane's own copy was corroborated, and `None` everywhere else.
+    admission_basis: str | None = None
 
     def __post_init__(self) -> None:
         if _LANE_CANDIDATE_REFERENCE.fullmatch(self.reference) is None:
             raise ReportValueError("provider lane candidate reference is invalid")
         _text(self.edition_identity, "provider candidate identity", 128)
         _text(self.work_identity, "provider candidate work identity", 128)
+        if self.admission_basis is not None and (
+            type(self.admission_basis) is not str
+            or self.admission_basis not in RECORDING_ADMISSION_BASES
+        ):
+            raise ReportValueError("provider admission basis is invalid")
 
-    def to_data(self) -> dict[str, str]:
+    def to_data(self) -> dict[str, str | None]:
         return {
+            "admission_basis": self.admission_basis,
             "edition_identity": self.edition_identity,
             "reference": self.reference,
             "work_identity": self.work_identity,
@@ -3880,6 +3907,28 @@ def companion_isbn_lane(
     )
 
 
+def companion_stated_isbn(companion: CompanionEbook | None) -> str | None:
+    """The ISBN the companion EPUB states for the book its lane asks (#1723).
+
+    It is shown as the EPUB states it, without hyphens or spaces and keeping
+    a final X: its ISBN-13 when it states one, otherwise its ISBN-10, the
+    first in claim order within the lane's family. The lane's family is
+    always the ISBN-13 form, which the EPUB may never state.
+    """
+    lane = companion_isbn_lane(companion)
+    if lane is None or companion is None:
+        return None
+    stated = tuple(
+        _comparison_value(ClaimKind.ISBN, cast("str", claim.canonical))
+        for claim in companion.claims
+        if claim.reference in lane.input_references
+    )
+    return next(
+        (value for value in stated if len(value) == 13),
+        next((value for value in stated if len(value) == 10), None),
+    )
+
+
 # One audiobook plan asks at most this many provider queries; a plan that
 # would ask more carries no lane at all.
 MAX_PROVIDER_DISCOVERY_QUERIES = 9
@@ -4056,6 +4105,97 @@ def companion_discovery_title(
         return AudioDiscoveryTitle(COMPANION_TITLE_BASIS, title)
     except ReportValueError:
         return None
+
+
+def plan_alternative_discovery_title(
+    fields: tuple[TargetField, ...],
+    discovery_titles: tuple[AudioDiscoveryTitle, ...],
+    companion: CompanionEbook | None,
+) -> AudioDiscoveryTitle | None:
+    """The first discovery title a plan keeps, read back from a report (#1723).
+
+    A plan keeps the companion title first, then the audio surfaces, minus
+    every title that would only repeat a query already made; a report's audio
+    section states the audio surfaces alone. This is the title an
+    alternative WORK lane asks and a carried lookup is admitted against.
+    """
+    companion_title = companion_discovery_title(companion)
+    surviving = surviving_discovery_titles(
+        (
+            discovery_titles
+            if companion_title is None
+            else (companion_title, *discovery_titles)
+        ),
+        fields,
+    )
+    return surviving[0] if surviving else None
+
+
+def alternative_lane_identity(
+    first: AudioDiscoveryTitle | None,
+    work: tuple[str, tuple[str, ...]] | None,
+    companion: CompanionEbook | None,
+) -> tuple[str, tuple[str, ...], str] | None:
+    """The alternative work an ASIN lane may admit a product against (#1723).
+
+    It is the one shared seam for the build and for the report's replay. With
+    no complete target work, it is the companion EPUB's own title and creators
+    (#1468). Otherwise it is the plan's first surviving discovery title with
+    the target's authors (#1255), named by the surface it was read from. The
+    title and its basis come back with the authors, so a caller can say which
+    route admitted a product.
+    """
+    if work is None:
+        fallback = companion_work_payload(companion)
+        return (
+            None
+            if fallback is None
+            else (fallback.title, fallback.authors, COMPANION_WORK_BASIS)
+        )
+    if first is None:
+        return None
+    return first.title, work[1], first.basis
+
+
+def edition_marketplace_evidence(candidate: ProviderCandidate) -> bool:
+    """Whether a candidate keeps edition marketplace evidence.
+
+    Only a recording the runtime band corroborated keeps it (ADR-0061).
+    """
+    return any(
+        value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        and value.scope is ClaimScope.EDITION
+        for value in candidate.evidence
+    )
+
+
+def identifier_only_candidate(candidate: ProviderCandidate) -> bool:
+    """Whether a candidate kept nothing beyond its ASIN claims: a stub."""
+    return all(claim.kind is ClaimKind.ASIN for claim in candidate.claims)
+
+
+def candidate_admission_basis(
+    provider: ProviderObservation, candidate: ProviderCandidate
+) -> str | None:
+    """How one observation kept one product as the recording (#1723).
+
+    It is derived from the product's lane candidates in that observation and
+    never stored: `target` when any lane kept it on the target's own
+    identity, otherwise the first alternative route in the total order any
+    lane states, and `None` when no lane states one.
+    """
+    values = {
+        member.admission_basis
+        for lane in provider.lanes
+        for member in lane.candidates
+        if member.edition_identity == candidate.identity
+        and member.admission_basis is not None
+    }
+    if TARGET_ADMISSION_BASIS in values:
+        return TARGET_ADMISSION_BASIS
+    return next(
+        (value for value in ALTERNATIVE_ADMISSION_BASES if value in values), None
+    )
 
 
 def companion_title_reference(companion: CompanionEbook | None) -> str | None:
@@ -5400,6 +5540,7 @@ class MetadataReport:
                 )
                 if candidate != expected:
                     raise ReportValueError("provider comparison links are inconsistent")
+        self._validate_admission_bases(planned)
         # An observation that names a candidate is a comparison, and a
         # comparison is only readable against the thing it was made with. A
         # citation naming an identity this report does not retain would be
@@ -5423,6 +5564,98 @@ class MetadataReport:
             raise ReportValueError("report identity is inconsistent")
         if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
             raise ReportValueError("report exceeds its byte limit")
+
+    def _validate_admission_bases(self, planned: dict[str, WorkLanePayload]) -> None:
+        """Replay how each lane kept a recording, lane by lane (#1723).
+
+        A value is that lane's own route: `target` on the asserted WORK lane,
+        exactly the payload's title basis on an alternative WORK lane, and on
+        an ASIN lane a route that replays against the lane's own queried ASIN.
+        A value implies the lane's own copy was corroborated, and a merge only
+        ever keeps a superset, so the retained product is a full recording
+        with edition marketplace evidence. Completeness is read per product:
+        a corroborated recording at an audiobook authority is kept by at least
+        one lane that says how.
+        """
+        # Imported here: the corroboration module imports this one.
+        from mechanical_librarian.domain.audiobook_corroboration import (
+            asin_lane_admission_basis_replays,
+        )
+
+        is_audio = self.audio is not None
+        for provider in self.providers:
+            candidates = {value.identity: value for value in provider.candidates}
+            for lane in provider.lanes:
+                payload = planned.get(lane.identity)
+                for member in lane.candidates:
+                    value = member.admission_basis
+                    candidate = candidates.get(member.edition_identity)
+                    alternative_work = (
+                        lane.kind is ProviderQueryKind.WORK
+                        and payload is not None
+                        and payload.title_basis is not None
+                        and lane.status is ProviderStatus.CANDIDATES
+                    )
+                    if value is None:
+                        # The alternative lane keeps only its corroborated
+                        # recording, so its one product always says how.
+                        if alternative_work:
+                            raise ReportValueError(
+                                "provider admission basis is missing"
+                            )
+                        continue
+                    if (
+                        not is_audio
+                        or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                        or lane.kind
+                        not in {ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
+                        or lane.status is not ProviderStatus.CANDIDATES
+                        or candidate is None
+                        or not candidate.claims
+                        or identifier_only_candidate(candidate)
+                        or not edition_marketplace_evidence(candidate)
+                    ):
+                        raise ReportValueError("provider admission basis is invalid")
+                    if lane.kind is ProviderQueryKind.WORK:
+                        expected = (
+                            TARGET_ADMISSION_BASIS
+                            if payload is None or payload.title_basis is None
+                            else payload.title_basis
+                        )
+                        if value != expected:
+                            raise ReportValueError(
+                                "provider admission basis does not replay"
+                            )
+                        continue
+                    if not asin_lane_admission_basis_replays(
+                        value,
+                        lane,
+                        candidate,
+                        target=self.target,
+                        local_claims=self.local_claims,
+                        audio=self.audio,
+                        providers=self.providers,
+                        companion=self.companion,
+                        library_languages=self.library_languages,
+                    ):
+                        raise ReportValueError(
+                            "provider admission basis does not replay"
+                        )
+        if not is_audio:
+            return
+        for provider in self.providers:
+            if (
+                provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                or not provider.lanes
+            ):
+                continue
+            for candidate in provider.candidates:
+                if (
+                    not identifier_only_candidate(candidate)
+                    and edition_marketplace_evidence(candidate)
+                    and candidate_admission_basis(provider, candidate) is None
+                ):
+                    raise ReportValueError("provider admission basis is missing")
 
     def _validate_lane_dispatch(self, planned: dict[str, WorkLanePayload]) -> None:
         """Replay every lane's dispatch record, one rule at a time (#1258).
@@ -7804,9 +8037,14 @@ def _recording_lookup_hint_from_data(value: object) -> RecordingLookupHint:
 
 
 def _provider_lane_candidate_from_data(value: object) -> ProviderLaneCandidate:
-    item = _object(value, {"edition_identity", "reference", "work_identity"})
+    item = _object(
+        value, {"admission_basis", "edition_identity", "reference", "work_identity"}
+    )
     return ProviderLaneCandidate(
-        item["reference"], item["edition_identity"], item["work_identity"]
+        item["reference"],
+        item["edition_identity"],
+        item["work_identity"],
+        item["admission_basis"],
     )
 
 
@@ -8211,11 +8449,21 @@ __all__ = [
     "DISCOVERY_TITLE_BASES",
     "COMPANION_WORK_BASIS",
     "LANE_TITLE_BASES",
+    "ALTERNATIVE_ADMISSION_BASES",
+    "COMPANION_ISBN_WORK_BASIS",
+    "RECORDING_ADMISSION_BASES",
+    "TARGET_ADMISSION_BASIS",
+    "alternative_lane_identity",
+    "candidate_admission_basis",
+    "edition_marketplace_evidence",
+    "identifier_only_candidate",
+    "plan_alternative_discovery_title",
     "companion_work_payload",
     "CompanionIsbnLanePayload",
     "companion_discovery_title",
     "companion_isbn_books",
     "companion_isbn_claims",
+    "companion_stated_isbn",
     "companion_isbn_lane",
     "companion_title_reference",
     "local_identifier_asins",

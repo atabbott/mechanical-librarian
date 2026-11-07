@@ -2950,11 +2950,14 @@ export default function LibraryPage({
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
-              {detail.data.recordingIdentityBasis || detail.data.audiobookReviewScope === 'work' ? (
+              {detail.data.recordingIdentityBasis ||
+              detail.data.recordingAdmissionBasis ||
+              detail.data.audiobookReviewScope === 'work' ? (
                 <section aria-label="Whole-work context">
                   <h3>Whole-work context</h3>
                   <RecordingIdentityBasis
                     value={detail.data.recordingIdentityBasis}
+                    admission={detail.data.recordingAdmissionBasis}
                     scope={detail.data.audiobookReviewScope}
                     offered={detail.data.fields
                       .filter(railOffers)

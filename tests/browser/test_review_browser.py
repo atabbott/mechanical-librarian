@@ -195,7 +195,9 @@ _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
 )
 
 
-def _publish_audiobook(repository: Any, chapter_runtime: bool = False) -> None:
+def _publish_audiobook(
+    repository: Any, chapter_runtime: bool = False, companion_admission: bool = False
+) -> None:
     """Publish one audiobook exactly as preparation does, and stop there.
 
     The row this leaves behind is the whole point: a `report_only` package
@@ -249,6 +251,8 @@ def _publish_audiobook(repository: Any, chapter_runtime: bool = False) -> None:
             providers=base.providers,
             audio=base.audio,
         )
+    if companion_admission:
+        report = _companion_admission(report.target.connection, "audio-item")
     producer = "f" * 64
     repository.request_review_scan("primary", "ebooks", "library", producer, 10)
     discovery = repository.claim_review_pipeline_action(11)
@@ -282,7 +286,29 @@ def _publish_audiobook(repository: Any, chapter_runtime: bool = False) -> None:
     )
 
 
-def _publish_audiobook_case(repository: Any, chapter_runtime: bool = False) -> str:
+def _companion_admission(connection: str, item: str) -> MetadataReport:
+    """A recording Hardcover lists as an audio edition of the EPUB's book (#1723).
+
+    Its own title differs from the audiobook's, so the owner is told how it
+    was found: by the ISBN the EPUB in its folder states.
+    """
+    from tests.unit.test_recording_admission_basis import _companion_report
+
+    base = _companion_report()
+    return MetadataReport.create(
+        target=TargetFacts(connection, "ebooks", item, base.target.fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+        companion=base.companion,
+    )
+
+
+def _publish_audiobook_case(
+    repository: Any, chapter_runtime: bool = False, companion_admission: bool = False
+) -> str:
     """Prepare one recording whose work identity is admitted, through to a case.
 
     This is the F45 outcome the owner actually meets: the same admission the
@@ -308,6 +334,8 @@ def _publish_audiobook_case(repository: Any, chapter_runtime: bool = False) -> s
             providers=base.providers,
             audio=base.audio,
         )
+    if companion_admission:
+        report = _companion_admission("primary", "admission-case-item")
     repository.publish(report, lambda: True)
     proposal = evaluate_report(report)
     repository.publish_proposal(proposal)
@@ -501,6 +529,7 @@ def _server(
     audiobook: bool = False,
     audiobook_case: bool = False,
     chapter_runtime: bool = False,
+    companion_admission: bool = False,
     audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
@@ -1352,9 +1381,9 @@ def _server(
         if provider_recovery:
             repository.persist_shadow_outcome(extra_case, 3)
     if audiobook:
-        _publish_audiobook(repository, chapter_runtime)
+        _publish_audiobook(repository, chapter_runtime, companion_admission)
     if audiobook_case:
-        _publish_audiobook_case(repository, chapter_runtime)
+        _publish_audiobook_case(repository, chapter_runtime, companion_admission)
     listener_port = ReservedPort() if transport_mode == "proxy" else port
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
@@ -6066,7 +6095,9 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
 
                 row.click()
 
-                basis = page.get_by_role("region", name="Recording identity evidence")
+                basis = page.get_by_role(
+                    "region", name="How this recording was matched"
+                )
                 if chapter_runtime:
                     expect(basis).to_contain_text(
                         "Complete chapter timing and structure corroborate this recording where overall runtime is unavailable."
@@ -6095,10 +6126,12 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         page.get_by_role("link", name="Back to work", exact=True)
                     ).to_be_visible()
                     expect(
-                        page.get_by_role("region", name="Recording identity evidence")
+                        page.get_by_role(
+                            "region", name="How this recording was matched"
+                        )
                     ).to_be_visible()
                     source = page.get_by_role(
-                        "region", name="Recording identity evidence"
+                        "region", name="How this recording was matched"
                     ).locator("summary")
                     bounds = source.bounding_box()
                     assert bounds is not None and bounds["height"] >= 44
@@ -6174,7 +6207,9 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         "button", name=re.compile("^Recorded audiobook")
                     ).click()
                     expect(
-                        page.get_by_role("region", name="Recording identity evidence")
+                        page.get_by_role(
+                            "region", name="How this recording was matched"
+                        )
                     ).to_have_count(0)
                     page.get_by_text("Chapters (6)", exact=True).click()
                     expect(page.get_by_text("00:00:00 – 00:01:53")).to_be_visible()
@@ -6185,6 +6220,100 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
 
 def test_chapter_runtime_case_explains_its_identity_basis() -> None:
     test_an_admitted_audiobook_is_decided_like_any_other_case(chapter_runtime=True)
+
+
+_COMPANION_ISBN_SENTENCE = (
+    "Hardcover lists the matched recording as an audio edition of the book "
+    "with ISBN 9780306406157, which is stated in the EPUB in this folder. "
+    "The matched recording\u2019s running time closely matches this "
+    "audiobook\u2019s."
+)
+
+
+def test_a_companion_isbn_admission_is_explained_on_every_surface() -> None:
+    """How a recording titled otherwise was found, wherever it is shown (#1723).
+
+    The recording Hardcover lists for the EPUB's ISBN is explained on the
+    Library's Whole-work context, on its case and on a report-only work's
+    recorded evidence, and its Sources name the EPUB's ISBN lookup.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    audiobook=True,
+                    audiobook_case=True,
+                    companion_admission=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&q=Asserted Title")
+                page.get_by_role(
+                    "button", name=re.compile("^Asserted Title")
+                ).first.click()
+                context_region = page.get_by_role("region", name="Whole-work context")
+                expect(context_region).to_be_visible()
+                note = context_region.get_by_role(
+                    "region", name="How this recording was matched"
+                )
+                expect(note).to_contain_text(_COMPANION_ISBN_SENTENCE)
+                assert note.get_attribute("aria-live") is None
+                note.get_by_text("Recording source").click()
+                expect(note).to_contain_text("enrichment-B0LINKED01")
+
+                preview = parse_qs(urlparse(page.url).query)["preview"][0]
+                page.goto(f"{origin}/review/{preview}")
+                expect(
+                    page.get_by_role("region", name="How this recording was matched")
+                ).to_contain_text(_COMPANION_ISBN_SENTENCE)
+
+                page.goto(f"{origin}/library?lens=all&q=Asserted Title")
+                rows = page.get_by_role("button", name=re.compile("^Asserted Title"))
+                expect(rows).to_have_count(2)
+                # The report-only work, published as preparation leaves it.
+                rows.filter(has_not_text="needs attention").click()
+                evidence = page.get_by_role("region", name="Recorded evidence")
+                expect(
+                    evidence.get_by_role(
+                        "region", name="How this recording was matched"
+                    )
+                ).to_contain_text(_COMPANION_ISBN_SENTENCE)
+                sources = page.locator(".work-sources")
+                sources.get_by_text("Sources", exact=True).first.click()
+                expect(sources).to_contain_text("ISBN lookup (EPUB in this folder)")
+                expect(sources).to_contain_text(
+                    "Looked up the book and its audio editions by the EPUB's ISBN."
+                )
+            browser.close()
+        assert errors == []
 
 
 def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -> None:
@@ -11716,7 +11845,7 @@ def test_audiobook_work_series_title_owner_journey():
                 page.get_by_role("region", name="Book-level evidence")
             ).to_be_visible()
             expect(
-                page.get_by_role("region", name="Recording identity evidence")
+                page.get_by_role("region", name="How this recording was matched")
             ).to_have_count(0)
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text("To Example Saga", exact=False)).to_be_visible()

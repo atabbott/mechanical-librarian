@@ -1264,7 +1264,7 @@ def test_login_case_evidence_history_and_logout_round_trip(
     )
     history = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/history")
     assert evidence.status_code == 200
-    assert evidence.json()["schema_version"] == "review-case-evidence-v4"
+    assert evidence.json()["schema_version"] == "review-case-evidence-v5"
     assert evidence.json()["items"][0]["source"] == "Local library record"
     assert evidence.json()["items"][0]["destinations"] == ["title"]
     assert "Exact evaluator candidate" in evidence.json()["items"][0]["observation"]

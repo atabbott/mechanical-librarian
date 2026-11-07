@@ -26,6 +26,7 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
+    recording_admission_basis,
     recording_identity_basis,
 )
 from mechanical_librarian.application.operations import StageTimer
@@ -1074,9 +1075,10 @@ class InspectCurrentReviewCase:
                 # were read from, never from a second source.
                 "media_health": _media_health(report),
                 "recording_identity_basis": recording_identity_basis(report),
+                "recording_admission_basis": recording_admission_basis(report),
                 "audiobook_review_scope": audiobook_review_scope(report),
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v6",
+                "schema_version": "review-case-detail-v7",
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -1499,7 +1501,7 @@ class InspectCurrentReviewCase:
                 else None
             ),
             "review_case_id": review_case_id,
-            "schema_version": "review-case-evidence-v4",
+            "schema_version": "review-case-evidence-v5",
             "source_ledger": _provider_outcomes(provider_lane_facts(report)),
         }
 
@@ -2010,7 +2012,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v4",
+            "schema_version": "review-library-v5",
         }
 
     def attention(
@@ -2353,6 +2355,7 @@ def _report_detail(
         # already published and nothing was rebuilt to obtain it.
         "media_health": _media_health(recorded),
         "recording_identity_basis": recording_identity_basis(recorded),
+        "recording_admission_basis": recording_admission_basis(recorded),
         "audiobook_review_scope": audiobook_review_scope(recorded),
         # What every dispatched provider was asked, and how each ended.
         "provider_sources": _provider_outcomes(provider_lane_facts(recorded)),
@@ -2361,7 +2364,7 @@ def _report_detail(
         "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
         "provider_evidence_truncated": len(provider_claims) > _EVIDENCE_CEILING,
         "report_id": report["report_id"],
-        "schema_version": "review-report-detail-v5",
+        "schema_version": "review-report-detail-v6",
         "title": _report_title(report),
     }
 
@@ -3417,6 +3420,15 @@ _ADAPTER_FAULT_REASON = (
 )
 
 
+# The two companion ISBN endings that read differently from a generic ISBN
+# lookup (#1723); every other ending keeps its generic reason, so a failure is
+# still named under the companion label.
+_COMPANION_ISBN_REASONS = {
+    "candidates": "Looked up the book and its audio editions by the EPUB's ISBN.",
+    "no_match": "The EPUB's ISBN did not lead to this audiobook.",
+}
+
+
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
@@ -3433,11 +3445,16 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused" or lane.identity_refused
+            else _COMPANION_ISBN_REASONS[lane.status]
+            if lane.companion_isbn and lane.status in _COMPANION_ISBN_REASONS
             else _PROVIDER_OUTCOME_REASONS.get(
                 lane.status, "Ended in a bounded state this build cannot name."
             ),
             # Its own status, so Sources never labels it unavailable (#1498).
             "status": "adapter_fault" if lane.adapter_fault else lane.status,
+            # The companion EPUB's ISBN lane, so Sources says where the ISBN
+            # an audiobook never states came from (#1723).
+            "companion_isbn": lane.companion_isbn,
         }
         for lane in lanes
     ]
