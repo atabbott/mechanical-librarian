@@ -3445,7 +3445,9 @@ _PRODUCTION_CSP = (
 # Writes are off and one library may be enabled, so the Library handoff shows.
 _WRITES_OFF_CONSENT = {
     "backup_ready": None,
-    "configured_libraries": [{"connection": "primary", "library": "Household ebooks"}],
+    "configured_libraries": [
+        {"connection": "primary", "library": "Household ebooks", "prepared": None}
+    ],
     "lapsed_consents": [],
     "capabilities": [
         {
@@ -5355,7 +5357,11 @@ def test_activity_paging_keeps_the_focused_control_in_view() -> None:
         payload["events"] = (
             events
             + [
-                {**event, "event_id": f"{event['event_id']}-{copy}"}
+                {
+                    **event,
+                    "event_id": f"{event['event_id']}-{copy}",
+                    "change_id": f"{event['change_id']}-{copy}",
+                }
                 for copy in range(ledger["page_size"])
                 for event in events
                 if not event["check_group"]

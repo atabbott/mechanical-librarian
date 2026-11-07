@@ -1439,9 +1439,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             },
         ],
         "consented_libraries": [
-            {"connection": "primary", "library": "Household ebooks"}
+            {"connection": "primary", "library": "Household ebooks", "prepared": None}
         ],
-        "enabled_libraries": [{"connection": "primary", "library": "Household ebooks"}],
+        "enabled_libraries": [
+            {"connection": "primary", "library": "Household ebooks", "prepared": None}
+        ],
         "capabilities": [
             {
                 "connection": "primary",
@@ -1504,6 +1506,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         "events": [
             {
                 "event_id": f"activity-event-{index}",
+                # The server always sends these; the old browser mapper read an
+                # absent change_id as the event id, so the cohort keeps that.
+                "change_id": f"activity-event-{index}",
+                "diagnostic": None,
                 "event_type": _cohort_event_type(destination, origin, failure),
                 "category": _cohort_category(destination, origin, failure),
                 "change": _cohort_change(work, destination)[0],
@@ -1544,12 +1550,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "occurred_at": 1_754_858_100
                 + index * 300
                 + (86_400 if work == CHECKED_WORK and destination == "genres" else 0),
-                **(
-                    {"transition_id": "effect_plan_" + "a" * 64}
-                    if work == "The Glass Orchard"
-                    else {}
-                ),
-                **({"failure": failure} if failure else {}),
+                "transition_id": "effect_plan_" + "a" * 64
+                if work == "The Glass Orchard"
+                else None,
+                "failure": failure or None,
             }
             for index, (
                 work,
@@ -1593,12 +1597,43 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                     "missing_corroboration",
                     "blanket_scan",
                 ],
+                "failure_reasons": [],
             },
-            {"state": "checking", "affected_count": 1, "next_eligible_at": None},
-            {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
-            {"state": "recovered", "affected_count": 1, "next_eligible_at": None},
-            {"state": "dormant", "affected_count": 2, "next_eligible_at": None},
-            {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
+            {
+                "state": "checking",
+                "affected_count": 1,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "fanout",
+                "affected_count": 3,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "recovered",
+                "affected_count": 1,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "dormant",
+                "affected_count": 2,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "exhausted",
+                "affected_count": 1,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
         ],
         "suspensions": [
             {
