@@ -74,8 +74,10 @@ _COMPETING = "competing_evidence"
 _POLICY = re.compile(r"^fixed-conservative-v([1-9][0-9]{0,2})$")
 
 # Containment clauses of the duplicate check, in attribution order. The
-# series name with its number can fire only where the bare name fires too,
-# so it is counted with the number.
+# series name with its number can fire only where the bare name fires too.
+# The mirror records it under the number clause, but the name clause comes
+# first in attribution order, so a combination it vetoes is attributed to
+# the name.
 CLAUSES = (
     "subtitle_in_title",
     "series_name_equals_title",
@@ -1187,7 +1189,7 @@ CAUSE_LABELS = {
     "series_name_equals_title": "series name equals title",
     "series_name_in_title": "series name in title",
     "series_number_in_title": "series number in title",
-    "ambiguous_source": "ambiguous source",
+    "ambiguous_source": "ambiguous source records",
     "too_many_combinations": "too many combinations",
     "not_explained": "not explained",
 }
@@ -1242,7 +1244,7 @@ def _relaxation_cells(entry: Mapping[str, object]) -> list[str]:
         _n(outcomes["main_forms"]),
         " / ".join(_n(outcomes[name]) for name in refused),
         _n(outcomes["admitted"]),
-        _n(entry["fields"]) if entry["rule"] != R3 else "none: no value changes",
+        _n(entry["fields"]) if entry["rule"] != R3 else "no value changes",
         _n(entry["cases"]) if entry["rule"] == R3 else "not applicable",
         f"{entry['true_positive']}/{entry['false_positive']}/{entry['unlabelled']}",
         _ratio(entry),
@@ -1326,32 +1328,27 @@ def render(section: Mapping[str, object]) -> list[str]:
         "### Stale for main",
         "",
         "| Snapshot | Works | Stale: later rule (#1099) | "
-        "Works with no combination on main | Withheld-title rule (#1497) |",
+        "Works with no combination on main | Withheld-title rule (#1497) at source |",
         "|---|---|---|---|---|",
     ]
     for entry in snapshots:
         works, stale = cast("int", entry["works"]), cast("int", entry["stale_works"])
         lines.append(
             f"| {entry['label']} | {_n(works)} | {_n(stale)} | {_n(works - stale)} | "
-            + (
-                "present at source"
-                if entry["withheld_title_rule_at_source"]
-                else "not present at source"
-            )
-            + " |"
+            f"{_yes(entry['withheld_title_rule_at_source'])} |"
         )
     header = (
         "| Relaxation | Snapshot | Evaluated | Main already forms one | "
-        "Refused: shape / held first / series populated / other clause / several / "
+        "Refused: shape / held first / series populated / other clause / several qualify / "
         "degraded title / wrong-work record | Admitted | Admitted fields | "
         "Cases with no held sibling | "
         "Cited records: right work / wrong work / unlabelled | "
         "Identity precision (Wilson 95% lower limit) | "
         "Fields: tied / decided (admitted is the right-work one) / no right-work | "
         "Repeats current value | Value agreement with an uncited record | "
-        "Containment kept after admission |"
+        "Clause still firing after admission |"
     )
-    lines += ["", "### Relaxations", "", header, "|" + "---|" * 15]
+    lines += ["", "### Relaxations", "", header, "|" + "---|" * 14]
     for entry in snapshots:
         for row in ledger._dicts(entry["relaxations"]):
             lines.append(

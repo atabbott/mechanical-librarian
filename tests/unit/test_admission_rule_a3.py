@@ -10,7 +10,9 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
-from collections.abc import Mapping, Sequence
+import shutil
+import sqlite3
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -20,6 +22,7 @@ import scripts.admission_rule_ledger as ledger
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from tests.unit.test_admission_rule_a6 import _breakdown_run
 from tests.unit.test_admission_rule_ledger import (
     _SENTINEL,
     EBOOK_REVISION,
@@ -28,6 +31,7 @@ from tests.unit.test_admission_rule_ledger import (
     Sentinels,
     _arguments,
     _database,
+    _run,
     _strings,
     _test_vocabulary,
 )
@@ -743,10 +747,19 @@ def _a3_run(
     tmp_path: Path,
     *extra: str,
     ancestry: ledger.Ancestry = _source_predates_elections,
+    extra_shadow: str | None = None,
     **replays: a3.CaseReplay,
 ) -> tuple[int, str, str]:
     text = Sentinels()
     fixture, identities = _a3_fixture(text)
+    if extra_shadow is not None:
+        fixture.shadow.append(
+            {
+                "destination": "title",
+                "disposition": "conflict",
+                "reason_code": extra_shadow,
+            }
+        )
     database = _database(
         tmp_path / "a3.sqlite3", "v26-like", [fixture, _masked_fixture(text)]
     )
@@ -847,13 +860,17 @@ def test_r3_counts_a_case_only_when_no_sibling_stays_held(tmp_path: Path) -> Non
 
 
 def test_a_work_main_would_form_is_stale_and_not_relaxed(tmp_path: Path) -> None:
+    # Two combinations, vetoed at a source without the same-name rule; only
+    # one survives main's rule, which is enough.
     stale = _replay(
-        [_same_name()],
+        [_r1_combination(), _same_name()],
         {"title": _prior("keep"), "series": _prior("propose_change")},
     )
     code, stdout, _ = _a3_run(tmp_path, first=stale)
     assert code == 0
     (entry,) = json.loads(stdout)["a3_combination"]["snapshots"]
+    # The mirror reads the source's own rule, so it agrees with the veto.
+    assert entry["mirror_disagreements"] == 0
     populations = {row["destination"]: row for row in entry["populations"]}
     assert populations["title"]["stale_later_rule"] == 1
     assert populations["series"]["stale_later_rule"] == 1
@@ -915,7 +932,7 @@ def test_the_markdown_is_the_analysis_only_and_reads_not_estimable(
         "| same_name_series_beside_new_title | pooled | 2 | 0 | 1 / 1 / 0 / 0 / 0 / 0 / 0 "
         "| 0 | 0 | not applicable | 0/0/0 | not estimable |"
     ) in markdown
-    assert "| snap-a | 2 | 0 | 2 | not present at source |" in markdown
+    assert "| snap-a | 2 | 0 | 2 | no |" in markdown
 
 
 def test_the_analysis_is_aggregate_only(tmp_path: Path) -> None:
@@ -972,7 +989,8 @@ def test_a_surprising_replay_document_is_a_fixed_refusal(document: str) -> None:
     assert _SENTINEL not in refused.value.message
 
 
-def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) -> None:
+def _product_case(tmp_path: Path) -> Path:
+    """A product-built case: a kept title that holds the series name."""
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database)
     report = _bibliographic_report(
@@ -991,7 +1009,11 @@ def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) 
     repository.publish_proposal(proposal)
     repository.admit_review_case(proposal)
     repository.close()
-    probe = a3.child_a3(REPOSITORY, database)
+    return database
+
+
+def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) -> None:
+    probe = a3.child_a3(REPOSITORY, _product_case(tmp_path))
     assert probe.same_name_rule and probe.failed == 0 and len(probe.cases) == 1
     (replay,) = probe.cases.values()
     assert (replay.replay, replay.a3, replay.counterfactual) == (
@@ -1004,6 +1026,8 @@ def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) 
         item.verdict == bool(a3.clauses(item, same_name_rule=True))
         for item in replay.combinations
     )
+    # The source passes its own kept-title fact to the duplicate check.
+    assert all(item.title_kept for item in replay.combinations)
     assert a3.classify(replay.prior["title"]) == "kept_value"
     assert a3.classify(replay.prior["series"]) == "value_change"
     assert a3.work_causes(replay, probe.limit, same_name_rule=True) == (
@@ -1011,3 +1035,162 @@ def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) 
     )
     assert not a3.stale_for_main(replay)
     assert a3.relax_r1(replay, _case()).admitted == ("series",)
+
+
+def test_the_child_reports_a_stored_set_altered_off_the_a3_fields(
+    tmp_path: Path,
+) -> None:
+    database = _product_case(tmp_path)
+    connection = sqlite3.connect(database)
+    connection.execute("DROP TRIGGER proposal_sets_no_update")
+    ((identity, text),) = connection.execute(
+        "SELECT proposal_set_id, document FROM proposal_sets"
+    ).fetchall()
+    document = json.loads(text)
+    other = next(
+        result
+        for result in document["results"]
+        if result["destination"] not in a3.BIBLIOGRAPHIC
+    )
+    other["reasons"] = [*other["reasons"], "competing_evidence"]
+    connection.execute(
+        "UPDATE proposal_sets SET document=? WHERE proposal_set_id=?",
+        (json.dumps(document), identity),
+    )
+    connection.commit()
+    connection.close()
+    probe = a3.child_a3(REPOSITORY, database)
+    (replay,) = probe.cases.values()
+    # The replay and the negative control both see the altered field.
+    assert (replay.replay, replay.a3, replay.counterfactual) == (
+        "differs",
+        ("title", "series"),
+        "differs",
+    )
+
+
+def test_the_child_reads_a_source_without_the_same_name_rule(
+    tmp_path: Path,
+) -> None:
+    """A source whose duplicate check takes no kept-title fact (before #1099)."""
+    database = _product_case(tmp_path)
+    old = tmp_path / "old"
+    shutil.copytree(
+        REPOSITORY / "src", old / "src", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    module = old / "src" / "mechanical_librarian" / "domain" / "proposal_set.py"
+    text = module.read_text(encoding="utf-8")
+    signature = (
+        "    results: dict[TargetDestination, ProposalResult],\n"
+        "    title_kept: bool,\n"
+        ") -> bool:\n"
+        "    alternatives = {"
+    )
+    call = (
+        "_duplicates_bibliographic_component(selections, targets, results, title_kept)"
+    )
+    assert text.count(signature) == 1 and text.count(call) == 1
+    text = text.replace(
+        signature,
+        "    results: dict[TargetDestination, ProposalResult],\n"
+        ") -> bool:\n"
+        "    title_kept = False\n"
+        "    alternatives = {",
+    ).replace(call, "_duplicates_bibliographic_component(selections, targets, results)")
+    module.write_text(text, encoding="utf-8")
+    probe = a3.child_a3(old, database)
+    assert probe.same_name_rule is False
+    (replay,) = probe.cases.values()
+    assert replay.replay == "equal" and replay.combinations
+    # Without the parameter the kept-title fact comes from the title's outcome.
+    assert all(item.title_kept for item in replay.combinations)
+    assert all(
+        item.verdict == bool(a3.clauses(item, same_name_rule=False))
+        for item in replay.combinations
+    )
+
+
+@pytest.mark.parametrize(
+    ("relax", "prior"),
+    [
+        (
+            a3.relax_r1,
+            {
+                **_r1_prior(),
+                "series": _prior(
+                    "acceptable_choice", selected="fill", assessment="fills_empty"
+                ),
+            },
+        ),
+        (
+            a3.relax_r2,
+            {**_r2_prior(), "title": _prior("acceptable_choice", selected="new")},
+        ),
+    ],
+    ids=["r1-acceptable-series", "r2-acceptable-title"],
+)
+def test_an_acceptable_choice_is_not_a_proposed_change(
+    relax: Callable[[a3.CaseReplay, ledger.Case], a3.Verdict],
+    prior: dict[str, a3.Prior],
+) -> None:
+    combinations = [_r1_combination(), _r2_combination()]
+    assert relax(_replay(combinations, prior), _case()).outcome == "refused_shape"
+
+
+def test_one_surviving_combination_is_not_explained() -> None:
+    survivor = dataclasses.replace(_r1_combination(), verdict=False)
+    assert a3.work_causes(_replay([survivor], {}), 256, same_name_rule=False) == (
+        "not_explained",
+    )
+
+
+def test_only_competing_values_count_as_stale_by_election_and_only_its_code_as_atomicity(
+    tmp_path: Path,
+) -> None:
+    other = _replay(
+        [
+            _combination(
+                TITLE,
+                kind=C,
+                alternative="x",
+                series=_part(C, "y", items=[_series(NAME)]),
+            )
+        ],
+        {"title": _prior("defer", reasons=["no_supported_evidence"])},
+        ("title",),
+    )
+    code, stdout, _ = _a3_run(tmp_path, second=other, extra_shadow="no_eligible_action")
+    assert code == 0
+    (entry,) = json.loads(stdout)["a3_combination"]["snapshots"]
+    title = next(row for row in entry["populations"] if row["destination"] == "title")
+    assert (title["held_first"], title["held_first_later_election"]) == (1, 0)
+    assert title["atomicity"] == 1
+
+
+def _table_widths(markdown: str) -> list[tuple[int, int]]:
+    """Header and delimiter cell counts of every table in the text."""
+    lines = markdown.splitlines()
+    return [
+        (lines[index - 1].count(" | ") + 1, line.count("---|"))
+        for index, line in enumerate(lines)
+        if line.startswith("|---")
+    ]
+
+
+def test_every_rendered_table_has_a_delimiter_as_wide_as_its_header(
+    tmp_path: Path,
+) -> None:
+    code, markdown, _ = _a3_run(tmp_path, "--format", "markdown")
+    assert code == 0
+    (tmp_path / "a6").mkdir()
+    a6_code, a6_markdown, _ = _breakdown_run(tmp_path / "a6", "--format", "markdown")
+    database = _database(tmp_path / "l.sqlite3", "v26-like", [])
+    ledger_code, ledger_markdown, _ = _run(
+        _arguments(
+            [("snap-a", database, EBOOK_REVISION)], tmp_path, "--format", "markdown"
+        )
+    )
+    assert (a6_code, ledger_code) == (0, 0)
+    for text in (markdown, a6_markdown, ledger_markdown):
+        widths = _table_widths(text)
+        assert widths and all(header == cells for header, cells in widths), widths
