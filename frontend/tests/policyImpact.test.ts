@@ -29,7 +29,7 @@ describe('policy impact projections', () => {
       reason: null,
       target_state: 'value',
     }).detail
-    expect(series).toBe('Old order (1) → Reading order (2), Companion set')
+    expect(series).toBe('changes Old order (1) to Reading order (2), Companion set')
     const genres = policyImpactDisplay({
       current_value: ['Fantasy'],
       desired_value: ['Fantasy', 'Adventure'],
@@ -38,7 +38,7 @@ describe('policy impact projections', () => {
       reason: null,
       target_state: 'value',
     }).detail
-    expect(genres).toBe('Fantasy → Fantasy, Adventure')
+    expect(genres).toBe('changes Fantasy to Fantasy, Adventure')
     expect(`${series} ${genres}`).not.toMatch(/[[\]{}"]/u)
   })
 
@@ -59,7 +59,7 @@ describe('policy impact projections', () => {
     ).toBe('would propose clearing Old')
     expect(
       policyImpactDisplay({ ...field, current_value: 'Old', desired_value: 'New' }, true).detail,
-    ).toBe('would propose Old → New')
+    ).toBe('would propose changing Old to New')
     // A language value reads by its name.
     expect(
       policyImpactDisplay({
@@ -68,7 +68,7 @@ describe('policy impact projections', () => {
         current_value: 'en',
         desired_value: 'English',
       }).detail,
-    ).toBe('English (en) → English')
+    ).toBe('changes English (en) to English')
   })
 
   it('projects bounded policy impact language without promoting transport enums', () => {
@@ -81,7 +81,7 @@ describe('policy impact projections', () => {
         reason: null,
         target_state: 'value',
       }),
-    ).toMatchObject({ changed: true, title: 'Change', detail: 'Old title → New title' })
+    ).toMatchObject({ changed: true, title: 'Change', detail: 'changes Old title to New title' })
     expect(
       policyImpactDisplay({
         current_value: null,
@@ -108,8 +108,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: true,
       title: 'Change',
-      detail:
-        'fills the empty field with 9780306406157 because deterministic identity evidence binds it to this file’s work',
+      detail: 'fills the empty field with 9780306406157 because it is verified for this edition',
     })
     expect(
       policyImpactDisplay({
@@ -133,7 +132,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains empty — no supported value found',
+      detail: 'remains empty. No supported value found.',
     })
     expect(
       policyImpactDisplay({
@@ -147,7 +146,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title — the exact current value is preserved',
+      detail: 'remains Current title.',
     })
     expect(
       policyImpactDisplay({
@@ -176,7 +175,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'Needs review',
-      detail: 'Current value is unavailable or unreadable — inspect the source before deciding',
+      detail: 'Current value is unavailable or unreadable. Inspect the source before deciding.',
     })
     expect(
       policyImpactDisplay({
@@ -190,7 +189,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains empty — this policy leaves the field unchanged',
+      detail: 'remains empty. This policy leaves the field unchanged.',
     })
     expect(
       policyImpactDisplay({
@@ -218,7 +217,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title — the exact current value is preserved',
+      detail: 'remains Current title.',
     })
     expect(
       policyImpactDisplay({
@@ -260,7 +259,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title — this policy leaves the field unchanged',
+      detail: 'remains Current title. This policy leaves the field unchanged.',
     })
     expect(
       policyImpactDisplay({

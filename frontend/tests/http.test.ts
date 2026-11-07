@@ -40,6 +40,7 @@ import {
   BuildMismatchError,
   CsrfRenewedError,
   MEDIA_HEALTH_KINDS,
+  NetworkUnavailableError,
   PageCsrfTokenStore,
   ReviewApiClient,
   derivePolicyDraftDisplay,
@@ -2423,16 +2424,27 @@ describe('ReviewApiClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps a lost resend ambiguous rather than resending again', async () => {
+  // A lost resend is never sent a third time. A write that may have landed
+  // stays ambiguous; validate writes nothing, so it is a lost network call.
+  it.each([
+    [
+      'provider-recovery/retry',
+      (client: ReviewApiClient) => client.retryProviderRecovery(7),
+      AmbiguousMutationError,
+    ],
+    [
+      'validate',
+      (client: ReviewApiClient) => client.policyCommand('validate', policyDraft),
+      NetworkUnavailableError,
+    ],
+  ] as const)('does not resend a lost %s resend again', async (_name, send, expected) => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(csrfChallenge())
       .mockRejectedValueOnce(new TypeError('network'))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    await expect(client.policyCommand('validate', policyDraft)).rejects.toBeInstanceOf(
-      AmbiguousMutationError,
-    )
+    await expect(send(client)).rejects.toBeInstanceOf(expected)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
@@ -4594,6 +4606,40 @@ describe('central response decoding (#1685)', () => {
     const failure = await client.preparationAction('pause').catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(AmbiguousMutationError)
     expect(failure).not.toBeInstanceOf(UncertainMutationError)
+  })
+
+  // #1754: only a command that may write is uncertain when its answer is lost.
+  const policyDraft: PolicyDraft = { name: 'Draft', options: {}, destinations: {} }
+  it.each([
+    ['preview', (client: ReviewApiClient) => client.previewPolicy(policyDraft)],
+    ['validate', (client: ReviewApiClient) => client.policyCommand('validate', policyDraft)],
+    ['a read', (client: ReviewApiClient) => client.getPolicyState()],
+  ] as const)('reports a lost %s answer as a network failure', async (_name, send) => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Failed to fetch'))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    const failure = await send(client).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(NetworkUnavailableError)
+    expect(failure).not.toBeInstanceOf(AmbiguousMutationError)
+    expect(failure).not.toBeInstanceOf(ApiError)
+    expect(uncertainWriteOutcome(failure)).toBe(false)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('reports a lost CSRF renewal on validate as a network failure', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ error: { code: 'csrf' } }, { status: 403 }))
+    const client = new ReviewApiClient({
+      csrf: { current: () => token, renew: () => Promise.reject(new TypeError('Failed to fetch')) },
+      fetch: fetchMock,
+      buildIdentity: 'c'.repeat(64),
+    })
+    const failure = await client
+      .policyCommand('validate', policyDraft)
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(NetworkUnavailableError)
+    expect(uncertainWriteOutcome(failure)).toBe(false)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('reports a failure as a 502 only for a command that writes nothing', async () => {

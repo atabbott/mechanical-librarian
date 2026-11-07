@@ -99,6 +99,8 @@ export const reviewField = (overrides: Overrides = {}) => ({
   inventory_role: 'primary',
   manual_hold: false,
   manual_required: false,
+  manual_return_requested: false,
+  manual_return_failed: false,
   navigation_role: 'attention',
   needs_attention: true,
   notices: [],
