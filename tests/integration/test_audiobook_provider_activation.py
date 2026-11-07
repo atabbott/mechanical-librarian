@@ -37,6 +37,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
+    CoverRedirects,
     MetadataProvider,
     ProviderCoverDescriptor,
     ProviderLaneResult,
@@ -259,7 +260,7 @@ class _FakeAudiobookProvider:
                         "audnexus-book-" + _ASIN,
                     ),
                     None,
-                    False,
+                    CoverRedirects.NONE,
                     None,
                     None if cover_url is not None else CoverSourceState.UNSAFE_REMOTE,
                 ),
@@ -529,7 +530,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v69" == published.schema_version
+        assert "metadata-report-v70" == published.schema_version
         # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).

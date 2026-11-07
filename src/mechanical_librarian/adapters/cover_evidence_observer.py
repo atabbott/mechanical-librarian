@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
@@ -31,6 +33,8 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
+    CoverEvidenceError,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -48,9 +52,28 @@ if TYPE_CHECKING:
         CoverArtifactStore,
     )
 
+_DATANODE = re.compile(r"ia[0-9]{1,6}\.us\.archive\.org")
 # Every metadata adapter states this one literal when the provider named an
 # edition but no work, so two descriptors carrying it name nothing in common.
 _UNRESOLVED_WORK_IDENTITY = "unresolved"
+
+
+def _final_host(kind: CoverSourceKind, url: str) -> CoverFinalHost | None:
+    """The closed family of the host a retrieved Open Library cover came from.
+
+    The transport admitted ``url`` on Open Library's fixed route, so any other
+    host is an internal invariant failure. It raises, and no host persists.
+    """
+    if kind is not CoverSourceKind.OPEN_LIBRARY:
+        return None
+    host = urlsplit(url).hostname
+    if host == "covers.openlibrary.org":
+        return CoverFinalHost.COVERS_OPEN_LIBRARY
+    if host == "archive.org":
+        return CoverFinalHost.ARCHIVE
+    if host is not None and _DATANODE.fullmatch(host) is not None:
+        return CoverFinalHost.US_ARCHIVE
+    raise CoverEvidenceError("cover final host is invalid")
 
 
 class CoverEvidenceObserver:
@@ -337,9 +360,10 @@ class CoverEvidenceObserver:
             remote = fetch_remote_cover(
                 descriptor.url,
                 deadline=attempt,
-                allow_redirects=descriptor.allow_redirects,
+                redirects=descriptor.redirects,
                 user_agent=descriptor.user_agent,
             )
+            final_host = _final_host(kind, remote.url)
             decoded = decode_cover(
                 remote.content,
                 deadline=deadline.aggregate_deadline,
@@ -351,6 +375,7 @@ class CoverEvidenceObserver:
                 CoverSourceState.RETRIEVED,
                 decoded.artifact,
                 provenance=descriptor.provenance,
+                final_host=final_host,
             )
         except RemoteCoverTimeout:
             return CoverSource(

@@ -22,6 +22,7 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -1224,6 +1225,45 @@ def test_cover_requires_one_complete_safe_artifact(kind: CoverSourceKind) -> Non
         "cover_gallery_incomplete",
         "owner_cover_choice_required",
     ) == incomplete.reasons
+
+
+def test_an_archived_open_library_cover_is_judged_like_any_other() -> None:
+    artifact = CoverArtifact.create(b"cover", b"preview", "image/jpeg", 10, 20)
+    provenance = CoverProvenance(
+        "open_library", CoverDesignation.WORK, "open-library-work-OL1W"
+    )
+    source_id = cover_source_id(CoverSourceKind.OPEN_LIBRARY, "open_library:work")
+    archived = CoverSource(
+        source_id,
+        CoverSourceKind.OPEN_LIBRARY,
+        CoverSourceState.RETRIEVED,
+        artifact,
+        provenance=provenance,
+        final_host=CoverFinalHost.US_ARCHIVE,
+    )
+    result = _result(
+        evaluate_report(_report(covers=(archived,))), TargetDestination.COVER
+    )
+    assert (result.outcome, result.reasons) == (
+        ProposalOutcome.PROPOSE_CHANGE,
+        ("unique_safe_cover",),
+    )
+    assert artifact.artifact_id == result.alternatives[0].value.value
+    # Negative control: the same source arriving unavailable, as every archived
+    # Open Library cover did before #1752, keeps the gallery incomplete.
+    unavailable = CoverSource(
+        source_id,
+        CoverSourceKind.OPEN_LIBRARY,
+        CoverSourceState.UNAVAILABLE,
+        provenance=provenance,
+    )
+    deferred = _result(
+        evaluate_report(_report(covers=(unavailable,))), TargetDestination.COVER
+    )
+    assert (deferred.outcome, deferred.reasons) == (
+        ProposalOutcome.DEFER,
+        ("cover_gallery_incomplete",),
+    )
 
 
 def test_verified_incumbent_and_alternative_require_owner_cover_choice() -> None:

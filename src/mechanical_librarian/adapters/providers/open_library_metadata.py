@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
@@ -1851,7 +1852,7 @@ def _cover_descriptors(
                 ),
                 provenance,
                 wait,
-                False,
+                CoverRedirects.OPEN_LIBRARY_ARCHIVE,
                 user_agent,
                 (
                     cover.terminal_state
@@ -1887,7 +1888,7 @@ def _cover_descriptors(
                 ),
                 provenance,
                 wait,
-                False,
+                CoverRedirects.OPEN_LIBRARY_ARCHIVE,
                 user_agent,
                 (
                     cover.terminal_state

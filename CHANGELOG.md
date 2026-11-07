@@ -93,6 +93,9 @@ brackets are GitHub issues.
   change now answers with its saved view (#1571).
 - Closing the Attention queue with its toolbar toggle keeps focus on the
   toggle, as Close and Escape do (#1566).
+- **Clean rebuild required.** Older Open Library covers, which Open Library
+  serves from the Internet Archive, are now fetched and judged like any other
+  cover instead of being reported unavailable (#1752).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

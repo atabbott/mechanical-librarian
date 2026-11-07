@@ -38,6 +38,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverContextField,
     CoverDesignation,
     CoverEvidenceError,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -96,7 +97,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v69"
+REPORT_SCHEMA = "metadata-report-v70"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -7492,6 +7493,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
         value,
         {
             "artifact",
+            "final_host",
             "kind",
             "provenance",
             "source_id",
@@ -7556,6 +7558,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
         artifact,
         item["timeout_scope"],
         provenance,
+        None if item["final_host"] is None else CoverFinalHost(item["final_host"]),
     )
 
 

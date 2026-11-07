@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryPacer,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -3714,6 +3715,44 @@ def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(
     descriptor = provider_result.cover_descriptors[0]
     assert expected_url == descriptor.url
     assert expected_state == descriptor.terminal_state
+
+
+def test_both_open_library_cover_descriptors_follow_only_the_archive_route() -> None:
+    values = {
+        "/search.json": _search("/books/OL1M"),
+        "/books/OL1M.json": {**_edition("/books/OL1M"), "covers": [7]},
+        "/works/OL5W.json": {**_work(), "covers": [3]},
+    }
+    provider = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=values[request.url.path],
+                )
+            )
+        ),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    )
+    descriptors = provider.observe(_isbn_lookup((_isbn(),))).cover_descriptors
+    assert [
+        (value.url, value.redirects, value.user_agent is not None)
+        for value in descriptors
+    ] == [
+        (
+            f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/7-L.jpg?default=false",
+            CoverRedirects.OPEN_LIBRARY_ARCHIVE,
+            True,
+        ),
+        (
+            f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/3-L.jpg?default=false",
+            CoverRedirects.OPEN_LIBRARY_ARCHIVE,
+            True,
+        ),
+    ]
 
 
 @pytest.mark.parametrize(

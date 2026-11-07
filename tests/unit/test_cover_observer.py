@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     CoverReadError,
+    CoverRedirects,
     CoverSourceChangedError,
     CoverTimeoutError,
     ProviderCoverDescriptor,
@@ -27,6 +29,8 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
+    CoverEvidenceError,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -38,6 +42,15 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderObservation,
     ProviderStatus,
+)
+from tests.unit.test_remote_cover import (
+    _AGENT,
+    _COVER_URL,
+    _HOP1,
+    _HOP2,
+    _image,
+    _redirect,
+    _Route,
 )
 
 
@@ -652,3 +665,157 @@ def test_expired_provider_preserves_known_outcome_before_pacing_or_transport(
     )
     wait.assert_not_called()
     fetch.assert_not_called()
+
+
+def _open_library_descriptor(
+    url: str = _COVER_URL,
+    kind: CoverSourceKind = CoverSourceKind.OPEN_LIBRARY,
+    redirects: CoverRedirects = CoverRedirects.OPEN_LIBRARY_ARCHIVE,
+) -> ProviderCoverDescriptor:
+    return ProviderCoverDescriptor(
+        "catalogue",
+        kind,
+        cover_source_id(kind, "catalogue:edition:/books/OL1M"),
+        url,
+        CoverProvenance("catalogue", CoverDesignation.WORK, "work-1"),
+        redirects=redirects,
+        user_agent=_AGENT,
+    )
+
+
+def _deadline() -> CoverDeadline:
+    return CoverDeadline(time.monotonic() + 30, time.monotonic() + 20)
+
+
+@pytest.mark.parametrize(
+    ("final_url", "family"),
+    (
+        (_COVER_URL, CoverFinalHost.COVERS_OPEN_LIBRARY),
+        (_HOP1, CoverFinalHost.ARCHIVE),
+        (_HOP2, CoverFinalHost.US_ARCHIVE),
+    ),
+    ids=("direct", "archive_org", "datanode"),
+)
+def test_open_library_retrieved_cover_records_only_the_closed_host_family(
+    final_url: str, family: CoverFinalHost, tmp_path: Path
+) -> None:
+    with patch(
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
+        return_value=RemoteCover(final_url, "image/jpeg", _jpeg()),
+    ) as fetch:
+        source = CoverEvidenceObserver(
+            _Target(None), CoverArtifactStore(tmp_path)
+        )._remote(_open_library_descriptor(), _deadline())
+    assert (source.state, source.final_host) == (CoverSourceState.RETRIEVED, family)
+    assert fetch.call_args.kwargs["redirects"] is CoverRedirects.OPEN_LIBRARY_ARCHIVE
+    assert fetch.call_args.kwargs["user_agent"] == _AGENT
+
+
+def test_other_retrieved_provider_covers_record_no_final_host(tmp_path: Path) -> None:
+    with patch(
+        "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
+        return_value=RemoteCover("https://example.com/c.jpg", "image/jpeg", _jpeg()),
+    ) as fetch:
+        source = CoverEvidenceObserver(
+            _Target(None), CoverArtifactStore(tmp_path)
+        )._remote(
+            _open_library_descriptor(
+                "https://example.com/c.jpg",
+                CoverSourceKind.HARDCOVER,
+                CoverRedirects.PUBLIC_HTTPS,
+            ),
+            _deadline(),
+        )
+    assert (source.state, source.final_host) == (CoverSourceState.RETRIEVED, None)
+    assert fetch.call_args.kwargs["redirects"] is CoverRedirects.PUBLIC_HTTPS
+
+
+def test_an_unmapped_open_library_final_host_is_an_invariant_failure(
+    tmp_path: Path,
+) -> None:
+    store = CoverArtifactStore(tmp_path)
+    with (
+        patch(
+            "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
+            return_value=RemoteCover(
+                "https://example.com/c.jpg", "image/jpeg", _jpeg()
+            ),
+        ),
+        patch(
+            "mechanical_librarian.adapters.cover_evidence_observer.decode_cover"
+        ) as decode,
+        pytest.raises(CoverEvidenceError, match="^cover final host is invalid$"),
+    ):
+        CoverEvidenceObserver(_Target(None), store)._remote(
+            _open_library_descriptor(), _deadline()
+        )
+    decode.assert_not_called()
+
+
+def _observe_route(tmp_path: Path, *sockets: object) -> tuple[CoverSource, _Route]:
+    route = _Route(*sockets)
+    with (
+        patch("socket.getaddrinfo", side_effect=route._lookup),
+        patch("socket.create_connection", side_effect=route._connect),
+        patch("ssl.create_default_context", return_value=route.context),
+    ):
+        source = CoverEvidenceObserver(
+            _Target(None), CoverArtifactStore(tmp_path)
+        )._remote(_open_library_descriptor(), _deadline())
+    return source, route
+
+
+@pytest.mark.parametrize(
+    ("sockets", "connects"),
+    (
+        ((_redirect(_HOP1.replace("https://", "http://")),), 1),
+        ((_redirect(_HOP1), _redirect(_HOP2.replace("https://", "http://"))), 2),
+        ((_redirect(_HOP1), _redirect("https://evil.example/x.jpg")), 2),
+        ((_redirect(_HOP1), _redirect(_HOP2), _redirect(_HOP2)), 3),
+    ),
+    ids=("http_at_hop_1", "http_at_hop_2", "off_list_at_hop_2", "third_redirect"),
+)
+def test_off_route_redirect_is_recorded_unsafe_remote_not_unavailable(
+    sockets: tuple[object, ...],
+    connects: int,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source, route = _observe_route(tmp_path, *sockets)
+    assert (source.state, source.final_host) == (CoverSourceState.UNSAFE_REMOTE, None)
+    assert route.connects == connects
+    _assert_value_free(json.dumps(source.to_data()) + "".join(capsys.readouterr()))
+
+
+def test_datanode_cover_is_retrieved_and_its_evidence_is_value_free(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = _jpeg()
+    source, route = _observe_route(
+        tmp_path, _redirect(_HOP1), _redirect(_HOP2), _image(body)
+    )
+    assert (source.state, source.final_host) == (
+        CoverSourceState.RETRIEVED,
+        CoverFinalHost.US_ARCHIVE,
+    )
+    assert source.artifact is not None
+    assert route.connects == 3
+    data = json.dumps(source.to_data())
+    assert '"final_host": "us.archive.org"' in data
+    _assert_value_free(data + "".join(capsys.readouterr()))
+
+
+def _assert_value_free(output: str) -> None:
+    for value in (
+        "https://",
+        "http://",
+        "ia800100",
+        "olcovers",
+        "view_archive",
+        "download",
+        "7-L.jpg",
+        "covers.openlibrary.org/b",
+        "operator@example.invalid",
+        "evil.example",
+    ):
+        assert value not in output

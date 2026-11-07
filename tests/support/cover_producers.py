@@ -14,6 +14,7 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -137,6 +138,9 @@ def _source(
         CoverSourceState.RETRIEVED,
         artifact,
         provenance=provenance,
+        final_host=(
+            CoverFinalHost.US_ARCHIVE if kind is CoverSourceKind.OPEN_LIBRARY else None
+        ),
     )
 
 

@@ -43,6 +43,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     merge_provider_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -789,7 +790,7 @@ def _cover_descriptors(
                     "itunes-collection-" + str(collection),
                 ),
                 wait,
-                False,
+                CoverRedirects.NONE,
                 None,
                 terminal_state,
             )

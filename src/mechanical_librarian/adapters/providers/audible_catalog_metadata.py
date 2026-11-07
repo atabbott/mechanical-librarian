@@ -38,6 +38,7 @@ from mechanical_librarian.adapters.providers.visible_text import (
     projected_description,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -771,7 +772,7 @@ def _cover_descriptors(
                     "audible-product-" + asin,
                 ),
                 wait,
-                False,
+                CoverRedirects.NONE,
                 None,
                 terminal_state,
             )

@@ -187,7 +187,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema,
             "_REPORTS_SQL",
             schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v69'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v70'", "= 'metadata-report-v49'"
             ),
         ),
         patch.object(
