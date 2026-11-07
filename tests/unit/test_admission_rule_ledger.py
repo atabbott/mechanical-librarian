@@ -989,7 +989,10 @@ def test_a6_splits_scalar_abstention_from_the_rich_residual(
     markdown = _run([*arguments, "--format", "markdown"], attention=probe)[1]
     assert "upstream echo" not in markdown
     if not rich_split:
-        assert "not separable on that snapshot: rich refusals collapsed" in markdown
+        assert (
+            "not separable on that snapshot: rich-preview refusals collapsed"
+            in markdown
+        )
 
 
 def test_a_scalar_destination_set_outside_the_vocabulary_refuses(

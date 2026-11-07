@@ -1206,7 +1206,7 @@ def _classes(entry: Mapping[str, object]) -> str:
     classes = cast("dict[str, int]", entry["field_classes"])
     return (
         f"{_n(classes['tied'])} / {_n(classes['discriminable'])} "
-        f"({_n(entry['pick_agrees'])} right) / {_n(classes['no_right_work'])}"
+        f"({_n(entry['pick_agrees'])} right-work) / {_n(classes['no_right_work'])}"
     )
 
 
@@ -1288,7 +1288,7 @@ def render(section: Mapping[str, object]) -> list[str]:
         lines.append(
             f"| {entry['label']} | {_n(echo)} | "
             + (
-                "not separable: rich refusals collapsed"
+                "not separable: rich-preview refusals collapsed"
                 if residual is None
                 else _n(sum(cast("dict[str, int]", residual).values()))
             )
@@ -1311,8 +1311,8 @@ def render(section: Mapping[str, object]) -> list[str]:
         "| Relaxation | Snapshot | Population | Evaluated | Main already passes | "
         "Refused: none / degraded / ambiguous / conflict | Admitted | "
         "Cited records: right work / wrong work / unlabelled | "
-        "Identity precision (Wilson 95% lower) | "
-        "Fields: tied / decided (admitted is right) / no right-work | "
+        "Identity precision (Wilson 95% lower limit) | "
+        "Fields: tied / decided (admitted is the right-work one) / no right-work | "
         "Repeats current value | Value agreement with an uncited record |"
     )
     lines += ["", "### Relaxations", "", header, "|" + "---|" * 12]

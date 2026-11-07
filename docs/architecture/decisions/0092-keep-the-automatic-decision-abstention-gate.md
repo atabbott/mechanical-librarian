@@ -4,7 +4,7 @@
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1745 (row A6 of the admission-rule ledger, #1350)
-- Amends: ADR-0029. This ADR defines the would-admit note; eligibility is
+- Amends: ADR-0029. This ADR defines the would-admit note. Eligibility is
   unchanged. ADR-0036's qualified envelope is unchanged.
 - Supersedes: none
 - Superseded by: none
@@ -56,8 +56,8 @@ Measured again, A6 turned out not to be one rule.
   the proposable population, and the already-refused fields the blocked
   population.
 - **"First alternative" ranks nothing.** A field's alternatives are sorted
-  by `alternative_id`, which is a SHA-256 digest. The first alternative is
-  therefore an arbitrary one.
+  by `alternative_id`, which is a SHA-256 digest. The first alternative, the
+  one with the lowest identifier, is therefore an arbitrary one.
 - **The engines are old.** The ebook source decides with decision policy v9
   and the audiobook source with v22, while main runs v27. All 80 scalar
   ebook-744 fields are titles, and main now decides titles with later
@@ -101,7 +101,7 @@ A cited record counts as right work or wrong work when the snapshot's own
 identifier evidence already ties it to this book or to another one. Identity
 precision is the share of labelled records that are right work. The Wilson
 lower limit is the smallest share that the counts support with 95%
-confidence; with few records it is far below the observed share.
+confidence. With few records it is far below the observed share.
 
 In the proposable population the relaxations admit 14 of 29 fields. No
 admitted value merely repeats the value the book already has. Only 1
@@ -163,8 +163,8 @@ can say that, and none exist yet. Two further limits apply.
    - `published_date_day_one_correlation`: a published date given to the
      day, with one agreeing provider.
 
-   The authors relaxation as measured is looser than the one the contract
-   proposed. It counts one agreeing provider only, without checking that
+   The authors relaxation as measured is looser than the one proposed in
+   #1745. It counts one agreeing provider only, without checking that
    one of the records is bound to this book's identity. A later change that
    activates an authors relaxation would add that check, using the
    identity rule #1355 is defining.
@@ -255,12 +255,13 @@ one admitted field that could be compared with an uncited accepted record
 disagreed with it. Identity precision cannot qualify a relaxation at any
 level, because it measures whether a cited record belongs to the right
 work, not whether the admitted value is correct. It also counts records
-rather than fields, and the title records come from stale ebook-744 fields. The pass mark is not set. When the owner
-sets it, it will apply to owner-labelled values, not to identity.
+rather than fields, and the title records come from stale ebook-744
+fields. The pass mark is not set. When the owner sets it, it will apply to
+owner-labelled values, not to identity.
 
 ### Record the keep as an issue comment
 
-Rejected by the lane's decision. A6 is the gate every automatic field
+Rejected when #1745 was planned. A6 is the gate every automatic field
 shares, and the would-admit note needs one lasting definition that #1355 can
 adopt.
 

@@ -1243,18 +1243,18 @@ CATALOGUE: tuple[Gate, ...] = (
     Gate(
         "A6b",
         "Applicability and abstention",
-        "Rich-preview no-eligible-action residual",
+        "Rich-preview no-eligible-action leftover",
         "domain/shadow_outcome.py _rich_field_outcome",
         "#442 (593e6198); #1745, ADR-0092",
         _NOT_RECORDED,
         "593e619821175655dd15c24e4717104eca0d722f",
         "rich-preview destinations",
-        "none: refile under the rich reason's own row",
+        "none: refile under the rich-preview reason's own row",
         "not_identity",
         _abstaining(frozenset({"no_eligible_action"}), scalar=False),
         disposition="kept (ADR-0092)",
         ranked=False,
-        unranked_note="residual of rich refusals outside their own reasons",
+        unranked_note="leftover of rich-preview refusals outside their own reasons",
         needs_rich_split=True,
     ),
     Gate(
@@ -1365,8 +1365,8 @@ _STATUS_TEXT: dict[str, str] = {
     "gate_postdates_source": "not measurable on that snapshot: gate postdates source",
     "block_not_retained": "not measurable on that snapshot: block not retained",
     "cause_not_separable": "not measurable on that snapshot: cause not separable",
-    "rich_refusals_collapsed": "not separable on that snapshot: rich refusals "
-    "collapsed",
+    "rich_refusals_collapsed": "not separable on that snapshot: rich-preview "
+    "refusals collapsed",
 }
 
 
@@ -2330,6 +2330,14 @@ def _number(value: object) -> str:
     return f"{cast('int', value):,}"
 
 
+def _reach(fields: int) -> str:
+    return (
+        "1 field reaches no record"
+        if fields == 1
+        else f"{_number(fields)} fields reach no record"
+    )
+
+
 def _cell(entry: Mapping[str, object]) -> str:
     status = cast("str", entry["status"])
     if status != "measurable":
@@ -2349,7 +2357,7 @@ def _controls(row: Mapping[str, object]) -> str:
         return _CONTROL_TEXT[control]
     parts = [
         f"{entry['label']} {entry['true_positive']}/{entry['false_positive']}/"
-        f"{entry['unlabelled']} ({_number(entry['unreached_fields'])} fields reach no record)"
+        f"{entry['unlabelled']} ({_reach(cast('int', entry['unreached_fields']))})"
         for entry in cast("list[dict[str, object]]", row["snapshots"])
         if entry["status"] == "measurable"
     ]
