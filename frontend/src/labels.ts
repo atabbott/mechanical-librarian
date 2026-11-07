@@ -191,6 +191,16 @@ export const lookupLabels = {
   none: 'No lookup',
 } satisfies Record<ProviderQueryKind, string>
 
+// The ISBN lane an audiobook's companion EPUB planned (#1723). An audiobook
+// states no ISBN of its own, so its row says where the ISBN came from, for
+// every status.
+export const companionIsbnLookupLabel = 'ISBN lookup (EPUB in this folder)'
+
+export const sourceLookupLabel = (source: {
+  laneKind: ProviderQueryKind
+  companionIsbn: boolean
+}): string => (source.companionIsbn ? companionIsbnLookupLabel : lookupLabels[source.laneKind])
+
 // The server's closed lane status is an audit token, not something an owner can
 // read: `candidates` and `candidate_limit_exceeded` differ by one word and mean
 // opposite things. The consequence beside it is the server's own owner-facing

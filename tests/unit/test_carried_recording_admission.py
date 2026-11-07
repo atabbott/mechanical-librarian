@@ -35,7 +35,7 @@ from mechanical_librarian.application.metadata_report import (
     observe_provider,
     provider_discovery_lane_order,
     provider_observation,
-    qualify_provider_observation,
+    qualify_provider_lane,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
@@ -238,7 +238,7 @@ def _lane_result(
     if status is not ProviderStatus.CANDIDATES:
         return ProviderLaneResult(lane, status)
     work = lane.kind is ProviderQueryKind.WORK
-    qualified = qualify_provider_observation(
+    lane_answer = qualify_provider_lane(
         ProviderObservation(
             provider,
             ProviderStatus.CANDIDATES,
@@ -269,6 +269,7 @@ def _lane_result(
             title_basis=lane.title_basis,
         ),
     )
+    qualified = lane_answer.observation
     return ProviderLaneResult(
         lane,
         qualified.status,
@@ -276,6 +277,7 @@ def _lane_result(
         dispatch_lineage=qualified.dispatch_lineage,
         transformation_lineage=qualified.transformation_lineage,
         recording_lookup_candidates=qualified.recording_lookup_candidates,
+        admission_bases=lane_answer.admission_bases,
     )
 
 

@@ -20,6 +20,8 @@ from mechanical_librarian.domain.audio_inspection import AudioChapter
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
+    AUDIOBOOK_PROVIDER_AUTHORITIES,
+    TARGET_ADMISSION_BASIS,
     ClaimKind,
     ClaimScope,
     FieldState,
@@ -41,13 +43,16 @@ from mechanical_librarian.domain.metadata_report import (
     TargetSeries,
     WorkDispatchLineage,
     default_target_fields,
+    edition_marketplace_evidence,
     finalize_candidate_comparisons,
+    identifier_only_candidate,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.work_identity import work_query_ladder
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 __all__ = [
+    "target_admission_bases",
     "admitted_audiobook_report",
     "corroborated_audiobook_report",
     "asin_lane_observation",
@@ -464,6 +469,28 @@ def corroborated_audiobook_report(
     )
 
 
+def target_admission_bases(
+    candidates: tuple[ProviderCandidate, ...], authority: str
+) -> tuple[tuple[str, str], ...]:
+    """The ASIN-lane values a fixture's unqualified answer states (#1723).
+
+    A fixture that hands an ASIN lane result products it never qualified
+    states each kept recording as admitted on the target's own identity:
+    a local-ASIN lane is the recording by construction, and every product
+    an audiobook authority keeps with marketplace evidence needs a value.
+    """
+    if authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
+        return ()
+    return tuple(
+        sorted(
+            (candidate.identity, TARGET_ADMISSION_BASIS)
+            for candidate in candidates
+            if edition_marketplace_evidence(candidate)
+            and not identifier_only_candidate(candidate)
+        )
+    )
+
+
 def chapter_runtime_report(
     *,
     provider_duration: str | None = None,
@@ -546,7 +573,14 @@ def chapter_runtime_report(
     candidate = finalize_candidate_comparisons(candidate, claims, provider)
     observation = provider_observation(
         provider,
-        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
+        (
+            ProviderLaneResult(
+                lane,
+                ProviderStatus.CANDIDATES,
+                (candidate,),
+                admission_bases=target_admission_bases((candidate,), authority),
+            ),
+        ),
         authority=authority,
     )
     return MetadataReport.create(

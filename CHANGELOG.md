@@ -96,6 +96,17 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** When an audiobook's recording was matched by a
+  title other than its own, the book's page now says how: by this folder's
+  name, the title tag in its audio file, the title of the EPUB in its folder,
+  that EPUB's title and author, or the EPUB's ISBN, whose book Hardcover lists
+  the recording as an audio edition of. It quotes what was searched and notes
+  that the running time closely matches. The note appears on the Evidence
+  page, in Recorded evidence and in Library's Whole-work context. In Sources,
+  the EPUB's ISBN lookup now reads "ISBN lookup (EPUB in this folder)". The
+  Library and case-evidence responses move to `review-library-v5` and
+  `review-case-evidence-v5`, whose sources flag that lookup (#1723).
+
 - **Clean rebuild required.** When an audiobook's folder also holds an EPUB,
   that EPUB now helps find and confirm the book. Its ISBN asks Hardcover for the
   book and the audiobook editions Hardcover lists for it. An Audible product

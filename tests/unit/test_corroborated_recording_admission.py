@@ -786,7 +786,7 @@ def _fed_report(
     feed = m.audiobook_asin_feed_plan(snapshot, plan, ())
     assert feed is not None
     (lane,) = feed.lanes
-    qualified = m.qualify_provider_observation(
+    lane_answer = m.qualify_provider_lane(
         ProviderObservation(
             "enrichment",
             ProviderStatus.CANDIDATES,
@@ -805,6 +805,7 @@ def _fed_report(
             recording_corroboration=feed.recording_corroboration,
         ),
     )
+    qualified = lane_answer.observation
     observation = m.provider_observation(
         "enrichment",
         (
@@ -813,6 +814,7 @@ def _fed_report(
                 qualified.status,
                 qualified.candidates,
                 refused_products=qualified.refused_products,
+                admission_bases=lane_answer.admission_bases,
             ),
         ),
         authority="audnexus",
@@ -908,7 +910,7 @@ def _carried_report(product: ProviderCandidate, narrators: tuple[str, ...]) -> A
         if lane.kind is not ProviderQueryKind.ASIN:
             results.append(m.ProviderLaneResult(lane, ProviderStatus.NO_MATCH))
             continue
-        qualified = m.qualify_provider_observation(
+        lane_answer = m.qualify_provider_lane(
             ProviderObservation(
                 "audible",
                 ProviderStatus.CANDIDATES,
@@ -927,12 +929,14 @@ def _carried_report(product: ProviderCandidate, narrators: tuple[str, ...]) -> A
                 recording_corroboration=plan.recording_corroboration,
             ),
         )
+        qualified = lane_answer.observation
         results.append(
             m.ProviderLaneResult(
                 lane,
                 qualified.status,
                 qualified.candidates,
                 refused_products=qualified.refused_products,
+                admission_bases=lane_answer.admission_bases,
             )
         )
     observation = m.provider_observation(

@@ -140,7 +140,7 @@ def test_named_case_operation_returns_bounded_view(
 
     assert view.review_case_id == repository.case.review_case_id
     assert view.current
-    assert view.to_data()["schema_version"] == "review-case-detail-v6"
+    assert view.to_data()["schema_version"] == "review-case-detail-v7"
 
 
 def test_named_browse_operations_return_bounded_views(
@@ -149,7 +149,7 @@ def test_named_browse_operations_return_bounded_views(
     library = application.library(lens="all", search=None, limit=20, cursor=None)
     attention = application.attention(search=None, limit=20, cursor=None)
 
-    assert library.schema_version == "review-library-v4"
+    assert library.schema_version == "review-library-v5"
     assert library.counts["all"] == 1
     assert attention.schema_version == "review-attention-v1"
     assert attention.total == 1

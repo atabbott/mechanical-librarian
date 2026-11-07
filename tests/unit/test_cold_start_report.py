@@ -930,7 +930,7 @@ def test_main_rejects_a_malformed_mount_root() -> None:
 
 
 def test_the_schema_is_pinned_at_its_sixth_version() -> None:
-    assert "cold-start-report-v7" == cold_start.COLD_START_REPORT_SCHEMA
+    assert "cold-start-report-v8" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:
@@ -1057,6 +1057,7 @@ def _census_reports() -> tuple[MetadataReport, ...]:
     from tests.support.audiobook_reports import (
         audio_local_claims,
         audiobook_candidate,
+        target_admission_bases,
     )
     from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -1233,6 +1234,7 @@ def _census_reports() -> tuple[MetadataReport, ...]:
     )
     asin = asin_plan()
     (asin_lane,) = asin.lanes
+    fed = audiobook_candidate(asin.local_claims, provider="audible")
     third = report(
         "item-3",
         audio_target().fields,
@@ -1244,7 +1246,8 @@ def _census_reports() -> tuple[MetadataReport, ...]:
                 ProviderLaneResult(
                     asin_lane,
                     ProviderStatus.CANDIDATES,
-                    (audiobook_candidate(asin.local_claims, provider="audible"),),
+                    (fed,),
+                    admission_bases=target_admission_bases((fed,), "audible_catalog"),
                 ),
             ),
         ),
@@ -1698,7 +1701,14 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             "title_alternative": 0,
             "work_fallback": 0,
             "recording_admitted": 0,
-            "linked_recording_admitted": 0,
+        },
+        "recording_admission_bases": {
+            "target": 2,
+            "companion_isbn_work": 0,
+            "companion_work": 0,
+            "companion_title": 0,
+            "path_leaf": 0,
+            "title_tag": 0,
         },
     } == audiobooks["audiobook_outcomes"]
     assert {
