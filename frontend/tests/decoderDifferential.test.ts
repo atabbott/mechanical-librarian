@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import openapi from '../../docs/reference/review-openapi-v1.json'
 import { ApiError, DECODED, ReviewApiClient, UncertainMutationError } from '../src/api/http'
-import type { DecisionCommand } from '../src/api/http'
+import type { DecisionCommand, PolicyCommandPath } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
 import { DecodeFailure, matchOperation, responseDecoders } from '../src/generated/review-decoders'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
@@ -1154,7 +1154,10 @@ const decision: DecisionCommand = {
 }
 type Binding = NonNullable<DecisionCommand['authoredDescription']>['binding']
 const authored = { ...decision, authoredDescription: { candidateId: 'c', binding: {} as Binding } }
-const policy = (c: Case) => client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length))
+// A captured policy command's path; the RUNNERS keys below keep preview and
+// activation on their typed methods.
+const policy = (c: Case) =>
+  client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length) as PolicyCommandPath)
 // Preview and activation go through the typed methods the Policy page calls,
 // so their named checks run (#1692). A captured activation activated the
 // policy it names.

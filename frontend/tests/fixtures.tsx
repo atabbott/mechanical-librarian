@@ -15,8 +15,6 @@ import type {
   CaseDetailView,
   DecisionAcknowledgementView,
   LibraryView,
-  PolicyActivationView,
-  PolicyPreviewView,
   PolicyStateView,
   PreparationView,
   ReviewHttp,
@@ -295,6 +293,9 @@ export const idlePreparation: PreparationView = {
   presentation: null,
   provider_throttling: null,
 }
+// How the fake's `previewPolicy` and `activatePolicy` reach `policyCommand`
+// (below): by path, outside the typed union, for tests only.
+type ScriptedPolicyCommand = (path: string, body?: unknown) => Promise<never>
 export const createHttp = (): ReviewHttp => ({
   getReportDetail: vi.fn(async () => {
     throw new Error('not configured')
@@ -419,12 +420,13 @@ export const createHttp = (): ReviewHttp => ({
   // The page previews and activates through typed client methods; this fake
   // sends both through `policyCommand`, so a test scripts every policy command
   // by its path in one place. The named checks those methods make are the
-  // real client's and are tested through it.
+  // real client's and are tested through it. The real `policyCommand` accepts
+  // neither path, so the fake reaches it through a loose test-only type.
   previewPolicy(draft) {
-    return this.policyCommand<PolicyPreviewView>('preview', draft)
+    return (this.policyCommand as ScriptedPolicyCommand)('preview', draft)
   },
   activatePolicy(request) {
-    return this.policyCommand<PolicyActivationView>('activate', request)
+    return (this.policyCommand as ScriptedPolicyCommand)('activate', request)
   },
   getActivity: vi.fn(async () => activity()),
   getActivityPermissionReadiness: vi.fn(async () => {
