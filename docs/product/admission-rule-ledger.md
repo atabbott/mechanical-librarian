@@ -19,7 +19,8 @@ leave them.
 ## Method
 
 - **Gates.** One row per gate. The origin column names the introducing pull
-  request, issue and any ADR; the corpus column, what precision it recorded.
+  request, issue and any ADR; the corpus column quotes the precision it
+  recorded, or "not recorded".
 - **Stale ceilings.** Five elections on main decide values the bare
   evaluator leaves competing: titles by provider consensus (#974), decoration
   equivalence (#981) and evidence (#1040), contributor display forms (#978)
@@ -135,7 +136,7 @@ leave them.
   A child process composes the per-case query from each snapshot's own
   source's `review_sql` fragments, and the run refuses when the count differs
   from that source's report query by more than the EPUB narrator and explicit
-  exclusion; both reconcile. The ebook source stored no cover authority, so
+  exclusion; both match their own source's report. The ebook source stored no cover authority, so
   its "with covers" figures equal "without covers". An attention field counts once under each reason it
   carries: the automatic decision's abstention reason if any, otherwise each
   result reason.
@@ -307,7 +308,7 @@ The origin ADRs are
   closed after measurement), C4's EPUB `invalid_declaration` part (#1357,
   closed) and C2's work-search records (#1380). A filed follow-on's row gets
   its issue number by re-running the script with `--follow-on ID=ISSUE`.
-- **Large ceilings that score 0.** These rows' fields kept almost no
+- **Large ceilings that score 0.** Some rows' fields kept almost no
   alternative, so loosening them as stated unblocks almost nothing:
   A1 (2,066 blocked, none actionable), X5 (1,899, none), A5 (1,415, three
   actionable, whose cover sources reach only unlabelled records), I4 (502,
