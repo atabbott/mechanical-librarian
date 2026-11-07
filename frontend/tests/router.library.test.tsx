@@ -8790,6 +8790,41 @@ describe('Library route', () => {
     expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
+  it('keeps Try again when more attention fails for another reason', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async (search: AttentionSearch) => {
+        if (search.cursor) throw new ApiError(503, 'unavailable')
+        return {
+          total: 2,
+          nextCursor: 'next',
+          items: [
+            {
+              id: 'case-1',
+              destination: 'title' as const,
+              title: 'A Book',
+              authors: [],
+              library: 'Books',
+              mediaKind: 'epub' as const,
+              classificationReason: 'Canonical library attention reason',
+              notices: [],
+              provenance: [],
+              workAttentionCount: 1,
+            },
+          ],
+        }
+      }),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
+    const alert = await within(rail).findByRole('alert')
+    expect(alert).toHaveTextContent(/^More attention could not be loaded\. Try again$/u)
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeVisible()
+    expect(within(rail).queryByText(/This tab is running an earlier build/u)).toBeNull()
+  })
+
   it.each(['Close', 'toggle', 'Escape'] as const)(
     'cancels the opening reveal when %s closes the rail before it runs (#1563)',
     async (closer) => {
@@ -14384,6 +14419,25 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     ).toBeVisible()
     expect(within(footer).queryByText('The next attention work could not be loaded.')).toBeNull()
     expect(within(footer).queryByRole('button', { name: 'Try finding next work again' })).toBeNull()
+  })
+
+  it('V4: the next work keeps its retry when it fails for another reason', async () => {
+    const footer = await completeUnderSearch(
+      '/library?lens=all&q=needle&preview=case-1&field=title',
+      async (decided) => counted(decided ? 0 : 1, 4),
+      async (decided) => {
+        if (decided) throw new ApiError(503, 'unavailable')
+        return { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] }
+      },
+    )
+    if (!footer) throw new Error('completion footer is required')
+    expect(
+      await within(footer).findByText('The next attention work could not be loaded.'),
+    ).toBeVisible()
+    expect(
+      within(footer).getByRole('button', { name: 'Try finding next work again' }),
+    ).toBeVisible()
+    expect(within(footer).queryByText(/This tab is running an earlier build/u)).toBeNull()
   })
 
   it('V5: the default landing and the summary share one request', async () => {
