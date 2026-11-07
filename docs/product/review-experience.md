@@ -109,7 +109,10 @@ marked, and Library stays current while a review or Attention is open.
 
 Navigation mounts without waiting for data, and loading reads as one small
 line beside a dot that pulses only when motion is welcome. A pending or failed
-count is never shown as zero, and a failed read keeps a retry. An older
+count is never shown as zero, and a failed read keeps a retry. A page that
+cannot load says why in plain words (the server could not be reached, could
+not answer, or sent an answer the page could not read) and what to do; the
+status and code appear only under Technical detail. An older
 response never replaces a newer selection. While a newer read is pending, the last content
 stays, marked busy with its controls inert, and the route is announced only
 when the read settles. Owner actions take priority over background refreshes.

@@ -8,6 +8,7 @@ import {
   ApiError,
   BuildMismatchError,
   CsrfRenewedError,
+  NetworkUnavailableError,
   UncertainMutationError,
 } from '../src/api/http'
 import type {
@@ -67,6 +68,29 @@ it('keeps navigation available during initial Activity failure and retries the r
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(3)
+})
+
+// #1756: a lost read says the server could not be reached, keeps the code out
+// of the sentence, and Try again reads again.
+it('explains a lost Activity read in plain words and retries it', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getActivity = vi
+    .fn<ReviewHttp['getActivity']>()
+    .mockRejectedValueOnce(new NetworkUnavailableError())
+    .mockResolvedValue(activity())
+  renderRoute('/activity', http)
+  expect(
+    await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
+  ).toBeVisible()
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'The server could not be reached. Check that Mechanical Librarian is running and this device is connected, then try again.',
+  )
+  expect(screen.queryByText(/Failed to fetch|Review API request failed/u)).toBeNull()
+  expect(screen.getByText('network_unavailable').closest('details')).not.toHaveAttribute('open')
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(http.getActivity).toHaveBeenCalledTimes(2)
 })
 
 describe('Activity route', () => {

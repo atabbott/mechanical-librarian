@@ -6,6 +6,7 @@ import {
   AmbiguousMutationError,
   ApiError,
   BuildMismatchError,
+  ResponseDecodeError,
   ReviewApiClient,
   UncertainMutationError,
 } from '../src/api/http'
@@ -67,6 +68,37 @@ const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][num
   }))
 
 describe('Policy route', () => {
+  // #1756: a state read the client cannot decode names the page and says in
+  // plain words what happened; the status and code are Technical detail.
+  it('names Policy and explains an unreadable state read in plain words', async () => {
+    const user = userEvent.setup()
+    // The real client decodes the invented document and refuses it.
+    const transport = answeringClient({ invented: true })
+    const failure = await transport.getPolicyState().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ResponseDecodeError)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPolicyState: vi.fn(() => transport.getPolicyState()),
+    }
+    renderRoute('/policy?section=curation', http)
+
+    expect(
+      await screen.findByRole('heading', { name: 'Policy could not be loaded.' }),
+    ).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The server sent an answer this page could not read safely, so nothing from it is shown. Try again; if it keeps happening, reload the page.',
+    )
+    expect(screen.queryByText(/Review API request failed/u)).toBeNull()
+    expect(screen.queryByText(/workspace could not be loaded/u)).toBeNull()
+    const technical = screen.getByText('Technical detail')
+    const details = technical.closest('details')
+    expect(details).not.toBeNull()
+    expect(details).not.toHaveAttribute('open')
+    await user.click(technical)
+    expect(within(details as HTMLElement).getByText('502 · invalid_response')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+  })
+
   it('explains empty-series filling, fill and explicit add/replace representations and provider numbering limits', async () => {
     renderRoute('/policy?section=publication')
     const series = await screen.findByRole('region', { name: 'Series memberships' })
