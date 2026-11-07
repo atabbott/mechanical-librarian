@@ -87,6 +87,7 @@ from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
     provider_candidate_represents_target_recording,
     work_route_cover_offered,
+    work_route_cover_sources,
 )
 
 SCHEMA_VERSION = "cover-consideration-v4"
@@ -1518,10 +1519,16 @@ class CoverConsiderationService:
     ) -> dict[str, object]:
         policy_document = cast("str | None", value["policy_report_document"])
         policy = None if policy_document is None else json.loads(policy_document)
+        matched_book = _matched_book_references(value, report)
         candidates = [
             dict(
                 cast("dict[str, object]", item),
                 manual_eligible=manual_cover_eligible(cast("dict[str, object]", item)),
+                match_reason=(
+                    "matched_book"
+                    if cast("dict[str, object]", item)["reference"] in matched_book
+                    else None
+                ),
             )
             for item in cast("list[object]", value["candidates"])
         ]
@@ -1741,6 +1748,42 @@ class CoverConsiderationService:
             item["consideration"] = self.project_historical(document)
             items.append(item)
         return tuple(items)
+
+
+def _matched_book_references(
+    value: Mapping[str, object], report: MetadataReport
+) -> frozenset[str]:
+    """Proposed covers that come from the exactly matched book (#1642).
+
+    On an audiobook with no admitted recording, a cover from the work route's
+    own sources is the matched book's cover, though its identity stays
+    unverified. The note is display only: identity, selection, rank, the
+    unverified-match confirmation and automatic eligibility all ignore it.
+    """
+    packet_document = value["packet_document"]
+    if packet_document is None:
+        return frozenset()
+    offered = {
+        cover_source_reference(report.report_id, source.source_id)
+        for source in work_route_cover_sources(report)
+    }
+    if not offered:
+        return frozenset()
+    identities = {
+        cast("dict[str, object]", item)["reference"]: cast(
+            "dict[str, object]", cast("dict[str, object]", item)["identity"]
+        )["outcome"]
+        for item in cast("list[object]", value["candidates"])
+    }
+    return frozenset(
+        candidate["reference"]
+        for candidate in json.loads(str(packet_document))["candidates"]
+        if candidate["incumbent"] is False
+        and identities.get(candidate["reference"]) != "conflict"
+        and any(
+            binding["reference"] in offered for binding in candidate["source_bindings"]
+        )
+    )
 
 
 def _cover_choice_contexts(

@@ -118,6 +118,7 @@ refused.
 | `epub-inspection-v3` | The isolated EPUB inspection protocol |
 | `batch-manifest-v5` | Source-only foreground evidence batches ([Ebook evidence batches](../operations/ebook-evidence-batches.md)) |
 | `cold-start-report-v6` | The read-only [cold-start report](../operations/cold-start-report.md) |
+| `work-route-measurement-v1` | The read-only [work-route measurement](../operations/work-route-measurement.md) |
 | `review-react-assets-v1` | The browser bundle identity manifest |
 
 The session database (`/data/private/review-sessions.sqlite`) and the provider

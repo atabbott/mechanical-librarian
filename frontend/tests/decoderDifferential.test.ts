@@ -12,15 +12,11 @@ import {
   ApiError,
   DECODED,
   ReviewApiClient,
+  UncertainMutationError,
   mapActivity,
   mapActivityConsent,
   mapActivityPermissionReadiness,
-  mapCaseDetail,
-  mapCoverConsideration,
-  mapEvidence,
-  mapHistory,
   mapReviewerAccess,
-  mapSettings,
 } from '../src/api/http'
 import type { DecisionCommand } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
@@ -606,18 +602,6 @@ const TOLERANCES = [
     'mapActivity http.ts:3191 reads an absent check_group as null (optionalString)',
   ],
   [
-    'T2',
-    series,
-    '/fields/0/current/value/0/sequence',
-    'mapCaseDetail http.ts:3868 shows the current value through displayValue (:2546), which reads an absent series sequence as none',
-  ],
-  [
-    'T3',
-    coverBase,
-    '/reviewer_failure_code',
-    'mapCoverConsideration http.ts:4679 reads an absent reviewer_failure_code as null (?? null)',
-  ],
-  [
     'T6',
     activityItems,
     '/provider_recovery/0/failure_reasons',
@@ -626,8 +610,11 @@ const TOLERANCES = [
 ] as const
 for (const [row, instance, pointer] of TOLERANCES) deletion(`tolerance:${row}`, instance, pointer)
 // Tolerances whose family is decoded: the absence is now refused on both sides,
-// so the case agrees and keeps no row (#1685 drained T5, #1686 drained T4).
+// so the case agrees and keeps no row (#1685 drained T5, #1686 drained T4,
+// #1688 drained T2 and T3).
 const DRAINED = [
+  ['T2', series, '/fields/0/current/value/0/sequence'],
+  ['T3', coverBase, '/reviewer_failure_code'],
   ['T4', libraryWithWork, '/items/0/cover'],
   ['T5', preparationBase, '/provider_throttling'],
 ] as const
@@ -742,6 +729,29 @@ const consideration = () =>
     ready: true,
   })
 const covered = builder('CaseDetail', 'coverConsideration.candidate', COVER, consideration)
+// The work-route shape the server sends for an audiobook with no admitted
+// recording: an unconfirmed, unranked cover from the matched book (#1642).
+builder('CaseDetail', 'coverConsideration.matched-book', COVER, () =>
+  coverConsideration({
+    candidates: [
+      coverCandidate({
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        identity: coverIdentity({ outcome: 'unknown' }),
+        match_reason: 'matched_book',
+        match_state: 'match_not_confirmed',
+        selectable: false,
+        state: 'excluded',
+      }),
+    ],
+    choice_contexts: [
+      choiceContext(),
+      choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+    ],
+    policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+    ready: true,
+  }),
+)
 // One item of each kind mapHistory reads: transition, preview, two owner
 // decisions (text and authors, then series) and a cover consideration.
 builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
@@ -789,7 +799,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     recordingBasis,
     '/media_kind',
     'epub',
-    'mapAudiobookReviewScope http.ts:3227: a scope needs an audio media_kind; cross-field',
+    'mapAudiobookReviewScope http.ts:3188: a scope needs an audio media_kind; cross-field',
     'reject:inconsistent_audiobook_review_scope',
   ],
   [
@@ -797,7 +807,7 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     recordingBasis,
     '/audiobook_review_scope',
     'work',
-    'mapAudiobookReviewScope http.ts:3228: a recording basis needs the recording scope; cross-field',
+    'mapAudiobookReviewScope http.ts:3189: a recording basis needs the recording scope; cross-field',
     'reject:inconsistent_audiobook_review_scope',
   ],
   [
@@ -805,35 +815,40 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     advice,
     '/fields/8/description_advice/application_outcome',
     'verified',
-    'mapDescriptionAdvice http.ts:3693-3698: an application outcome needs a selection; cross-field',
+    'mapDescriptionAdvice http.ts:3345-3346: an application outcome needs a selection; cross-field',
+    'reject:invalid_description_application_outcome',
   ],
   [
     'check:mapDescriptionAdvice.selection-pairing',
     preserved,
     '/fields/8/description_advice/selected_advice',
     null,
-    'mapDescriptionAdvice http.ts:3739: selection and selected_advice are both present or both null; cross-field',
+    'mapDescriptionAdvice http.ts:3356: selection and selected_advice are both present or both null; cross-field',
+    'reject:invalid_description_selection',
   ],
   [
     'check:mapDescriptionAdvice.selection-candidate',
     preserved,
     '/fields/8/description_advice/selected_advice/candidate/candidate_id',
     `description_candidate_${'f'.repeat(64)}`,
-    'mapDescriptionAdvice http.ts:3764: the selection names the selected candidate; cross-field',
+    'mapDescriptionAdvice http.ts:3366: the selection names the selected candidate; cross-field',
+    'reject:invalid_description_selection',
   ],
   [
     'check:mapDescriptionAdvice.selection-binding',
     preserved,
     '/fields/8/description_advice/selected_advice/binding/access_revision',
     99,
-    'mapDescriptionAdvice http.ts:3766-3770: the selection binding equals the selected advice binding; cross-field',
+    'mapDescriptionAdvice http.ts:3367-3369: the selection binding equals the selected advice binding; cross-field',
+    'reject:invalid_description_selection',
   ],
   [
     'check:mapChoiceContexts.current-first',
     caseBase,
     '/fields/0/choice_contexts',
     [],
-    'mapChoiceContexts http.ts:4360: the first choice context is the current value; positional',
+    'mapChoiceContexts http.ts:3591: the first choice context is the current value; positional',
+    'reject:misaligned_choice_contexts',
   ],
   [
     'check:preparationPresentation.passage-order',
@@ -933,21 +948,24 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     covered,
     '/candidates/0/manual_eligible',
     false,
-    'mapCoverConsideration http.ts:4568-4574: manual_eligible follows incumbent and identity; cross-field',
+    'mapCoverConsideration http.ts:3653-3659: manual_eligible follows incumbent and identity; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_manual_eligibility',
   ],
   [
     'check:mapCoverConsideration.rank-key-reference',
     covered,
     '/candidates/0/deterministic_rank_key/6',
     'candidate-2',
-    'mapCoverConsideration http.ts:4541: the rank key ends with the candidate reference; cross-field',
+    'mapCoverConsideration http.ts:3642: the rank key ends with the candidate reference; cross-field',
+    'reject:mutation_outcome_unknown:invariant@invalid_cover_deterministic_rank_key',
   ],
   [
     'check:mapCoverConsideration.match-state',
     covered,
     '/candidates/0/match_state',
     'same_edition',
-    'mapCoverConsideration http.ts:4579: match_state follows the identity outcome; cross-field',
+    'mapCoverConsideration http.ts:3667: match_state follows the identity outcome; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_identity',
   ],
   [
     'check:mapCoverConsideration.unconfirmed-unranked',
@@ -957,105 +975,137 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
       identity: coverIdentity({ outcome: 'unknown' }),
       match_state: 'match_not_confirmed',
     }),
-    'mapCoverConsideration http.ts:4580: an unconfirmed candidate is neither selectable nor ranked; cross-field',
+    'mapCoverConsideration http.ts:3668: an unconfirmed candidate is neither selectable nor ranked; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_identity',
+  ],
+  [
+    'check:mapCoverConsideration.match-reason',
+    covered,
+    '/candidates/0',
+    coverCandidate({
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      identity: coverIdentity({ outcome: 'conflict' }),
+      manual_eligible: false,
+      match_reason: 'matched_book',
+      match_state: 'match_not_confirmed',
+      selectable: false,
+      state: 'excluded',
+    }),
+    'mapCoverConsideration http.ts:3689-3690: only a proposed cover whose identity is not a conflict comes from the matched book; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_match_reason',
   ],
   [
     'check:mapCoverObservation.binding',
     covered,
     '/candidates/0/observation/candidate_reference',
     'candidate-2',
-    'mapCoverObservation http.ts:4409-4411: an observation names its candidate reference and preview; cross-field',
+    'mapCoverObservation http.ts:3609-3610: an observation names its candidate reference and preview; cross-field',
+    'reject:mutation_outcome_unknown:invariant@misaligned_cover_observation',
   ],
   [
     'check:mapCoverConsideration.unique-references',
     covered,
     '/candidates',
     [coverCandidate(), coverCandidate({ artifact_id: 'artifact-2', ordinal: 1 })],
-    'mapCoverConsideration http.ts:4614: candidate references are distinct; identity across items',
+    'mapCoverConsideration http.ts:3699: candidate references are distinct; identity across items',
+    'reject:mutation_outcome_unknown:invariant@misaligned_cover_candidates',
   ],
   [
     'check:mapCoverConsideration.ordinal-position',
     covered,
     '/candidates/0/ordinal',
     1,
-    'mapCoverConsideration http.ts:4617: a candidate ordinal is its position; positional',
+    'mapCoverConsideration http.ts:3701: a candidate ordinal is its position; positional',
+    'reject:mutation_outcome_unknown:invariant@misaligned_cover_candidates',
   ],
   [
     'check:mapCoverConsideration.absent-incumbent',
     covered,
     '/incumbent/reference',
     'candidate-1',
-    'mapCoverConsideration http.ts:4623-4624: an absent or unavailable incumbent has no reference and no incumbent candidate; cross-field',
+    'mapCoverConsideration http.ts:3709-3710: an absent or unavailable incumbent has no reference and no incumbent candidate; cross-field',
+    'reject:mutation_outcome_unknown:invariant@misaligned_cover_incumbent',
   ],
   [
     'check:mapCoverConsideration.available-incumbent',
     covered,
     '/incumbent/state',
     'available',
-    'mapCoverConsideration http.ts:4625-4626: an available incumbent is the one incumbent candidate; cross-field',
+    'mapCoverConsideration http.ts:3711-3712: an available incumbent is the one incumbent candidate; cross-field',
+    'reject:mutation_outcome_unknown:invariant@misaligned_cover_incumbent',
   ],
   [
     'check:mapChoiceContexts.proposed-count',
     covered,
     '/choice_contexts',
     [choiceContext()],
-    'mapChoiceContexts http.ts:4362 (count from mapCoverConsideration :4632): one proposed context per manually eligible alternative; cross-field',
+    'mapChoiceContexts http.ts:3593 (count from mapCoverConsideration :3718): one proposed context per manually eligible alternative; cross-field',
+    'reject:mutation_outcome_unknown:invariant@misaligned_choice_contexts',
   ],
   [
     'check:mapCoverConsideration.policy-presence',
     covered,
     '/policy',
     null,
-    'mapCoverConsideration http.ts:4647: a policy report exists exactly when there are candidates; cross-field',
+    'mapCoverConsideration http.ts:3727: a policy report exists exactly when there are candidates; cross-field',
+    'reject:mutation_outcome_unknown:invariant@invalid_cover_policy_candidates',
   ],
   [
     'check:mapCoverConsideration.reviewer-failure-status',
     coverBase,
     '/reviewer_failure_code',
     'timed_out',
-    'mapCoverConsideration http.ts:4680-4685: a reviewer failure code needs the failed status; cross-field',
+    'mapCoverConsideration http.ts:3737: a reviewer failure code needs the failed status; cross-field',
+    'reject:mutation_outcome_unknown:invariant@invalid_cover_reviewer_failure_code',
   ],
   [
     'check:mapCoverConsideration.recommended-reference',
     covered,
     '/policy/status',
     'recommended',
-    'mapCoverConsideration http.ts:4695: a recommended policy names its candidate; cross-field',
+    'mapCoverConsideration http.ts:3741: a recommended policy names its candidate; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_policy',
   ],
   [
     'check:mapCoverConsideration.acceptable-ranking',
     covered,
     '/policy/acceptable_candidate_references',
     [],
-    'mapCoverConsideration http.ts:4704-4719: acceptable references are the ranked alternatives in rank order; cross-field',
+    'mapCoverConsideration http.ts:3748-3763: acceptable references are the ranked alternatives in rank order; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_policy',
   ],
   [
     'check:mapCoverConsideration.derived-candidate-state',
     covered,
     '/candidates/0/state',
     'available',
-    'mapCoverConsideration http.ts:4720-4733: a candidate state follows selectable, the recommendation and the acceptable list; cross-field',
+    'mapCoverConsideration http.ts:3764-3777: a candidate state follows selectable, the recommendation and the acceptable list; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_candidate_state',
   ],
   [
     'check:mapCoverConsideration.recommendation-context',
     covered,
     '/choice_contexts/0/recommendation',
     'recommended',
-    'mapCoverConsideration http.ts:4745-4756: only the recommended candidate context is recommended; cross-field',
+    'mapCoverConsideration http.ts:3789-3800: only the recommended candidate context is recommended; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_recommendation',
   ],
   [
     'check:mapCoverConsideration.readiness',
     covered,
     '/ready',
     false,
-    'mapCoverConsideration http.ts:4757-4776: ready follows provider_fetching and the candidates; cross-field',
+    'mapCoverConsideration http.ts:3801-3820: ready follows provider_fetching and the candidates; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_readiness',
   ],
   [
     'check:mapDecisionAcknowledgement.case-identity',
     decisionBase,
     '/confirmation/case/review_case_id',
     'another-case',
-    'mapDecisionAcknowledgement http.ts:2605: the confirmed case is the requested case; cross-document identity',
+    'mapDecisionAcknowledgement http.ts:2718: the confirmed case is the requested case; cross-document identity',
+    'reject:mutation_outcome_unknown:invariant@invalid_decision_confirmation',
   ],
 ]
 
@@ -1130,7 +1180,7 @@ const reviewerAccess = (c: Case) => mapReviewerAccess(c.doc())
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
   'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
-  'GET /api/v1/settings': (c) => mapSettings(c.doc()),
+  'GET /api/v1/settings': (c) => client(c).getSettings(),
   'PUT /api/v1/reviewer-access/openrouter': reviewerAccess,
   'DELETE /api/v1/reviewer-access/openrouter': reviewerAccess,
   'POST /api/v1/reviewer-access/openrouter/refresh': reviewerAccess,
@@ -1140,11 +1190,11 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'POST /api/v1/reviewer-access/description-model/test': (c) =>
     client(c).testDescriptionModel({ expected_revision: 1, api_key: '', model: 'example/text' }),
   'GET /api/v1/attention': (c) => client(c).getAttention({}),
-  'GET /api/v1/review-cases/{review_case_id}': (c) => mapCaseDetail(c.doc()),
-  'GET /api/v1/review-cases/{review_case_id}/evidence': (c) => mapEvidence(c.doc()),
-  'GET /api/v1/review-cases/{review_case_id}/history': (c) => mapHistory(c.doc()),
+  'GET /api/v1/review-cases/{review_case_id}': (c) => client(c).getCaseDetail(caseId(c)),
+  'GET /api/v1/review-cases/{review_case_id}/evidence': (c) => client(c).getEvidence(caseId(c)),
+  'GET /api/v1/review-cases/{review_case_id}/history': (c) => client(c).getHistory(caseId(c)),
   'POST /api/v1/review-cases/{review_case_id}/cover-considerations/retry': (c) =>
-    mapCoverConsideration(c.doc()),
+    client(c).retryCoverConsideration(caseId(c)),
   'POST /api/v1/review-cases/{review_case_id}/decisions': (c) =>
     client(c).recordDecision(caseId(c), decision),
   'POST /api/v1/review-cases/{review_case_id}/description-advice/selection': (c) =>
@@ -1177,6 +1227,10 @@ const map = async (c: Case) => {
     await runner(c)
     return 'accept'
   } catch (error) {
+    // An unsafe answer the client refuses is uncertain; its reason and pointer
+    // (for a named check, `invariant` and the check's code) say which check.
+    if (error instanceof UncertainMutationError)
+      return `reject:${error.code}:${error.reason}@${error.at}`
     if (error instanceof ApiError) return `reject:${error.code}`
     // Only a plain Error is a mapper's own refusal; a crash (TypeError and the like) must fail the case.
     if (error instanceof Error && error.constructor === Error) return `reject:${error.message}`
@@ -1272,12 +1326,16 @@ describe('presence parity', () => {
     expect(results).toContain(seen(id).decoder)
     expect(seen(id).mapper).toMatch(/^reject:/)
   })
-  it.each(DRAINED.map(([row, , pointer]) => [row, pointer]))(
+  // A read refuses it as a 502; an unsafe answer (T3's cover retry) is uncertain.
+  it.each(DRAINED.map(([row, instance, pointer]) => [row, instance.method, pointer]))(
     '%s, drained, is refused at its one deleted key on both sides',
-    (row, pointer) => {
+    (row, method, pointer) => {
       expect(seen(`tolerance:${row}`)).toMatchObject({
         decoder: `required@${pointer}`,
-        mapper: 'reject:invalid_response',
+        mapper:
+          method === 'GET'
+            ? 'reject:invalid_response'
+            : `reject:mutation_outcome_unknown:required@${pointer}`,
         observed: 'agree',
       })
     },

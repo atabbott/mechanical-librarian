@@ -16,6 +16,7 @@ import {
   settingsProviderKeyless,
   settingsSecretValid,
   settingsTextValid,
+  UncertainMutationError,
 } from '../src/api/http'
 import type {
   CodexDeviceAuthState,
@@ -27,7 +28,7 @@ import type {
 } from '../src/api/http'
 import { coverReviewerLabel } from '../src/labels'
 import { createHttp, idlePreparation, renderRoute } from './fixtures'
-import { document, view } from './settingsFixtures'
+import { document, savedDocument, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
   schema_version: 'reviewer-access-view-v2',
@@ -167,7 +168,7 @@ describe('owner settings route', () => {
     }))
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       savedRequest = request
-      return { ...view(), document: request.document }
+      return { ...view(), document: savedDocument(request.document) }
     })
     renderRoute('/settings?group=providers', http)
 
@@ -222,7 +223,7 @@ describe('owner settings route', () => {
     }))
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       savedRequest = request
-      return { ...view(), document: request.document, provider_capabilities: [] }
+      return { ...view(), document: savedDocument(request.document), provider_capabilities: [] }
     })
     renderRoute('/settings?group=providers', http)
 
@@ -301,7 +302,7 @@ describe('owner settings route', () => {
     http.getSettings = vi.fn(async () => view())
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       savedRequest = request
-      return { ...view(), document: request.document }
+      return { ...view(), document: savedDocument(request.document) }
     })
     renderRoute('/settings?group=providers', http)
 
@@ -497,52 +498,58 @@ describe('owner settings route', () => {
     },
   )
 
-  it.each([new AmbiguousMutationError(), new ApiError(502, 'invalid_settings_response')])(
-    'reconciles an uncertain save before confirming authoritative state',
-    async (failure) => {
-      const user = userEvent.setup()
-      const http = createHttp()
-      const reconciled: SettingsView = {
-        ...view(),
-        document: {
-          ...document,
-          revision: 4,
-          connections: [
-            { adapter: 'audiobookshelf', endpoint: 'https://authoritative.invalid', name: 'home' },
-          ],
-        },
-      }
-      http.getSettings = vi.fn().mockResolvedValueOnce(view()).mockResolvedValueOnce(reconciled)
-      http.writeSettings = vi.fn(async () => {
-        throw failure
-      })
-      renderRoute('/settings?group=connection', http)
-      const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
-      await waitFor(() =>
-        expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
-          'data-restored-path',
-          '/settings',
-        ),
-      )
-      await user.click(endpoint)
-      await user.clear(endpoint)
-      await user.type(endpoint, 'https://submitted.invalid')
-      await user.click(screen.getByRole('button', { name: 'Save settings' }))
+  it.each([
+    new AmbiguousMutationError(),
+    // A 2xx the decoder refused (#1689).
+    new UncertainMutationError({
+      operation: 'PATCH /api/v1/settings',
+      responseStatus: 200,
+      at: '/fields',
+      reason: 'required',
+    }),
+  ])('reconciles an uncertain save before confirming authoritative state', async (failure) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const reconciled: SettingsView = {
+      ...view(),
+      document: {
+        ...document,
+        revision: 4,
+        connections: [
+          { adapter: 'audiobookshelf', endpoint: 'https://authoritative.invalid', name: 'home' },
+        ],
+      },
+    }
+    http.getSettings = vi.fn().mockResolvedValueOnce(view()).mockResolvedValueOnce(reconciled)
+    http.writeSettings = vi.fn(async () => {
+      throw failure
+    })
+    renderRoute('/settings?group=connection', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await waitFor(() =>
+      expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/settings',
+      ),
+    )
+    await user.click(endpoint)
+    await user.clear(endpoint)
+    await user.type(endpoint, 'https://submitted.invalid')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
-      const recovered = await screen.findByText(
-        'Current settings reloaded. Review the values before saving again.',
-      )
-      expect(recovered.closest('[role="alert"]')).toHaveFocus()
-      expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
-        'https://authoritative.invalid',
-      )
-      // The reloaded values are the saved state, so no draft or tray remains.
-      expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
-      expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
-      expect(http.getSettings).toHaveBeenCalledTimes(2)
-      expect(http.writeSettings).toHaveBeenCalledOnce()
-    },
-  )
+    const recovered = await screen.findByText(
+      'Current settings reloaded. Review the values before saving again.',
+    )
+    expect(recovered.closest('[role="alert"]')).toHaveFocus()
+    expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
+      'https://authoritative.invalid',
+    )
+    // The reloaded values are the saved state, so no draft or tray remains.
+    expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
+    expect(http.getSettings).toHaveBeenCalledTimes(2)
+    expect(http.writeSettings).toHaveBeenCalledOnce()
+  })
 
   it('blocks repeat mutation when uncertain reconciliation cannot reload', async () => {
     const user = userEvent.setup()
@@ -1771,7 +1778,7 @@ describe('owner settings route', () => {
     http.getSettings = vi.fn(async () => view())
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       savedRequest = request
-      return { ...view(), document: { ...request.document, revision: 4 } }
+      return { ...view(), document: { ...savedDocument(request.document), revision: 4 } }
     })
     renderRoute('/settings?group=providers', http)
     await screen.findByRole('group', { name: 'Use Hardcover' })
@@ -2002,7 +2009,7 @@ describe('owner settings route', () => {
     http.getSettings = vi.fn(async () => ({ ...view(), document: awkward }))
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       saved = request
-      return { ...view(), document: request.document }
+      return { ...view(), document: savedDocument(request.document) }
     })
     renderRoute('/settings', http)
     const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
@@ -2021,7 +2028,7 @@ describe('owner settings route', () => {
     http.getSettings = vi.fn(async () => view())
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       saved = request
-      return { ...view(), document: request.document }
+      return { ...view(), document: savedDocument(request.document) }
     })
     renderRoute('/settings?group=background', http)
 
@@ -2051,7 +2058,7 @@ describe('owner settings route', () => {
     http.getSettings = vi.fn(async () => view())
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       saved = request
-      return { ...view(), document: request.document }
+      return { ...view(), document: savedDocument(request.document) }
     })
     renderRoute('/settings?group=background', http)
 
@@ -3287,7 +3294,7 @@ describe('library languages in Settings (#1466)', () => {
     http.getSettings = vi.fn(async () => view())
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       saved = request
-      return { ...view(), document: { ...request.document, revision: 4 } }
+      return { ...view(), document: { ...savedDocument(request.document), revision: 4 } }
     })
     renderRoute('/settings?group=libraries', http)
 
@@ -3512,7 +3519,7 @@ describe('settings provider throttling (#1282)', () => {
     http.retryProviderRecovery = vi.fn(async () => retried)
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       savedRequest = request
-      return { ...view(), document: { ...request.document, revision: 5 } }
+      return { ...view(), document: { ...savedDocument(request.document), revision: 5 } }
     })
     renderRoute('/settings', http)
     const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
@@ -3548,7 +3555,7 @@ describe('settings provider throttling (#1282)', () => {
     }))
     http.writeSettings = vi.fn(async (request: SettingsWrite) => {
       savedRequest = request
-      return { ...view(), document: { ...request.document, revision: 5 } }
+      return { ...view(), document: { ...savedDocument(request.document), revision: 5 } }
     })
     renderRoute('/settings?group=libraries', http)
     await user.click(await screen.findByRole('combobox', { name: /Add a language/ }))

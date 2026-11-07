@@ -146,6 +146,7 @@ export const coverCandidate = (overrides: Overrides = {}) => ({
   incumbent: false,
   manual_eligible: true,
   match_state: 'same_book',
+  match_reason: null,
   observation: null,
   ordinal: 0,
   original_sha256: 'a'.repeat(64),

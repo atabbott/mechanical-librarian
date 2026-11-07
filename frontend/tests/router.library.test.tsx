@@ -9,7 +9,6 @@ import {
   CsrfRenewedError,
   EMPTY_TARGET_TEXT,
   UncertainMutationError,
-  mapCaseDetail,
 } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
@@ -40,6 +39,7 @@ import {
   detail,
   idlePreparation,
   library,
+  readCaseDetail,
   recordedAcknowledgement,
   renderRoute,
   wholeText,
@@ -3447,6 +3447,7 @@ describe('Library route', () => {
           ? {
               actor: 'owner',
               application: 'recorded_only' as const,
+              application_reason: null,
               decision_id: 'human-series',
               destination: 'series' as const,
               occurred_at: 2,
@@ -3868,6 +3869,7 @@ describe('Library route', () => {
             : {
                 actor: 'owner',
                 application: 'apply' as const,
+                application_reason: null,
                 decision_id: 'owner-authors',
                 destination: 'authors' as const,
                 occurred_at: 2,
@@ -4165,6 +4167,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner',
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-isbn',
         destination: 'isbn' as const,
         occurred_at: 2,
@@ -4225,6 +4228,7 @@ describe('Library route', () => {
         humanDecision: {
           actor: 'owner',
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-title',
           destination: 'title' as const,
           occurred_at: 2,
@@ -4292,6 +4296,7 @@ describe('Library route', () => {
     const owner = {
       actor: 'owner',
       application: 'apply' as const,
+      application_reason: null,
       decision_id: 'owner-series',
       destination: 'series' as const,
       occurred_at: 2,
@@ -4781,6 +4786,7 @@ describe('Library route', () => {
             humanDecision: {
               actor: 'owner' as const,
               application: 'apply' as const,
+              application_reason: null,
               decision_id: 'recorded-cover',
               destination: 'cover' as const,
               occurred_at: 1,
@@ -5014,6 +5020,41 @@ describe('Library route', () => {
         }),
       )
       expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
+    })
+
+    it('names a cover from the matched book without confirming its recording (#1642)', async () => {
+      const user = userEvent.setup()
+      const matched = `cover_transport_ref_${'5'.repeat(64)}`
+      const http = coverHttp((consideration) => ({
+        candidates: consideration.candidates.map((candidate) =>
+          candidate.reference === matched
+            ? { ...candidate, matchReason: 'matched_book' as const }
+            : candidate,
+        ),
+      }))
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const card = within(group).getByRole('radio', {
+        name: 'Choose Open Library cover, 800 × 1200 px (4)',
+      })
+      expect(card).toHaveTextContent('Same book · recording not confirmed')
+      expect(card).toHaveTextContent('From the matched book, not a confirmed recording.')
+      expect(card).not.toHaveTextContent('Match not confirmed')
+      expect(card).not.toHaveTextContent("We couldn't confirm")
+      // Other unconfirmed covers keep their wording.
+      expect(
+        within(group).getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (5)' }),
+      ).toHaveTextContent('Match not confirmed')
+      // The match stays unverified, so the tap still confirms it.
+      await user.click(card)
+      expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          outcome: 'accept',
+          coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+        }),
+      )
     })
   })
 
@@ -5662,6 +5703,16 @@ describe('Library route', () => {
       new ApiError(500, 'invalid_error_response'),
       'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
     ],
+    // An answer the browser cannot read is as unconfirmed as a lost one (#1688).
+    [
+      new UncertainMutationError({
+        operation: 'POST /api/v1/review-cases/{review_case_id}/cover-considerations/retry',
+        responseStatus: 200,
+        reason: 'required',
+        at: '/ready',
+      }),
+      'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    ],
     [
       new ApiError(503, 'persistence'),
       'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
@@ -5738,6 +5789,15 @@ describe('Library route', () => {
   it.each([
     [
       new ApiError(500, 'invalid_error_response'),
+      'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
+    ],
+    [
+      new UncertainMutationError({
+        operation: 'POST /api/v1/review-cases/{review_case_id}/cover-considerations/retry',
+        responseStatus: 200,
+        reason: 'invariant',
+        at: 'misaligned_cover_candidates',
+      }),
       'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.',
     ],
     [
@@ -6186,6 +6246,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-title',
             destination: 'title' as const,
             occurred_at: 1,
@@ -6210,6 +6271,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-title',
           destination: 'title' as const,
           occurred_at: 1,
@@ -6266,6 +6328,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-series',
         destination: 'series' as const,
         occurred_at: 1,
@@ -6288,6 +6351,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-series',
           destination: 'series' as const,
           occurred_at: 1,
@@ -6342,6 +6406,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-series',
         destination: 'series' as const,
         occurred_at: 1,
@@ -6391,6 +6456,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-series',
           destination: 'series' as const,
           occurred_at: 1,
@@ -6440,6 +6506,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-title',
         destination: 'title' as const,
         occurred_at: 1,
@@ -6463,6 +6530,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-title',
           destination: 'title' as const,
           occurred_at: 1,
@@ -6505,6 +6573,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-title',
         destination: 'title' as const,
         occurred_at: 1,
@@ -6527,6 +6596,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-title',
           destination: 'title' as const,
           occurred_at: 1,
@@ -6578,6 +6648,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-title',
         destination: 'title' as const,
         occurred_at: 1,
@@ -6609,6 +6680,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-title',
           destination: 'title' as const,
           occurred_at: 1,
@@ -6727,6 +6799,7 @@ describe('Library route', () => {
             schema_version: 'review-decision-v1',
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: `decision-${command.destination}`,
             destination: command.destination,
             occurred_at: 1,
@@ -6768,6 +6841,7 @@ describe('Library route', () => {
         humanDecision: {
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-title',
           destination: 'title' as const,
           occurred_at: 1,
@@ -7016,6 +7090,7 @@ describe('Library route', () => {
             humanDecision: {
               actor: 'owner',
               application: 'apply' as const,
+              application_reason: null,
               decision_id: 'decision-retried',
               destination: 'title' as const,
               occurred_at: 1,
@@ -7040,6 +7115,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-retried',
           destination: 'title' as const,
           occurred_at: 1,
@@ -7088,6 +7164,45 @@ describe('Library route', () => {
     },
   )
 
+  // An acknowledgement the browser cannot read may follow a committed decision,
+  // and a same-key Retry would replay the same answer: the outcome is reported
+  // as uncertain and the case reloaded, with no Retry (#1688).
+  it.each([
+    ['required', '/decision_id'],
+    ['invariant', 'invalid_decision_confirmation'],
+  ])(
+    'reports a decision answered with an unreadable %s acknowledgement as uncertain',
+    async (reason, at) => {
+      const user = userEvent.setup()
+      const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+        throw new UncertainMutationError({
+          operation: 'POST /api/v1/review-cases/{review_case_id}/decisions',
+          responseStatus: 200,
+          reason,
+          at,
+        })
+      })
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => detail),
+        recordDecision,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+      await user.click(
+        await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
+      )
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'The response was lost. The current case was reloaded before any retry.',
+      )
+      expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBeGreaterThan(1)
+      expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+      expect(screen.queryByText(/The decision could not be confirmed/u)).toBeNull()
+      expect(screen.queryByText('Choice recorded.')).toBeNull()
+      expect(recordDecision).toHaveBeenCalledOnce()
+    },
+  )
+
   describe("a recording's optional choice (#1249)", () => {
     const title = detail.fields[0]
     if (!title) throw new Error('optional choice fixture requires a title field')
@@ -7110,6 +7225,7 @@ describe('Library route', () => {
       const decision = {
         actor: 'owner',
         application: 'apply' as const,
+        application_reason: null,
         decision_id: `decision-${field.destination}`,
         destination: field.destination,
         occurred_at: 1,
@@ -7747,6 +7863,7 @@ describe('Library route', () => {
       humanDecision: {
         actor: 'owner',
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-authors',
         destination: 'authors' as const,
         occurred_at: 1,
@@ -7777,6 +7894,7 @@ describe('Library route', () => {
                 humanDecision: {
                   actor: 'owner',
                   application: 'apply' as const,
+                  application_reason: null,
                   decision_id: `decision-title-${command.outcome}`,
                   destination: 'title' as const,
                   occurred_at: 1,
@@ -7796,6 +7914,7 @@ describe('Library route', () => {
             schema_version: 'review-decision-v1',
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: `decision-title-${command.outcome}`,
             destination: 'title' as const,
             occurred_at: 1,
@@ -8647,6 +8766,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-identity',
             destination: 'title' as const,
             occurred_at: 1,
@@ -8701,6 +8821,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1',
           actor: 'owner',
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-identity',
           destination: 'title' as const,
           occurred_at: 1,
@@ -8750,6 +8871,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-complete',
             destination: 'title' as const,
             occurred_at: 1,
@@ -8817,6 +8939,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1',
           actor: 'owner',
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-complete',
           destination: 'title' as const,
           occurred_at: 1,
@@ -8874,6 +8997,7 @@ describe('Library route', () => {
     const decision = {
       actor: 'owner',
       application: 'apply' as const,
+      application_reason: null,
       decision_id: 'decision-complete',
       destination: 'title' as const,
       occurred_at: 1,
@@ -9431,6 +9555,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'd',
             destination: 'title' as const,
             occurred_at: 1,
@@ -9467,6 +9592,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-echo',
           destination: 'title' as const,
           occurred_at: 1,
@@ -9548,6 +9674,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'd',
             destination: 'title' as const,
             occurred_at: 1,
@@ -9582,6 +9709,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-settle',
           destination: 'title' as const,
           occurred_at: 1,
@@ -9632,6 +9760,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'd',
             destination: 'title' as const,
             occurred_at: 1,
@@ -9666,6 +9795,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-outrun',
           destination: 'title' as const,
           occurred_at: 1,
@@ -9766,6 +9896,7 @@ describe('Library route', () => {
             schema_version: 'review-decision-v1',
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-title',
             destination: 'title' as const,
             occurred_at: 1,
@@ -9831,6 +9962,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: `decision-${command.destination}`,
           destination: command.destination,
           occurred_at: 1,
@@ -9894,6 +10026,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-authors',
           destination: 'authors' as const,
           occurred_at: 1,
@@ -9960,6 +10093,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: `decision-${command.destination}`,
           destination: command.destination,
           occurred_at: 1,
@@ -10019,6 +10153,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-title',
             destination: 'title' as const,
             occurred_at: 1,
@@ -10049,6 +10184,7 @@ describe('Library route', () => {
             schema_version: 'review-decision-v1',
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-title',
             destination: 'title' as const,
             occurred_at: 1,
@@ -10615,6 +10751,7 @@ describe('Library route', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-page',
             destination: 'title' as const,
             occurred_at: 1,
@@ -10687,6 +10824,7 @@ describe('Library route', () => {
           schema_version: 'review-decision-v1',
           actor: 'owner',
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-page',
           destination: 'title' as const,
           occurred_at: 1,
@@ -11623,11 +11761,20 @@ it.each([
     'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
   ],
   [
+    new UncertainMutationError({
+      operation: 'POST /api/v1/review-cases/{review_case_id}/description-advice/retry',
+      responseStatus: 200,
+      reason: 'const',
+      at: '/queued',
+    }),
+    'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+  ],
+  [
     new ApiError(409, 'stale'),
     'Description preparation could not be requested. Reload the current case and retry.',
   ],
 ])('reports a description advice retry failing with %s', async (failure, copy) => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
   let fail!: (error: unknown) => void
@@ -11658,7 +11805,7 @@ it.each([
 })
 
 it('keeps a requested description advice retry focused and ignores another press', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
   http.retryDescriptionAdvice = vi.fn(async () => undefined)
@@ -11677,7 +11824,7 @@ it('keeps a requested description advice retry focused and ignores another press
 })
 
 it('keeps description advice retry natively disabled while a decision records', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
   http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
@@ -11698,7 +11845,7 @@ it('keeps description advice retry natively disabled while a decision records', 
 })
 
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
   const advice = field.descriptionAdvice
@@ -11710,6 +11857,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
   field.humanDecision = {
     actor: 'owner',
     application: 'apply',
+    application_reason: null,
     decision_id: 'prior-description',
     destination: 'description' as const,
     occurred_at: 1,
@@ -11811,7 +11959,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
 })
 
 it('renders hostile multiline advice as text and refuses stale selection while ordinary choices remain', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
   const advice = field.descriptionAdvice
@@ -11847,7 +11995,7 @@ it('renders hostile multiline advice as text and refuses stale selection while o
 })
 
 it('retries an advised selection through the ordinary controller with the same authored binding and idempotency key', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
   const advice = field.descriptionAdvice
@@ -11885,7 +12033,7 @@ it('retries an advised selection through the ordinary controller with the same a
 })
 
 it('places the decision failure directly under its retry, before the external update status (#1584)', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
   const proposed = field.proposedValues[0]
@@ -11894,6 +12042,7 @@ it('places the decision failure directly under its retry, before the external up
   field.humanDecision = {
     actor: 'owner',
     application: 'apply',
+    application_reason: null,
     decision_id: 'prior-description',
     destination: 'description' as const,
     occurred_at: 1,
@@ -11923,7 +12072,7 @@ it('places the decision failure directly under its retry, before the external up
 })
 
 it('places the reload-required alert directly above Reload current case, before the external update status (#1584)', async () => {
-  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
   const proposed = field.proposedValues[0]
@@ -11932,6 +12081,7 @@ it('places the reload-required alert directly above Reload current case, before 
   field.humanDecision = {
     actor: 'owner',
     application: 'apply',
+    application_reason: null,
     decision_id: 'prior-description',
     destination: 'description' as const,
     occurred_at: 1,
@@ -11979,7 +12129,7 @@ it('places the reload-required alert directly above Reload current case, before 
 it.each(['verified', 'no_change_required'] as const)(
   'shows the exact authored %s outcome without renewing a stale binding',
   async (outcome) => {
-    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const authored = readCaseDetail(descriptionAdviceFixture)
     const field = authored.fields.find((item) => item.destination === 'description')
     if (!field) throw new Error('description fixture requires its field')
     const advice = field.descriptionAdvice
@@ -12041,7 +12191,7 @@ it.each([
 ] as const)(
   'labels only valid authored owner selections as recorded: %j',
   async ({ origin, current, outcome, recorded }) => {
-    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const authored = readCaseDetail(descriptionAdviceFixture)
     const field = authored.fields.find((item) => item.destination === 'description')
     if (!field) throw new Error('description fixture requires its field')
     const advice = field.descriptionAdvice
@@ -12145,7 +12295,7 @@ it.each(['human', 'automatic_policy'] as const)(
         detail: 'The library already held the selected description.',
       },
     ] as const) {
-      const authored = mapCaseDetail(descriptionAdviceFixture)
+      const authored = readCaseDetail(descriptionAdviceFixture)
       const field = authored.fields.find((item) => item.destination === 'description')
       if (!field?.descriptionAdvice?.candidate)
         throw new Error('description fixture requires candidate')
@@ -12195,7 +12345,7 @@ it.each(['human', 'automatic_policy'] as const)(
 it.each([true, false])(
   'marks a held automatic authored description as chosen only after Resume (held: %s)',
   async (held) => {
-    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const authored = readCaseDetail(descriptionAdviceFixture)
     const field = authored.fields.find((item) => item.destination === 'description')
     if (!field?.descriptionAdvice?.candidate)
       throw new Error('description fixture requires candidate')
@@ -12254,7 +12404,7 @@ it.each([true, false])(
 it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
   'does not infer external application from unselected %s advice',
   async (state) => {
-    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const authored = readCaseDetail(descriptionAdviceFixture)
     const field = authored.fields.find((item) => item.destination === 'description')
     if (!field?.descriptionAdvice?.candidate)
       throw new Error('description fixture requires candidate')
@@ -12302,7 +12452,7 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
           : field,
       ),
     }
-    const authored = mapCaseDetail(payload)
+    const authored = readCaseDetail(payload)
     const field = authored.fields.find((item) => item.destination === 'description')
     if (!field?.descriptionAdvice?.selected_advice)
       throw new Error('selected retry fixture required')
@@ -12343,7 +12493,7 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
 
 it('shows retained automatic advice during preservation-only retry without adding owner actions', async () => {
   const { default: payload } = await import('./descriptionAdvicePreservationFixture.json')
-  const authored = mapCaseDetail(payload)
+  const authored = readCaseDetail(payload)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field?.descriptionAdvice?.selected_advice)
     throw new Error('Selected preservation fixture required')
@@ -13131,6 +13281,16 @@ describe('library provider throttling notice (#1282)', () => {
       new ApiError(503, 'settings_unavailable'),
       'Retry now could not be confirmed. Check the notice before pressing it again.',
     ],
+    [
+      // A 2xx the decoder refused (#1689).
+      new UncertainMutationError({
+        operation: 'POST /api/v1/provider-recovery/retry',
+        responseStatus: 200,
+        at: '/secrets',
+        reason: 'required',
+      }),
+      'Retry now could not be confirmed. Check the notice before pressing it again.',
+    ],
   ])('alerts a refused Retry now (%s) and refreshes the notice', async (error, copy) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
@@ -13810,6 +13970,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-filtered',
             destination: 'title' as const,
             occurred_at: 1,
@@ -13852,6 +14013,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
+          application_reason: null,
           decision_id: 'decision-filtered',
           destination: 'title' as const,
           occurred_at: 1,
@@ -14182,6 +14344,7 @@ describe('a focused field decision (#1519)', () => {
       humanDecision: {
         actor: 'owner',
         application: 'apply',
+        application_reason: null,
         decision_id: 'decision-title',
         destination: 'title',
         occurred_at: 1,

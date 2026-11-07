@@ -263,6 +263,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                     "reasons": [],
                 },
                 "incumbent": True,
+                "match_reason": None,
                 "match_state": "same_book",
                 "observation": None,
                 "original_sha256": "e" * 64,
