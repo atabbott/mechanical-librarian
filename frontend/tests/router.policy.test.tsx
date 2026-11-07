@@ -11,6 +11,8 @@ import {
 } from '../src/api/http'
 import type {
   PolicyActivationRequest,
+  PolicyCommandBody,
+  PolicyCommandPath,
   PolicyDraft,
   PolicyStateView,
   PolicyPreviewView,
@@ -31,6 +33,11 @@ const answeringClient = (body: unknown, status = 200) =>
     csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
     fetch: vi.fn<typeof fetch>(async () => Response.json(body, { status })),
   })
+
+// A scripted `policyCommand` mock receives the page's path and body untyped;
+// this hands both to the real client unchanged.
+const sendThrough = (transport: ReviewApiClient, path: string, body?: unknown) =>
+  transport.policyCommand(path as PolicyCommandPath, body as PolicyCommandBody<PolicyCommandPath>)
 
 const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][number]['fields']) =>
   fields.map((draft) => ({
@@ -293,7 +300,7 @@ describe('Policy route', () => {
       const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
         // The page previews only through the typed method below.
         if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
-        if (path === failing) return transport.policyCommand(path, body)
+        if (path === failing) return sendThrough(transport, path, body)
         if (path === 'drafts')
           return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
         return {}
@@ -585,7 +592,7 @@ describe('Policy route', () => {
           ],
         }
       }
-      if (path === 'activate') return transport.policyCommand(path, body)
+      if (path === 'activate') return transport.activatePolicy(body as PolicyActivationRequest)
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
@@ -1680,7 +1687,16 @@ describe('Policy route', () => {
   })
 
   it.each([
-    ['invalid success payload', new ApiError(502, 'invalid_policy_response')],
+    // An answer the client could not decode (#1692, #1729).
+    [
+      'an undecodable success payload',
+      new UncertainMutationError({
+        operation: 'POST /api/v1/metadata-policy/activate',
+        responseStatus: 200,
+        at: '/transition',
+        reason: 'required',
+      }),
+    ],
     ['gateway timeout', new ApiError(504, 'gateway_timeout')],
     ['post-response build mismatch', new BuildMismatchError()],
   ])(
@@ -2252,7 +2268,7 @@ it.each(['a server failure', 'an undecodable answer (#1692)'])(
       // The pause committed; only its response failed.
       paused = true
       if (failure === 'a server failure') throw new ApiError(503, 'persistence')
-      return transport.policyCommand(path, body)
+      return sendThrough(transport, path, body)
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -2521,7 +2537,7 @@ it('keeps the draft after a real stale envelope and binds explicit repreview to 
       }
     if (path === 'activate' && generation === 1) {
       generation = 3
-      return transport.policyCommand(path, body)
+      return transport.activatePolicy(body as PolicyActivationRequest)
     }
     if (path === 'activate')
       return {
@@ -2650,7 +2666,7 @@ it.each([
     })
     http.policyCommand = async <T,>(path: string, body?: unknown) =>
       (path === refused
-        ? transport.policyCommand(path, body)
+        ? sendThrough(transport, path, body)
         : path === 'preview'
           ? {
               schema_version: 'metadata-policy-preview-v1',

@@ -3,7 +3,12 @@
 // route under the route-size rule (#1571).
 import type { RefObject } from 'react'
 
-import type { AutomaticSafetyView, ShadowPostureView } from '../api/http'
+import type {
+  AutomaticSafetyView,
+  PolicyCommandBody,
+  PolicyCommandPath,
+  ShadowPostureView,
+} from '../api/http'
 import { readableCategory } from '../policyFields'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useReviewContext } from '../router'
@@ -21,7 +26,7 @@ export const PolicySafety = ({
   pending: boolean
   /** Where focus returns after a recovery. */
   summaryRef: RefObject<HTMLElement | null>
-  run: (action: string, body?: unknown) => Promise<void>
+  run: <P extends PolicyCommandPath>(action: P, body?: PolicyCommandBody<P>) => Promise<void>
 }) => {
   const { http } = useReviewContext()
   const sample = useQuery({

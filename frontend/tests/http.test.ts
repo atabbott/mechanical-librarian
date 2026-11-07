@@ -31,7 +31,7 @@ import {
   targetIdentity,
 } from './wireFixtures'
 import activationCapture from './wire/post-metadata-policy-activate.200.json'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
   signInLocation,
@@ -51,7 +51,19 @@ import {
   ResponseDecodeError,
   UncertainMutationError,
 } from '../src/api/http'
-import type { PolicyStateView, SettingsWrite } from '../src/api/http'
+import type {
+  AutomaticSafetyView,
+  PolicyCommandAnswer,
+  PolicyCommandBody,
+  PolicyCommandPath,
+  PolicyDraft,
+  PolicyStateView,
+  PolicyTransitionView,
+  SettingsWrite,
+  ShadowPostureView,
+} from '../src/api/http'
+import type { components } from '../src/generated/review-api'
+import type { components as responseComponents } from '../src/generated/review-api-response'
 import { classifyDecisionFailure } from '../src/reviewDecisionController'
 import { view as settingsView } from './settingsFixtures'
 
@@ -2349,13 +2361,29 @@ describe('ReviewApiClient', () => {
     expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body)
   })
 
+  const policyDraft: PolicyDraft = { name: 'Draft', options: {}, destinations: {} }
+  // Preview and activation have their own typed methods; the rest are generic
+  // policy commands.
   it.each([
-    ['validate', 2],
-    ['preview', 2],
-    ['drafts', 1],
-    ['activate', 1],
-    ['automatic-safety/pause', 1],
-  ])('resends policy %s only when it is side-effect free', async (action, sends) => {
+    ['validate', (client: ReviewApiClient) => client.policyCommand('validate', policyDraft), 2],
+    ['preview', (client: ReviewApiClient) => client.previewPolicy(policyDraft), 2],
+    ['drafts', (client: ReviewApiClient) => client.policyCommand('drafts', policyDraft), 1],
+    [
+      'activate',
+      (client: ReviewApiClient) =>
+        client.activatePolicy({
+          policy_id: 'policy-2',
+          expected_active_policy_id: 'policy-1',
+          expected_active_generation: 1,
+        }),
+      1,
+    ],
+    [
+      'automatic-safety/pause',
+      (client: ReviewApiClient) => client.policyCommand('automatic-safety/pause', { paused: true }),
+      1,
+    ],
+  ] as const)('resends policy %s only when it is side-effect free', async (action, send, sends) => {
     // Only validate and preview are resent; each answers with its own document.
     const body = (action === 'preview' ? policyPreview : policyProfile)({ policy_id: 'policy-2' })
     const fetchMock = vi
@@ -2364,7 +2392,7 @@ describe('ReviewApiClient', () => {
       .mockResolvedValueOnce(Response.json(body))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    const command = client.policyCommand(action, { name: 'Draft' })
+    const command = send(client)
     if (sends === 2) await expect(command).resolves.toEqual(body)
     else await expect(command).rejects.toBeInstanceOf(CsrfRenewedError)
     expect(csrf.renew).toHaveBeenCalledOnce()
@@ -2375,7 +2403,9 @@ describe('ReviewApiClient', () => {
     const fetchMock = vi.fn<typeof fetch>(async () => csrfChallenge())
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    await expect(client.policyCommand('validate', {})).rejects.toBeInstanceOf(CsrfRenewedError)
+    await expect(client.policyCommand('validate', policyDraft)).rejects.toBeInstanceOf(
+      CsrfRenewedError,
+    )
     expect(csrf.renew).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
@@ -2387,7 +2417,7 @@ describe('ReviewApiClient', () => {
       .mockRejectedValueOnce(new TypeError('network'))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    await expect(client.policyCommand('validate', {})).rejects.toBeInstanceOf(
+    await expect(client.policyCommand('validate', policyDraft)).rejects.toBeInstanceOf(
       AmbiguousMutationError,
     )
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -2400,7 +2430,7 @@ describe('ReviewApiClient', () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(response)
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    const refused = client.policyCommand('validate', {})
+    const refused = client.policyCommand('validate', policyDraft)
     await expect(refused).rejects.toMatchObject({ status: 403, code })
     await expect(refused).rejects.not.toBeInstanceOf(CsrfRenewedError)
     expect(csrf.renew).not.toHaveBeenCalled()
@@ -2495,7 +2525,13 @@ describe('ReviewApiClient', () => {
       onSessionExpired: expired,
     })
 
-    await expect(client.policyCommand('activate', {})).rejects.toBeInstanceOf(SessionExpiredError)
+    await expect(
+      client.activatePolicy({
+        policy_id: 'policy-2',
+        expected_active_policy_id: 'policy-1',
+        expected_active_generation: 1,
+      }),
+    ).rejects.toBeInstanceOf(SessionExpiredError)
     await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
   })
 
@@ -4572,10 +4608,10 @@ describe('central response decoding (#1685)', () => {
     const spy = vi.spyOn(client as unknown as { mutate: Mutate }, 'mutate')
     // Each answer is undecodable; only the flags each command sends matter here.
     const ignore = () => undefined
-    await client.policyCommand('validate', {}).catch(ignore)
-    await client.policyCommand('preview', {}).catch(ignore)
-    await client.previewPolicy({ name: 'Draft', options: {}, destinations: {} }).catch(ignore)
-    await client.policyCommand('drafts', {}).catch(ignore)
+    const draft = { name: 'Draft', options: {}, destinations: {} }
+    await client.policyCommand('validate', draft).catch(ignore)
+    await client.previewPolicy(draft).catch(ignore)
+    await client.policyCommand('drafts', draft).catch(ignore)
     await client
       .activatePolicy({
         policy_id: 'policy-2',
@@ -4584,7 +4620,6 @@ describe('central response decoding (#1685)', () => {
       })
       .catch(ignore)
     expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([
-      [true, true],
       [true, true],
       [true, true],
       [false, false],
@@ -5308,6 +5343,94 @@ describe('activity write decoding (#1691)', () => {
   })
 })
 
+// `policyCommand` is typed by its operation (#1729). Each path's body and answer
+// come from the generated `paths`, and preview and activation, which carry
+// checks the schema cannot state, are not among its paths. `tsc` checks these
+// cases; the commands below are never sent.
+describe('policy command types (#1729)', () => {
+  type Request<Name extends keyof components['schemas']> = components['schemas'][Name]
+  type Answer<Name extends keyof responseComponents['schemas']> =
+    responseComponents['schemas'][Name]
+
+  it('derives each command answer from its operation', () => {
+    expectTypeOf<PolicyCommandAnswer<'validate'>>().toEqualTypeOf<PolicyStateView>()
+    expectTypeOf<PolicyCommandAnswer<'drafts'>>().toEqualTypeOf<Answer<'_PolicyDraftResponse'>>()
+    expectTypeOf<
+      PolicyCommandAnswer<
+        'automatic-safety/pause' | 'automatic-safety/recover' | 'automatic-safety/suspend'
+      >
+    >().toEqualTypeOf<AutomaticSafetyView>()
+    expectTypeOf<PolicyCommandAnswer<'shadow/enter'>>().toEqualTypeOf<ShadowPostureView>()
+    expectTypeOf<
+      PolicyCommandAnswer<'shadow/confirm-automatic'>
+    >().toEqualTypeOf<ShadowPostureView>()
+    expectTypeOf<
+      PolicyCommandAnswer<'transitions/transition-1/acknowledge'>
+    >().toEqualTypeOf<PolicyTransitionView>()
+    expectTypeOf<
+      PolicyCommandAnswer<'transitions/transition-1/retry'>
+    >().toEqualTypeOf<PolicyTransitionView>()
+    // A union of paths answers the union of their answers.
+    expectTypeOf<PolicyCommandAnswer<'validate' | 'shadow/enter'>>().toEqualTypeOf<
+      PolicyStateView | ShadowPostureView
+    >()
+  })
+
+  it('derives each command body from its operation', () => {
+    expectTypeOf<PolicyCommandBody<'validate' | 'drafts'>>().toEqualTypeOf<PolicyDraft>()
+    expectTypeOf<PolicyCommandBody<'automatic-safety/pause'>>().toEqualTypeOf<
+      Request<'_AutomaticPauseRequest'>
+    >()
+    expectTypeOf<PolicyCommandBody<'automatic-safety/recover'>>().toEqualTypeOf<
+      Request<'_AutomaticRecoveryRequest'>
+    >()
+    expectTypeOf<PolicyCommandBody<'automatic-safety/suspend'>>().toEqualTypeOf<
+      Request<'_AutomaticSuspendRequest'>
+    >()
+    expectTypeOf<
+      PolicyCommandBody<
+        | 'shadow/enter'
+        | 'shadow/confirm-automatic'
+        | 'transitions/transition-1/acknowledge'
+        | 'transitions/transition-1/retry'
+      >
+    >().toEqualTypeOf<undefined>()
+  })
+
+  it('sends only the generic policy commands, each with its own body', () => {
+    const client = new ReviewApiClient({ csrf, buildIdentity: 'c'.repeat(64), fetch: vi.fn() })
+    const draft: PolicyDraft = { name: 'Draft', options: {}, destinations: {} }
+    const request = {
+      policy_id: 'policy-2',
+      expected_active_policy_id: 'policy-1',
+      expected_active_generation: 1,
+    }
+    const typed = () => {
+      expectTypeOf(
+        client.policyCommand('validate', draft),
+      ).resolves.toEqualTypeOf<PolicyStateView>()
+      expectTypeOf(
+        client.policyCommand('automatic-safety/pause', { paused: true }),
+      ).resolves.toEqualTypeOf<AutomaticSafetyView>()
+      expectTypeOf(
+        client.policyCommand('transitions/transition-1/retry'),
+      ).resolves.toEqualTypeOf<PolicyTransitionView>()
+      expectTypeOf<'preview' | 'activate'>().not.toExtend<PolicyCommandPath>()
+      // @ts-expect-error preview is sent only by `previewPolicy` (P-X1, P-X2)
+      void client.policyCommand('preview', draft)
+      // @ts-expect-error activation is sent only by `activatePolicy` (P-X3)
+      void client.policyCommand('activate', request)
+      // @ts-expect-error no such policy command
+      void client.policyCommand('transitions/transition-1/cancel')
+      // @ts-expect-error validate takes a complete draft
+      void client.policyCommand('validate', {})
+      // @ts-expect-error the automatic pause takes `{ paused }`, not a draft
+      void client.policyCommand('automatic-safety/pause', draft)
+    }
+    expect(typed).toBeTypeOf('function')
+  })
+})
+
 describe('policy decoding (#1692)', () => {
   const answering = (body: unknown, status = 200) => {
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json(body, { status }))
@@ -5392,11 +5515,6 @@ describe('policy decoding (#1692)', () => {
       (client: ReviewApiClient) => client.previewPolicy(draft),
       'required@/active_generation',
     ],
-    [
-      'POST /api/v1/metadata-policy/preview',
-      (client: ReviewApiClient) => client.policyCommand('preview', draft),
-      'required@/active_generation',
-    ],
   ] as const)(
     'reports an undecodable %s answer as a 502 (%#)',
     async (operation, send, failure) => {
@@ -5445,23 +5563,34 @@ describe('policy decoding (#1692)', () => {
   })
 
   type Unsafe = readonly [operation: string, send: (client: ReviewApiClient) => Promise<unknown>]
-  const policyPath = (operation: string) =>
-    operation
-      .slice('POST /api/v1/metadata-policy/'.length)
-      .replace('{transition_id}', 'transition-1')
   const commands: readonly Unsafe[] = [
-    'POST /api/v1/metadata-policy/drafts',
-    'POST /api/v1/metadata-policy/automatic-safety/pause',
-    'POST /api/v1/metadata-policy/automatic-safety/recover',
-    'POST /api/v1/metadata-policy/automatic-safety/suspend',
-    'POST /api/v1/metadata-policy/shadow/enter',
-    'POST /api/v1/metadata-policy/shadow/confirm-automatic',
-    'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
-    'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
-  ].map((operation): Unsafe => [
-    operation,
-    (client) => client.policyCommand(policyPath(operation), {}),
-  ])
+    ['POST /api/v1/metadata-policy/drafts', (client) => client.policyCommand('drafts', draft)],
+    [
+      'POST /api/v1/metadata-policy/automatic-safety/pause',
+      (client) => client.policyCommand('automatic-safety/pause', { paused: true }),
+    ],
+    [
+      'POST /api/v1/metadata-policy/automatic-safety/recover',
+      (client) => client.policyCommand('automatic-safety/recover', { category: null }),
+    ],
+    [
+      'POST /api/v1/metadata-policy/automatic-safety/suspend',
+      (client) => client.policyCommand('automatic-safety/suspend', { reason: 'repeated_failure' }),
+    ],
+    ['POST /api/v1/metadata-policy/shadow/enter', (client) => client.policyCommand('shadow/enter')],
+    [
+      'POST /api/v1/metadata-policy/shadow/confirm-automatic',
+      (client) => client.policyCommand('shadow/confirm-automatic'),
+    ],
+    [
+      'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
+      (client) => client.policyCommand('transitions/transition-1/acknowledge'),
+    ],
+    [
+      'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
+      (client) => client.policyCommand('transitions/transition-1/retry'),
+    ],
+  ]
   it.each<Unsafe>([
     ...commands,
     ['POST /api/v1/metadata-policy/activate', (client) => client.activatePolicy(request)],

@@ -274,5 +274,4 @@ exercise.
 - Since #1684 every response family the browser reads is decoded, the
   hand-written checks the schema states are removed, and ADR-0043's
   HTTP-module text and drift check are amended. A later stage removes the
-  per-operation decode gate and the version-only reads that remain for some
-  policy responses, and types every policy command.
+  per-operation decode gate.

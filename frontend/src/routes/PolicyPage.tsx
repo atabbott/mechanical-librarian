@@ -18,11 +18,11 @@ import {
 import type {
   PolicyActivationRequest,
   PolicyActivationView,
+  PolicyCommandBody,
+  PolicyCommandPath,
   PolicyDraft,
   PolicyPreviewView,
   PolicySection,
-  PolicyTransitionView,
-  ShadowPostureView,
   TargetDestination,
 } from '../api/http'
 import { ChangeCount } from '../components/ChangeCount'
@@ -56,6 +56,12 @@ import type { FieldDefinition } from '../policyFields'
 import { policyImpactDisplay, policyImpactTotals } from '../policyImpact'
 
 type PolicyStage = 'editing' | 'validating' | 'preview' | 'activation' | 'activated'
+// What the page's one policy mutation sends: preview and activation with their
+// own request types, and every other command typed by its path.
+type PolicyMutation =
+  | { action: 'preview'; body: PolicyDraft }
+  | { action: 'activate'; body: PolicyActivationRequest }
+  | { action: PolicyCommandPath; body?: PolicyCommandBody<PolicyCommandPath> }
 
 const Check = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -120,14 +126,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     ])
   }
   const command = useMutation({
-    mutationFn: async ({ action, body }: { action: string; body?: unknown }) => {
-      if (action === 'validate' || action === 'drafts')
-        return http.policyCommand<{ policy_id: string; schema_version: string }>(action, body)
+    mutationFn: async (input: PolicyMutation) => {
       // Preview and activation carry the checks the schema cannot state, so
       // they go through their typed client methods (ADR-0091 P-X1 to P-X3).
-      if (action === 'preview') return http.previewPolicy(body as PolicyDraft)
-      if (action === 'activate') return http.activatePolicy(body as PolicyActivationRequest)
-      return http.policyCommand<PolicyTransitionView | ShadowPostureView>(action, body)
+      if (input.action === 'preview') return http.previewPolicy(input.body)
+      if (input.action === 'activate') return http.activatePolicy(input.body)
+      return http.policyCommand(input.action, input.body)
     },
     retry: false,
     onSettled: async (_data, _error, { action }) => {
@@ -157,7 +161,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     })
   }
   const safetySummaryRef = useRef<HTMLElement>(null)
-  const runAuxiliary = async (action: string, body?: unknown) => {
+  const runAuxiliary = async <P extends PolicyCommandPath>(
+    action: P,
+    body?: PolicyCommandBody<P>,
+  ) => {
     setStatus({ tone: 'neutral', message: 'Updating policy state…' })
     try {
       await command.mutateAsync({ action, body })
