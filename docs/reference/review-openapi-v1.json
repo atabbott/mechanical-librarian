@@ -8342,7 +8342,7 @@
             "items": {
               "$ref": "#/components/schemas/_PreparationTriggerRecord"
             },
-            "maxItems": 4,
+            "maxItems": 5,
             "minItems": 1,
             "title": "Triggers",
             "type": "array"
@@ -8745,7 +8745,8 @@
               "initial_setup",
               "manual_scan",
               "library_added",
-              "title_recovery"
+              "title_recovery",
+              "automatic_confirmed"
             ],
             "title": "Trigger",
             "type": "string"

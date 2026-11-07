@@ -22,6 +22,10 @@ These seams cross this aggregate's boundary, and each is resolved differently:
   hands the field-effect aggregate every case it retires, and whether the
   policy is unchanged, inside this transaction (#1599), and also every case an
   earlier activation retired that preparation never readmitted (#1657).
+- `activate_qualified_automatic` requeues every complete current case work to
+  projection, which writes `review_preparation_work` and the scans, so review
+  preparation's requeue is injected as a callable and runs inside this
+  method's transaction (#1573).
 - `enter_shadow_preview` writes `metadata_policy_state` and now lives here. It
   calls `activate_metadata_policy` to reconcile the automatic cohort, and a
   unit test replaces that call on the composing repository to prove the posture
@@ -114,6 +118,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         supersede_retired_waiting_effects: Callable[
             [tuple[tuple[str, str, str, str], ...], bool, int], int
         ],
+        requeue_current_case_projections: Callable[[int], None],
     ) -> None:
         super().__init__(connection, binding)
         # Review preparation owns `review_preparation_work`, so the restart it
@@ -128,6 +133,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         self._activate_metadata_policy = activate_metadata_policy
         self._carry_field_effect_consents = carry_field_effect_consents
         self._supersede_retired_waiting_effects = supersede_retired_waiting_effects
+        self._requeue_current_case_projections = requeue_current_case_projections
 
     @local_operation
     def shadow_posture(self) -> str:
@@ -279,6 +285,11 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             self._connection.execute(
                 "UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1"
             )
+            # Each work prepared so far is decided again in Automatic from its
+            # outcome under this generation, the one Preview showed (#1573).
+            # A projection that commits after this reads the Automatic posture
+            # in its own transaction, so no current work misses its decision.
+            self._requeue_current_case_projections(updated_at)
             transaction.commit()
             return "automatic"
         except (

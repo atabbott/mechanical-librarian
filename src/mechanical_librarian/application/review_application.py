@@ -366,9 +366,15 @@ def provider_throttling_view(
 class PolicyOperations:
     """Serialized named policy operations; transport never receives its store."""
 
-    def __init__(self, notebook: PolicyNotebook, gate: SerializedGate) -> None:
+    def __init__(
+        self,
+        notebook: PolicyNotebook,
+        gate: SerializedGate,
+        wake_field_application: Callable[[], None] = lambda: None,
+    ) -> None:
         self._notebook = notebook
         self._gate = gate
+        self._wake_field_application = wake_field_application
 
     def active(self) -> MetadataPolicyProfile:
         return self._gate(self._notebook.active)
@@ -401,7 +407,11 @@ class PolicyOperations:
         return self._gate(self._notebook.shadow_state)
 
     def confirm_automatic(self, updated_at: object) -> dict[str, object]:
-        return self._gate(lambda: self._notebook.confirm_automatic(updated_at))
+        state = self._gate(lambda: self._notebook.confirm_automatic(updated_at))
+        # Confirming decides the works already prepared and makes their
+        # decisions plannable, so the applier looks again now (#1573).
+        self._wake_field_application()
+        return state
 
     def enter_preview(self, updated_at: object) -> dict[str, object]:
         return self._gate(lambda: self._notebook.enter_preview(updated_at))
@@ -543,7 +553,9 @@ class ReviewApplication:
         self._browse_lifetime = Condition()
         self._active_browses = 0
         self._gate = operation_lock or gate
-        self._policy = PolicyOperations(policy, self.serialized)
+        self._policy = PolicyOperations(
+            policy, self.serialized, self._wake_continuous_application
+        )
         self._automatic_safety = AutomaticSafetyOperations(
             automatic_safety, self.serialized, updates
         )
@@ -1612,6 +1624,10 @@ class ReviewApplication:
     def _permission_reader(self) -> ContinuousGuardedApplication:
         application = self._permission_projection
         return self._continuous_application() if application is None else application
+
+    def _wake_continuous_application(self) -> None:
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.wake()
 
     def _continuous_application(self) -> ContinuousGuardedApplication:
         if not isinstance(self._field_application, ContinuousGuardedApplication):

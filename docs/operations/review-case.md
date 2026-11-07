@@ -206,7 +206,9 @@ it stay current, since no decision moves to a successor case. A work still
 retired by an earlier change of policy when that happens starts a new episode
 on return, as any case does after a policy change. An automatic
 decision writes only in the Automatic posture, and one from an earlier policy
-generation no longer decides its field.
+generation no longer decides its field. Confirming Automatic requeues every
+complete current work to projection, so the field is decided again from what
+Preview showed, and so is a work first prepared in Preview.
 A queued write whose authority is withdrawn only for now waits rather than
 going stale: an automatic write waits outside Automatic, and an owner's write
 waits while its case is retired by that reactivation and not yet returned.

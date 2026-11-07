@@ -2902,3 +2902,216 @@ def test_an_automatic_no_change_reopens_after_leaving_automatic(
     ).fetchone() == (2,)
     repository.close()
     open_repository(tmp_path / "reports.sqlite").close()
+
+
+def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
+    tmp_path: Path,
+) -> None:
+    """An earlier generation's automatic description never waits again (#1573)."""
+    import hashlib
+    from types import SimpleNamespace
+    from typing import Any
+
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+    from mechanical_librarian.application.description_advice import (
+        admit_staged_description,
+        prepare_staged_description,
+    )
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPreparationPipeline,
+    )
+    from mechanical_librarian.domain.description_advice import (
+        AuthoredDescriptionDecision,
+    )
+    from mechanical_librarian.domain.metadata_policy import (
+        ResolvedMetadataPolicy,
+        human_review_destinations,
+    )
+    from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+
+    captured = {}
+
+    def probe(repository, report, deterministic, access, calls):
+        captured["access"] = access
+
+    repository, store, binding, _, _ = _prepared(tmp_path, pipeline_probe=probe)
+    report, *_ = _automatic_no_change_inputs("description_preserved")
+    target = report.target
+    connection = repository._connection
+    now = [12]
+
+    def extract(bound, action, claim_next):
+        bound.publish(report, lambda: True)
+        return report.report_id, False
+
+    def propose(bound, report_id):
+        generation = bound._connection.execute(
+            "SELECT generation FROM metadata_policy_state"
+        ).fetchone()[0]
+        policy = ResolvedMetadataPolicy.from_data(
+            json.loads(
+                bound._connection.execute(
+                    "SELECT document FROM metadata_policy_resolutions "
+                    "WHERE generation=? AND library_name=?",
+                    (generation, target.library),
+                ).fetchone()[0]
+            )
+        )
+        proposal = evaluate_report(
+            report, policy.resolved_id, human_review_destinations(policy)
+        )
+        bound.publish_proposal(proposal)
+        return proposal.proposal_set_id
+
+    def admit(bound, proposal_set_id):
+        proposal = ProposalSet.from_json(bound.get_proposal(proposal_set_id))
+        value = json.loads(bound.admit_review_case(proposal))
+        return value["status"], value.get("review_case_id")
+
+    def project(bound, action):
+        case_id = action if type(action) is str else action.review_case_id
+        kwargs = {} if type(action) is str else {"staged_action": action}
+        outcome = bound.persist_shadow_outcome(case_id, now[0], **kwargs)
+        return "stale" if outcome == "stale" else "complete"
+
+    settings = DescriptionAdviceSettings(automatic_application=True).model_dump()
+    review: Any = SimpleNamespace(
+        **{f"description_{key}": value for key, value in settings.items()}
+    )
+
+    def before(bound, action):
+        prepare_staged_description(
+            bound, action, reviewer_access=captured["access"], review=review
+        )
+
+    def after(bound, action, output_id):
+        if action.report_id is not None and (
+            action.stage == "projection"
+            or (action.stage == "admission" and output_id is None)
+        ):
+            admit_staged_description(bound, action)
+
+    def factory():
+        bound = open_repository(
+            tmp_path / "reports.sqlite", authority=repository.authority
+        )
+        bound_store = bound.description_advice_store()
+        bound_store.bind_settings(DescriptionAdviceSettings(automatic_application=True))
+        bound_store.bind_identity(
+            lambda engine, _model: (
+                (
+                    "gpt-5.6-sol",
+                    hashlib.sha256(b"synthetic-contained-profile").hexdigest(),
+                )
+                if engine == "codex"
+                else None
+            )
+        )
+        return bound
+
+    entry = CatalogueEntry(
+        target.connection,
+        target.library,
+        "library",
+        target.item,
+        1,
+        "Synthetic work",
+        (),
+        True,
+        False,
+        "singular-supported",
+        report.file.identity,
+        "/book.epub",
+        "epub",
+        "books",
+    )
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=factory,
+        libraries=((target.connection, target.library, "library", "f" * 64),),
+        discover=lambda *_: (1, "a" * 64, (entry,)),
+        extract=extract,
+        providers=lambda *_: (),
+        propose=propose,
+        admit=admit,
+        project=project,
+        before_projection=before,
+        after_advance=after,
+        clock=lambda: now[0],
+    )
+
+    def drain() -> None:
+        for _ in range(32):
+            if not pipeline.run_next():
+                return
+        pytest.fail("preparation did not settle")
+
+    def automatic_descriptions() -> list[tuple[str, int, bool]]:
+        return connection.execute(
+            "SELECT d.decision_id,"
+            "json_extract(d.document,'$.binding.policy_generation'),"
+            "current.decision_id IS NOT NULL FROM description_decisions d "
+            "LEFT JOIN current_description_decisions current "
+            "ON current.decision_id=d.decision_id "
+            "WHERE json_extract(d.document,'$.origin')='automatic_policy' "
+            "ORDER BY d.rowid"
+        ).fetchall()
+
+    def field_generations() -> set[int]:
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT policy_generation FROM automatic_decisions"
+            )
+        }
+
+    def pending_descriptions() -> list[AuthoredDescriptionDecision]:
+        return [
+            AuthoredDescriptionDecision.from_json(document)
+            for document in repository.pending_field_effect_decision_documents(100)
+            if json.loads(document).get("schema_version")
+            == "authored-description-decision-v1"
+        ]
+
+    def automatic_counted() -> int:
+        return sum(
+            row["count"]
+            for row in repository.pending_field_effect_decision_counts()
+            if row["origin"] == "automatic"
+        )
+
+    repository.request_review_scan(
+        target.connection, target.library, "library", "f" * 64, now[0]
+    )
+    drain()
+    ((earlier, earlier_generation, earlier_current),) = automatic_descriptions()
+    assert (earlier_generation, earlier_current) == (2, True)
+    assert field_generations() == {2}
+    assert [item.decision_id for item in pending_descriptions()] == [earlier]
+
+    now[0] = 20
+    assert repository.enter_shadow_preview(20, (target.library,)) == "preview"
+    now[0] = 30
+    drain()
+    assert pending_descriptions() == [] and automatic_counted() == 0
+    repository.activate_qualified_automatic(31)
+    # The case is current again in an Automatic posture, but its description
+    # was decided in an earlier generation: it waits for nothing.
+    assert connection.execute(
+        "SELECT generation,posture FROM metadata_policy_state"
+    ).fetchone() == (3, "automatic")
+    assert pending_descriptions() == [] and automatic_counted() == 0
+
+    now[0] = 40
+    drain()
+    descriptions = automatic_descriptions()
+    assert descriptions[0] == (earlier, 2, False)
+    ((current, current_generation, is_current),) = descriptions[1:]
+    assert (current_generation, is_current) == (3, True)
+    assert field_generations() == {2, 3}
+    (decision,) = pending_descriptions()
+    assert decision.decision_id == current
+    assert PersistedFieldEffectAuthority(repository).resolve(decision).decision_value
+    assert automatic_counted() >= 1
+    assert store.read(binding.review_case_id)["current"] is True
+    repository.close()
