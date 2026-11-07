@@ -279,7 +279,7 @@ def test_nothing_a_document_references_is_ever_opened(
     opened: list[str] = []
     real = isolated_audio.open_local_media
 
-    def spy(root: str, relative: str):  # type: ignore[no-untyped-def]
+    def spy(root: str, relative: str):
         opened.append(relative)
         return real(root, relative)
 
