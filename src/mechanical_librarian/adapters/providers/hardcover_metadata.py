@@ -34,10 +34,12 @@ from mechanical_librarian.application.failure_diagnostics import (
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
+    MetadataReportError,
     ProviderCoverDescriptor,
     ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
+    aggregate_audio_editions,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     provider_discovery_lane_order,
@@ -99,6 +101,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_asin,
     canonical_json,
     comma_inverted_name,
+    companion_isbn_books,
     comparison_links,
     finalize_candidate_comparisons,
     isbn_family,
@@ -353,6 +356,8 @@ class HardcoverMetadataProvider:
                     audio=plan.audio,
                     work_title=plan.work_title,
                     work_authors=plan.work_authors,
+                    companion=plan.companion,
+                    companion_linked_asins=plan.companion_linked_asins,
                 )
                 attempts_before = len(self._session.attempt_records)
                 incomplete_causes_before = len(self._session.incomplete_causes)
@@ -372,6 +377,10 @@ class HardcoverMetadataProvider:
                 audio_editions = self._audio_editions(
                     observation, lookup, deadline=deadline
                 )
+                if lookup.kind is ProviderQueryKind.ISBN and lookup.audio is not None:
+                    observation, audio_editions = _companion_isbn_answer(
+                        observation, audio_editions, lookup
+                    )
                 diagnostics = provider_attempt_diagnostics(
                     self._session.attempt_records[attempts_before:],
                     status=observation.status.value,
@@ -405,7 +414,7 @@ class HardcoverMetadataProvider:
         self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
-            tuple(results),
+            _companion_books_after_aggregation(tuple(results), plan),
             diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
         )
@@ -469,12 +478,14 @@ class HardcoverMetadataProvider:
                 if last.status is not ProviderStatus.NO_MATCH:
                     return last
             return last
+        # The companion ISBN lane (#1468) asks with the companion's ISBN; it
+        # is read for the query alone and never compared.
         local_claims = lookup.local_claims
         usable = tuple(
             sorted(
                 (
                     claim
-                    for claim in local_claims
+                    for claim in lookup.query_claims
                     if claim.kind is ClaimKind.ISBN
                     and claim.canonical is not None
                     and (
@@ -582,9 +593,14 @@ class HardcoverMetadataProvider:
             if _has_graphql_errors(payload):
                 self._session.mark_response_attempt("provider_declared_error")
                 return result(ProviderStatus.UNAVAILABLE)
-            work_only = (
-                lookup.kind is ProviderQueryKind.WORK and lookup.audio is not None
-            )
+            # An audiobook keeps only Hardcover's books, whose audio editions
+            # are read below: on its WORK lanes, and on its companion ISBN
+            # lane, where the ebook edition the ISBN names is never this
+            # recording's (#1468).
+            work_only = lookup.audio is not None and lookup.kind in {
+                ProviderQueryKind.WORK,
+                ProviderQueryKind.ISBN,
+            }
             overflow = (
                 None
                 if work_only
@@ -602,11 +618,17 @@ class HardcoverMetadataProvider:
                 local_claims,
                 self._optional_rejections,
                 work_only=work_only,
+                required_family=(
+                    lookup.matched_family
+                    if work_only and lookup.kind is ProviderQueryKind.ISBN
+                    else None
+                ),
             )
             self._reject_schema_members(_optional_projection_rejections(payload))
             if (
                 lookup.kind is ProviderQueryKind.ISBN
                 and lookup.matched_family is not None
+                and not work_only
             ):
                 if any(
                     lookup.matched_family
@@ -661,8 +683,8 @@ class HardcoverMetadataProvider:
     ) -> tuple[ProviderCandidate, ...]:
         """Read the admitted books' audio editions that witness this recording.
 
-        Only an audiobook WORK lane whose qualified answer admitted one or two
-        Hardcover books asks, and only when the recording states one running
+        Only an audiobook WORK lane, or its companion ISBN lane (#1468), whose
+        qualified answer admitted one or two Hardcover books asks, and only when the recording states one running
         time. An edition is kept when it credits a narrator and its runtime is
         inside the tight band of the recording's (#962, ADR-0089). Any failed
         or malformed page ends the fan-out with no editions: the admitted work
@@ -676,7 +698,7 @@ class HardcoverMetadataProvider:
             and candidate.identity.startswith("hardcover-work-")
         )
         if (
-            lookup.kind is not ProviderQueryKind.WORK
+            lookup.kind not in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
             or lookup.audio is None
             or observation.status is not ProviderStatus.CANDIDATES
             or local_runtime is None
@@ -1107,6 +1129,90 @@ def _has_graphql_errors(payload: bytes) -> bool:
     return True
 
 
+def _companion_books_after_aggregation(
+    results: tuple[ProviderLaneResult, ...],
+    plan: MetadataDiscoveryPlan,
+) -> tuple[ProviderLaneResult, ...]:
+    """Keep the companion books the observation's own editions still link.
+
+    The observation keeps fewer audio editions than its lanes read when two
+    lanes read one edition differently or the total passes the bound, and the
+    report replays the companion rule against what it keeps (#1468). A book
+    linked only by a dropped edition is dropped with it, so an honest answer
+    always replays; dropping a book drops only its own editions, so this
+    settles in at most one pass per book.
+    """
+    if plan.audio is None:
+        return results
+    for _ in range(len(results) + MAX_AUDIO_EDITIONS + 1):
+        editions = aggregate_audio_editions(results)
+        changed = False
+        refit: list[ProviderLaneResult] = []
+        for result in results:
+            if (
+                result.lane.kind is not ProviderQueryKind.ISBN
+                or result.status is not ProviderStatus.CANDIDATES
+            ):
+                refit.append(result)
+                continue
+            kept = companion_isbn_books(
+                result.candidates, editions, plan.work_title, plan.work_authors
+            )
+            if kept == result.candidates:
+                refit.append(result)
+                continue
+            changed = True
+            works = {value.identity for value in kept}
+            refit.append(
+                replace(
+                    result,
+                    status=ProviderStatus.CANDIDATES
+                    if kept
+                    else ProviderStatus.NO_MATCH,
+                    candidates=kept,
+                    audio_editions=tuple(
+                        value
+                        for value in result.audio_editions
+                        if value.work_identity in works
+                    ),
+                )
+            )
+        results = tuple(refit)
+        if not changed:
+            return results
+    raise MetadataReportError("provider companion books did not settle")
+
+
+def _companion_isbn_answer(
+    observation: ProviderObservation,
+    audio_editions: tuple[ProviderCandidate, ...],
+    lookup: MetadataLookup,
+) -> tuple[ProviderObservation, tuple[ProviderCandidate, ...]]:
+    """Keep only the companion ISBN's books that are this work (#1468)."""
+    if observation.status is not ProviderStatus.CANDIDATES:
+        return observation, ()
+    kept = companion_isbn_books(
+        observation.candidates,
+        audio_editions,
+        lookup.work_title,
+        lookup.work_authors,
+    )
+    works = {candidate.identity for candidate in kept}
+    editions = tuple(
+        edition for edition in audio_editions if edition.work_identity in works
+    )
+    if not kept:
+        return (
+            replace(
+                observation,
+                status=ProviderStatus.NO_MATCH,
+                candidates=(),
+            ),
+            (),
+        )
+    return replace(observation, candidates=kept), editions
+
+
 def _parse_candidates(
     payload: bytes,
     provider: str,
@@ -1114,6 +1220,7 @@ def _parse_candidates(
     rejected: _OptionalRejections | None = None,
     *,
     work_only: bool = False,
+    required_family: str | None = None,
 ) -> tuple[ProviderCandidate, ...]:
     rejected = rejected or _OptionalRejections()
     source = json.loads(
@@ -1273,6 +1380,15 @@ def _parse_candidates(
             raise ValueError("provider edition identity duplicated")
         edition_ids.add(edition_id)
         used.add(book_id)
+        # An audiobook's companion ISBN lane keeps only the books (#1468), so
+        # each edition row is checked here for the family it was asked for,
+        # since no edition candidate is left to check it afterwards.
+        if required_family is not None and required_family not in {
+            family
+            for key in ("isbn_13", "isbn_10")
+            if type(row[key]) is str and (family := isbn_family(row[key])) is not None
+        }:
+            raise ValueError("provider edition family invalid")
         if work_only:
             continue
         _cover_url(row["image"], rejected)

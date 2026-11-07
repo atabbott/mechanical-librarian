@@ -82,6 +82,16 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** When an audiobook's folder also holds an EPUB,
+  that EPUB now helps find and confirm the book. Its ISBN asks Hardcover for the
+  book and the audiobook editions Hardcover lists for it. An Audible product
+  that is one of those editions can then match even when its title differs
+  from your folder's, as long as its running time agrees with your recording
+  and its narrators don't contradict yours. The EPUB's title is also searched
+  before the folder name and the title tag, and when the audiobook has no title or
+  author, the EPUB's title and author are searched instead. The EPUB's own
+  details are never offered as the audiobook's (#1468).
+
 - **Clean rebuild required.** A value that only one source suggests, with
   nothing else to confirm it, such as a different publisher or title from one
   catalogue, no longer asks you. The book's page says only one source suggests

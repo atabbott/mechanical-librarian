@@ -48,6 +48,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_asin_feed_plan,
     audiobook_carried_plan,
     audiobook_discovery_plan,
+    companion_binding_plan,
     metadata_discovery_plan,
     provider_observation,
     require_report_current,
@@ -486,11 +487,15 @@ class GenerateProviderRetrySuccessor:
         ):
             raise CurrentnessError("target or media changed")
         plan = (
-            audiobook_discovery_plan(
-                snapshot,
-                source.local_claims,
-                audio=source.audio,
-                library_languages=source.library_languages,
+            companion_binding_plan(
+                audiobook_discovery_plan(
+                    snapshot,
+                    source.local_claims,
+                    audio=source.audio,
+                    library_languages=source.library_languages,
+                    companion=source.companion,
+                ),
+                original.authority,
             )
             if audio
             else metadata_discovery_plan(snapshot, source.local_claims)
@@ -803,7 +808,7 @@ class GenerateProviderRetrySuccessor:
                 audio_editions=tuple(
                     edition
                     for edition in evidence.audio_editions
-                    if lane.kind is ProviderQueryKind.WORK
+                    if lane.kind in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
                     and observation.status is ProviderStatus.CANDIDATES
                     and any(
                         item.edition_identity == edition.work_identity

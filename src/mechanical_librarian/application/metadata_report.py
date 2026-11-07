@@ -48,6 +48,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_narrator_disjoint,
     candidate_recording_runtime_veto,
     carried_asin_claim,
+    companion_linked_asins,
     corroborated_recording_candidate,
     hardcover_edition_leads,
     local_claim_runtime_seconds,
@@ -80,11 +81,12 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.field_outcomes import library_languages_valid
 from mechanical_librarian.domain.metadata_report import (
     ASSERTED_ASIN_BASES,
-    AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_EBOOK_CLAIM_KINDS,
+    COMPANION_ISBN_AUTHORITIES,
     CORROBORATED_RULE_AUTHORITY,
+    LANE_TITLE_BASES,
     MAX_AUDIO_EDITIONS,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
@@ -124,6 +126,9 @@ from mechanical_librarian.domain.metadata_report import (
     audio_set_identity,
     candidate_asins,
     canonical_asin,
+    companion_discovery_title,
+    companion_isbn_claims,
+    companion_isbn_lane,
     complete_creator_identity_bindings,
     default_target_fields,
     derive_field_results,
@@ -317,9 +322,41 @@ class MetadataLookup:
     # The library's declared languages, which an audiobook's recording-conflict
     # check holds a product to when the item states no language (#1315).
     library_languages: tuple[str, ...] = ()
+    # An audiobook's companion EPUB (#1468): its ISBN may be asked and its
+    # title may be an alternative, but its claims are never compared with a
+    # provider's, so they are never `local_claims`.
+    companion: CompanionEbook | None = None
+    # The ASINs of the audio editions Hardcover lists under the book the
+    # companion ISBN names, counted against the file (#1468). An identifier
+    # lane admits such a product's work as it admits an alternative title's.
+    companion_linked_asins: tuple[str, ...] = ()
+
+    @property
+    def query_claims(self) -> tuple[LocalClaim, ...]:
+        """The claims an identifier query may read: the companion's ISBN only
+        on the companion's own ISBN lane."""
+        lane = companion_isbn_lane(self.companion)
+        if (
+            self.kind is ProviderQueryKind.ISBN
+            and lane is not None
+            and self.matched_family == lane.matched_family
+        ):
+            return (*self.local_claims, *companion_isbn_claims(self.companion))
+        return self.local_claims
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
+        if (
+            self.companion is not None
+            and (type(self.companion) is not CompanionEbook or self.audio is None)
+        ) or (
+            type(self.companion_linked_asins) is not tuple
+            or any(
+                type(value) is not str or canonical_asin(value) != value
+                for value in self.companion_linked_asins
+            )
+        ):
+            raise MetadataReportError("provider lookup is invalid")
         if (
             self.recording_corroboration is not None
             and (
@@ -336,7 +373,7 @@ class MetadataLookup:
             or any(type(value) is not str for value in self.authors)
             or self.title_basis is not None
             and (
-                self.title_basis not in AUDIO_DISCOVERY_TITLE_BASES
+                self.title_basis not in LANE_TITLE_BASES
                 or self.kind is not ProviderQueryKind.WORK
                 or self.audio is None
             )
@@ -408,7 +445,7 @@ class MetadataDiscoveryLane:
             or tuple(sorted(set(self.input_references))) != self.input_references
             or self.title_basis is not None
             and (
-                self.title_basis not in AUDIO_DISCOVERY_TITLE_BASES
+                self.title_basis not in LANE_TITLE_BASES
                 or self.kind is not ProviderQueryKind.WORK
             )
         ):
@@ -478,9 +515,23 @@ class MetadataDiscoveryPlan:
     recording_corroboration: RecordingCorroboration | None = None
     corroborated_rule: bool = True
     library_languages: tuple[str, ...] = ()
+    # See `MetadataLookup`: the companion EPUB and the ASINs its book links.
+    companion: CompanionEbook | None = None
+    companion_linked_asins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
+        if (
+            self.companion is not None
+            and (type(self.companion) is not CompanionEbook or self.audio is None)
+        ) or (
+            type(self.companion_linked_asins) is not tuple
+            or any(
+                type(value) is not str or canonical_asin(value) != value
+                for value in self.companion_linked_asins
+            )
+        ):
+            raise MetadataReportError("provider discovery plan is invalid")
         if (
             self.recording_corroboration is not None
             and (
@@ -506,6 +557,23 @@ class MetadataDiscoveryPlan:
         ):
             raise MetadataReportError("provider discovery plan is invalid")
         known = {value.reference for value in self.local_claims}
+        companion = companion_isbn_lane(self.companion)
+        # A companion claim stands behind an ISBN lane only as the companion's
+        # own ISBN lane (#1468); its title and creators may stand behind the
+        # WORK lane they ask and the product lanes that search fed.
+        companion_references = (
+            set()
+            if self.companion is None
+            else {value.reference for value in self.companion.claims}
+        )
+        if any(
+            set(lane.input_references) & companion_references
+            and lane.kind is ProviderQueryKind.ISBN
+            and not (companion is not None and lane.identity == companion.identity)
+            for lane in self.lanes
+        ):
+            raise MetadataReportError("provider discovery plan is invalid")
+        known |= companion_references
         asin_lanes = tuple(
             lane for lane in self.lanes if lane.kind is ProviderQueryKind.ASIN
         )
@@ -554,7 +622,8 @@ class ProviderLaneResult:
     dispatch: ProviderLaneDispatch | None = None
     # What an ASIN lane refused, with its claims (#1307).
     refused_products: tuple[ProviderCandidate, ...] = ()
-    # Hardcover audio editions of this WORK lane's admitted books (#962).
+    # Hardcover audio editions of this WORK lane's admitted books (#962), or
+    # of the book the companion ISBN lane kept (#1468).
     audio_editions: tuple[ProviderCandidate, ...] = ()
 
     def __post_init__(self) -> None:
@@ -566,7 +635,8 @@ class ProviderLaneResult:
             )
             or self.audio_editions
             and (
-                self.lane.kind is not ProviderQueryKind.WORK
+                # A WORK lane's books, or the companion ISBN's book (#1468).
+                self.lane.kind not in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
                 or self.status is not ProviderStatus.CANDIDATES
                 or not {value.work_identity for value in self.audio_editions}.issubset(
                     {value.identity for value in self.candidates}
@@ -709,6 +779,7 @@ def _work_discovery_lanes(
     target_fields: tuple[TargetField, ...],
     local_claims: tuple[LocalClaim, ...],
     audio: AudioFacts | None = None,
+    companion: CompanionEbook | None = None,
 ) -> tuple[MetadataDiscoveryLane, ...]:
     """Build the WORK lanes both media plans share from one payload set."""
     return tuple(
@@ -724,6 +795,7 @@ def _work_discovery_lanes(
             target_fields,
             local_claims,
             None if audio is None else audio.discovery_titles,
+            companion,
         )
     )
 
@@ -791,7 +863,10 @@ def provider_discovery_lane_order(
         and all(lane.title_basis is None for lane in plan.lanes)
         and not (
             audiobook
-            and any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes)
+            and any(
+                lane.kind in {ProviderQueryKind.ASIN, ProviderQueryKind.ISBN}
+                for lane in plan.lanes
+            )
         )
     ):
         return plan.lanes
@@ -800,6 +875,9 @@ def provider_discovery_lane_order(
             plan.lanes,
             key=lambda lane: (
                 audiobook and lane.kind is not ProviderQueryKind.ASIN,
+                # The companion ISBN lane (#1468) follows any product lane
+                # and precedes the searches.
+                audiobook and lane.kind is ProviderQueryKind.WORK,
                 eligible is not None and lane.kind is ProviderQueryKind.WORK,
                 eligible is not None and lane is not eligible,
                 lane.title_basis is not None,
@@ -926,6 +1004,7 @@ def audiobook_discovery_plan(
     *,
     audio: AudioFacts | None = None,
     library_languages: tuple[str, ...] = (),
+    companion: CompanionEbook | None = None,
 ) -> MetadataDiscoveryPlan:
     """Plan one audiobook's discovery from its own identifier surfaces.
 
@@ -951,10 +1030,17 @@ def audiobook_discovery_plan(
         # The plan keeps only the discovery titles a lane may ask, so every
         # lookup it hands out reads the alternative title the lane asks
         # (#1255), and a carried lookup re-verifies against it (#1316).
+        # The companion EPUB's title is asked first among them (#1468).
+        companion_title = companion_discovery_title(companion)
         audio = replace(
             audio,
             discovery_titles=surviving_discovery_titles(
-                audio.discovery_titles, target.fields
+                (
+                    audio.discovery_titles
+                    if companion_title is None
+                    else (companion_title, *audio.discovery_titles)
+                ),
+                target.fields,
             ),
         )
     canonical_asins = sorted(_local_identifier_asins(local_claims))
@@ -981,7 +1067,28 @@ def audiobook_discovery_plan(
         )
         lanes.append(_asin_discovery_lane(asin, references))
     if not lanes:
-        lanes.extend(_work_discovery_lanes(target.fields, local_claims, audio))
+        lanes.extend(
+            _work_discovery_lanes(target.fields, local_claims, audio, companion)
+        )
+    # The companion EPUB's ISBN asks for the book beside whichever lanes the
+    # recording's own surfaces planned (#1468). It never replaces them: an
+    # ebook's identifier cannot stand in for a search for the recording, so
+    # it is added only where the budget still has room, and never overflows
+    # a plan that fits without it.
+    isbn = companion_isbn_lane(companion) if audio is not None else None
+    if isbn is not None and (
+        _metadata_discovery_query_count(tuple(lanes), audiobook=True) + 1
+        <= MAX_PROVIDER_DISCOVERY_QUERIES
+    ):
+        lanes.append(
+            MetadataDiscoveryLane(
+                isbn.identity,
+                ProviderQueryKind.ISBN,
+                isbn.input_references,
+                isbn.matched_family,
+                isbn.canonical_isbns,
+            )
+        )
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if (
         _metadata_discovery_query_count(ordered_lanes, audiobook=audio is not None)
@@ -1006,7 +1113,27 @@ def audiobook_discovery_plan(
             None if audio is None else recording_corroboration(target.fields)
         ),
         library_languages=library_languages,
+        companion=None if audio is None else companion,
     )
+
+
+def companion_binding_plan(
+    plan: MetadataDiscoveryPlan, authority: str | None
+) -> MetadataDiscoveryPlan:
+    """The plan one binding is handed: the companion ISBN lane only where it
+    can be answered (#1468).
+
+    An ebook ISBN names no recording, so the lane goes only to an authority
+    whose book lists audio editions to compare with the file
+    (`COMPANION_ISBN_AUTHORITIES`). Every other binding is handed the plan
+    without it, exactly as it was before the lane existed.
+    """
+    if plan.audio is None or authority in COMPANION_ISBN_AUTHORITIES:
+        return plan
+    lanes = tuple(
+        lane for lane in plan.lanes if lane.kind is not ProviderQueryKind.ISBN
+    )
+    return plan if lanes == plan.lanes else replace(plan, lanes=lanes)
 
 
 def _asin_discovery_lane(
@@ -1268,6 +1395,10 @@ def audiobook_asin_feed_plan(
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
+        companion=plan.companion,
+        companion_linked_asins=companion_linked_asins(
+            plan.local_claims, plan.audio, observations, plan.companion
+        ),
     )
 
 
@@ -1549,6 +1680,15 @@ def provider_observation(
         ),
         refused_products=_aggregate_refused_products(results, candidates),
         audio_editions=_aggregate_audio_editions(results, candidates),
+    )
+
+
+def aggregate_audio_editions(
+    results: tuple[ProviderLaneResult, ...],
+) -> tuple[ProviderCandidate, ...]:
+    """The audio editions an observation of these lanes would keep (#1468)."""
+    return _aggregate_audio_editions(
+        results, tuple(value for result in results for value in result.candidates)
     )
 
 
@@ -2289,6 +2429,20 @@ def _identifier_lane_candidates(
         else set()
     )
     alternative_admitted |= corroborated_admitted
+    # A product whose ASIN the companion ISBN's own book lists as an audio
+    # edition counted against this file is that book's work (#1468). Like an
+    # alternative title's, it is kept only as the recording the tight band
+    # corroborates, so the ISBN confirms the work and never the recording.
+    alternative_admitted |= {
+        c.identity
+        for c in observation.candidates
+        if c.identity not in work_admitted
+        and lookup.requested_asin is not None
+        and lookup.requested_asin in lookup.companion_linked_asins
+        and lookup.requested_asin in _candidate_valid_asins(c)
+        # Narrators the file never credits name another recording of the work.
+        and not candidate_narrator_disjoint(c, lookup.local_claims)
+    }
     runtime_candidates = tuple(
         c
         for c in observation.candidates
@@ -2358,6 +2512,16 @@ def _identifier_lane_candidates(
             )
         )
     return tuple(shaped), tuple(sorted(refused, key=lambda value: value.identity))
+
+
+def _candidate_valid_asins(candidate: ProviderCandidate) -> frozenset[str]:
+    return frozenset(
+        value
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ASIN
+        and claim.state is FieldState.VALID
+        and (value := canonical_asin(claim.value)) is not None
+    )
 
 
 def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:
@@ -3498,10 +3662,11 @@ class GenerateMetadataReport:
                 sorted(selected, key=lambda value: value.authority == "audiosilo")
             )
         for binding in selected:
-            binding_plan = (
+            binding_plan = companion_binding_plan(
                 catalogue_plan
                 if catalogue_plan is not None and binding.authority == "audible_catalog"
-                else plan
+                else plan,
+                binding.authority,
             )
             if binding.authority not in dispatch_adapters(
                 audio=binding_plan.audio is not None
@@ -3739,6 +3904,7 @@ class GenerateMetadataReport:
             combined_claims,
             audio=facts,
             library_languages=self._library.languages,
+            companion=companion,
         )
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
@@ -4129,6 +4295,7 @@ __all__ = [
     "corroborated_rule_permitted",
     "audiobook_asin_feed_plan",
     "audiobook_carried_plan",
+    "aggregate_audio_editions",
     "audiobook_discovery_plan",
     "merge_provider_cover_descriptor",
     "merge_provider_cover_descriptors",
