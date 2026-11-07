@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Any, cast
 
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
@@ -39,11 +40,12 @@ from tests.support.field_effects import (  # noqa: F401
 
 
 def _application(repository: object) -> ContinuousGuardedApplication:
+    store = cast("Any", repository)
     return ContinuousGuardedApplication(
-        repository,
+        store,
         {},
         {},
-        PersistedFieldEffectAuthority(repository),
+        PersistedFieldEffectAuthority(store),
         (("primary", "books"),),
         lambda: 2_000,
         lambda *_: None,
@@ -123,9 +125,9 @@ def _decide(environment: _EffectEnvironment, case: ReviewCase, key: str) -> str:
     return decision.decision_id
 
 
-def _owner_notes(environment: _EffectEnvironment) -> dict[str, object]:
+def _owner_notes(environment: _EffectEnvironment) -> dict[str, str | None]:
     return {
-        str(event["event_id"]): event["note"]
+        str(event["event_id"]): cast("str | None", event["note"])
         for event in _events(environment)
         if str(event["event_id"]).startswith("human_decision_event_")
     }
