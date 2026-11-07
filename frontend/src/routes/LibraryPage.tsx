@@ -52,7 +52,6 @@ import {
   normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
-import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
 import {
   actionable,
@@ -65,7 +64,6 @@ import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
 import {
   authoredOwnerRecorded,
-  completionOutcome,
   decisionValue,
   valueText,
   shownAdvice,
@@ -78,6 +76,7 @@ import {
 import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import { ReviewCompletion } from './ReviewCompletion'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
 import {
@@ -972,7 +971,6 @@ export default function LibraryPage({
             !complete.priorAttention.has(`${item.id}:${item.destination}`),
         ) ?? null)
       : null
-  const nextWorkError = attention.isError
   const coverPrepareFailure = useCoverPrepareFailure(selectedReviewCaseId)
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
@@ -1586,10 +1584,6 @@ export default function LibraryPage({
       setAutomaticResults((current) => {
         return Object.fromEntries(Object.entries(current).filter(([key]) => key !== closingKey))
       })
-  }
-  const retryNextWork = () => {
-    if (attention.isFetchNextPageError) void attention.fetchNextPage()
-    else void attention.refetch()
   }
   const clearSelection = () => {
     workSelectionGeneration.current += 1
@@ -2445,87 +2439,29 @@ export default function LibraryPage({
               </section>
               {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
-                <article
-                  className="review-complete"
-                  aria-live="polite"
-                  tabIndex={-1}
-                  ref={completionRegion}
-                >
-                  <span className="review-complete-mark">✓</span>
-                  <div>
-                    <h3>Review complete</h3>
-                    <span>
-                      {String(complete.fields.length)} recorded field outcome
-                      {complete.fields.length === 1 ? '' : 's'}
-                      {writesActive ? ' — each began applying the moment you decided it.' : '.'}
-                    </span>
-                  </div>
-                  <ol>
-                    {complete.fields.map((field) => (
-                      <li key={field.destination}>
-                        <button
-                          type="button"
-                          aria-label={
-                            field.destination === 'description' && decisionValue(field).length > 240
-                              ? `Revisit description: ${completionOutcome(field)}`
-                              : undefined
-                          }
-                          onClick={() => {
-                            setCompletionInspection(field.destination)
-                            selectCase(selectedReviewCaseId, field.destination)
-                          }}
-                        >
-                          <small>
-                            {destinationLabel(field.destination)} · {completionOutcome(field)}
-                          </small>
-                          <strong>{decisionValue(field)}</strong>
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                  {writesActive ? <p>Every write is logged in Activity.</p> : null}
-                  <footer>
-                    {nextWork ? (
-                      <Button
-                        variant="primary"
-                        type="button"
-                        onClick={() => {
-                          setComplete(null)
-                          setCompletionInspection(null)
-                          selectCase(nextWork.id, nextWork.destination, {
-                            cursor: nextWork.attentionCursor,
-                          })
-                        }}
-                      >
-                        Review next work →
-                      </Button>
-                    ) : attention.isPending ||
-                      attention.isPlaceholderData ||
-                      attention.isFetchingNextPage ? (
-                      <span>Looking for the next visible work…</span>
-                    ) : nextWorkError && attention.error instanceof BuildMismatchError ? (
-                      <StaleBuildRead lead="The next attention work was not loaded." />
-                    ) : nextWorkError ? (
-                      <>
-                        <span>The next attention work could not be loaded.</span>
-                        <Button variant="primary" type="button" onClick={retryNextWork}>
-                          Try finding next work again
-                        </Button>
-                      </>
-                    ) : !search.q ? (
-                      <span>All visible review work is complete.</span>
-                    ) : (
-                      <span>
-                        All review work matching this search is complete.
-                        {summaryAttention === undefined || !data
-                          ? null
-                          : outsideSearch > 0
-                            ? ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} a decision outside this search.`
-                            : ' No other work needs a decision.'}
-                      </span>
-                    )}
-                  </footer>
-                </article>
+                <ReviewCompletion
+                  fields={complete.fields}
+                  writesActive={writesActive}
+                  completionRegion={completionRegion}
+                  attention={attention}
+                  hasNextWork={Boolean(nextWork)}
+                  searching={Boolean(search.q)}
+                  outsideSearch={
+                    summaryAttention === undefined || !data ? undefined : outsideSearch
+                  }
+                  inspect={(destination) => {
+                    setCompletionInspection(destination)
+                    selectCase(selectedReviewCaseId, destination)
+                  }}
+                  reviewNextWork={() => {
+                    if (!nextWork) return
+                    setComplete(null)
+                    setCompletionInspection(null)
+                    selectCase(nextWork.id, nextWork.destination, {
+                      cursor: nextWork.attentionCursor,
+                    })
+                  }}
+                />
               ) : selected ? (
                 <article
                   key={selected.destination}
