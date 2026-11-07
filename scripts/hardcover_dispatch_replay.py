@@ -130,7 +130,6 @@ class AudiobookTally:
     reports: int = 0
     work_lanes: int = 0
     candidate_limit_work_lanes: int = 0
-    narrowing_removed: int = 0
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
@@ -403,27 +402,15 @@ def _replay_ebook(document: object, tally: EbookTally) -> None:
 
 
 def _replay_audiobook(document: object, tally: AudiobookTally) -> None:
-    title, fields = _target_fields(document)
-    authors = next(
-        value.value
-        for value in fields
-        if value.destination is TargetDestination.AUTHORS
-    )
     lanes = _lanes(_hardcover(document))
     tally.reports += 1
     work = [lane for lane in lanes if lane["kind"] == "work"]
     tally.work_lanes += len(work)
-    over = sum(lane["status"] == "candidate_limit_exceeded" for lane in work)
-    tally.candidate_limit_work_lanes += over
-    names = (
-        tuple(value for value in authors if isinstance(value, str))
-        if isinstance(authors, tuple)
-        else ()
+    # The audiobook path never sent a narrowing retry, before or after this
+    # change, so an audiobook overflow removes none.
+    tally.candidate_limit_work_lanes += sum(
+        lane["status"] == "candidate_limit_exceeded" for lane in work
     )
-    if over and title and names:
-        ladder = work_query_ladder(title, names, audiobook=True)
-        if ladder and _narrowing_skipped(ladder[0]):
-            tally.narrowing_removed += over
 
 
 def _distribution(values: Counter[int]) -> dict[str, int]:
@@ -510,7 +497,7 @@ def replay(connection: sqlite3.Connection) -> dict[str, object]:
             "plan_rebuilt": False,
             "recorded_work_lanes": audiobook.work_lanes,
             "narrowing_retries_removed": {
-                "lower_bound": audiobook.narrowing_removed,
+                "lower_bound": 0,
                 "recorded_candidate_limit_work_lanes": (
                     audiobook.candidate_limit_work_lanes
                 ),

@@ -287,7 +287,7 @@ def test_witnesses_edition_claims_and_q5_are_counted() -> None:
     )
 
 
-def test_an_audiobook_counts_only_its_recorded_work_lanes() -> None:
+def test_an_audiobook_overflow_removes_no_narrowing_retry() -> None:
     result = replay(
         _store(
             _document(
@@ -302,7 +302,7 @@ def test_an_audiobook_counts_only_its_recorded_work_lanes() -> None:
         "plan_rebuilt": False,
         "recorded_work_lanes": 1,
         "narrowing_retries_removed": {
-            "lower_bound": 1,
+            "lower_bound": 0,
             "recorded_candidate_limit_work_lanes": 1,
         },
     } == result["audiobook"]
