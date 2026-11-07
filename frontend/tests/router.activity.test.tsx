@@ -84,7 +84,7 @@ it('explains a lost Activity read in plain words and retries it', async () => {
     await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
   ).toBeVisible()
   expect(screen.getByRole('alert')).toHaveTextContent(
-    'The server could not be reached. Check that Mechanical Librarian is running and this device is connected, then try again.',
+    "Couldn't reach the server. Check that Mechanical Librarian is running, then try again.",
   )
   expect(screen.queryByText(/Failed to fetch|Review API request failed/u)).toBeNull()
   expect(screen.getByText('network_unavailable').closest('details')).not.toHaveAttribute('open')

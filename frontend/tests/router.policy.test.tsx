@@ -86,7 +86,7 @@ describe('Policy route', () => {
       await screen.findByRole('heading', { name: 'Policy could not be loaded.' }),
     ).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'The server sent an answer this page could not read safely, so nothing from it is shown. Try again; if it keeps happening, reload the page.',
+      "The server sent an answer this page couldn't read. Try again.",
     )
     expect(screen.queryByText(/Review API request failed/u)).toBeNull()
     expect(screen.queryByText(/workspace could not be loaded/u)).toBeNull()
@@ -407,7 +407,7 @@ describe('Policy route', () => {
       const { policyCommand, previewPolicy } = await run('preview')
       expect(
         await screen.findByText(
-          "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
+          "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
         ),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
@@ -424,7 +424,7 @@ describe('Policy route', () => {
       ],
       [
         'preview',
-        "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
+        "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
       ],
     ] as const)("that is not JSON, to %s, shows that phase's copy", async (failing, copy) => {
       await run(failing, 'text')
@@ -443,7 +443,7 @@ describe('Policy route', () => {
       ],
       [
         'preview',
-        "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
+        "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
         ['validate', 'drafts'],
         1,
       ],
@@ -510,7 +510,7 @@ describe('Policy route', () => {
 
     expect(
       await screen.findByText(
-        "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
+        "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
       ),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()

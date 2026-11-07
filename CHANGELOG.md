@@ -42,7 +42,7 @@ brackets are GitHub issues.
 - When the browser loses the answer to validating a policy draft or previewing
   its impact, it now says the validation failed or the preview could not be
   shown, not that a change is uncertain. The preview message now says nothing
-  else changed (#1754).
+  changed (#1754).
 - Resuming automatic handling now shows when fresh checks were requested, also
   after a reload. An unconfirmed request is shown as a warning that says
   whether the reloaded work shows the checks as requested, and that requesting

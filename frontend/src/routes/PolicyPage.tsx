@@ -251,7 +251,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'error',
           message:
-            "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
+            "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
         })
       else if (phase === 'drafts')
         setStatus({

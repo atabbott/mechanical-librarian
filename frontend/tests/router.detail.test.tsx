@@ -1005,10 +1005,9 @@ describe('Library review ownership', () => {
 
   // #1755: an unconfirmed request is a warning that resolves from the case
   // reread after it, and focus stays on the safe button throughout.
-  const U1 =
-    'Fresh checks could not be confirmed. Reloading this work to see whether they were requested…'
+  const U1 = "The request wasn't confirmed. Reloading this work to check…"
   const U2 =
-    'Fresh checks could not be confirmed, and this work does not show them as requested. Requesting them again is safe: the recorded value stays until they finish.'
+    "The request wasn't confirmed, and this work doesn't show it. Requesting again is safe."
   const S0 = 'Fresh checks requested. Manual handling remains until they complete.'
   const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]
@@ -1089,7 +1088,7 @@ describe('Library review ownership', () => {
     const done = await screen.findByText(S0)
     expect(done).toHaveAttribute('role', 'status')
     expect(done).toHaveClass('is-success')
-    expect(screen.queryByText(/could not be confirmed/u)).toBeNull()
+    expect(screen.queryByText(/wasn't confirmed/u)).toBeNull()
     expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
     expect(run.returnToAutomatic).toHaveBeenCalledOnce()
@@ -1113,7 +1112,7 @@ describe('Library review ownership', () => {
     run.finishReload()
     const retry = await screen.findByRole('button', { name: 'Try again' })
     expect(screen.getByRole('alert')).toHaveTextContent('Selected work could not be loaded.')
-    expect(screen.queryByText(/could not be confirmed/u)).toBeNull()
+    expect(screen.queryByText(/wasn't confirmed/u)).toBeNull()
     const readsBefore = run.getCaseDetail.mock.calls.length
     await user.click(retry)
     await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))

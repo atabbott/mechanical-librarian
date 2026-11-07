@@ -16,17 +16,12 @@ export interface RouteFailureCopy {
 }
 
 const copy = {
-  session: 'Your session has ended. Sign in again to continue.',
-  network:
-    'The server could not be reached. Check that Mechanical Librarian is running and this device is connected, then try again.',
-  unreadable:
-    'The server sent an answer this page could not read safely, so nothing from it is shown. Try again; if it keeps happening, reload the page.',
-  server:
-    'The server could not answer just now. Try again in a moment; if it keeps happening, check that the Mechanical Librarian service is running normally.',
-  refused:
-    'The server would not show this page. Try again; if it keeps happening, reload the page.',
-  unexpected:
-    'Something went wrong while showing this page. Try again; if it keeps happening, reload the page.',
+  session: 'Your session ended.',
+  network: "Couldn't reach the server. Check that Mechanical Librarian is running, then try again.",
+  unreadable: "The server sent an answer this page couldn't read. Try again.",
+  server: "The server couldn't answer. Try again in a moment.",
+  refused: "The server wouldn't show this page. Try again.",
+  unexpected: 'Something went wrong showing this page. Try again.',
 } as const
 
 const apiDetail = (error: ApiError) => `${String(error.status)} · ${error.code}`
