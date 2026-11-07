@@ -49,6 +49,11 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** Hardcover now finds a widely published ebook by
+  its title and author instead of refusing it for having many editions. It
+  matches the title whatever its capitals, searches with the EPUB's own authors
+  when Audiobookshelf names none, and no longer repeats a search it has just
+  sent (#1777).
 - **Clean rebuild required.** A source lookup that failed inside Mechanical
   Librarian reads as **Failed in Mechanical Librarian** in Sources and, when
   nothing matched, in Library's Not matched lens, instead of "Could not be
