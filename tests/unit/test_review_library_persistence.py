@@ -619,8 +619,11 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
 
 
 # The next step for every code a rescan re-prepares and Library has no
-# more specific remedy for (#1765; proved in test_review_pipeline.py).
+# more specific remedy for: the next scan queues the book again from the step
+# that failed (#1765; proved in test_review_pipeline.py). Saved data that could
+# not be read is read again by that retry, so Library has no step for it.
 _SCAN_AGAIN = "Scan this library again to retry it."
+_NO_LIBRARY_STEP = "Library has no step that fixes this."
 
 
 @pytest.mark.parametrize(
@@ -691,7 +694,7 @@ _SCAN_AGAIN = "Scan this library again to retry it."
         (
             "malformed_retained_data",
             "Saved preparation data for this book could not be read.",
-            _SCAN_AGAIN,
+            _NO_LIBRARY_STEP,
         ),
         (
             "internal_failure",
@@ -3251,7 +3254,12 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
     (
         (ProviderStatus.CANDIDATES, "Returned possible matches to compare."),
         (ProviderStatus.UNAVAILABLE, "Did not answer."),
-        (ProviderStatus.RATE_LIMITED, "Mechanical Librarian retries it automatically."),
+        # A limited source is retried only when a recovery job is scheduled,
+        # so its reason states the refusal and promises nothing (#1765).
+        (
+            ProviderStatus.RATE_LIMITED,
+            "Refused more lookups for now, so nothing was recorded.",
+        ),
         (
             ProviderStatus.NOT_NEEDED,
             "Never asked: another source had already matched this recording by "
@@ -3289,6 +3297,7 @@ def test_provider_snapshot_copy_does_not_invent_match_or_retry(status, reason):
     outcomes = _provider_outcomes(provider_lane_facts(report))
     assert outcomes[0]["status"] == status.value
     assert outcomes[0]["reason"] == reason
+    assert "retr" not in reason.casefold()
 
 
 def test_existing_automatic_outcome_never_gets_provider_withheld_claim(tmp_path):

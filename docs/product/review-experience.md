@@ -161,8 +161,10 @@ A work whose preparation could not finish stays in Library as a
 non-interactive row, Could not finish, with its title while the catalogue
 still matches. Each failure code maps to one reason and one next step: a
 change you make and then a scan, an automatic retry, or scanning the library
-again, which prepares a failed book afresh. Unknown codes are rejected, not
-given invented guidance. The row shows its reason, next step and a copyable
+again, which queues a failed book again from the step that failed. That retry
+rereads what earlier steps saved, so saved data that could not be read says
+Library has no step that fixes it. Unknown codes are rejected, not given
+invented guidance. The row shows its reason, next step and a copyable
 reference, never a stage code, path or provider payload.
 If its catalogue identity has changed it reads `Preparation unavailable`.
 
@@ -187,9 +189,9 @@ when the works fit on one page.
 Works needing a decision come first: those whose lookups all finished, then
 those with a lookup that gave no usable answer, under **Every lookup
 finished** and **Some lookups gave no usable answer**, with no caption. The
-first does not promise a match, and the second does not promise a retry. Works that could not finish follow under
-**Could not finish**, then Not matched, then the rest. The other
-lenses are alphabetical.
+first does not promise a match, and the second does not promise a retry. Works
+that could not finish follow under **Could not finish**, then Not matched, then
+the rest. The other lenses are alphabetical.
 
 A work with no case, nothing to decide and no admitted provider evidence is
 **Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
@@ -272,7 +274,8 @@ The server classifies every field, and the tab status follows from it:
   beside the current value, and says turning on Automatic decides it again.
 
 Fields with nothing to decide sit in one collapsed panel headed `No change:`
-and their names, with any field waiting or unavailable counted separately; each row gives its value and why nothing changed.
+and their names, with any field waiting or unavailable counted separately;
+each row gives its value and why nothing changed.
 
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An

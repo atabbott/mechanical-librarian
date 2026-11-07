@@ -3398,7 +3398,7 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
         "Nothing was recorded from it. "
         "Check its credentials in Settings → Metadata sources."
     ),
-    "rate_limited": "Mechanical Librarian retries it automatically.",
+    "rate_limited": "Refused more lookups for now, so nothing was recorded.",
     "unavailable": "Did not answer.",
     "incomplete": "Answered only in part, so nothing was recorded.",
     "malformed": "Nothing was recorded from it.",
@@ -3470,9 +3470,12 @@ def _provider_comparison_notices(report: MetadataReport) -> list[str]:
     return []
 
 
-# Every code a rescan re-prepares and Library has no more specific step for
-# says to scan again: the next scan queues a failed item afresh (#1765).
+# A code Library has no more specific step for says to scan again: the next
+# scan queues a failed book again from the step that failed (#1765). That
+# retry rereads what the earlier steps saved, so a code that fails the same way
+# on that saved data says Library has no step that fixes it instead.
 _SCAN_AGAIN = "Scan this library again to retry it."
+_NO_LIBRARY_STEP = "Library has no step that fixes this."
 _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     "provider": ("A source stopped without a usable answer.", _SCAN_AGAIN),
     "configuration": (
@@ -3526,7 +3529,7 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     ),
     "malformed_retained_data": (
         "Saved preparation data for this book could not be read.",
-        _SCAN_AGAIN,
+        _NO_LIBRARY_STEP,
     ),
     "internal_failure": (
         "Preparation stopped before the review was ready.",
