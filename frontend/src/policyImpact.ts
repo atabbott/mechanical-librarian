@@ -131,7 +131,7 @@ export const policyImpactDisplay = (
     return {
       changed: false,
       title: 'Needs review',
-      detail: 'Current value is unavailable or unreadable. Inspect the source before deciding',
+      detail: 'Current value is unavailable or unreadable. Inspect the source before deciding.',
       technicalDetail,
     }
   if (field.outcome === 'abstain')

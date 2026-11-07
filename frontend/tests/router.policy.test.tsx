@@ -574,14 +574,14 @@ describe('Policy route', () => {
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. Owner choice required. Automatic eligibility if selected: No automatic effect. Owner review required',
+      'Ebooks: Ask me. Owner choice required. If set to Automatic: No automatic effect. Owner review required.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me. Owner choice required. Automatic eligibility if selected: ASIN: fill empty',
+      'Audiobooks: Ask me. Owner choice required. If set to Automatic: Fill empty ASIN.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
-    expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
-    expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
+    expect(within(asin).getByText(/Fill an empty field\. Automatic available\./u)).toBeVisible()
+    expect(within(asin).getByText(/Replace a valid ASIN\. Review required\./u)).toBeVisible()
 
     // The record qualified one option, so the other one this field offers is
     // still the owner's.
@@ -592,7 +592,7 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. Owner choice required. Automatic eligibility if selected: No automatic effect. Owner review required',
+      'Ebooks: Ask me. Owner choice required. If set to Automatic: No automatic effect. Owner review required.',
     )
   })
 
@@ -635,9 +635,7 @@ describe('Policy route', () => {
     const language = await screen.findByRole('region', { name: 'Language' })
     const scope = language.querySelector('.cm-policy-media-scope')
     expect(scope).not.toBeNull()
-    expect(scope).toHaveTextContent(
-      'Automatic eligibility if selected: Fill empty or respell the same language',
-    )
+    expect(scope).toHaveTextContent('If set to Automatic: Fill empty or respell the same language.')
     expect(scope?.textContent.match(/Fill empty or respell the same language/gu)).toHaveLength(2)
     expect(scope).not.toHaveTextContent('Fill empty only')
   })
@@ -2579,9 +2577,9 @@ it.each([
 )
 
 it.each([
-  ['ignore', 'Ignored. No metadata action'],
-  ['ask', 'Ask me. Owner choice required'],
-  ['automatic', 'Automatic:'],
+  ['ignore', 'Ignored. No metadata action.'],
+  ['ask', 'Ask me. Owner choice required.'],
+  ['automatic', 'Automatic.'],
 ])(
   'states selected %s behavior before eligibility in cards and activation',
   async (mode, label) => {
@@ -2620,18 +2618,22 @@ it.each([
     expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Audiobooks: ${label}`)
     if (mode !== 'automatic')
       expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-        'Automatic eligibility if selected:',
+        'If set to Automatic: Fill empty only.',
+      )
+    // One label, then plain sentences: no stacked colons (#1760).
+    else
+      expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+        'Ebooks: Automatic. Fill empty only.',
       )
     await user.click(within(tags).getByRole('combobox', { name: 'Tags representation' }))
     await user.click(screen.getByRole('option', { name: 'Add missing values' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     await user.click(await screen.findByRole('button', { name: 'Review activation' }))
-    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
-      `Ebook libraries — ${label}`,
-    )
-    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
-      `Audiobook libraries — ${label}`,
-    )
+    const activation = screen.getByLabelText('Review policy activation')
+    expect(activation).toHaveTextContent(`Ebooks: ${label}`)
+    expect(activation).toHaveTextContent(`Audiobooks: ${label}`)
+    expect(activation).not.toHaveTextContent('—')
+    if (mode === 'automatic') expect(activation).toHaveTextContent('Ebooks: Automatic. Add only.')
   },
 )
 

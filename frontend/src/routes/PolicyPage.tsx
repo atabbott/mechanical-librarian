@@ -446,44 +446,47 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       media === 'ebook' ? data.state.rich_qualification : data.state.audiobook_qualification
     ).filter((entry) => entry.field === field.key && entry.option === option)
     const available = entries.filter((entry) => entry.automatic_available)
-    if (!available.length) return 'No automatic effect. Owner review required'
+    // Each value is a sentence with no label of its own, so it reads
+    // plainly after "Ebooks:" and "Automatic." (#1760).
+    if (!available.length) return 'No automatic effect. Owner review required.'
     if (media === 'ebook' && field.key === 'cover_order')
       return option === 'replace_if_strictly_better'
-        ? 'Fill empty only: confirmed covers are preserved'
-        : 'Fill empty or replace only with a confirmed strict-rank upgrade'
+        ? 'Fill empty only. Confirmed covers are kept.'
+        : 'Fill empty or replace only with a confirmed strict-rank upgrade.'
     if (media === 'audiobook' && field.key === 'cover_order')
-      return 'Replace a small incumbent only with a materially larger confirmed cover'
-    if (field.key === 'language_rendering') return operationScopeLabels.fill_or_respell
+      return 'Replace a small incumbent only with a materially larger confirmed cover.'
+    if (field.key === 'language_rendering') return `${operationScopeLabels.fill_or_respell}.`
     const grouped = new Map<TargetDestination, string[]>()
     for (const entry of available) {
       if ('operation_scope' in entry)
-        return entry.operation_scope === 'fill'
-          ? 'Fill empty only'
-          : operationScopeLabels[entry.operation_scope]
+        return `${entry.operation_scope === 'fill' ? 'Fill empty only' : operationScopeLabels[entry.operation_scope]}.`
       const operations = grouped.get(entry.destination) ?? []
       operations.push(operationWords[entry.operation])
       grouped.set(entry.destination, operations)
     }
     const operations = [...grouped]
-      .map(([destination, values]) => `${destinationLabel(destination)}: ${values.join(', ')}`)
-      .join(' · ')
-    return media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
-      ? `${operations} · Narrators: no automatic effect`
-      : operations
+      .map(([destination, values]) => `${values.join(' or ')} ${destinationLabel(destination)}`)
+      .concat(
+        media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
+          ? ['no automatic effect on Narrators']
+          : [],
+      )
+      .join('; ')
+    return `${operations.charAt(0).toUpperCase()}${operations.slice(1)}.`
   }
 
   const mediaBehavior = (field: FieldDefinition, option: string, media: 'ebook' | 'audiobook') => {
     const destination =
       draft.destinations[field.key] ?? fieldDefaults[field.key]?.destination ?? 'ask'
     const eligibility = mediaQualification(field, option, media)
-    if (destination === 'automatic') return `Automatic: ${eligibility}`
+    if (destination === 'automatic') return `Automatic. ${eligibility}`
     const selected =
       destination === 'ignore'
-        ? 'Ignored. No metadata action'
+        ? 'Ignored. No metadata action.'
         : destination === 'ask'
-          ? 'Ask me. Owner choice required'
-          : 'Unavailable. No metadata action'
-    return `${selected}. Automatic eligibility if selected: ${eligibility}`
+          ? 'Ask me. Owner choice required.'
+          : 'Unavailable. No metadata action.'
+    return `${selected} If set to Automatic: ${eligibility}`
   }
 
   const impactTotals = useMemo(
@@ -735,10 +738,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                             .map((entry) => (
                               <li key={entry.identity} data-qualification-identity={entry.identity}>
                                 {destinationLabel(entry.destination)}:{' '}
-                                {audiobookOperationLabels[entry.operation]} —{' '}
+                                {audiobookOperationLabels[entry.operation]}.{' '}
                                 {entry.automatic_available
-                                  ? 'Automatic available'
-                                  : 'Review required'}
+                                  ? 'Automatic available.'
+                                  : 'Review required.'}
                               </li>
                             ))}
                         </ul>
@@ -1031,9 +1034,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <ul>
                   {changedFields.map((field) => (
                     <li key={field.key}>
-                      <strong>{field.label}:</strong> Ebook libraries —{' '}
-                      {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}; Audiobook
-                      libraries —{' '}
+                      <strong>{field.label}</strong>
+                      <br />
+                      Ebooks: {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}
+                      <br />
+                      Audiobooks:{' '}
                       {mediaBehavior(field, draft.options[field.key] ?? '', 'audiobook')}
                     </li>
                   ))}
