@@ -114,10 +114,11 @@ leave them.
 - **Ranking.** Score = actionable fields, summed over the snapshots where the
   gate is measurable, × the pooled identity-precision Wilson lower limit. Rows with no estimable
   precision, or measurable on neither snapshot, score 0 and follow the scored
-  rows by blocked count, then ID. A6a and A6b (#1745) are measured but
-  unranked: [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
-  keeps them, and the [A6 analysis](automatic-decision-abstention.md)
-  measures the abstention's own cost. A7 (owner-reserved and write-safety
+  rows by blocked count, then ID. Rows A6a and A6b, where the decision step
+  declines to fill a field (#1745), are measured but not ranked.
+  [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
+  keeps that gate, and the [A6 analysis](automatic-decision-abstention.md)
+  measures what declining costs. A7 (owner-reserved and write-safety
   holds) is listed last and is out of scope.
 - **Attention per case.** Attention follows the
   [per-case definition](../operations/cold-start-report.md#attention-per-case).
@@ -268,9 +269,9 @@ The origin ADRs are
   A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333),
   A2 as [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747) (135) and
   W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
-  a measurement task rather than a loosening. #1745 kept A6 (ADR-0092);
-  T1, A3, A2 and W9 are the only scored rows not filed under an earlier
-  issue.
+  a measurement task rather than a loosening. #1745 kept the A6 gate
+  (ADR-0092), so T1, A3, A2 and W9 are the only scored rows not filed under
+  an earlier issue.
 - **Identity precision is not a case for loosening.** Where the controls can
   decide, the lowest-identifier pick agrees with the one right-work
   alternative in about half the fields: T1 247 of 480 (0.515, lower limit

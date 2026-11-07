@@ -3,233 +3,287 @@
 - Status: proposed
 - Date: 2026-11-07
 - Owners: project maintainers
-- Issues: #1745 (A6 of the admission-rule ledger, #1350)
-- Amends: ADR-0029 (defines the would-admit note; eligibility unchanged).
-  ADR-0036's qualified envelope is unchanged.
+- Issues: #1745 (row A6 of the admission-rule ledger, #1350)
+- Amends: ADR-0029. This ADR defines the would-admit note; eligibility is
+  unchanged. ADR-0036's qualified envelope is unchanged.
 - Supersedes: none
 - Superseded by: none
 
 ## Context
 
-The admission-rule ledger (#1350) ranked A6, "automatic-decision abstention",
-second by score. Its proposed loosening was to admit the first-ranked
-alternative wherever an automatic decision abstained. #1745 asked whether
+The admission-rule ledger (#1350) lists every rule that keeps a metadata
+value from reaching a book automatically, and ranks the rules by how many
+fields they hold back. Its row A6 is automatic-decision abstention: the
+decision step looks at a field it is allowed to fill automatically, and
+declines to pick a value, so the field falls back to manual review. The
+ledger ranked A6 second. Its proposed loosening was to take the first-listed
+alternative wherever the decision declined. #1745 asked whether
 that, or any narrower loosening, is safe.
 
-Re-measured, A6 was not one gate:
+Two terms recur below. The proposal set is the earlier step that reads the
+provider evidence and proposes a value for each field, or refuses to. The
+decision step then either applies a proposed value automatically or
+abstains. It has two engines. The scalar engine decides single-value fields:
+title, authors, narrators, publisher, language and published date. The
+rich-preview engine handles every other field, such as series.
+
+Measured again, A6 turned out not to be one rule.
 
 - **Three things were counted as one.** On the ebook-744 snapshot (source
-  1203cf58) the row's 5,481 blocked fields were 80 abstentions of the scalar
-  decision engine, 162 `evidence_sufficiency_manual` abstentions and 5,239
-  rich-preview refusals that this source collapsed into `no_eligible_action`.
-  On audiobook-1294 (source 32360e99) the 6 were 5 scalar abstentions and 1
-  `evidence_sufficiency_manual`, with no rich residual.
-  - An `evidence_sufficiency_manual` abstention only repeats the proposal
-    set's refusal, which other ledger rows own (T1, A1 to A5).
-  - On main the rich-preview path keeps each refusal's own reason, so those
-    fields belong to the rich rows, not to A6.
-- **The real cost was missing.** "Blocked" means the proposal set already
-  refused the field. The abstention's own cost is a field the proposal set
-  proposes, whose policy destination is automatic, and on which the decision
-  still abstains. The owner sees it as manual fallback. That population is
-  23 fields on ebook-744 (authors 9, publisher 14) and 6 on audiobook-1294
-  (language).
-- **"First-ranked" ranks nothing.** A result's alternatives are ordered by
-  `alternative_id`, a SHA-256 digest, so the first one is an arbitrary
-  choice.
-- **Stale engines.** The ebook source decides with policy v9 and the
-  audiobook source with v22, against v27 on main. All 80 scalar ebook-744
-  fields compete on title, which later elections (#974, #981, #1040) decide
-  on main.
+  revision 1203cf58) the row held back 5,481 fields that the proposal set
+  had already refused. Only 80 of them were abstentions of the scalar
+  engine. Another 162 were abstentions whose reason is that the proposal
+  set's evidence was insufficient (`evidence_sufficiency_manual`). The
+  remaining 5,239 were refusals of the rich-preview engine, which this old
+  source recorded under the generic reason "no eligible action"
+  (`no_eligible_action`) instead of their own. On audiobook-1294 (source
+  revision 32360e99) the 6 fields were 5 scalar abstentions and 1
+  insufficient-evidence abstention, with no rich-preview refusals.
+  - An insufficient-evidence abstention only repeats the proposal set's own
+    refusal. That refusal belongs to the ledger rows for the proposal set's
+    rules (T1 and A1 to A5), so this ADR calls it an upstream echo.
+  - On main the rich-preview engine records each refusal's own reason, so
+    those fields belong to the rich-preview rows, not to A6.
+- **The real cost was missing.** All of those fields were already refused
+  by the proposal set, so the decision step had nothing to apply. The cost
+  of abstaining is a different set of fields: ones where the proposal set
+  did propose a value, policy allows the field to be filled automatically,
+  and the decision still abstained. The owner sees each of these as a field
+  left for manual review. There are 23 on ebook-744 (9 authors, 14
+  publishers) and 6 on audiobook-1294 (all language). This ADR calls them
+  the proposable population, and the already-refused fields the blocked
+  population.
+- **"First alternative" ranks nothing.** A field's alternatives are sorted
+  by `alternative_id`, which is a SHA-256 digest. The first alternative is
+  therefore an arbitrary one.
+- **The engines are old.** The ebook source decides with decision policy v9
+  and the audiobook source with v22, while main runs v27. All 80 scalar
+  ebook-744 fields are titles, and main now decides titles with later
+  rules (#974, #981, #1040).
 
-`--a6-abstention` of `scripts/admission_rule_ledger.py` measures the scalar
-engine (A6a) on both populations. For every abstained field it rebuilds the
-decision packet under the snapshot's own source, replays that source's
-decision, and attributes each candidate to the first failing named check of
-`_candidate_is_eligible`.
+The ledger script's `--a6-abstention` option measures the scalar engine on
+both populations. For every field where the decision abstained, it rebuilds
+the decision's input under the snapshot's own source revision and replays
+that revision's decision. It then names, for each candidate value, the first
+eligibility check the candidate fails. These are the checks of
+`_candidate_is_eligible`, mirrored clause by clause in the script.
 
-- **The replay is exact.** Every current case rebuilt and replayed, and
-  every replayed reason equals the stored one. The mirrored checks agree
-  with the source's verdict for all 202 candidates compared.
-- **Support, or no eligible action, refuses.** On ebook-744 the abstentions
-  fail local support (83 candidates of blocked fields, 29 of proposable
-  ones) or correlation support (89 of blocked fields). On audiobook-1294
-  the abstentions are 3 language policy conflicts, 7 candidates without a
-  candidate action and 1 local-support failure.
+- **The replay is exact.** Every current case was rebuilt and replayed, and
+  every replayed reason equals the stored one. For all 202 candidates
+  compared, the mirrored checks reach the same eligible-or-not verdict as
+  the source's own code.
+- **Support, or no eligible action, explains every abstention.** Two of the
+  checks measure support. Local support asks whether the value matches the
+  book file's own metadata, and correlation support counts independent
+  providers that agree on it. On ebook-744 every abstained candidate fails
+  one of these two: local support for 83 candidates of blocked fields and
+  29 of proposable fields, and correlation support for 89 of blocked
+  fields. On audiobook-1294, 3 abstentions are language fields whose
+  proposals conflict with the language policy, 7 candidates have no action
+  the decision could take, and 1 candidate fails local support.
 
-It then evaluates one closed relaxation per scalar destination under main's
-checks (named under Decision 3). Pooled over both snapshots and populations:
+The script then tries one narrow loosening per scalar field, called a
+relaxation, under main's checks. Decision 3 lists them. Each relaxation
+lowers one support threshold by one step. Pooled over both snapshots and
+both populations, they give these results:
 
-| Relaxation | Fields evaluated | Admitted | Identity TP / FP / unlabelled | Identity precision (Wilson 95% lower) |
+| Relaxation | Fields evaluated | Fields admitted | Cited records: right work / wrong work / unlabelled | Identity precision (Wilson 95% lower limit) |
 |---|---|---|---|---|
 | authors, one correlation | 9 | 9 | 15 / 0 / 11 | 1.000 (0.796) |
 | title, two correlations, no local | 82 | 37 | 47 / 0 / 73 | 1.000 (0.924) |
 | publisher, two correlations, no local | 14 | 4 | 8 / 0 / 0 | 1.000 (0.676) |
 | language, two correlations, no local | 9 | 1 | 2 / 0 / 0 | 1.000 (0.342) |
-| publishedDate, day precision, one correlation | 0 | 0 | 0 / 0 / 0 | not estimable |
+| published date, day precision, one correlation | 0 | 0 | 0 / 0 / 0 | not estimable |
+
+A cited record counts as right work or wrong work when the snapshot's own
+identifier evidence already ties it to this book or to another one. Identity
+precision is the share of labelled records that are right work. The Wilson
+lower limit is the smallest share that the counts support with 95%
+confidence; with few records it is far below the observed share.
 
 In the proposable population the relaxations admit 14 of 29 fields. No
-admitted candidate only preserves the current value. Only 1 admitted field
-had an uncited, identifier-accepted record to compare its value with, and
-that record disagreed. Both snapshots hold 0 human decisions.
+admitted value merely repeats the value the book already has. Only 1
+admitted field could be compared with an identifier-accepted record that the
+candidate does not itself cite, and that record gave a different value. Both
+snapshots hold 0 owner decisions.
 
 Identity precision says whether an admitted value's records belong to the
-work, not whether the value is right. Value correctness needs owner labels,
-and none exist yet.
+book. It does not say whether the value is right. Only owner-labelled values
+can say that, and none exist yet. Two further limits apply.
 
-- **Identity n counts records, not fields.** Per field, the controls decide
-  title on 16 of its 37 admitted fields, authors on 6 of 9, publisher on 3
-  of 4 (plus 1 tied) and language on 1 of 1. In each decided field the
-  admitted candidate is the right-work one. The other 21 title fields have
-  no right-work alternative.
-- **Title is stale.** Every title figure comes from ebook-744 fields decided
-  by its v9 engine, before the title elections on main. That engine's
-  summaries also lack the independent-title and recording features, which
-  the analysis reads as absent.
+- **The counts are records, not fields.** One field can cite many records.
+  Counted by field, the labels decide which alternative is the right work
+  for 16 of the 37 admitted title fields, 6 of the 9 author fields, 3 of the
+  4 publisher fields (with 1 more tied between two right-work alternatives)
+  and the 1 language field. In every decided field the admitted value is the
+  right-work one. The other 21 title fields have no right-work alternative
+  at all.
+- **The title figures are stale.** Every title figure comes from ebook-744
+  fields decided by the old v9 engine, before main's title rules. That
+  engine's records also lack two signals main uses for titles, independent
+  title evidence and recording support, and the analysis treats them as
+  absent.
 
 ## Decision
 
-1. **Keep the gate.** The scalar decision engine's abstentions stay exactly
-   as they are. No reason code, threshold, rule or qualified option changes,
-   and nothing under `src/` changes.
-2. **Reject "admit the first-ranked alternative"** for every destination. It
-   is hash order, it mixes two engines, and it counts fields the proposal
-   set already refused.
-3. **A6 is the scalar engine.** The ledger splits the row in two:
-   - **A6a** is the scalar engine: the source revision's
-     `_SUPPORTED_DESTINATIONS`, abstaining with `insufficient_support` or
-     `no_eligible_action`.
-   - **A6b** is the rich-preview `no_eligible_action` residual. It is
-     refiled under its rich reason's own row wherever the source can
-     separate it.
-   - `evidence_sufficiency_manual` is an upstream echo of the proposal
-     set's refusal. The A6 analysis reports it; the ledger never counts or
-     scores it.
-   - Neither row is ranked.
+1. **Keep the gate.** The scalar engine's abstentions stay exactly as they
+   are. No reason code, threshold, rule or qualified option changes, and
+   nothing under `src/` changes.
+2. **Reject taking the first alternative** for every field. The order is a
+   hash, the rule mixes two engines, and it counts fields the proposal set
+   already refused.
+3. **A6 is the scalar engine only.** The ledger splits the row in two, and
+   ranks neither part.
+   - Row A6a is the scalar engine's own abstentions: fields in the source
+     revision's scalar list (`_SUPPORTED_DESTINATIONS`) where the decision
+     abstained for insufficient support (`insufficient_support`) or because
+     no action was eligible (`no_eligible_action`).
+   - Row A6b is what is left of the rich-preview engine's "no eligible
+     action" refusals. Wherever the source records each refusal's own
+     reason, those fields move to that reason's own row.
+   - The upstream echo, an insufficient-evidence abstention
+     (`evidence_sufficiency_manual`), is reported in the A6 analysis only.
+     The ledger never counts or scores it.
 
-   Any future loosening is a closed relaxation, one per destination. It
-   admits the unique candidate that fails only one named support threshold,
-   passes it relaxed by one step, and is not degraded. It never selects by
-   ordering. The measured relaxations are these five:
-   - `authors_one_correlation`;
-   - `title_two_correlations_without_local`;
-   - `publisher_two_correlations_without_local`;
-   - `language_two_correlations_without_local`;
-   - `published_date_day_one_correlation`.
+   Any future loosening must be a closed relaxation, one per field. It
+   admits a value only when exactly one candidate fails a single named
+   support threshold, passes it once the threshold is lowered by one step,
+   and is not a degraded value such as a narrator credit in an author field.
+   It never picks by list order. These are the five relaxations measured
+   here:
+   - `authors_one_correlation`: authors with one agreeing independent
+     provider instead of two;
+   - `title_two_correlations_without_local`: a title with two agreeing
+     providers and no match in the book file;
+   - `publisher_two_correlations_without_local`: the same rule for
+     publisher;
+   - `language_two_correlations_without_local`: the same rule for language;
+   - `published_date_day_one_correlation`: a published date given to the
+     day, with one agreeing provider.
 
-   As measured, `authors_one_correlation` has no identity-bound record
-   check: it counts one independent correlation only. A PR 2 relaxation for
-   authors would add #1355's identity-bound record predicate.
+   The authors relaxation as measured is looser than the one the contract
+   proposed. It counts one agreeing provider only, without checking that
+   one of the records is bound to this book's identity. A later change that
+   activates an authors relaxation would add that check, using the
+   identity rule #1355 is defining.
 
-   Narrators, degraded candidates, `target_only_preservation`, every
-   conflict code, the language `field_policy_conflict`, publication event
-   and paired consistency, citation and combination subsets,
-   `unique_action_required` and combination atomicity stay whatever a
-   measurement shows.
-4. **The would-admit note.** This ADR defines it; #1355's ADR adopts it and
-   does not redefine it. It stays a definition until an owner-approved
-   relaxation exists:
-   - **Shape.** A non-authoritative annotation on one shadow decision: the
-     closed relaxation name and the packet candidate id it would admit.
-   - **No authority.** The decision keeps its `manual` action and its
-     abstention reason. Its disposition stays `abstention`, so no automatic
-     decision is created and the field stays manual fallback. Automatic
-     authority is keyed by policy category and option, not by decision
-     rule, so a relaxation inside `_eligible_actions` would act at once
-     under existing qualified options. The note never changes the selected
-     action.
-   - **Wording.** Read-time and API names say "would admit", never
+   Everything else stays as it is unless a later measurement says
+   otherwise: narrators, degraded values, a value supported only by the
+   current one (`target_only_preservation`), every conflict reason, the
+   language policy conflict (`field_policy_conflict`), the publication-event
+   and consistency checks, citation and combination checks, the rule that
+   one action must be unique (`unique_action_required`) and the rule that
+   combined values are decided together.
+4. **The would-admit note.** This ADR defines it, and #1355's ADR adopts this
+   definition without changing it. It stays a definition, with nothing
+   built, until the owner approves a relaxation.
+   - It is an annotation on one shadow decision that carries no authority.
+     It names the relaxation and the candidate it would admit.
+   - The decision keeps its manual action and its abstention reason, and
+     its disposition stays an abstention. No automatic decision is created,
+     and the field stays in manual review. This matters because automatic
+     authority depends on the field's policy category and option, not on
+     which rule decided. A relaxation placed inside the decision's
+     eligibility code (`_eligible_actions`) would therefore act at once
+     under options that are already qualified. The note never changes the
+     chosen action.
+   - Anything the owner reads, and any API name, says "would admit", never
      "shadow". Stored names stay as they are until the refactor that owns
      them.
-   - **Where it lives.** Adding the member is a domain change: a
-     decision-policy version and SHA change, a decision-set schema change
-     and a clean rebuild (ADR-0013). It is made only together with a
-     relaxation the owner has approved.
-5. **The bound.** A relaxation may be activated only on owner-labelled value
-   precision for that destination and relaxation, through #1418, under a new
-   qualification identity. ADR-0036's envelope is not widened in place.
-   - **Pass mark (proposal, for the owner).** A Wilson 95% lower limit of
-     at least 0.95, no contradiction, and n of at least 73 at zero errors.
-   - **Screens only.** Identity precision from natural controls and value
-     agreement with uncited accepted records are necessary screens. An
-     identity false positive disqualifies a relaxation; an identity true
-     positive proves nothing about the value.
+   - Adding the note changes the domain. It needs a new decision-policy
+     version and hash, a decision-set schema change and a clean rebuild
+     (ADR-0013). It is made only together with a relaxation the owner has
+     approved.
+5. **The bar for activating a relaxation.** A relaxation may be switched on
+   only on the strength of owner-labelled value precision for that field
+   and that relaxation, measured through #1418 under a new qualification
+   identity. ADR-0036's envelope is not widened in place.
+   - The pass mark is the owner's to set. The proposal for the owner is a
+     Wilson 95% lower limit of at least 0.95 with no contradiction, which
+     needs at least 73 labelled values with no error.
+   - Identity precision and agreement with uncited accepted records are
+     screens a relaxation must pass first. One wrong-work record
+     disqualifies a relaxation. A right-work record proves nothing about
+     whether the value is right.
 
 ## Consequences
 
 ### Positive
 
-- The ledger no longer charges A6 with 5,239 rich refusals and 162 upstream
-  echoes it does not own. The abstention's own cost is now visible as a
-  population: 29 proposable fields across both snapshots.
-- The measurement replays each source's own decision, verified case by
-  case. The first failing check is the mirror's attribution, checked
-  against the engine's own eligibility verdict for every candidate.
-- Any later loosening has closed predicates, a shared would-admit shape and a
-  stated bound to meet.
+- The ledger no longer charges A6 with 5,239 rich-preview refusals and 162
+  upstream echoes it does not own. The abstention's own cost is now
+  visible: 29 proposable fields across both snapshots.
+- The measurement replays each source's own decision and checks it case by
+  case. The first failing check is the script's mirror of the eligibility
+  code, and the mirror's verdict was checked against the source's own for
+  every candidate.
+- Any later loosening has a closed definition, a shared would-admit note
+  and a stated bar to meet.
 
 ### Negative
 
-- The 29 proposable fields stay manual fallback for now. Fourteen of them
-  have a unique relaxation-admitted candidate whose records are all
-  positive or unlabelled.
-- The ebook figures come from a v9 engine that predates three title
-  elections. Every ebook-744 A6a field is stale for main.
+- The 29 proposable fields stay in manual review for now. For 14 of them a
+  relaxation would admit exactly one candidate, whose records are all right
+  work or unlabelled.
+- The ebook figures come from a v9 engine that predates three title rules.
+  Every ebook-744 field in row A6a is stale for main.
 
 ### Neutral or deferred
 
-- #1418's full-library re-run re-measures A6 with the same script on a
+- #1418's full-library run measures A6 again with the same script on a
   current source. That run is also where owner labels can be collected, if
   the owner wants a relaxation tried.
-- The pass mark and any would-admit hint in review are the owner's choices,
-  and are asked only if a relaxation is proposed.
-- The rich residual on a current source is not separable on ebook-744. On
+- The pass mark, and whether review shows a would-admit hint, are the
+  owner's choices. They are asked only if a relaxation is proposed.
+- The rich-preview leftover (row A6b) cannot be separated on ebook-744. On
   audiobook-1294 it is 0.
 
 ## Alternatives considered
 
-### Admit the first-ranked alternative
+### Take the first alternative
 
-Rejected (Decision 2): the order is a digest, and the population it counts
-is mostly not this gate's.
+Rejected by Decision 2. The order is a hash, and most of the fields it
+counts are not this gate's.
 
 ### Loosen a relaxation now on identity precision
 
-Rejected (Decision 5). Only owner-labelled value precision can qualify a
-relaxation. Both snapshots hold 0 human decisions, so no owner label exists,
-and the one admitted field comparable for value agreement disagreed (0 of
-1). Identity cannot qualify a relaxation at any level: its n counts records,
-and title's records come from stale ebook-744 fields. The pass mark is not
-set; it is the owner's, and it would apply to owner-labelled values, not to
-identity.
+Rejected by Decision 5. Only owner-labelled values can qualify a relaxation.
+Both snapshots hold 0 owner decisions, so there is no owner label, and the
+one admitted field that could be compared with an uncited accepted record
+disagreed with it. Identity precision cannot qualify a relaxation at any
+level, because it counts records rather than values, and the title records
+come from stale ebook-744 fields. The pass mark is not set. When the owner
+sets it, it will apply to owner-labelled values, not to identity.
 
 ### Record the keep as an issue comment
 
-Rejected by the lane's decision. A6 is the gate every automatic destination
-shares, and the would-admit note needs one durable definition that #1355 can
+Rejected by the lane's decision. A6 is the gate every automatic field
+shares, and the would-admit note needs one lasting definition that #1355 can
 adopt.
 
 ## Validation
 
 - `tests/unit/test_admission_rule_a6.py` covers:
-  - the first-failing-check attribution;
-  - mirror disagreement;
-  - each relaxation's admission and its refusals (none, several, degraded,
-    target-only preservation, conflict codes, the language conflict), and
-    a candidate outside its one step (another failing check, local
-    evidence, month precision);
-  - the screen's false positives and preserved values, and AO's tied,
-    discriminable and no-right-work classes;
-  - the echo and the rich residual kept to their own fields;
-  - value agreement that never counts a cited record;
-  - the proposable population kept apart from the blocked one, and the
-    alternatives classes;
-  - n = 0 as not estimable;
-  - aggregate-only output;
-  - a product-built case replayed through the real child with no mirror
-    disagreement.
-- `tests/unit/test_admission_rule_ledger.py` covers the A6a/A6b split, the
-  echo's exclusion from A6a and the collapsed-source status.
+  - naming the first failing check, and counting the mirror's
+    disagreements with the source;
+  - each relaxation's admissions and refusals: no candidate, several,
+    degraded, support from the current value only, conflict reasons and the
+    language conflict;
+  - a candidate outside the one-step loosening: one that fails another check
+    too, a title that matches the book file, and a date given only to the
+    month;
+  - the screens: wrong-work records, values that repeat the current one,
+    tied, decided and undecided fields, and agreement that never counts a
+    record the candidate cites;
+  - the upstream echo and the rich-preview leftover counted only on their
+    own fields, and the proposable population kept apart from the blocked
+    one;
+  - n = 0 reported as not estimable, and output that holds aggregates only;
+  - a product-built case replayed through the real source process with no
+    mirror disagreement.
+- `tests/unit/test_admission_rule_ledger.py` covers the split into rows A6a
+  and A6b, the upstream echo's exclusion from A6a, and the status shown when
+  a source cannot separate rich-preview reasons.
 - Re-running the documented Reproduce commands on both retained snapshots
   regenerates the tables of [the ledger](../../product/admission-rule-ledger.md)
   and of [the A6 analysis](../../product/automatic-decision-abstention.md)

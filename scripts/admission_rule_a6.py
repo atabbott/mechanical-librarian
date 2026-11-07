@@ -1234,9 +1234,9 @@ def render(section: Mapping[str, object]) -> list[str]:
     lines = [
         "### Replay",
         "",
-        "| Snapshot | Decision engine | Scalar destinations | Rich refusals | "
-        "Human decisions | Cases not replayed | Replayed reasons that differ | "
-        "Mirror disagreements |",
+        "| Snapshot | Decision engine | Scalar fields | Rich-preview reasons | "
+        "Owner decisions | Cases not replayed | Replayed reasons that differ | "
+        "Mirror disagreements with the source |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for entry in snapshots:
@@ -1276,10 +1276,10 @@ def render(section: Mapping[str, object]) -> list[str]:
             )
     lines += [
         "",
-        "### Upstream echo and rich residual",
+        "### Upstream echo and rich-preview leftover",
         "",
-        "| Snapshot | Upstream echo (evidence_sufficiency_manual), blocked fields | "
-        "Rich no_eligible_action residual, all fields |",
+        "| Snapshot | Upstream echo (insufficient evidence), blocked fields | "
+        "Rich-preview no-eligible-action leftover, all fields |",
         "|---|---|---|",
     ]
     for entry in snapshots:
@@ -1308,10 +1308,12 @@ def render(section: Mapping[str, object]) -> list[str]:
                 f"{row['check']} | {_n(row['candidates'])} |"
             )
     header = (
-        "| Relaxation | Snapshot | Population | Evaluated | Checkout passes already | "
-        "Refused: none / degraded / ambiguous / conflict | Admitted | Identity TP/FP/unlabelled | "
-        "Identity precision (Wilson 95% lower) | Tied / discriminable (right) / "
-        "no right-work | Preserves current | Value agreement |"
+        "| Relaxation | Snapshot | Population | Evaluated | Main already passes | "
+        "Refused: none / degraded / ambiguous / conflict | Admitted | "
+        "Cited records: right work / wrong work / unlabelled | "
+        "Identity precision (Wilson 95% lower) | "
+        "Fields: tied / decided (admitted is right) / no right-work | "
+        "Repeats current value | Value agreement with an uncited record |"
     )
     lines += ["", "### Relaxations", "", header, "|" + "---|" * 12]
     for entry in snapshots:

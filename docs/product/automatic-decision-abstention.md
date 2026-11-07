@@ -1,82 +1,109 @@
 # Automatic-decision abstention (A6)
 
-The [admission-rule ledger](admission-rule-ledger.md)'s A6 row,
-"automatic-decision abstention", measured on its own terms (#1745). The
-tables below are the Markdown output of
+The [admission-rule ledger](admission-rule-ledger.md) lists the rules that
+keep a metadata value from reaching a book automatically. Its row A6 is
+automatic-decision abstention: the decision step may fill a field
+automatically, but declines to pick a value, so the field falls back to
+manual review. This page measures that row on its own terms (#1745). The
+tables are the unedited Markdown output of
 [`scripts/admission_rule_ledger.py`](../../scripts/admission_rule_ledger.py)
-`--a6-abstention`, unedited, over the ledger's two retained snapshots.
+with `--a6-abstention`, over the ledger's two retained snapshots.
 [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
 records the decision they support: keep the gate.
 
 ## Method
 
-- **Engines.** The ledger's A6a row is the scalar decision engine: the
-  destinations in the source revision's own
-  `shadow_decision._SUPPORTED_DESTINATIONS`. The ebook-744 source decides
-  with policy v9 and the audiobook-1294 source with v22; main runs v27.
-- **Populations.** Each field is one current review case and destination.
-  - **Blocked** fields are A6a's: the proposal set refused the field and the
-    decision abstained with `insufficient_support` or `no_eligible_action`.
-  - **Proposable** fields are the abstention's own cost: the proposal set
-    proposes a change or an acceptable choice, the field's policy
-    destination is automatic, and the decision still abstains with one of
-    those reasons. The owner sees them as manual fallback.
+- **Two steps and two engines.** The proposal set reads the provider
+  evidence and proposes a value for each field, or refuses to. The decision
+  step then applies a proposed value automatically or abstains. Its scalar
+  engine decides single-value fields: title, authors, narrators, publisher,
+  language and published date. The source revision lists them itself in
+  `shadow_decision._SUPPORTED_DESTINATIONS`. Its rich-preview engine handles
+  every other field, such as series. The ebook-744 source decides with
+  decision policy v9 and the audiobook-1294 source with v22; main runs v27.
+  The ledger's row A6a is the scalar engine's abstentions, and row A6b is
+  the rich-preview engine's leftover.
+- **Two populations.** A field is one destination of one current review
+  case. Both populations count fields where the decision abstained for
+  insufficient support (`insufficient_support`) or because no action was
+  eligible (`no_eligible_action`).
+  - A blocked field is one the proposal set had already refused. These are
+    row A6a's fields.
+  - A proposable field is one where the proposal set proposed a change or
+    an acceptable choice, policy allows the field to be filled
+    automatically, and the decision still abstained. These are the
+    abstention's own cost, and the owner sees each as a field left for
+    manual review.
 
-  Both are counted by destination, reason, medium and the number of
-  alternatives the field kept.
-- **Upstream echo and rich residual.** An `evidence_sufficiency_manual`
-  abstention repeats the proposal set's refusal; it is counted only here,
-  never in the ledger, and never scored. The rich residual is
-  `no_eligible_action` on a destination outside the scalar engine, over all
-  fields. It is separable only where the source
-  keeps rich refusals' own reasons.
-- **Replay.** For every current case a child process imports only the
-  snapshot's source tree. It rebuilds the decision packet from the stored
-  review case, proposal set and report with that source's
-  `ShadowReviewPacket.create`, and replays that source's decision. The replay
-  table counts cases that would not rebuild and replayed reasons that differ
-  from the stored ones.
-- **First failing check.** Each candidate of an abstained field is attributed
-  to the first failing named check of that source's `_candidate_is_eligible`,
-  in this order: scope, binding, citations, publication, preservation, local
-  support, correlation support, narrator, evidence-led title. Where no check
-  applies, a state is named instead: the candidate passes, has no candidate
-  action, or is never evaluated by its branch; or the field has no candidate
-  or a language policy conflict. The checks are mirrored clause by clause.
-  For every candidate with an action the mirror is compared with the
-  source's own verdict, and the replay table counts disagreements.
-- **Relaxations.** There is one closed relaxation per scalar destination
-  except narrators. Each is evaluated only where the source's decision
-  abstained with `insufficient_support`, under this checkout's checks (v27).
-  - **What it admits.** The unique candidate that fails only one named
-    support threshold, passes it relaxed by one step, and is not degraded.
-  - **What it refuses.** Zero or several such candidates, a language policy
-    conflict, and a candidate this checkout already passes ("checkout passes
-    already"). No ordering is used.
-  - **Authors, as measured.** `authors_one_correlation` checks one
-    independent correlation only. It omits the identity-bound record the
-    contract's relaxation requires; a domain predicate would add #1355's
-    predicate once it lands.
-- **Screens.** An admitted candidate is screened four ways:
-  - **Identity precision** of its cited records, with the ledger's natural
-    controls and Wilson lower limit. n = 0 is "not estimable".
-  - **AO's field classes:** tied (two or more right-work alternatives),
-    discriminable (exactly one, and whether the admitted candidate is it),
-    or no right-work alternative.
-  - **Preserving** the current value only.
-  - **Value agreement** with an identifier-accepted record the candidate
-    does not cite, compared ignoring case and spacing. It is "not
-    estimable" where no such record states the field.
+  Both are counted by field, reason, medium, and whether the field kept no,
+  one or more alternatives.
+- **Upstream echo and rich-preview leftover.** An abstention for
+  insufficient evidence (`evidence_sufficiency_manual`) only repeats the
+  proposal set's own refusal. It is counted on this page only, never in the
+  ledger, and never scored. The rich-preview leftover is "no eligible
+  action" on a field outside the scalar engine, over all fields. It can be
+  separated only where the source records each rich-preview refusal's own
+  reason.
+- **Replay.** For every current case, a separate process imports only the
+  snapshot's own source tree. It rebuilds the decision's input from the
+  stored review case, proposal set and report, using that source's
+  `ShadowReviewPacket.create`, and replays that source's decision. The
+  replay table counts cases that would not rebuild, and replayed reasons
+  that differ from the stored ones.
+- **First failing check.** For each candidate value of an abstained field,
+  the script names the first eligibility check it fails. The checks are
+  those of the source's `_candidate_is_eligible`, mirrored clause by clause,
+  in this order: scope, binding, citations, publication, preservation,
+  local support, correlation support, narrator, evidence-led title. Local
+  support (`support_local`) asks whether the value matches the book file's
+  own metadata. Correlation support (`support_correlation`) counts the
+  independent providers that agree on it. Where no check applies, the table
+  names a state instead: the candidate passes (`passes`), the decision had
+  no action to take with it (`no_action`), or its branch never evaluates it
+  (`not_evaluated`); or the field had no candidate (`no_candidate`), or its
+  proposal conflicts with the language policy (`language_conflict`). For
+  every candidate with an action, the mirror's verdict is compared with the
+  source's own, and the replay table counts disagreements.
+- **Relaxations.** A relaxation is a narrow loosening of one support
+  threshold by one step, one per scalar field except narrators. Each is
+  tried only where the source's decision abstained for insufficient
+  support, and under main's checks (v27).
+  - It admits a value only when exactly one candidate fails a single named
+    support threshold, passes it once the threshold is lowered, and is not
+    a degraded value such as a narrator credit in an author field.
+  - It refuses when no candidate or several candidates qualify, when the
+    proposal conflicts with the language policy, and when main's checks
+    already pass a candidate ("main already passes"). It never picks by
+    list order.
+  - The authors relaxation as measured (`authors_one_correlation`) counts
+    one agreeing provider only. It does not check that a record is bound to
+    this book's identity, as the contract's version does. A later change
+    that activates it would add that check, using the identity rule #1355
+    is defining.
+- **Screens.** Each admitted value is screened in four ways.
+  - Identity precision: each cited record counts as right work or wrong
+    work when the snapshot's identifier evidence already ties it to this
+    book or to another one, and as unlabelled otherwise. Precision is the
+    share of labelled records that are right work, with its Wilson 95%
+    lower limit, the smallest share the counts support. With no labelled
+    record it reads "not estimable".
+  - The field's class, as lane AO defines it for #1744: tied (two or more
+    right-work alternatives), decided (exactly one, and whether the
+    admitted value is it), or no right-work alternative.
+  - Whether the admitted value only repeats the book's current value.
+  - Agreement with an identifier-accepted record that the candidate does
+    not itself cite, ignoring case and spacing. It reads "not estimable"
+    where no such record gives the field.
 
-  These are necessary screens, not value correctness. Neither snapshot holds
-  a human decision, so owner-labelled value precision (#1418) cannot be
-  measured here.
+  These screens are necessary, but they do not show that a value is right.
+  Neither snapshot holds an owner decision, so owner-labelled value
+  precision (#1418) cannot be measured here.
 
-## Breakdown
+## Tables
 
 ### Replay
 
-| Snapshot | Decision engine | Scalar destinations | Rich refusals | Human decisions | Cases not replayed | Replayed reasons that differ | Mirror disagreements |
+| Snapshot | Decision engine | Scalar fields | Rich-preview reasons | Owner decisions | Cases not replayed | Replayed reasons that differ | Mirror disagreements with the source |
 |---|---|---|---|---|---|---|---|
 | ebook-744 | deterministic-shadow-decision-policy-v9 | authors, language, publishedDate, publisher, title | collapsed | 0 | 0 | 0 | 0 of 201 |
 | audiobook-1294 | deterministic-shadow-decision-policy-v22 | authors, language, narrators, publishedDate, publisher, title | separate reasons | 0 | 0 | 0 | 0 of 1 |
@@ -93,9 +120,9 @@ records the decision they support: keep the gate.
 | audiobook-1294 | proposable | language | insufficient_support | audiobook | 5 (0 / 5 / 0) |
 | audiobook-1294 | proposable | language | insufficient_support | ebook | 1 (0 / 1 / 0) |
 
-### Upstream echo and rich residual
+### Upstream echo and rich-preview leftover
 
-| Snapshot | Upstream echo (evidence_sufficiency_manual), blocked fields | Rich no_eligible_action residual, all fields |
+| Snapshot | Upstream echo (insufficient evidence), blocked fields | Rich-preview no-eligible-action leftover, all fields |
 |---|---|---|
 | ebook-744 | 162 | not separable: rich refusals collapsed |
 | audiobook-1294 | 1 | 0 |
@@ -114,7 +141,7 @@ records the decision they support: keep the gate.
 
 ### Relaxations
 
-| Relaxation | Snapshot | Population | Evaluated | Checkout passes already | Refused: none / degraded / ambiguous / conflict | Admitted | Identity TP/FP/unlabelled | Identity precision (Wilson 95% lower) | Tied / discriminable (right) / no right-work | Preserves current | Value agreement |
+| Relaxation | Snapshot | Population | Evaluated | Main already passes | Refused: none / degraded / ambiguous / conflict | Admitted | Cited records: right work / wrong work / unlabelled | Identity precision (Wilson 95% lower) | Fields: tied / decided (admitted is right) / no right-work | Repeats current value | Value agreement with an uncited record |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | title_two_correlations_without_local | ebook-744 | blocked | 80 | 0 | 43 / 0 / 0 / 0 | 37 | 47/0/73 | 1.000 (0.924) | 0 / 16 (16 right) / 21 | 0 | not estimable (0 comparable) |
 | authors_one_correlation | ebook-744 | proposable | 9 | 0 | 0 / 0 / 0 / 0 | 9 | 15/0/11 | 1.000 (0.796) | 0 / 6 (6 right) / 3 | 0 | not estimable (0 comparable) |
@@ -130,38 +157,46 @@ records the decision they support: keep the gate.
 
 ## Reading the analysis
 
-- **The old row was three things.** A6's 5,481 blocked ebook-744 fields were
-  80 scalar abstentions, 162 upstream echoes and 5,239 rich-preview refusals
-  the ebook source collapsed into `no_eligible_action`. Audiobook-1294's 6
-  were 5 and 1, with no rich residual. All 80 ebook-744 A6a fields compete on
-  title, which later elections decide on main.
-- **The real cost is small.** The proposable population is 23 fields on
-  ebook-744 (authors 9, publisher 14) and 6 on audiobook-1294 (language).
-- **Support, or no eligible action, refuses.** The replay is exact on both snapshots, and the
-  mirror agrees with every source verdict. Every abstention fails local or
-  correlation support, has no candidate action, or is a language policy
-  conflict.
-- **No relaxation can be activated.** Only owner-labelled value precision
-  can qualify a relaxation, and both snapshots hold no owner label. The one
-  admitted field that could be compared for value agreement disagreed (0
-  of 1). Identity is a screen at any level, never the bound.
-  - **Identity counts records.** Over both populations the relaxations
-    admit 51 fields, whose cited records give 72 positives, no negative and
-    84 unlabelled. Per field, the controls decide title on 16 of 37
-    admitted fields, authors on 6 of 9, publisher on 3 of 4 (plus 1 tied)
-    and language on 1 of 1; the admitted candidate is the right-work one in
-    each decided field.
-  - **Title is stale.** Every title figure comes from ebook-744 fields
-    decided by its v9 engine, before the title elections on main.
+The old A6 row counted three different things. On ebook-744 its 5,481
+fields were 80 abstentions of the scalar engine, 162 upstream echoes, and
+5,239 rich-preview refusals that the old ebook source recorded under the
+generic "no eligible action" reason. On audiobook-1294 its 6 fields were 5
+scalar abstentions and 1 echo, with no rich-preview leftover. All 80
+ebook-744 fields in row A6a are titles, which main now decides with later
+rules.
 
-  The pass mark is not set. It is the owner's, and it would apply to
-  owner-labelled values, not to identity. Hence ADR-0092: keep the gate,
-  and let #1418's owner labels decide any later relaxation.
+The abstention's own cost is small. The proposable population is 23 fields
+on ebook-744 (9 authors and 14 publishers) and 6 on audiobook-1294 (all
+language).
+
+Support, or the lack of an eligible action, explains every abstention. The
+replay is exact on both snapshots, and the mirror reaches the source's own
+verdict for every candidate. Every abstained candidate fails local or
+correlation support, has no action the decision could take, or belongs to a
+language field whose proposal conflicts with the language policy.
+
+No relaxation can be switched on. Only owner-labelled values can qualify a
+relaxation, and neither snapshot holds an owner label. The one admitted
+field that could be compared with an uncited accepted record disagreed with
+it. Identity precision is a screen, never the bar, for two reasons.
+
+- It counts records, not fields. Over both populations the relaxations
+  admit 51 fields, whose cited records are 72 right work, none wrong work
+  and 84 unlabelled. Counted by field, the labels decide the right-work
+  alternative for 16 of the 37 admitted title fields, 6 of the 9 author
+  fields, 3 of the 4 publisher fields (with 1 more tied) and the 1 language
+  field. In every decided field the admitted value is the right-work one.
+- The title figures are stale. They all come from ebook-744 fields decided
+  by the old v9 engine, before main's title rules.
+
+The pass mark is not set. It is the owner's to set, and it will apply to
+owner-labelled values, not to identity. ADR-0092 therefore keeps the gate,
+and leaves any later relaxation to the owner labels that #1418 can collect.
 
 ## Reproduce
 
 Run the [ledger's Reproduce command](admission-rule-ledger.md#reproduce)
 with `--a6-abstention` added. It prints these tables instead of the
 ledger's, and the JSON document carries them under `a6_abstention`. The
-analysis rebuilds every current case's decision packet under its source,
+analysis rebuilds every current case's decision input under its own source,
 which takes about forty seconds for both snapshots.
