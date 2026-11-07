@@ -1698,6 +1698,7 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             "title_alternative": 0,
             "work_fallback": 0,
             "recording_admitted": 0,
+            "linked_recording_admitted": 0,
         },
     } == audiobooks["audiobook_outcomes"]
     assert {

@@ -808,7 +808,7 @@ class GenerateProviderRetrySuccessor:
                 audio_editions=tuple(
                     edition
                     for edition in evidence.audio_editions
-                    if lane.kind is ProviderQueryKind.WORK
+                    if lane.kind in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
                     and observation.status is ProviderStatus.CANDIDATES
                     and any(
                         item.edition_identity == edition.work_identity

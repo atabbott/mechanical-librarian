@@ -306,12 +306,21 @@ def test_the_audiobook_plan_adds_the_isbn_lane_before_its_search() -> None:
     order = app.provider_discovery_lane_order(plan)
     assert order[0] is isbn
     assert all(lane.kind is ProviderQueryKind.WORK for lane in order[1:])
-    # The ISBN never suppresses the search: the ebook's identifier cannot
-    # stand in for a search for the recording.
-    assert not any(
-        app.identifier_suppresses_discovery(plan, [], lane)
+    # The ISBN never suppresses the search, even when it found this very work:
+    # the ebook's identifier cannot stand in for a search for the recording.
+    found = [
+        app.ProviderLaneResult(
+            isbn, ProviderStatus.CANDIDATES, (_book("Asserted Title"),)
+        )
+    ]
+    searches = [
+        lane
         for lane in plan.lanes
         if lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
+    ]
+    assert searches
+    assert not any(
+        app.identifier_suppresses_discovery(plan, found, lane) for lane in searches
     )
 
 
@@ -686,6 +695,67 @@ def test_a_report_s_audio_never_states_the_companion_title() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("title", "authors", "basis"),
+    [
+        ("Not The Companion Title", ("Ada Author",), COMPANION_TITLE_BASIS),
+        ("Companion Title", ("Somebody Else",), COMPANION_WORK_BASIS),
+    ],
+)
+def test_a_report_refuses_a_companion_search_it_did_not_plan(
+    title: str, authors: tuple[str, ...], basis: str
+) -> None:
+    companion = _companion()
+    target_authors = ("Ada Author",) if basis == COMPANION_TITLE_BASIS else ()
+    references = tuple(
+        sorted(
+            claim.reference
+            for claim in companion.claims
+            if claim.kind is not ClaimKind.ISBN
+        )
+    )
+    payload = dom.WorkLanePayload(title, authors, references, basis)
+    record = ProviderLaneObservation(
+        payload.identity,
+        ProviderQueryKind.WORK,
+        ProviderStatus.NO_MATCH,
+        payload.input_references,
+        None,
+        (),
+    )
+    record = replace(
+        record,
+        dispatch=dom.ProviderLaneDispatch(
+            dom.lane_dispatch_outcome(record, starved=False)
+        ),
+    )
+    with pytest.raises(ReportValueError, match="work lane"):
+        MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "audiobooks",
+                "item-1",
+                _fields("Asserted Title", target_authors),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=(_duration_claim(),),
+            local_reasons=("no_local_audio_claims",),
+            providers=(
+                ProviderObservation(
+                    "audible",
+                    ProviderStatus.NO_MATCH,
+                    payload.input_references,
+                    (),
+                    ProviderQueryKind.WORK,
+                    "audible_catalog",
+                    lanes=(record,),
+                ),
+            ),
+            audio=single_track_audio_facts(),
+            companion=companion,
+        )
+
+
 # --- Admission: the ISBN confirms the work, never the recording ---------------
 
 
@@ -694,6 +764,7 @@ def _product(
     *narrators: str,
     title: str = "A Mangled Folder Title",
     language: str | None = None,
+    edition_statement: str | None = None,
 ) -> ProviderCandidate:
     identity = f"audible-product-{_ASIN}"
     return ProviderCandidate(
@@ -711,6 +782,17 @@ def _product(
                 *(((ClaimKind.LANGUAGE, language, None),) if language else ()),
             ),
         ),
+        evidence=(
+            (
+                dom.ProviderEvidence(
+                    dom.ProviderEvidenceKind.EDITION_STATEMENT,
+                    edition_statement,
+                    ClaimScope.EDITION,
+                ),
+            )
+            if edition_statement
+            else ()
+        ),
     )
 
 
@@ -719,6 +801,7 @@ def _asin_answer(
     *,
     linked: tuple[str, ...] = (_ASIN,),
     local: tuple[LocalClaim, ...] = (),
+    work_title: str = "Asserted Title",
 ) -> ProviderObservation:
     observation = ProviderObservation(
         "audible",
@@ -734,7 +817,7 @@ def _asin_answer(
             ProviderQueryKind.ASIN,
             (_duration_claim(), *local),
             audio=single_track_audio_facts(),
-            work_title="Asserted Title",
+            work_title=work_title,
             work_authors=("Ada Author",),
             requested_asin=_ASIN,
             companion=_companion(),
@@ -792,6 +875,59 @@ def test_a_linked_product_in_another_language_is_refused() -> None:
     )
 
 
+def test_a_linked_product_of_another_abridgement_is_refused() -> None:
+    def answer(statement: str) -> ProviderObservation:
+        return _asin_answer(
+            _product(_LOCAL_SECONDS // 60, "Nia Narrator", edition_statement=statement),
+            work_title="Asserted Title (Unabridged)",
+        )
+
+    assert _kept(answer("Unabridged"))
+    assert not _kept(answer("Abridged"))
+
+
+def test_editions_that_disagree_admit_nothing_through_the_gate() -> None:
+    """From the report's editions to the gate: disagreeing casts link nothing."""
+    companion = _companion()
+    observation = _hardcover(
+        companion,
+        (
+            _edition(1, _LOCAL_SECONDS, "Nia Narrator"),
+            _edition(2, _LOCAL_SECONDS + 30, "Other Reader", asin="B0LINKED02"),
+        ),
+    )
+    linked = companion_linked_asins(
+        (_duration_claim(),), single_track_audio_facts(), (observation,), companion
+    )
+    assert not _kept(
+        _asin_answer(_product(_LOCAL_SECONDS // 60, "Nia Narrator"), linked=linked)
+    )
+    agreeing = _hardcover(companion, (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),))
+    linked = companion_linked_asins(
+        (_duration_claim(),), single_track_audio_facts(), (agreeing,), companion
+    )
+    assert _kept(
+        _asin_answer(_product(_LOCAL_SECONDS // 60, "Nia Narrator"), linked=linked)
+    )
+
+
+def test_the_feed_plan_asks_for_the_linked_product_and_carries_the_link() -> None:
+    target = _target("Asserted Title", ("Ada Author",))
+    companion = _companion()
+    plan = audiobook_discovery_plan(
+        target,
+        (_target_title_claim("Asserted Title"), _duration_claim()),
+        audio=single_track_audio_facts(),
+        companion=companion,
+    )
+    observation = _hardcover(companion, (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),))
+    feed = app.audiobook_asin_feed_plan(target, plan, (observation,))
+    assert feed is not None
+    assert feed.companion == companion
+    assert feed.companion_linked_asins == (_ASIN,)
+    assert _ASIN in {lane.canonical_asin for lane in feed.lanes}
+
+
 # --- Measurement ----------------------------------------------------------------
 
 
@@ -805,16 +941,28 @@ def test_the_cold_start_report_counts_what_the_companion_did() -> None:
     )
     use = cold_start._companion_use(report)
     # This report states no target title claim, so it planned no search.
-    assert use == ("read", True, True, None)
+    # No ASIN lane asked for the linked product here.
+    assert use == ("read", True, True, None, False)
+    linked_use = (*use[:4], True)
+
+    def row(value: tuple[object, ...], outcome: str) -> tuple[object, ...]:
+        return (None,) * 3 + (outcome,) + (None,) * 4 + (value,)
+
     counts = cold_start._companion_counts(
-        [(None,) * 3 + ("recording_admitted",) + (None,) * 4 + (use,)]
+        [
+            row(use, "recording_admitted"),
+            row(linked_use, "recording_admitted"),
+            # A linked product kept, but the recording was not admitted.
+            row(linked_use, "work_only"),
+        ]
     )
     assert counts == {
-        "reports": 1,
+        "reports": 3,
         "unreadable": 0,
-        "isbn_lane_kept_book": 1,
-        "linked_edition": 1,
+        "isbn_lane_kept_book": 3,
+        "linked_edition": 3,
         "title_alternative": 0,
         "work_fallback": 0,
-        "recording_admitted": 1,
+        "recording_admitted": 2,
+        "linked_recording_admitted": 1,
     }

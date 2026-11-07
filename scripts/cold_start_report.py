@@ -97,6 +97,7 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_TITLE_BASIS,
     COMPANION_WORK_BASIS,
     AudioFacts,
+    ClaimKind,
     MetadataReport,
     ProviderLaneDispatch,
     ProviderQueryKind,
@@ -600,25 +601,44 @@ def _audiobook_rows(
     return rows
 
 
-def _companion_use(report: MetadataReport) -> tuple[str, bool, bool, str | None]:
+def _companion_use(
+    report: MetadataReport,
+) -> tuple[str, bool, bool, str | None, bool]:
     """What an audiobook's companion EPUB did for its report (#1468).
 
     (state, ISBN lane kept a book, its book linked an edition ASIN, the search
-    basis it supplied): closed vocabulary and flags only, never a value.
+    basis it supplied, an ASIN lane kept the product of a linked ASIN in
+    full): closed vocabulary and flags only, never a value.
     """
     companion = report.companion
     if companion is None:
-        return ("none", False, False, None)
+        return ("none", False, False, None, False)
     lane = companion_isbn_lane(companion)
     kept = lane is not None and any(
         value.identity == lane.identity and value.status is ProviderStatus.CANDIDATES
         for provider in report.providers
         for value in provider.lanes
     )
-    linked = bool(
+    linked_asins = set(
         companion_linked_asins(
             report.local_claims, report.audio, report.providers, companion
         )
+    )
+    linked = bool(linked_asins)
+    # A product kept beyond its identifier on an ASIN lane for a linked ASIN.
+    linked_product_kept = any(
+        candidate.identity == value.edition_identity
+        and any(claim.kind is not ClaimKind.ASIN for claim in candidate.claims)
+        and any(
+            claim.kind is ClaimKind.ASIN and claim.value in linked_asins
+            for claim in candidate.claims
+        )
+        for provider in report.providers
+        if provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        for lane in provider.lanes
+        if lane.kind is ProviderQueryKind.ASIN
+        for value in lane.candidates
+        for candidate in provider.candidates
     )
     basis = next(
         (
@@ -638,6 +658,7 @@ def _companion_use(report: MetadataReport) -> tuple[str, bool, bool, str | None]
         kept,
         linked,
         basis,
+        linked_product_kept,
     )
 
 
@@ -1030,7 +1051,8 @@ def _audiobook_outcomes(rows: list[tuple[object, ...]]) -> dict[str, object]:
 
 def _companion_counts(rows: list[tuple[object, ...]]) -> dict[str, object]:
     uses = [
-        (cast("tuple[str, bool, bool, str | None]", row[8]), row[3]) for row in rows
+        (cast("tuple[str, bool, bool, str | None, bool]", row[8]), row[3])
+        for row in rows
     ]
     present = [(use, outcome) for use, outcome in uses if use[0] != "none"]
     return {
@@ -1044,6 +1066,12 @@ def _companion_counts(rows: list[tuple[object, ...]]) -> dict[str, object]:
         "work_fallback": sum(1 for use, _ in present if use[3] == COMPANION_WORK_BASIS),
         "recording_admitted": sum(
             1 for _, outcome in present if outcome == "recording_admitted"
+        ),
+        # The recording admitted, and an ASIN lane kept a linked product.
+        "linked_recording_admitted": sum(
+            1
+            for use, outcome in present
+            if use[4] and outcome == "recording_admitted"
         ),
     }
 

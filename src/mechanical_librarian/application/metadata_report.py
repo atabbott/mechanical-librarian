@@ -622,7 +622,8 @@ class ProviderLaneResult:
     dispatch: ProviderLaneDispatch | None = None
     # What an ASIN lane refused, with its claims (#1307).
     refused_products: tuple[ProviderCandidate, ...] = ()
-    # Hardcover audio editions of this WORK lane's admitted books (#962).
+    # Hardcover audio editions of this WORK lane's admitted books (#962), or
+    # of the book the companion ISBN lane kept (#1468).
     audio_editions: tuple[ProviderCandidate, ...] = ()
 
     def __post_init__(self) -> None:
@@ -634,7 +635,8 @@ class ProviderLaneResult:
             )
             or self.audio_editions
             and (
-                self.lane.kind is not ProviderQueryKind.WORK
+                # A WORK lane's books, or the companion ISBN's book (#1468).
+                self.lane.kind not in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
                 or self.status is not ProviderStatus.CANDIDATES
                 or not {value.work_identity for value in self.audio_editions}.issubset(
                     {value.identity for value in self.candidates}
@@ -1678,6 +1680,15 @@ def provider_observation(
         ),
         refused_products=_aggregate_refused_products(results, candidates),
         audio_editions=_aggregate_audio_editions(results, candidates),
+    )
+
+
+def aggregate_audio_editions(
+    results: tuple[ProviderLaneResult, ...],
+) -> tuple[ProviderCandidate, ...]:
+    """The audio editions an observation of these lanes would keep (#1468)."""
+    return _aggregate_audio_editions(
+        results, tuple(value for result in results for value in result.candidates)
     )
 
 
@@ -4284,6 +4295,7 @@ __all__ = [
     "corroborated_rule_permitted",
     "audiobook_asin_feed_plan",
     "audiobook_carried_plan",
+    "aggregate_audio_editions",
     "audiobook_discovery_plan",
     "merge_provider_cover_descriptor",
     "merge_provider_cover_descriptors",

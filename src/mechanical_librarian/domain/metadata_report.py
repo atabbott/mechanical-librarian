@@ -3865,6 +3865,7 @@ def companion_isbn_lane(
     for claim in companion.claims:
         if (
             claim.kind is ClaimKind.ISBN
+            and claim.state is FieldState.VALID
             and claim.canonical is not None
             and (family := isbn_family(claim.canonical)) is not None
         ):
@@ -3979,7 +3980,11 @@ def companion_discovery_title(
     if companion is None:
         return None
     titles = tuple(claim for claim in companion.claims if claim.kind is ClaimKind.TITLE)
-    if len(titles) != 1 or titles[0].canonical is None:
+    if (
+        len(titles) != 1
+        or titles[0].state is not FieldState.VALID
+        or titles[0].canonical is None
+    ):
         return None
     title = normalize_title(titles[0].canonical)
     if not title:

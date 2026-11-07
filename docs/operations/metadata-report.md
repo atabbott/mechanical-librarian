@@ -159,6 +159,7 @@ the file's refuses it. The companion's title is the first
 alternative search title, with basis `companion_title`, unless it folds to the
 target's own title. When the target has no complete title and author set, the
 companion's title and author creators are the search, basis `companion_work`.
+Both are alternative lanes, asked of the Audible catalogue only.
 Validation replays each of these lanes from the stored companion.
 
 ### Media health

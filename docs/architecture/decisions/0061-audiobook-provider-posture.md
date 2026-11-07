@@ -250,7 +250,14 @@ when the book is this work by the target's title and authors or lists an audio
 edition counted against the file ([ADR-0090](0090-hardcover-audio-edition-witness.md)).
 The companion's title is the first alternative search title, ahead of the
 folder leaf and the title tag, and when the target names no complete work, the
-companion's title and author creators are the search. None of it is a local
+companion's title and author creators are the search. Both are alternative
+lanes, so, as for the folder leaf (#1255), only the Audible catalogue asks
+them, and a product found on either is kept only as the recording the tight
+band corroborates. The book providers are not asked the fallback: they would
+admit a book, and offer its work-level values, on the EPUB's title and
+creators alone, which the target never stated; Hardcover reaches the book
+through the companion ISBN instead. Widening the fallback to them is a change
+to `identifier_suppresses_discovery` and needs its own decision. None of it is a local
 claim or a proposed value. This is `metadata-report-v69`, a clean rebuild
 under ADR-0013.
 
