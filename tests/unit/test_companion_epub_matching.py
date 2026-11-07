@@ -548,7 +548,7 @@ def _companion_report(
     *,
     book: ProviderCandidate | None = None,
     authority: str = "hardcover",
-    title: str = "Asserted Title",
+    title: str | None = "Asserted Title",
 ) -> MetadataReport:
     providers = [_hardcover(companion, editions, book, authority=authority)]
     if product is not None:
@@ -804,7 +804,8 @@ def _asin_answer(
     *,
     linked: tuple[str, ...] = (_ASIN,),
     local: tuple[LocalClaim, ...] = (),
-    work_title: str = "Asserted Title",
+    work_title: str | None = "Asserted Title",
+    work_authors: tuple[str, ...] = ("Ada Author",),
 ) -> ProviderObservation:
     observation = ProviderObservation(
         "audible",
@@ -821,7 +822,7 @@ def _asin_answer(
             (_duration_claim(), *local),
             audio=single_track_audio_facts(),
             work_title=work_title,
-            work_authors=("Ada Author",),
+            work_authors=work_authors,
             requested_asin=_ASIN,
             companion=_companion(),
             companion_linked_asins=linked,
@@ -837,6 +838,29 @@ def _kept(observation: ProviderObservation) -> bool:
 
 def test_a_linked_product_in_the_band_is_admitted_whatever_its_title() -> None:
     assert _kept(_asin_answer(_product(_LOCAL_SECONDS // 60, "Nia Narrator")))
+
+
+def test_a_linked_product_is_admitted_with_no_target_identity() -> None:
+    """An ISBN-only plan feeds a lead with no title or authors to admit by."""
+    answer = _asin_answer(
+        _product(_LOCAL_SECONDS // 60, "Nia Narrator"), work_title=None, work_authors=()
+    )
+    assert _kept(answer)
+    assert not _kept(
+        _asin_answer(
+            _product(_LOCAL_SECONDS // 60, "Nia Narrator"),
+            linked=(),
+            work_title=None,
+            work_authors=(),
+        )
+    )
+    report = _companion_report(
+        _companion(),
+        (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),),
+        answer.candidates[0],
+        title=None,
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
 
 
 def test_an_unlinked_product_is_only_its_identifier() -> None:

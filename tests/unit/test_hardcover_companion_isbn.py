@@ -148,6 +148,7 @@ def _observe(
     *,
     companion_title: str = "A Different Title",
     isbn: str = _ISBN,
+    isbn_rows: bool = True,
     search_books: tuple[int, ...] = (),
     editions: Callable[[int, int], httpx.Response],
     plan: MetadataDiscoveryPlan | None = None,
@@ -173,7 +174,9 @@ def _observe(
                             "isbn_13": isbn,
                             "title": companion_title,
                         }
-                    ],
+                    ]
+                    if isbn_rows
+                    else [],
                     [_book(_COMPANION_BOOK, companion_title)],
                 ),
             )
@@ -309,6 +312,20 @@ def test_this_work_is_kept_by_title_and_authors_without_an_edition() -> None:
 def test_an_edition_row_of_another_isbn_names_nothing() -> None:
     observation, _sent = _observe(
         isbn=_OTHER_ISBN,
+        editions=lambda book, _offset: _page(
+            _edition(3, _LOCAL_SECONDS, book_id=book, asin="B0LINKED01")
+        ),
+    )
+
+    assert _isbn_lane(observation).status is not ProviderStatus.CANDIDATES
+    assert observation.audio_editions == ()
+    _report(observation)
+
+
+def test_a_book_no_edition_row_of_the_isbn_names_is_not_kept() -> None:
+    """A book with no edition row joining it to the ISBN names nothing."""
+    observation, _sent = _observe(
+        isbn_rows=False,
         editions=lambda book, _offset: _page(
             _edition(3, _LOCAL_SECONDS, book_id=book, asin="B0LINKED01")
         ),

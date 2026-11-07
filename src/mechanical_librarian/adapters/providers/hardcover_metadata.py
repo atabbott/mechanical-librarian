@@ -1426,7 +1426,10 @@ def _parse_candidates(
                     provider,
                 )
             )
-    if (not work_only and used != set(indexed)) or len(
+    # Every book must be joined by an edition row, except an audiobook WORK
+    # lane's, which keeps books alone; the companion ISBN lane keeps only
+    # books its ISBN's edition rows name (#1468).
+    if ((not work_only or required_family is not None) and used != set(indexed)) or len(
         {candidate.identity for candidate in candidates}
     ) != len(candidates):
         raise ValueError("provider join invalid")

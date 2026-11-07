@@ -1121,6 +1121,10 @@ def _chapter_candidate_support(
     library_languages: tuple[str, ...] = (),
 ) -> bool:
     """Qualify raw recording evidence before shaping can discard its vetoes."""
+    # The chapter route needs exact work admission, which a target with no
+    # title cannot give: a lead fed by the companion ISBN alone has none (#1468).
+    if not title:
+        return False
     if (
         recording_variant_conflict(
             candidate, local_claims, title or "", library_languages
@@ -1226,6 +1230,10 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
     authors = (
         cast("tuple[str, ...]", authors_value) if type(authors_value) is tuple else ()
     )
+    # Every route below needs exact work admission against the target's title,
+    # so a target with none has no chapter basis (#1468).
+    if not report.target.current_title:
+        return None
     support: list[tuple[str, str, str]] = []
     vetoed: set[str] = set()
     for observation in report.providers:
