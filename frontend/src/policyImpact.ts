@@ -1,7 +1,7 @@
-// The policy preview's projections: the payload checks and how each previewed
-// field reads as an owner-facing impact. Moved out of the Policy route under
-// the route-size rule (#1571).
-import type { PolicyActivationView, PolicyPreviewView, PolicyTransitionView } from './api/http'
+// The policy preview's projections: how each previewed field reads as an
+// owner-facing impact. Moved out of the Policy route under the route-size rule
+// (#1571). The preview and activation answers are decoded, and their named
+// checks made, by the HTTP client (#1692).
 import { automaticRefusalReasons, languageName } from './labels'
 
 // A language value reads by its name, `English (en)` (#1286).
@@ -173,105 +173,3 @@ export const policyImpactTotals = (rows: readonly PolicyImpactRow[]) => {
     materialChanges: changes.length,
   }
 }
-const previewFieldShape = (value: unknown): value is PolicyPreviewField => {
-  if (typeof value !== 'object' || value === null) return false
-  return (
-    'field' in value &&
-    typeof value.field === 'string' &&
-    'outcome' in value &&
-    typeof value.outcome === 'string' &&
-    'reason' in value &&
-    (value.reason === null || typeof value.reason === 'string') &&
-    'target_state' in value &&
-    typeof value.target_state === 'string' &&
-    'current_value' in value &&
-    'desired_value' in value
-  )
-}
-export const isPolicyPreview = (value: unknown): value is PolicyPreviewView =>
-  typeof value === 'object' &&
-  value !== null &&
-  'schema_version' in value &&
-  value.schema_version === 'metadata-policy-preview-v1' &&
-  'active_policy_id' in value &&
-  typeof value.active_policy_id === 'string' &&
-  'active_generation' in value &&
-  typeof value.active_generation === 'number' &&
-  Number.isSafeInteger(value.active_generation) &&
-  value.active_generation > 0 &&
-  'libraries' in value &&
-  Array.isArray(value.libraries) &&
-  value.libraries.every((library: unknown) => {
-    if (
-      typeof library !== 'object' ||
-      library === null ||
-      !('cases' in library) ||
-      !Array.isArray(library.cases) ||
-      !('comparisons' in library) ||
-      !Array.isArray(library.comparisons) ||
-      library.comparisons.length !== library.cases.length
-    )
-      return false
-    return library.comparisons.every(
-      (comparison: unknown) =>
-        typeof comparison === 'object' &&
-        comparison !== null &&
-        'media_kind' in comparison &&
-        ['ebook', 'audiobook'].includes(String(comparison.media_kind)) &&
-        'fields' in comparison &&
-        Array.isArray(comparison.fields) &&
-        comparison.fields.every(
-          (field: unknown) =>
-            typeof field === 'object' &&
-            field !== null &&
-            'active' in field &&
-            previewFieldShape(field.active) &&
-            'draft' in field &&
-            previewFieldShape(field.draft) &&
-            field.active.field === field.draft.field &&
-            'changed' in field &&
-            typeof field.changed === 'boolean' &&
-            'active_destination' in field &&
-            ['ask', 'automatic', 'ignore', 'unsupported'].includes(
-              String(field.active_destination),
-            ) &&
-            'draft_destination' in field &&
-            ['ask', 'automatic', 'ignore', 'unsupported'].includes(String(field.draft_destination)),
-        ),
-    )
-  })
-const isPolicyTransition = (value: unknown): value is PolicyTransitionView =>
-  typeof value === 'object' &&
-  value !== null &&
-  'schema_version' in value &&
-  value.schema_version === 'metadata-policy-transition-v1' &&
-  'transition_id' in value &&
-  typeof value.transition_id === 'string' &&
-  'from_policy_id' in value &&
-  typeof value.from_policy_id === 'string' &&
-  'to_policy_id' in value &&
-  typeof value.to_policy_id === 'string' &&
-  'state' in value &&
-  typeof value.state === 'string' &&
-  'generation' in value &&
-  typeof value.generation === 'number' &&
-  'completed' in value &&
-  typeof value.completed === 'number' &&
-  'failed' in value &&
-  typeof value.failed === 'number' &&
-  'total' in value &&
-  typeof value.total === 'number' &&
-  'acknowledged' in value &&
-  typeof value.acknowledged === 'boolean'
-export const isPolicyActivation = (
-  value: unknown,
-  policyId: string,
-): value is PolicyActivationView =>
-  typeof value === 'object' &&
-  value !== null &&
-  'policy_id' in value &&
-  value.policy_id === policyId &&
-  'schema_version' in value &&
-  value.schema_version === 'metadata-policy-activation-v1' &&
-  'transition' in value &&
-  (value.transition === null || isPolicyTransition(value.transition))

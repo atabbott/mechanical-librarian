@@ -29,6 +29,10 @@ Keep one handwritten HTTP module. It owns session expiry, CSRF renewal,
 structured error normalization, cancellation, currentness, and conversion from
 generated transport DTOs to view models. `openapi-typescript` generates types
 only from the committed exact `review-openapi-v1.json`; it generates no client.
+Amended 2026-11-07 (#1684, ADR-0091): the module also decodes every response
+the browser reads through response decoders generated in-repository from the
+same document, which emit no client either. It keeps only view mapping and the
+checks a schema cannot state, each named in ADR-0091.
 
 Pin Node 24.19.0 and npm 11.17.0 for every exact build. Frontend source,
 generator rules, `package.json`, and `package-lock.json` are committed.
@@ -63,8 +67,11 @@ stable recovery state.
 
 ## Validation
 
-- `npm ci`, DTO generation drift, lint, strict type checking, Vitest/Testing
-  Library, deterministic double build, manifest/digest, and advisory checks.
+- `npm ci`, DTO and response-decoder generation drift, lint, strict type
+  checking, Vitest/Testing Library, deterministic double build,
+  manifest/digest, and advisory checks. Amended 2026-11-07 (#1684,
+  ADR-0091): a differential suite compares the decoders with the HTTP module's
+  remaining named checks and fails on any unlisted divergence.
 - Unit tests for the handwritten HTTP boundary, typed route/search ownership,
   critical loader, progressive panel, focus/announcement, and recovery state.
 - Python tests for bounded manifest loading, corruption, source-map exclusion,
