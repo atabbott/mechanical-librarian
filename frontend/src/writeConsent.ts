@@ -109,7 +109,7 @@ export const writesOffSentence = (
   const held = others.filter((library) => libraryWritesHeld(destinations(library)))
   if (!on.length)
     return holding.length && held.length
-      ? `Writes are off; writes to ${libraryList(held.map(libraryName))} are held.`
+      ? `Writes are off. Writes to ${libraryList(held.map(libraryName))} are held.`
       : 'Writes are off.'
   if (!others.length) return 'Writes are off.'
   const waiting = others.filter((library) => !held.includes(library))
@@ -120,9 +120,9 @@ export const writesOffSentence = (
           `${libraryList(waiting.map(libraryName))} ${waiting.length === 1 ? 'needs' : 'need'} permission`,
         ]
       : []),
-    ...(held.length ? [`writes to ${libraryList(held.map(libraryName))} are held`] : []),
+    ...(held.length ? [`Writes to ${libraryList(held.map(libraryName))} are held`] : []),
   ]
-    .join('; ')
+    .join('. ')
     .concat('.')
 }
 
@@ -169,7 +169,7 @@ const lapsedSentence = (
 export const destinationReason = (state: Exclude<DestinationState, 'allowed'>, lapsed = false) =>
   state === 'not_ready'
     ? lapsed
-      ? 'nothing is prepared for it yet; you can give permission again once a change is prepared'
+      ? 'nothing is prepared for it yet, and permission can be given again once something is'
       : 'it is not ready yet'
     : writeHoldReasons[state]
 
@@ -231,11 +231,11 @@ export const readWriteConsent = (
     data.backup_ready === null
       ? null
       : !data.backup_ready
-        ? 'Backup readiness has not been confirmed, so writes cannot be enabled yet.'
+        ? 'Writes can be enabled once the backup is confirmed.'
         : grants.length === 0
           ? scopes.length === 0
-            ? 'No selected destination is eligible for writes right now.'
-            : `No destination is eligible yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
+            ? 'No selected field can be written yet.'
+            : `No field can be written yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
           : null
   return {
     state,

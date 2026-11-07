@@ -11683,17 +11683,15 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', http)
 
     const heading = await screen.findByRole('heading', {
-      name: '5 works are in Library. Writes are on for Fiction Shelf; History Room needs permission; writes to Research Shelf are held.',
+      name: '5 works are in Library. Writes are on for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
     })
     const notice = heading.closest('section')
     if (!notice) throw new Error('the handoff notice is a section')
-    // Readiness is said once, in one sentence that is also the instruction.
-    expect(notice).toHaveTextContent(
-      'Open permission review in Activity to check current readiness.',
-    )
+    // What writes wait on is said once, in one sentence.
+    expect(notice).toHaveTextContent('Nothing is written until you give permission.')
     expect(notice).not.toHaveTextContent('Review current write permissions')
     expect(notice).not.toHaveTextContent('Readiness is checked when you open the review.')
-    expect(within(notice).getAllByText(/readiness/iu)).toHaveLength(1)
+    expect(within(notice).getAllByText(/until you give permission/u)).toHaveLength(1)
   })
 
   it('offers the completion handoff inside Library with one action for every eligible destination', async () => {
@@ -11779,7 +11777,7 @@ describe('Library route', () => {
     // The notice reads the narrow consent read, never Activity history (#1236).
     expect(http.getActivity).not.toHaveBeenCalled()
     // Preparation still running does not withdraw the action.
-    expect(screen.getByText(/while preparation continues/u)).toBeVisible()
+    expect(screen.getByText(/Preparation continues meanwhile\./u)).toBeVisible()
     // The Attention decision and status share one toolbar, toggle first, so
     // focus order matches the visual order at every width (#1013).
     const controls = document.querySelector('header[aria-label="Library controls"]')
@@ -14224,7 +14222,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       name: '5 works are in Library. Writes are enabled for fiction.',
     })
     expect(heading.closest('.cm-library-handoff')).toHaveTextContent(
-      'Write permission for history lapsed because it was given under a policy that is no longer active. Review current write permissions in Activity.',
+      'Write permission for history lapsed because it was given under a policy that is no longer active.',
     )
     expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
   })
@@ -14271,7 +14269,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     // Permission kept for a library whose every destination is suspended
     // writes nothing, so the lapse beside it does not read as writes enabled.
     const heading = await screen.findByRole('heading', {
-      name: '5 works are in Library. Writes are off; writes to fiction are held.',
+      name: '5 works are in Library. Writes are off. Writes to fiction are held.',
     })
     const notice = heading.closest('.cm-library-handoff')
     expect(notice).not.toHaveTextContent('Writes are enabled')

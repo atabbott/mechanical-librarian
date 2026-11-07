@@ -4564,7 +4564,7 @@ describe('owner language in Activity (#1286)', () => {
     // Partial consent says which library holds permission and which waits.
     expect(
       await screen.findByText(
-        'Writes are on for Fiction Shelf; History Room needs permission. Review permissions when you are ready.',
+        'Writes are on for Fiction Shelf. History Room needs permission. Review permissions when you are ready.',
         { exact: false },
       ),
     ).toBeVisible()
@@ -4632,7 +4632,7 @@ describe('owner language in Activity (#1286)', () => {
     }
     renderRoute('/activity', http)
     const heading = await screen.findByText(
-      'Writes are on for Fiction Shelf; History Room needs permission; writes to Research Shelf are held.',
+      'Writes are on for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
       { exact: false },
     )
     expect(heading).not.toHaveTextContent(/Research Shelf needs/u)
@@ -4836,7 +4836,7 @@ describe('owner language in Activity (#1286)', () => {
       name: 'history included and excluded destinations',
     })
     expect(destinations).toHaveTextContent(
-      'Excluded — nothing is prepared for it yet; you can give permission again once a change is prepared',
+      'Excluded — nothing is prepared for it yet, and permission can be given again once something is',
     )
     expect(destinations).not.toHaveTextContent('it is not ready yet')
   })

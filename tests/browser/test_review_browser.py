@@ -13522,9 +13522,9 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
         if lapsed == ("papers",):
             # Writes are enabled only for the library that kept permission.
             expect(notice).to_contain_text("Writes are enabled for Reading Room.")
-            expect(notice).to_contain_text(
-                "Review current write permissions in Activity."
-            )
+            expect(
+                notice.get_by_role("link", name="Review write permissions", exact=True)
+            ).to_be_visible()
         page.get_by_role("link", name="Activity", exact=True).click()
         page.get_by_text(sentence).first.wait_for()
         main = page.locator("main")

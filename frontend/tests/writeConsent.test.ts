@@ -164,12 +164,12 @@ describe('the write consent offer', () => {
 
     expect(
       readWriteConsent(view({ configured_libraries: configured, capabilities, waiting })).blocked,
-    ).toBe('No selected destination is eligible for writes right now.')
+    ).toBe('No selected field can be written yet.')
     expect(
       readWriteConsent(
         view({ backup_ready: false, configured_libraries: configured, capabilities, waiting }),
       ).blocked,
-    ).toBe('Backup readiness has not been confirmed, so writes cannot be enabled yet.')
+    ).toBe('Writes can be enabled once the backup is confirmed.')
     // A connection an owner has to check first makes enabling writes the wrong
     // next step; preparation still running does not, and is not consulted here.
     expect(
@@ -379,7 +379,7 @@ describe('the consent basis a permission draft is kept against', () => {
 it('explains an exclusion after a lapse by what is prepared, not readiness (#1286)', () => {
   expect(destinationReason('not_ready')).toBe('it is not ready yet')
   expect(destinationReason('not_ready', true)).toBe(
-    'nothing is prepared for it yet; you can give permission again once a change is prepared',
+    'nothing is prepared for it yet, and permission can be given again once something is',
   )
   // A held destination keeps its own reason whether or not permission lapsed.
   expect(destinationReason('insufficient_permission', true)).toBe(
@@ -452,11 +452,11 @@ describe('consent outlives a suspension (#1286 B1)', () => {
     }
     // Both fiction and research hold permission; only fiction still writes.
     expect(writesOffSentence(data, ['fiction', 'research'], (name) => name)).toBe(
-      'Writes are on for fiction; history needs permission; writes to research are held.',
+      'Writes are on for fiction. history needs permission. Writes to research are held.',
     )
     // With no library writing, writes are off and the held one is named (#1286 L2).
     expect(writesOffSentence(data, ['research'], (name) => name)).toBe(
-      'Writes are off; writes to research are held.',
+      'Writes are off. Writes to research are held.',
     )
   })
 })
