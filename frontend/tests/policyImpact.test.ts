@@ -108,8 +108,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: true,
       title: 'Change',
-      detail:
-        'fills the empty field with 9780306406157 because it is verified for this edition',
+      detail: 'fills the empty field with 9780306406157 because it is verified for this edition',
     })
     expect(
       policyImpactDisplay({
