@@ -477,7 +477,7 @@ def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
             "No cover advice could be produced",
         ),
         "failed": (
-            "Cover advice stopped",
+            "Cover advice failed",
             "Mechanical Librarian",
             "No cover was changed",
         ),

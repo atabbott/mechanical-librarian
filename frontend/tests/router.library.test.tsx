@@ -3564,7 +3564,7 @@ describe('Library route', () => {
     expect(
       screen.getAllByText(/^The sources disagree\. Choose the value yourself\.?$/u).length,
     ).toBeGreaterThan(0)
-    expect(screen.queryByText('Different source tag lists')).toBeNull()
+    expect(screen.queryByText('Different source tag lists.')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(within(fieldRail).getByRole('button', { name: /Series.*Automatic/u })).toBeVisible()
   })
@@ -4167,8 +4167,8 @@ describe('Library route', () => {
       ).toBeVisible()
       if (['epub', 'unknown', 'audio'].includes(mediaKind)) {
         expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
-        expect(screen.getByText('The sources disagree. Choose the value yourself')).toBeVisible()
-        expect(screen.queryByText('Different source tag lists')).toBeNull()
+        expect(screen.getByText('The sources disagree. Choose the value yourself.')).toBeVisible()
+        expect(screen.queryByText('Different source tag lists.')).toBeNull()
         expect(
           screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
         ).toBeNull()
@@ -4178,8 +4178,8 @@ describe('Library route', () => {
       expect(recorded).toHaveTextContent('First · Shared · Second')
       if (ownerTags.length) expect(recorded).toHaveTextContent('Owner tag')
       expect(recorded).toHaveTextContent('Compatible source tags were combined')
-      expect(screen.getByText('Different source tag lists')).toBeVisible()
-      expect(screen.queryByText('The sources disagree. Choose the value yourself')).toBeNull()
+      expect(screen.getByText('Different source tag lists.')).toBeVisible()
+      expect(screen.queryByText('The sources disagree. Choose the value yourself.')).toBeNull()
       await userEvent.click(within(recorded).getByRole('button', { name: 'Evidence' }))
       expect(recorded).toHaveTextContent('Source record 1')
       expect(recorded).toHaveTextContent('Source record 2')
