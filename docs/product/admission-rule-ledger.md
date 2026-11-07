@@ -266,23 +266,6 @@ The origin ADRs are
 | audiobook-1294 | unique_safe_cover | 3 |
 | audiobook-1294 | work_publication_cannot_replace | 1 |
 
-### Breakdown: T1
-
-| Split | Fields | Actionable | TP/FP/unlabelled | Reach no record | Identity precision (lower) | Pick agrees (lower) | Tied | Contaminated | No right-work | Single | Pick preserves |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| asin | 31 | 31 | 10/0/43 | 0 | 1.000 (0.723) | 10/22 0.455 (0.269) | 0 | 0 | 9 | 0 | 4 |
-| authors | 122 | 122 | 36/0/30 | 92 | 1.000 (0.904) | 16/32 0.500 (0.336) | 0 | 1 | 89 | 0 | 45 |
-| description | 368 | 368 | 193/22/236 | 47 | 0.898 (0.850) | 50/98 0.510 (0.413) | 95 | 2 | 173 | 0 | 47 |
-| genres | 32 | 32 | 11/7/14 | 0 | 0.611 (0.386) | 11/18 0.611 (0.386) | 0 | 0 | 14 | 0 | 1 |
-| isbn | 140 | 140 | 183/0/0 | 33 | 1.000 (0.979) | 23/42 0.548 (0.400) | 86 | 0 | 12 | 0 | 17 |
-| narrators | 15 | 15 | 4/0/7 | 6 | 1.000 (0.510) | 4/7 0.571 (0.251) | 0 | 0 | 8 | 0 | 4 |
-| series | 113 | 113 | 44/3/42 | 40 | 0.936 (0.828) | 36/62 0.581 (0.457) | 1 | 0 | 50 | 0 | 22 |
-| tags | 11 | 11 | 1/2/8 | 0 | 0.333 (0.061) | 1/3 0.333 (0.061) | 0 | 0 | 8 | 0 | 0 |
-| title | 500 | 500 | 338/46/280 | 147 | 0.880 (0.844) | 96/196 0.490 (0.421) | 64 | 1 | 239 | 0 | 262 |
-| medium: audiobook | 184 | 184 | 42/0/155 | 43 | 1.000 (0.916) | 42/81 0.518 (0.411) | 0 | 0 | 103 | 0 | 41 |
-| medium: ebook | 1,148 | 1,148 | 778/80/505 | 322 | 0.907 (0.885) | 205/399 0.514 (0.465) | 246 | 4 | 499 | 0 | 361 |
-| total | 1,332 | 1,332 | 820/80/660 | 365 | 0.911 (0.891) | 247/480 0.515 (0.470) | 246 | 4 | 602 | 0 | 402 |
-
 ## Reading the ledger
 
 - **Follow-ons.** Four rows are filed:
@@ -299,9 +282,8 @@ The origin ADRs are
   decide, the lowest-identifier pick agrees with the one right-work
   alternative in about half the fields: T1 247 of 480 (0.515, lower limit
   0.470), A6 108 of 184 (0.587, 0.515; unranked), A3 12 of 20 (0.600, 0.387). A2 has no
-  decidable field. Split by destination (the T1 breakdown), T1's agreement
-  runs from 1 of 3 (tags) to 11 of 18 (genres), and no destination's lower
-  limit reaches 0.46. Most of T1's ebook fields (759 of 1,141) and some of A6's
+  decidable field. `--breakdown T1` splits T1's by destination; no
+  destination's lower limit reaches 0.46. Most of T1's ebook fields (759 of 1,141) and some of A6's
   (187) compete on destinations a later election decides on main, so those
   ceilings are stale.
 - **Dispositions.** `kept` rows stay as they are; `kept (#1744)` was decided
@@ -356,7 +338,7 @@ uv run python scripts/admission_rule_ledger.py \
     --source-report audiobook-1294 "$AUDIO/final-report.json" \
     --follow-on A6=1745 --follow-on A3=1746 \
     --follow-on A2=1747 --follow-on W9=1748 \
-    --breakdown T1 --format markdown
+    --format markdown
 ```
 
 The checkout must hold full history: a shallow clone or an unknown revision

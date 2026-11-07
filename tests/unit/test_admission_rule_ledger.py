@@ -822,7 +822,7 @@ def _competing(
                     else list(claims),
                     "assessment": "preserves_target"
                     if alternative == preserves
-                    else "changes_target",
+                    else "replaces_target",
                 }
                 for alternative, claims in cited
             ],
@@ -1779,8 +1779,22 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
         "genres",
         [("alternative_a", "local_" + text()), ("alternative_b", records.unlabelled())],
     )
-    # Single alternative: nothing competes with it.
-    _competing(fixture, "tags", [("alternative_a", records.positive())])
+    # No right-work alternative either: another work's and unlabelled records.
+    _competing(
+        fixture,
+        "subtitle",
+        [
+            ("alternative_a", records.negative()),
+            ("alternative_b", records.unlabelled()),
+        ],
+    )
+    # Single alternative: nothing competes with it, and it keeps the value.
+    _competing(
+        fixture,
+        "tags",
+        [("alternative_a", records.positive())],
+        preserves="alternative_a",
+    )
     # Blocked but not actionable: no alternative at all.
     fixture.result("asin", "unresolved_choice", ["competing_evidence"])
     database = _database(tmp_path / "c.sqlite3", "v26-like", [fixture])
@@ -1796,8 +1810,8 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
         "no_right_work_fields",
         "single_alternative_fields",
     )
-    assert [pick[key] for key in classes] == [2, 1, 1, 1, 1]
-    assert (row["ceiling"], row["actionable"]) == (7, 6)
+    assert [pick[key] for key in classes] == [2, 1, 1, 2, 1]
+    assert (row["ceiling"], row["actionable"]) == (8, 7)
     assert sum(cast("int", pick[key]) for key in classes) == row["actionable"]
     assert (pick["pick_agrees"], pick["rate"]) == (1, 0.5)
     destinations = _split(row, "destination")
@@ -1807,6 +1821,7 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
         "title": "decidable_fields",
         "authors": "contaminated_fields",
         "genres": "no_right_work_fields",
+        "subtitle": "no_right_work_fields",
         "tags": "single_alternative_fields",
     }
     for destination, key in expected.items():
@@ -1817,6 +1832,11 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
     assert cast("dict[str, object]", destinations["series"]["pick"])["pick_agrees"] == 1
     assert cast("dict[str, object]", destinations["title"]["pick"])["pick_agrees"] == 0
     assert destinations["asin"]["actionable_fields"] == 0
+    # A single alternative's pick is that alternative, so it can preserve too.
+    assert (
+        cast("dict[str, object]", destinations["tags"]["pick"])["pick_preserves"] == 1
+    )
+    assert pick["pick_preserves"] == 1
     markdown = _run([*arguments, "--format", "markdown", "--breakdown", "T1"])[1]
     lines = markdown.splitlines()
     assert lines[lines.index("### Breakdown: T1") + 4 :][:2] == [
@@ -1826,10 +1846,10 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
         "| 0 | 1 | 0 | 0 | 0 |",
     ]
     assert lines[-2:] == [
-        "| medium: ebook | 7 | 6 | 4/1/1 | 2 | 0.800 (0.376) | 1/2 0.500 (0.095) "
-        "| 1 | 1 | 1 | 1 | 0 |",
-        "| total | 7 | 6 | 4/1/1 | 2 | 0.800 (0.376) | 1/2 0.500 (0.095) "
-        "| 1 | 1 | 1 | 1 | 0 |",
+        "| medium: ebook | 8 | 7 | 4/2/1 | 2 | 0.667 (0.300) | 1/2 0.500 (0.095) "
+        "| 1 | 1 | 2 | 1 | 1 |",
+        "| total | 8 | 7 | 4/2/1 | 2 | 0.667 (0.300) | 1/2 0.500 (0.095) "
+        "| 1 | 1 | 2 | 1 | 1 |",
     ]
     # T1's decision is recorded: it is kept, not proposed again.
     ranked = next(line for line in lines if line.split(" | ")[1:2] == ["T1"])
