@@ -397,3 +397,15 @@ forward while its file and configuration fingerprints are unchanged, so a
 stored report would keep its `unavailable` Open Library covers. The proposal
 policy is unchanged. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1363 also takes the clean-rebuild branch. `metadata-report-v72` adds
+`measures` to every decoded cover artifact: the perceptual, difference,
+colour and layout measures the constrained decoder computes from the 320×480
+preview, so later cover rules can tell the same art apart from other art. A
+v71 report states none, and a report carries forward while its file and
+configuration fingerprints are unchanged, so a stored report would never
+measure its covers. `cover-consideration-v5` records the kept original of an
+automatic switch, and two new tables bind each kept original to its plan and
+hold its removal obligation. The proposal policy is unchanged. Every earlier
+application database is rejected before mutation and needs a clean rebuild; no
+adoption is supplied.

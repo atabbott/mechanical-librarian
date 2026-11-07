@@ -26,6 +26,9 @@ one fixed, bounded diagnostic with no paths, credentials, target values,
 provider bodies or EPUB text. A report's cover evidence is a source outcome
 and a private artifact reference. The cover preview is a private
 digest-addressed artifact that contacts nothing and cannot fetch originals.
+Each decoded artifact also records `measures`: perceptual, difference, colour
+and layout measures computed inside the constrained decoder from the oriented
+320×480 preview, never from stated sizes or embedded metadata (#1363).
 
 ## Preconditions
 
