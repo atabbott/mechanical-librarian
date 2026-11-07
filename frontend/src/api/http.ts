@@ -1,7 +1,10 @@
 export type ReadWorkClass = 'foreground' | 'background'
 
-import type { components } from '../generated/review-api'
-import type { components as responseComponents } from '../generated/review-api-response'
+import type { components, paths } from '../generated/review-api'
+import type {
+  components as responseComponents,
+  paths as responsePaths,
+} from '../generated/review-api-response'
 import type { D, OperationKey } from '../generated/review-decoders'
 import { DecodeFailure, matchOperation, responseDecoders } from '../generated/review-decoders'
 import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
@@ -652,6 +655,9 @@ export interface ReviewFieldView {
     | ResponseSchema<'_CoverAutomaticDecisionProjection'>
     | null
   automaticWithheldReason: string | null
+  // In Preview, the value Automatic chose before the owner entered Preview
+  // mode on a field that now reads No change (#1575).
+  earlierAutomaticValue?: ResponseSchema<'_ProposedValue'> | null
   automaticSelectionSources?: readonly string[]
   notices: readonly string[]
   provenance: readonly string[]
@@ -847,6 +853,39 @@ export type PolicyTransitionView = ResponseSchema<'_PolicyTransitionResponse'>
 export type PolicyDraft = Schema<'_PolicyDraftRequest'>
 export type PolicyActivationRequest = Schema<'_PolicyActivationRequest'>
 export type PolicyPreviewView = ResponseSchema<'_PolicyPreviewResponse'>
+// The generic policy commands `policyCommand` sends. Preview and activation are
+// left out: each carries checks the schema cannot state, so only
+// `previewPolicy` and `activatePolicy` send them (ADR-0091 P-X1 to P-X3).
+export type PolicyCommandPath =
+  | 'validate'
+  | 'drafts'
+  | 'automatic-safety/pause'
+  | 'automatic-safety/recover'
+  | 'automatic-safety/suspend'
+  | 'shadow/enter'
+  | 'shadow/confirm-automatic'
+  | `transitions/${string}/acknowledge`
+  | `transitions/${string}/retry`
+// Each command's body and answer come from its operation in the generated
+// `paths`, so a path whose request or answer changes fails `tsc` here. Both
+// distribute over a union of paths, so a caller holding any command gets the
+// union of their bodies and answers.
+type PolicyCommandRoute<P extends PolicyCommandPath> = P extends `transitions/${string}/acknowledge`
+  ? '/api/v1/metadata-policy/transitions/{transition_id}/acknowledge'
+  : P extends `transitions/${string}/retry`
+    ? '/api/v1/metadata-policy/transitions/{transition_id}/retry'
+    : `/api/v1/metadata-policy/${P}`
+type JsonContent<Part> = Part extends { content: { 'application/json': infer Json } } ? Json : never
+export type PolicyCommandBody<P extends PolicyCommandPath> = P extends PolicyCommandPath
+  ? paths[PolicyCommandRoute<P>]['post'] extends { requestBody: infer Body }
+    ? JsonContent<Body>
+    : undefined
+  : never
+export type PolicyCommandAnswer<P extends PolicyCommandPath> = P extends PolicyCommandPath
+  ? responsePaths[PolicyCommandRoute<P>]['post']['responses'] extends infer Responses
+    ? JsonContent<Responses[Extract<keyof Responses, 200 | 201>]>
+    : never
+  : never
 export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
 // The activity family is decoded centrally (#1691): its views are the
 // response-truth types, and only the example adds a label of its own.
@@ -1092,7 +1131,11 @@ export interface ReviewHttp {
     request: PolicyActivationRequest,
     signal?: AbortSignal,
   ): Promise<PolicyActivationView>
-  policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
+  policyCommand<P extends PolicyCommandPath>(
+    path: P,
+    body?: PolicyCommandBody<P>,
+    signal?: AbortSignal,
+  ): Promise<PolicyCommandAnswer<P>>
   getActivity(
     search?: ActivitySearch,
     signal?: AbortSignal,
@@ -1737,16 +1780,14 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async getPolicyState(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return schemaVersionOnly<PolicyStateView>(
-      await this.read('/api/v1/metadata-policy/state', signal, workClass),
-      'policy_state',
-    )
+    return (await this.read('/api/v1/metadata-policy/state', signal, workClass)) as PolicyStateView
   }
   async getShadowPosture(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return schemaVersionOnly<ShadowPostureView>(
-      await this.read('/api/v1/metadata-policy/shadow', signal, workClass),
-      'shadow_posture',
-    )
+    return (await this.read(
+      '/api/v1/metadata-policy/shadow',
+      signal,
+      workClass,
+    )) as ShadowPostureView
   }
   async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return (await this.read(
@@ -1756,16 +1797,19 @@ export class ReviewApiClient implements ReviewHttp {
     )) as AutomaticSafetyView
   }
   async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return schemaVersionOnly<ShadowSampleView>(
-      await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal, workClass),
-      'shadow_sample',
-    )
+    return (await this.read(
+      '/api/v1/metadata-policy/shadow/outcomes?limit=10',
+      signal,
+      workClass,
+    )) as ShadowSampleView
   }
   async getPolicyTransition(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    const value = await this.read('/api/v1/metadata-policy/transition', signal, workClass)
-    return value === null
-      ? null
-      : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
+    // The decoder accepts `null`: no transition has run.
+    return (await this.read(
+      '/api/v1/metadata-policy/transition',
+      signal,
+      workClass,
+    )) as PolicyTransitionView | null
   }
   // A preview writes nothing, so an answer that fails decoding or a named check
   // is a 502, never an uncertain write (#1692).
@@ -1800,9 +1844,16 @@ export class ReviewApiClient implements ReviewHttp {
       },
     )
   }
-  async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
-    const writesNothing = path === 'validate' || path === 'preview'
-    const value = await this.mutate(
+  // Every path is decoded by its operation's decoder before `mutate` returns,
+  // so the answer is that operation's documented answer; `mutate` takes its
+  // type from the declared return.
+  async policyCommand<P extends PolicyCommandPath>(
+    path: P,
+    body?: PolicyCommandBody<P>,
+    signal?: AbortSignal,
+  ): Promise<PolicyCommandAnswer<P>> {
+    const writesNothing = path === 'validate'
+    return this.mutate(
       `/api/v1/metadata-policy/${path}`,
       body,
       signal,
@@ -1811,8 +1862,6 @@ export class ReviewApiClient implements ReviewHttp {
       writesNothing,
       writesNothing,
     )
-    if (!record(value)) throw new ApiError(502, 'invalid_policy_response')
-    return value as T
   }
   async getActivity(
     search?: ActivitySearch,
@@ -2285,26 +2334,6 @@ export const targetValueText = (
       ? EMPTY_TARGET_TEXT
       : 'Couldn’t be read from Audiobookshelf'
 
-const validateObject = (value: unknown, name: string): Record<string, unknown> => {
-  if (!record(value) || typeof value.schema_version !== 'string')
-    throw new ApiError(502, `invalid_${name}_response`)
-  return value
-}
-// A deliberate, named exception to the rule that every field a view reads is
-// checked. It predates the decoders: the only invariant it asserts is the
-// version handshake, because a hand-written copy of
-// docs/reference/review-openapi-v1.json would become a second contract. Every
-// family is now decoded (`DECODED`), so the policy reads that still pass
-// through here have already been checked field by field by their generated
-// decoders; stage 4 deletes this with `validateObject` (#1684). This is the one
-// place in the file allowed to widen a document to a DTO type, which is why
-// the call sites carry no cast of their own.
-// The lint rule below objects that a type parameter used once is an assertion in
-// disguise. It is, deliberately: this is the file's single declared assertion seam,
-// and naming it here is what keeps the call sites free of casts of their own.
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
-const schemaVersionOnly = <T>(value: unknown, name: string): T =>
-  validateObject(value, name) as unknown as T
 // The checks the preview schema cannot state (ADR-0091): the decoder has
 // already enforced every field.
 const mapPolicyPreview = (value: PolicyPreviewView): PolicyPreviewView => {
@@ -2621,6 +2650,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   inventoryRole: field.inventory_role,
   automaticDecision: field.automatic_decision,
   automaticWithheldReason: field.automatic_withheld_reason,
+  earlierAutomaticValue: field.earlier_automatic_value,
   automaticSelectionSources: field.automatic_selection_sources,
   notices: field.notices,
   provenance: field.provenance,

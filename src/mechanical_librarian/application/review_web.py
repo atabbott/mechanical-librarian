@@ -231,6 +231,9 @@ class CurrentReviewCaseSnapshot:
     final_outcome_document: str | None = None
     automatic_source_outcome_documents: tuple[str, ...] = ()
     automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
+    # In Preview, the value each field's latest earlier-generation automatic
+    # candidate chose, by destination (#1575).
+    earlier_automatic_values: tuple[tuple[str, dict[str, object]], ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     policy_attention_destinations: tuple[str, ...] = ()
     # The undecided choices the persisted field facts settle: a work-route
@@ -1227,6 +1230,16 @@ class InspectCurrentReviewCase:
             ),
             "automatic_decision": automatic_decision,
             "automatic_withheld_reason": None,
+            # Shown only on a field that reads No change with no decision of
+            # its own; the earlier choice decides nothing now (#1575).
+            "earlier_automatic_value": (
+                dict(snapshot.earlier_automatic_values).get(destination)
+                if automatic_decision is None
+                and decision is None
+                and classification.state == "unsupported"
+                and destination != "cover"
+                else None
+            ),
             "automatic_selection_sources": automatic_selection_sources,
             # Held only while the hold row is in force: Return to
             # automatic releases it on the deciding case too (#1358).
