@@ -127,6 +127,7 @@ from mechanical_librarian.domain.metadata_report import (
     candidate_asins,
     canonical_asin,
     companion_discovery_title,
+    companion_isbn_books,
     companion_isbn_claims,
     companion_isbn_lane,
     complete_creator_identity_bindings,
@@ -1711,6 +1712,69 @@ def aggregate_audio_editions(
     return _aggregate_audio_editions(
         results, tuple(value for result in results for value in result.candidates)
     )
+
+
+def refit_companion_books(
+    results: tuple[ProviderLaneResult, ...],
+    plan: MetadataDiscoveryPlan,
+) -> tuple[ProviderLaneResult, ...]:
+    """Keep the companion books the observation's own editions still link.
+
+    The observation keeps fewer audio editions than its lanes read when two
+    lanes read one edition differently or the total passes the bound, and the
+    report replays the companion rule against what it keeps (#1468). A book
+    linked only by a dropped edition is dropped with it, so an honest answer
+    always replays; dropping a book drops only its own editions, so this
+    settles in at most one pass per book. An adapter refits what it observed,
+    and a retry refits what it merged, since the retried lanes' editions can
+    join or leave the aggregate.
+    """
+    if plan.audio is None:
+        return results
+    for _ in range(len(results) + MAX_AUDIO_EDITIONS + 1):
+        editions = aggregate_audio_editions(results)
+        changed = False
+        refit: list[ProviderLaneResult] = []
+        for result in results:
+            if (
+                result.lane.kind is not ProviderQueryKind.ISBN
+                or result.status is not ProviderStatus.CANDIDATES
+            ):
+                refit.append(result)
+                continue
+            kept = companion_isbn_books(
+                result.candidates, editions, plan.work_title, plan.work_authors
+            )
+            if kept == result.candidates:
+                refit.append(result)
+                continue
+            changed = True
+            works = {value.identity for value in kept}
+            refit.append(
+                replace(
+                    result,
+                    status=ProviderStatus.CANDIDATES
+                    if kept
+                    else ProviderStatus.NO_MATCH,
+                    candidates=kept,
+                    audio_editions=tuple(
+                        value
+                        for value in result.audio_editions
+                        if value.work_identity in works
+                    ),
+                    # A recorded dispatch follows the status: an ISBN lane
+                    # left with no book found nothing.
+                    dispatch=None
+                    if result.dispatch is None
+                    else result.dispatch
+                    if kept
+                    else ProviderLaneDispatch(DispatchOutcome.EMPTY),
+                )
+            )
+        results = tuple(refit)
+        if not changed:
+            return results
+    raise MetadataReportError("provider companion books did not settle")
 
 
 def _aggregate_audio_editions(
@@ -4275,6 +4339,7 @@ def require_report_current(
 
 
 __all__ = [
+    "refit_companion_books",
     "AudioInspectionResult",
     "AudioInspector",
     "AudioItemInspectionError",

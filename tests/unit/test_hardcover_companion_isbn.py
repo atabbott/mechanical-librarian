@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from typing import Any, cast
 
 import httpx
 
@@ -21,6 +22,9 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     audiobook_discovery_plan,
     companion_binding_plan,
+)
+from mechanical_librarian.application.provider_retry_successor import (
+    GenerateProviderRetrySuccessor,
 )
 from mechanical_librarian.domain import metadata_report as dom
 from mechanical_librarian.domain.metadata_report import (
@@ -146,6 +150,8 @@ def _observe(
     isbn: str = _ISBN,
     search_books: tuple[int, ...] = (),
     editions: Callable[[int, int], httpx.Response],
+    plan: MetadataDiscoveryPlan | None = None,
+    isbn_fails: bool = False,
 ) -> tuple[ProviderObservation, list[str]]:
     sent: list[str] = []
 
@@ -155,6 +161,8 @@ def _observe(
         if body["operationName"] == "AudioEditions":
             return editions(body["variables"]["book"], body["variables"]["offset"])
         if body["operationName"] == "MetadataEvidenceByIsbn":
+            if isbn_fails:
+                return httpx.Response(500, json={})
             return httpx.Response(
                 200,
                 json=hardcover_envelope(
@@ -186,7 +194,7 @@ def _observe(
             sleep=lambda _seconds: None,
             jitter=lambda: 0.0,
         )
-        .observe(_plan())
+        .observe(_plan() if plan is None else plan)
         .observation
     )
     return observation, sent
@@ -341,3 +349,57 @@ def test_a_book_linked_only_by_editions_the_observation_drops_is_dropped() -> No
         "hardcover-work-0000000010"
     ]
     _report(observation)
+
+
+def test_a_retry_refits_the_companion_book_against_the_merged_editions() -> None:
+    """A retry refits the companion books against what its merge keeps.
+
+    The search's book holds sixteen audio editions and the companion lookup
+    failed. Its retry finds another book linked by one counted edition, so the
+    merge reads seventeen, past the bound, and keeps none. The companion book
+    stood only on that edition, so it is dropped and the report publishes
+    (#1468).
+    """
+
+    def editions(book: int, offset: int) -> httpx.Response:
+        if offset:
+            return _page()
+        if book == _COMPANION_BOOK:
+            return _page(_edition(3, _LOCAL_SECONDS + 40, book_id=book))
+        return _page(
+            *(
+                _edition(1_000 + index, _LOCAL_SECONDS + index, book_id=book)
+                for index in range(16)
+            )
+        )
+
+    plan = _plan()
+    original, _sent = _observe(
+        search_books=(_SEARCH_BOOK,), editions=editions, isbn_fails=True
+    )
+    assert _isbn_lane(original).status is not ProviderStatus.CANDIDATES
+    assert len(original.audio_editions) == 16
+    selected = tuple(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+    replacement, _sent = _observe(editions=editions, plan=replace(plan, lanes=selected))
+    assert _isbn_lane(replacement).status is ProviderStatus.CANDIDATES
+
+    merged = GenerateProviderRetrySuccessor._merged(
+        cast("Any", GenerateProviderRetrySuccessor),
+        plan,
+        replace(original, authority="hardcover"),
+        selected,
+        replace(replacement, authority="hardcover"),
+    )
+
+    assert _isbn_lane(merged).status is ProviderStatus.NO_MATCH
+    # Dropping the companion book drops its edition, so the search's book
+    # keeps its sixteen again under the bound.
+    assert {value.work_identity for value in merged.audio_editions} == {
+        "hardcover-work-0000000010"
+    }
+    assert len(merged.audio_editions) == 16
+    assert [value.identity for value in merged.candidates] == [
+        "hardcover-work-0000000010"
+    ]
+    report = _report(merged)
+    assert MetadataReport.from_json(report.to_json()) == report

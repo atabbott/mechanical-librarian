@@ -34,18 +34,17 @@ from mechanical_librarian.application.failure_diagnostics import (
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
-    MetadataReportError,
     ProviderCoverDescriptor,
     ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
-    aggregate_audio_editions,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
+    refit_companion_books,
 )
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
@@ -414,7 +413,7 @@ class HardcoverMetadataProvider:
         self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
-            _companion_books_after_aggregation(tuple(results), plan),
+            refit_companion_books(tuple(results), plan),
             diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
         )
@@ -1127,60 +1126,6 @@ def _has_graphql_errors(payload: bytes) -> bool:
                 }:
                     raise ValueError("provider error extension invalid")
     return True
-
-
-def _companion_books_after_aggregation(
-    results: tuple[ProviderLaneResult, ...],
-    plan: MetadataDiscoveryPlan,
-) -> tuple[ProviderLaneResult, ...]:
-    """Keep the companion books the observation's own editions still link.
-
-    The observation keeps fewer audio editions than its lanes read when two
-    lanes read one edition differently or the total passes the bound, and the
-    report replays the companion rule against what it keeps (#1468). A book
-    linked only by a dropped edition is dropped with it, so an honest answer
-    always replays; dropping a book drops only its own editions, so this
-    settles in at most one pass per book.
-    """
-    if plan.audio is None:
-        return results
-    for _ in range(len(results) + MAX_AUDIO_EDITIONS + 1):
-        editions = aggregate_audio_editions(results)
-        changed = False
-        refit: list[ProviderLaneResult] = []
-        for result in results:
-            if (
-                result.lane.kind is not ProviderQueryKind.ISBN
-                or result.status is not ProviderStatus.CANDIDATES
-            ):
-                refit.append(result)
-                continue
-            kept = companion_isbn_books(
-                result.candidates, editions, plan.work_title, plan.work_authors
-            )
-            if kept == result.candidates:
-                refit.append(result)
-                continue
-            changed = True
-            works = {value.identity for value in kept}
-            refit.append(
-                replace(
-                    result,
-                    status=ProviderStatus.CANDIDATES
-                    if kept
-                    else ProviderStatus.NO_MATCH,
-                    candidates=kept,
-                    audio_editions=tuple(
-                        value
-                        for value in result.audio_editions
-                        if value.work_identity in works
-                    ),
-                )
-            )
-        results = tuple(refit)
-        if not changed:
-            return results
-    raise MetadataReportError("provider companion books did not settle")
 
 
 def _companion_isbn_answer(
