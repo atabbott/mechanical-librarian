@@ -65,6 +65,7 @@ def classify_review_field(
     kept_cover: bool = False,
     kept_by_fill_policy: bool = False,
     kept_by_tags_off: bool = False,
+    single_source: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -80,8 +81,9 @@ def classify_review_field(
     the optional choice is a cover kept as it is, so its statement speaks of
     covers rather than values (#1310). `kept_by_fill_policy` says it is
     optional because the owner's setting only fills empty fields and the
-    current value passes the floor, and `kept_by_tags_off` because the owner's
-    tags setting is off (#1310).
+    current value passes the floor, `kept_by_tags_off` because the owner's
+    tags setting is off, and `single_source` because only one uncorroborated
+    source proposes a value (#1310).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -188,6 +190,9 @@ def classify_review_field(
                 else "Tags are off in your settings, so your tags are left as they are "
                 "and no review is needed. You can still choose proposed tags."
                 if kept_by_tags_off
+                else "Only one source suggests this, and nothing else confirms it, "
+                "so it isn't used and no review is needed. You can still choose it."
+                if single_source
                 else "No review is needed. You can still keep the current value or "
                 "choose a proposed one."
             ),

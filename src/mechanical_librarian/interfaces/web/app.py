@@ -475,6 +475,9 @@ class _CoverCandidate(_ClosedModel):
     identity: _CoverIdentity
     incumbent: bool
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
+    # A proposed cover from the exactly matched book of an audiobook with no
+    # admitted recording; display only, its identity stays as stated (#1642).
+    match_reason: Literal["matched_book"] | None
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: _Count

@@ -328,15 +328,17 @@ function LibraryCoverChoicesContent({
         .slice(0, 2)
     : []
   const excludedReason = (candidate: (typeof candidates)[number]) =>
-    candidate.matchState === 'match_not_confirmed'
-      ? "Match not confirmed · We couldn't confirm that this cover belongs to this book or edition."
-      : candidate.observation === null
-        ? 'Reviewer observations unavailable; deterministic match evidence is retained.'
-        : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
-          ? policyReasons.length
-            ? policyReasons.map(coverNoteLabel).join(', ')
-            : 'Not among the covers your policy accepts'
-          : coverStateLabels[candidate.state]
+    candidate.matchReason === 'matched_book'
+      ? 'From the matched book, not a confirmed recording.'
+      : candidate.matchState === 'match_not_confirmed'
+        ? "Match not confirmed · We couldn't confirm that this cover belongs to this book or edition."
+        : candidate.observation === null
+          ? 'Reviewer observations unavailable; deterministic match evidence is retained.'
+          : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
+            ? policyReasons.length
+              ? policyReasons.map(coverNoteLabel).join(', ')
+              : 'Not among the covers your policy accepts'
+            : coverStateLabels[candidate.state]
   const cardState = (candidate: (typeof candidates)[number]) => {
     const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
@@ -448,9 +450,11 @@ function LibraryCoverChoicesContent({
             <strong>
               {candidate.matchState === 'same_edition'
                 ? 'Same edition'
-                : candidate.matchState === 'same_book'
+                : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
                   ? 'Same book'
                   : 'Match not confirmed'}
+              {/* The identity stays unverified: only the wording names its basis (#1642). */}
+              {candidate.matchReason === 'matched_book' ? ' · recording not confirmed' : ''}
             </strong>
             <span className="cover-dimensions">
               {`${String(candidate.width)} × ${String(candidate.height)} px`}
@@ -459,7 +463,9 @@ function LibraryCoverChoicesContent({
               {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
             </span>
             {context?.rationale ? <em>{context.rationale}</em> : null}
-            {!eligibleCandidate || candidate.matchState === 'match_not_confirmed' ? (
+            {!eligibleCandidate ||
+            candidate.matchState === 'match_not_confirmed' ||
+            candidate.matchReason === 'matched_book' ? (
               <span className="choice-recommendation">{excludedReason(candidate)}</span>
             ) : recommended && context?.recommendationReason ? (
               <span className="choice-recommendation">{context.recommendationReason}</span>

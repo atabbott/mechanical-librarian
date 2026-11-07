@@ -801,10 +801,12 @@ def _classify_field(
     # options keep (#1310); an immaterial one is #1253's, not this. A
     # proposed fill the evaluated policy keeps (tags while they are off)
     # is settled the same way on every medium (#1661).
+    single_source = _single_source_choice(proposal)
     policy_settled = (
         result["outcome"] == "unresolved_choice"
         and "work_alternative_immaterial" not in reasons
         and not _kept_cover(proposal)
+        and not single_source
         and destination in snapshot.settled_choice_destinations
     ) or (
         result["outcome"] == "propose_change"
@@ -874,13 +876,18 @@ def _classify_field(
         # value a fill-only option keeps, or tags while they are off,
         # including a single proposed list for empty Tags) stay the
         # owner's to choose in their case without joining the queue
-        # (#1249, #1310, #1661). A kept cover with no current comparison
-        # is still choosable: the owner can prepare one.
+        # (#1249, #1310, #1661), and so does a value only one
+        # uncorroborated source proposes (#1310). A kept cover with no
+        # current comparison is still choosable: the owner can prepare one.
         owner_choosable=automatic_decision is None
         and (
             (
                 cover_admits
-                and (context.case.media_kind == "audiobook" or policy_settled)
+                and (
+                    context.case.media_kind == "audiobook"
+                    or policy_settled
+                    or single_source
+                )
                 and bool(actions)
             )
             or (
@@ -902,6 +909,7 @@ def _classify_field(
         kept_cover=_kept_cover(proposal),
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
+        single_source=single_source,
     )
 
 
@@ -3273,6 +3281,29 @@ def _kept_cover(proposal: dict[str, object]) -> bool:
     return proposal["destination"] == "cover" and "current_cover_verified" in reasons
 
 
+def _single_source_choice(proposal: dict[str, object]) -> bool:
+    """One uncorroborated source proposes the only alternative (#1310).
+
+    Residual uncertainty alone does not justify asking, so the choice stays
+    the owner's without joining the queue, as `_SINGLE_SOURCE_CHOICE_SQL`
+    reads it; an explicit Ask still asks.
+    """
+    result = proposal["result"]
+    assert type(result) is dict
+    if result["outcome"] != "unresolved_choice" or result["reasons"] != [
+        "insufficient_independent_corroboration"
+    ]:
+        return False
+    alternatives = result["alternatives"]
+    assert type(alternatives) is list
+    material = [
+        alternative
+        for alternative in alternatives
+        if alternative["assessment"] != "preserves_target"
+    ]
+    return len(material) == 1 and len(material[0]["correlations"]) < 2
+
+
 def _needs_attention(
     proposal: dict[str, object],
     automatic_attention_destinations: tuple[str, ...] = (),
@@ -3291,7 +3322,8 @@ def _needs_attention(
     and so does a cover choice over a readable current cover (#1310). So do
     a populated subjective value a fill-only option keeps and tags while their
     option is off; the facts read those options, so the detail passes their
-    settled destinations (#1310).
+    settled destinations (#1310). A value only one uncorroborated source
+    proposes is not queued either (#1310).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -3304,6 +3336,7 @@ def _needs_attention(
             result["outcome"] == "unresolved_choice"
             and "work_alternative_immaterial" not in reasons
             and not _kept_cover(proposal)
+            and not _single_source_choice(proposal)
             and proposal["destination"] not in settled_choice_destinations
         )
         or proposal["manual_required"] is True

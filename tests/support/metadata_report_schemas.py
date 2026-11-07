@@ -304,19 +304,27 @@ def retained_report_as_current(document: str) -> MetadataReport:
     return MetadataReport.from_json(canonical_json(data))
 
 
-# Every producer before #1310 queued a choice its policy settles, so its
-# review-case field-fact trigger lacks the policy clause.
+# Every producer before #1310 queued a choice its policy settles and a
+# single-source choice, so its review-case field-fact trigger lacks both clauses.
 PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
     persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL.replace(
         "AND NOT "
         + persistence_schema._policy_settles_choice_sql("NEW.proposal_set_id")
         + " ",
         "",
-    )
+    ).replace("AND NOT " + persistence_schema._SINGLE_SOURCE_CHOICE_SQL + " ", "")
 )
 assert (
-    PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL
-    != persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL
+    persistence_schema._SINGLE_SOURCE_CHOICE_SQL
+    in persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL
+)
+assert (
+    persistence_schema._SINGLE_SOURCE_CHOICE_SQL
+    not in PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL
+)
+assert (
+    persistence_schema._policy_settles_choice_sql("NEW.proposal_set_id")
+    not in PRE_1310_REVIEW_CASE_FIELD_FACTS_INSERT_SQL
 )
 
 

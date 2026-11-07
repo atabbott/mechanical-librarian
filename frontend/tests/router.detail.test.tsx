@@ -2,16 +2,26 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
+import { ApiError } from '../src/api/http'
+import { DecodeFailure } from '../src/generated/review-decoders'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
 import type { CaseDetailView, ReviewHttp } from '../src/api/http'
-import { createHttp, detail, renderRoute } from './fixtures'
+import {
+  createHttp,
+  detail,
+  readCaseDetail,
+  readEvidence,
+  readHistory,
+  renderRoute,
+} from './fixtures'
 import {
   caseHistory,
   coverCandidate,
   coverConsideration,
+  coverIdentity,
+  coverPolicyReport,
   decisionProjection,
   historyCoverItem,
 } from './wireFixtures'
@@ -137,7 +147,8 @@ describe('Library review ownership', () => {
         'Book-level evidence supports title choices. The exact recording remains unresolved.',
       ),
     ).toBeVisible()
-    expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
+    // One offered field reads in the singular (#1642).
+    expect(within(section).getByText(/^Your choice applies only to this field\./u)).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
   })
 
@@ -231,7 +242,13 @@ describe('Library review ownership', () => {
         'A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
       ),
     ).toBeVisible()
-    expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
+    // Narrators alone are one field, so the note reads in the singular.
+    expect(
+      within(section).getByText(
+        'Your choice applies only to this field. Recording identifiers and automatic changes are unavailable from this evidence.',
+      ),
+    ).toBeVisible()
+    expect(within(section).queryByText(/these fields/u)).toBeNull()
   })
 
   it('states media health on the case an admitted audiobook opens', async () => {
@@ -374,15 +391,15 @@ describe('Library review ownership', () => {
   })
 
   it('shows retained conflicting identifiers as observations without offering choices', async () => {
-    const evidence = mapEvidence(identifierEvidenceFixture.evidence)
-    const current = mapCaseDetail(identifierEvidenceFixture.detail)
+    const evidence = readEvidence(identifierEvidenceFixture.evidence)
+    const current = readCaseDetail(identifierEvidenceFixture.detail)
     const changed = structuredClone(identifierEvidenceFixture.detail)
     const choiceEvidence = changed.fields
       .flatMap((field) => field.choice_contexts)
       .flatMap((context) => context.evidence)[0]
     if (!choiceEvidence) throw new Error('actual linked choice evidence required')
     choiceEvidence.role = 'invented_support'
-    expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+    expect(() => readCaseDetail(changed)).toThrow(DecodeFailure)
     renderRoute(`/review/${current.id}?field=isbn&subview=evidence`, {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => current),
@@ -775,6 +792,7 @@ describe('Library review ownership', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-1',
             destination: field.destination,
             occurred_at: 1,
@@ -794,6 +812,7 @@ describe('Library review ownership', () => {
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-1',
         destination: 'title' as const,
         occurred_at: 1,
@@ -1294,7 +1313,7 @@ describe('bounded diagnostic return context', () => {
 it.each(['evidence', 'history'])(
   'keeps %s diagnostic-only while retaining authored history',
   async (subview) => {
-    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const authored = readCaseDetail(descriptionAdviceFixture)
     const candidate = authored.fields.find((field) => field.destination === 'description')
       ?.descriptionAdvice?.candidate
     if (!candidate) throw new Error('description fixture requires its candidate')
@@ -1379,7 +1398,7 @@ it.each(['evidence', 'history'])(
 it('retains unconfirmed incumbent evidence in actual mapped owner history', async () => {
   const http = createHttp()
   http.getHistory = vi.fn(async () =>
-    mapHistory(
+    readHistory(
       caseHistory({
         items: [
           historyCoverItem({
@@ -1406,4 +1425,51 @@ it('retains unconfirmed incumbent evidence in actual mapped owner history', asyn
   expect(await screen.findByText(/Owner-confirmed choice: the current cover\./u)).toHaveTextContent(
     'Match not confirmed by automated evidence. Recording a choice is separate from verified application.',
   )
+})
+
+it('says a chosen cover from the matched book leaves the recording unconfirmed (#1642)', async () => {
+  const http = createHttp()
+  http.getHistory = vi.fn(async () =>
+    readHistory(
+      caseHistory({
+        items: [
+          historyCoverItem({
+            kind: 'selected',
+            occurred_at: 3,
+            consideration: coverConsideration({
+              candidates: [
+                coverCandidate({
+                  artifact_id: 'matched-book-cover',
+                  deterministic_rank: null,
+                  deterministic_rank_key: null,
+                  identity: coverIdentity({ outcome: 'unknown' }),
+                  match_reason: 'matched_book',
+                  match_state: 'match_not_confirmed',
+                  selectable: false,
+                  state: 'excluded',
+                }),
+              ],
+              policy: coverPolicyReport({
+                acceptable_candidate_references: [],
+                reasons: ['no_confirmed_candidates'],
+                status: 'abstained',
+              }),
+              reviewer_status: 'unavailable',
+            }),
+            decision: decisionProjection({
+              outcome: 'accept',
+              selected_value: { kind: 'cover', value: 'matched-book-cover' },
+            }),
+          }),
+        ],
+      }),
+    ),
+  )
+  renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
+  expect(await screen.findByText(/Owner-confirmed choice: a proposed cover\./u)).toHaveTextContent(
+    'This cover comes from the matched book; the recording is not confirmed. Recording a choice is separate from verified application.',
+  )
+  expect(screen.getByText('No cover is confirmed for this recording')).toBeVisible()
+  expect(screen.queryByText('No cover is confirmed for this book')).toBeNull()
+  expect(screen.queryByText(/Match not confirmed by automated evidence/u)).toBeNull()
 })

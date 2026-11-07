@@ -355,6 +355,10 @@ genre list that passes the audiobook synopsis and genre floor carries the
 proposal reason `populated_value_meets_floor`, so the proposal policy moves to
 `fixed-conservative-v44`, and the review-case field facts read the resolved
 policy's options. The report schema is unchanged; no adoption is supplied.
+Its single-source settlement changes the review-case field-fact trigger again:
+a choice only one uncorroborated source proposes is no longer an unresolved
+choice there. The proposal policy and report schema are unchanged; no adoption
+is supplied.
 
 Issue #1642 also takes the clean-rebuild branch. `metadata-report-v68` adds
 Hardcover's work first-publication date claim on an audiobook WORK lane, which a

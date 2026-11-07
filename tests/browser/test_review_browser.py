@@ -3298,6 +3298,13 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 "review_case_id": payload["review_case_id"],
                                 "selected_value": selected,
                                 "target_fingerprint": field["target_fingerprint"],
+                                # A cover projection states what it replaced;
+                                # the lenient reader took an absent one as none.
+                                **(
+                                    {"supersedes_decision_id": None}
+                                    if field["destination"] == "cover"
+                                    else {}
+                                ),
                             },
                             classification="automatic_recorded",
                             classification_reason=(
@@ -11450,8 +11457,9 @@ def test_a_prepared_work_route_cover_keeps_the_case_readable():
     """Preparing a work-route cover leaves the case readable (#1642).
 
     The prepared consideration crosses the real wire parser: its offered
-    cover reads as an unconfirmed match, and the case, the field rail and the
-    work's Evidence page all still load after a reload.
+    cover reads as the matched book's cover whose recording is not confirmed,
+    and the case, the field rail and the work's Evidence page all still load
+    after a reload.
     """
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
         root = Path(directory)
@@ -11486,9 +11494,14 @@ def test_a_prepared_work_route_cover_keeps_the_case_readable():
                 page.get_by_role("button", name="Prepare cover comparison").click()
             assert prepared.value.status == 200
             for _ in range(2):
-                expect(
-                    page.get_by_text("Match not confirmed", exact=False).first
-                ).to_be_visible()
+                offered = page.locator(".cover-choice").filter(
+                    has_text="Same book · recording not confirmed"
+                )
+                expect(offered).to_have_count(1)
+                expect(offered).to_contain_text(
+                    "From the matched book, not a confirmed recording."
+                )
+                expect(offered).not_to_contain_text("Match not confirmed")
                 expect(
                     page.get_by_text("Selected work could not be loaded")
                 ).to_have_count(0)
@@ -11640,11 +11653,23 @@ def test_audiobook_work_series_title_owner_journey():
             ) as recorded:
                 series.press("Space")
             assert 200 == recorded.value.status
+            # Only one catalogue suggests the shorter title, so it does not ask
+            # and the case advances past it to the description (#1310).
             expect(
                 page.get_by_role(
-                    "heading", name="Which title should this work use?", exact=True
+                    "heading",
+                    name="Which description should this work use?",
+                    exact=True,
                 )
             ).to_be_visible()
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+            expect(
+                page.get_by_text(
+                    "Only one source suggests this, and nothing else confirms it",
+                    exact=False,
+                ).first
+            ).to_be_visible()
+            # It stays the owner's to choose.
             title = page.get_by_role(
                 "radio", name="Choose proposed value: Synthetic Journey", exact=True
             )
@@ -11654,13 +11679,6 @@ def test_audiobook_work_series_title_owner_journey():
             ) as recorded:
                 title.press("Enter")
             assert 200 == recorded.value.status
-            expect(
-                page.get_by_role(
-                    "heading",
-                    name="Which description should this work use?",
-                    exact=True,
-                )
-            ).to_be_visible()
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
             expect(title).to_have_attribute("aria-checked", "true")
             # Only the book's own fields are offered; the subtitle, cover and

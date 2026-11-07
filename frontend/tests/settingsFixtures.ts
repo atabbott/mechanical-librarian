@@ -1,4 +1,4 @@
-import type { SettingsView } from '../src/api/http'
+import type { SettingsView, SettingsWrite } from '../src/api/http'
 
 export const document: SettingsView['document'] = {
   schema_version: 'owner-settings-v4',
@@ -92,4 +92,18 @@ export const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
     },
     { configured: true, field_id: 'provider.hardcover.key', indicator: 'Configured · ····abcd' },
   ],
+})
+
+// A written document as the server answers it once saved: the write may leave
+// out a member that has a default, and the answer states every one (#1689).
+export const savedDocument = (written: SettingsWrite['document']): SettingsView['document'] => ({
+  ...written,
+  libraries: written.libraries.map((library) => ({
+    mount: null,
+    policy_override: null,
+    ...library,
+  })),
+  providers: written.providers.map((provider) =>
+    provider.adapter === 'open_library' ? { contact_email: null, ...provider } : provider,
+  ),
 })

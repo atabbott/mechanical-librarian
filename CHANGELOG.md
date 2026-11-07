@@ -29,6 +29,9 @@ brackets are GitHub issues.
 - A change waiting for Audiobookshelf to come back now closes when a rescan
   replaces or retires its review case, or the work leaves the library, instead
   of waiting for good, and a cover's restore point is removed (#1658).
+- When the browser cannot read a decision's confirmation, it now says the
+  outcome is uncertain and reloads the case instead of offering Try the same
+  decision again, which would read the same confirmation (#1688).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
@@ -79,6 +82,12 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** A value that only one source suggests, with
+  nothing else to confirm it, such as a different publisher or title from one
+  catalogue, no longer asks you. The book's page says only one source suggests
+  it, and you can still choose it there. A field set to Ask me still asks
+  (#1310).
+
 - **Clean rebuild required.** When your setting for descriptions or genres
   only fills empty fields (including Visible Google text), a book that already
   has a usable description or genre list keeps it without asking you; you can
@@ -101,7 +110,12 @@ brackets are GitHub issues.
   book is matched exactly, you can also choose the book's first publication
   date from Hardcover, a cover for an empty or tiny one, and, for an empty
   narrator field, the narrators of a Hardcover audio edition Audible cannot
-  confirm. Each is your choice; nothing changes automatically (#1642).
+  confirm. Each is your choice; nothing changes automatically. Such a cover
+  reads "Same book · recording not confirmed" (#1642).
+- Tooling: a read-only workbench script measures, per field and provider, how
+  often Hardcover's and Open Library's exact book matches agree with admitted
+  recordings and owner decisions, the evidence for letting the work route fill
+  empty fields without asking (#1642).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one

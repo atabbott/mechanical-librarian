@@ -105,6 +105,9 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
     work = []
     scan_id = "review_scan_" + "f" * 64
     actionable_source = _report()
+    # A work whose title matches its opening matter has nothing to choose, so
+    # no provider disagrees with it.
+    settled_source = _report(competing=False)
     for index in range(works):
         identity = f"{index:064x}"
         item_id = f"item-{index:04d}"
@@ -123,7 +126,9 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
             file=FileFacts(0, identity, f"{works + index:064x}"),
             local_claims=actionable_source.local_claims,
             local_reasons=actionable_source.local_reasons,
-            providers=actionable_source.providers,
+            providers=(
+                actionable_source if index % 2 == 0 else settled_source
+            ).providers,
         )
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
@@ -1018,11 +1023,12 @@ def test_visible_row_semantic_corruption_fails_closed_after_restart(
     ).fetchone()
     value = json.loads(document)
     value["providers"] = [
+        *value["providers"],
         {
             "authority": "bogus-authority",
             "lanes": [{"kind": "bogus-lane", "status": "bogus-status"}],
             "request_accounting": {"logical_requests": 1},
-        }
+        },
     ]
     corrupt = json.dumps(
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -1095,7 +1101,9 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
     connection = _representative_database(tmp_path / "application.sqlite3", works=8)
     repository = SQLiteMetadataReportRepository(connection)
     browse = BrowseReviewLibrary(repository)
-    source = _report()
+    # The opening matter alone proposes a title, so the work is not matched
+    # until its case is admitted, and then has nothing that asks (#1310).
+    source = _report(competing=False)
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",
@@ -1126,14 +1134,14 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
     case_page = browse.library(lens="all", search="Streamed", limit=50, cursor=None)
     assert case_page["counts"] == {
         "all": 1,
-        "needs_attention": 1,
-        "no_attention_needed": 0,
+        "needs_attention": 0,
+        "no_attention_needed": 1,
         "not_matched": 0,
         "preparation_failed": 0,
     }
     item = case_page["items"][0]
     assert item["review_case_id"] is not None
-    assert item["attention_count"] == 1
+    assert item["attention_count"] == 0
     repository.close()
 
 

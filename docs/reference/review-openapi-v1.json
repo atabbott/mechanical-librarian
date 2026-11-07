@@ -4028,6 +4028,18 @@
             "title": "Manual Eligible",
             "type": "boolean"
           },
+          "match_reason": {
+            "anyOf": [
+              {
+                "const": "matched_book",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Reason"
+          },
           "match_state": {
             "enum": [
               "same_edition",
@@ -4113,6 +4125,7 @@
           "identity",
           "incumbent",
           "match_state",
+          "match_reason",
           "observation",
           "original_sha256",
           "ordinal",

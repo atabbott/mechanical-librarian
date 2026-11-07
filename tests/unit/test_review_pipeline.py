@@ -11259,7 +11259,7 @@ def test_an_ebook_report_still_reaches_the_provider_stage() -> None:
     def unreachable(*_arguments: object, **_keywords: object) -> None:
         raise AssertionError
 
-    report = _report()
+    report = _report(competing=False)
 
     class _Repository:
         def get(self, _report_id: str) -> str:

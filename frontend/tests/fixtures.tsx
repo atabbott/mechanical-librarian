@@ -21,8 +21,24 @@ import type {
   ShadowPostureView,
   ShadowSampleView,
 } from '../src/api/http'
+import { mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
+import { responseDecoders } from '../src/generated/review-decoders'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { createApplicationRouter } from '../src/router'
+
+// A case-detail family document as the client reads it: the generated decoder
+// first, which throws a `DecodeFailure` for what the schema refuses, then the
+// mapper's named checks (#1688).
+export const readCaseDetail = (document: unknown) =>
+  mapCaseDetail(responseDecoders['GET /api/v1/review-cases/{review_case_id}']['200'](document, ''))
+export const readEvidence = (document: unknown) =>
+  mapEvidence(
+    responseDecoders['GET /api/v1/review-cases/{review_case_id}/evidence']['200'](document, ''),
+  )
+export const readHistory = (document: unknown) =>
+  mapHistory(
+    responseDecoders['GET /api/v1/review-cases/{review_case_id}/history']['200'](document, ''),
+  )
 
 /** A synthetic committed owner decision and its exact postcommit readback. */
 export const recordedAcknowledgement = (
@@ -343,6 +359,7 @@ export const createHttp = (): ReviewHttp => ({
         schema_version: 'review-decision-v1',
         actor: 'owner',
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-1',
         destination: command.destination,
         occurred_at: 1,

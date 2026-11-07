@@ -61,6 +61,7 @@ const decision = (
 ): NonNullable<Field['humanDecision']> => ({
   actor: 'owner',
   application: 'apply',
+  application_reason: null,
   decision_id: `decision-${outcome}`,
   destination: 'title' as const,
   occurred_at: 1,
@@ -97,6 +98,7 @@ const owner = (fields: () => readonly Field[], record?: ReviewHttp['recordDecisi
             schema_version: 'review-decision-v1',
             actor: 'owner',
             application: 'apply',
+            application_reason: null,
             decision_id: 'decision-owner',
             destination: command.destination,
             occurred_at: 2,

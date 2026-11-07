@@ -11,9 +11,14 @@ import sqlite3
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderObservation,
+    ProviderStatus,
     TargetFacts,
     default_target_fields,
 )
@@ -25,7 +30,14 @@ def _report(
     file_identity: str = "b",
     *,
     actionable: bool = True,
+    competing: bool = True,
 ) -> MetadataReport:
+    """One ebook report whose opening matter and a provider propose titles.
+
+    The two sources disagree, so the title is a choice that asks. Without
+    `competing`, the opening matter alone proposes one, which is a
+    single-source choice the queue leaves out (#1310).
+    """
     claims: tuple[LocalClaim, ...] = ()
     reasons = ("no_opening_claims",)
     if actionable:
@@ -52,7 +64,36 @@ def _report(
         file=FileFacts(0, content_digest * 64, file_identity * 64),
         local_claims=claims,
         local_reasons=reasons,
-        providers=(),
+        providers=(_competing_title_provider(),) if actionable and competing else (),
+    )
+
+
+def _competing_title_provider() -> ProviderObservation:
+    candidate = "competing-edition"
+    return ProviderObservation(
+        "hardcover_primary",
+        ProviderStatus.CANDIDATES,
+        (),
+        (
+            ProviderCandidate(
+                candidate,
+                f"{candidate}-work",
+                (
+                    ProviderClaim.create(
+                        provider="hardcover_primary",
+                        candidate=candidate,
+                        kind=ClaimKind.TITLE,
+                        value="Competing provider title",
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        raw_order=0,
+                    ),
+                ),
+                (),
+            ),
+        ),
+        authority="hardcover",
     )
 
 
