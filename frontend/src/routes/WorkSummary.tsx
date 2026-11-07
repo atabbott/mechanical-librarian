@@ -1,6 +1,7 @@
 // A Library work without an open review case: its summary, its recorded
 // evidence and the sources consulted for it. Moved out of the Library route
 // under the route-size rule (#1571).
+import { useRef } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { LibraryWorkView, ProviderOutcomeView } from '../api/http'
 import { BookMark } from '../components/BookMark'
@@ -8,6 +9,7 @@ import { MediaHealth } from '../components/MediaHealth'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatRunningTime } from '../dates'
+import { focusAfterRetry } from '../focusAfterRetry'
 import { valueText } from '../fieldDecision'
 import {
   audioSurfaceLabels,
@@ -91,6 +93,9 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
     staleTime: 15_000,
     retry: false,
   })
+  // Try again, or Reload once the tab is on an earlier build.
+  const evidenceRetry = useRef<HTMLButtonElement>(null)
+  const evidenceHeading = useRef<HTMLHeadingElement>(null)
   if (report.isPending)
     return (
       <p role="status" className="library-work-summary-reason">
@@ -98,12 +103,24 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
       </p>
     )
   if (report.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Recorded evidence was not loaded." />
+    return <StaleBuildRead lead="Recorded evidence was not loaded." ref={evidenceRetry} />
   if (report.isError)
     return (
       <p role="alert" className="library-work-summary-reason">
         Recorded evidence could not be loaded.{' '}
-        <button type="button" onClick={() => void report.refetch()}>
+        <button
+          ref={evidenceRetry}
+          type="button"
+          onClick={() =>
+            void report
+              .refetch()
+              .then((result) =>
+                focusAfterRetry(() =>
+                  result.isSuccess ? evidenceHeading.current : evidenceRetry.current,
+                ),
+              )
+          }
+        >
           Try again
         </button>
       </p>
@@ -111,7 +128,9 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
   const data = report.data
   return (
     <section className="library-work-evidence" aria-label="Recorded evidence">
-      <h3>Recorded evidence</h3>
+      <h3 ref={evidenceHeading} tabIndex={-1}>
+        Recorded evidence
+      </h3>
       <RecordingIdentityBasis
         value={data.recordingIdentityBasis}
         admission={data.recordingAdmissionBasis}

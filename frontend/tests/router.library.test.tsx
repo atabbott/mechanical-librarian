@@ -2570,6 +2570,70 @@ describe('Library route', () => {
     vi.stubGlobal('matchMedia', previousMatchMedia)
   })
 
+  it.each(['mismatch', 'success'] as const)(
+    'moves focus to what replaces the recorded evidence Try again after a %s (#1742)',
+    async (outcome) => {
+      const user = userEvent.setup()
+      const firstWork = library.works[0]
+      if (!firstWork) throw new Error('library fixture requires one work')
+      const baseWork = { ...firstWork }
+      delete baseWork.reviewCaseId
+      const recorded = {
+        ...baseWork,
+        id: 'library_work_retry',
+        workId: 'library_work_retry',
+        title: 'Retried evidence work',
+        attentionCount: 0,
+        attention: 'no_attention_needed' as const,
+        detailUrl: '/api/v1/library/report?connection=primary&library=ebooks&item=item-6',
+        detailKind: 'report' as const,
+        summary: {
+          state: 'no_decision_recorded' as const,
+          reason: 'No review decision is recorded.',
+          fields: [],
+        },
+      }
+      let reads = 0
+      renderRoute('/library?lens=all&work=library_work_retry', {
+        ...createHttp(),
+        getReportDetail: vi.fn<ReviewHttp['getReportDetail']>(async () => {
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return {
+            chapters: [],
+            chaptersTruncated: false,
+            coverPresent: false,
+            coverSurface: null,
+            evidence: [],
+            evidenceTruncated: false,
+            item: 'item-6',
+            library: 'ebooks',
+            mediaHealth: [],
+            mediaKind: 'epub' as const,
+            providerSources: [],
+            providerEvidence: [],
+            providerEvidenceTruncated: false,
+            audiobookReviewScope: null,
+            recordingIdentityBasis: null,
+            recordingAdmissionBasis: null,
+            reportId: 'report_' + 'c'.repeat(64),
+            title: 'Retried evidence work',
+          }
+        }),
+        getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, recorded] })),
+      })
+      const failure = await screen.findByText(/Recorded evidence could not be loaded\./u)
+      await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+      const target =
+        outcome === 'mismatch'
+          ? await screen.findByRole('button', { name: 'Reload the current application' })
+          : await screen.findByRole('heading', { name: 'Recorded evidence' })
+      await waitFor(() => expect(target).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    },
+  )
+
   it('does not let a retained report hide the latest real preparation failure', async () => {
     const firstWork = library.works[0]
     if (!firstWork) throw new Error('library fixture requires one work')
