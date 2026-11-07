@@ -103,3 +103,5 @@ preference; supersede or amend it.
 | [0094](0094-unconfirmed-current-covers-take-part.md) | proposed | Let an unconfirmed current cover take part in cover election |
 | [0095](0095-learned-cover-taste-profile.md) | proposed | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
 | [0096](0096-owner-chosen-work-identity-strictness.md) | proposed | Let the owner choose how strictly title and creator agreement establishes work identity |
+| [0097](0097-keep-the-bibliographic-combination-gate.md) | proposed | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
+| [0098](0098-revised-cover-observation-vocabulary.md) | proposed | Revise the cover observation vocabulary and keep observations advisory |
