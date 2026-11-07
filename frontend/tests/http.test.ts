@@ -51,16 +51,25 @@ import {
   ResponseDecodeError,
   UncertainMutationError,
 } from '../src/api/http'
+import { matchOperation, responseDecoders } from '../src/generated/review-decoders'
+import type { OperationKey } from '../src/generated/review-decoders'
 import type {
+  ActivityCommandPath,
   AutomaticSafetyView,
+  OperationOf,
   PolicyCommandAnswer,
   PolicyCommandBody,
   PolicyCommandPath,
   PolicyDraft,
   PolicyStateView,
   PolicyTransitionView,
+  PreparationActionPath,
+  RequestAnswer,
+  RoutablePath,
+  SettingsView,
   SettingsWrite,
   ShadowPostureView,
+  Unrouted,
 } from '../src/api/http'
 import type { components } from '../src/generated/review-api'
 import type { components as responseComponents } from '../src/generated/review-api-response'
@@ -4217,8 +4226,13 @@ describe('central response decoding (#1685)', () => {
     return new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
   }
   const undecodable = preparation({ libraries: [{}] })
-  const progressPaths = ['primary/Books/scan', 'primary/Books/retry']
-  const viewPaths = ['first-boot/acknowledge', 'pause', 'resume', 'primary/check-connection']
+  const progressPaths: PreparationActionPath[] = ['primary/Books/scan', 'primary/Books/retry']
+  const viewPaths: PreparationActionPath[] = [
+    'first-boot/acknowledge',
+    'pause',
+    'resume',
+    'primary/check-connection',
+  ]
   const operation = (path: string) =>
     `POST /api/v1/review-preparation/${path
       .replace(/^primary\/Books\//u, '{connection}/{library_name}/')
@@ -4411,7 +4425,13 @@ describe('central response decoding (#1685)', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  type Answer = readonly [path: string, body: unknown, status: number, reason: string, at: string]
+  type Answer = readonly [
+    path: PreparationActionPath,
+    body: unknown,
+    status: number,
+    reason: string,
+    at: string,
+  ]
   it.each<Answer>([
     ...progressPaths.map((path): Answer => [
       path,
@@ -5226,7 +5246,7 @@ describe('activity write decoding (#1691)', () => {
     }
   }
   const consent = { grants: [{ library: 'Fiction', destinations: ['title'] }] }
-  type Command = readonly [operation: string, path: string, body: unknown]
+  type Command = readonly [operation: string, path: ActivityCommandPath, body: unknown]
   const commands: readonly Command[] = [
     ['POST /api/v1/activity/consent', 'activity/consent', consent],
     [
@@ -5296,7 +5316,7 @@ describe('activity write decoding (#1691)', () => {
     },
   )
 
-  it.each(['field-effects/pause', 'field-effects/resume'])(
+  it.each<ActivityCommandPath>(['field-effects/pause', 'field-effects/resume'])(
     'leaves the 204 answer to %s undecoded',
     async (path) => {
       const { client, fetchMock } = answering(undefined, 204)
@@ -5305,7 +5325,7 @@ describe('activity write decoding (#1691)', () => {
     },
   )
 
-  it.each(['field-effects/pause', 'field-effects/resume'])(
+  it.each<ActivityCommandPath>(['field-effects/pause', 'field-effects/resume'])(
     'reports a body in answer to %s, which documents only 204, as uncertain',
     async (path) => {
       const refusal = await answering(activityResponse())
@@ -5428,6 +5448,81 @@ describe('policy command types (#1729)', () => {
       void client.policyCommand('automatic-safety/pause', draft)
     }
     expect(typed).toBeTypeOf('function')
+  })
+})
+
+describe('answer types of read and mutate (#1730)', () => {
+  type Answer<Name extends keyof responseComponents['schemas']> =
+    responseComponents['schemas'][Name]
+  type Method<K extends string> = K extends `${infer M} ${string}` ? M : never
+  type Route<K extends string> = K extends `${string} ${infer R}` ? R : never
+  // A route with each `{parameter}` filled by a hole, or by `x-1`.
+  type Holes<R extends string> = R extends `${infer Head}{${string}}${infer Tail}`
+    ? `${Head}${string}${Holes<Tail>}`
+    : R
+  type Filled<R extends string> = R extends `${infer Head}{${string}}${infer Tail}`
+    ? `${Head}x-1${Filled<Tail>}`
+    : R
+  const filled = (route: string) => route.replaceAll(/\{[^}]+\}/gu, 'x-1')
+  const keys = Object.keys(responseDecoders) as OperationKey[]
+
+  it('resolves every operation from its own path, in types and at run time alike', () => {
+    expectTypeOf<{
+      [K in OperationKey]: OperationOf<Method<K>, Filled<Route<K>>>
+    }>().toEqualTypeOf<{ [K in OperationKey]: K }>()
+    expectTypeOf<{
+      [K in OperationKey]: OperationOf<Method<K>, `${Filled<Route<K>>}?q=1`>
+    }>().toEqualTypeOf<{ [K in OperationKey]: K }>()
+    expectTypeOf<{
+      [K in OperationKey]: OperationOf<Method<K>, Holes<Route<K>>>
+    }>().toEqualTypeOf<{ [K in OperationKey]: K }>()
+    expectTypeOf<{
+      [K in OperationKey]: OperationOf<Method<K>, `${Holes<Route<K>>}?${string}`>
+    }>().toEqualTypeOf<{ [K in OperationKey]: K }>()
+    // The same filled paths, resolved by the run-time matcher `request()` uses.
+    expect(keys.length).toBeGreaterThan(60)
+    for (const key of keys) {
+      const [method = '', route = ''] = key.split(' ')
+      expect(matchOperation(method, filled(route))).toBe(key)
+      expect(matchOperation(method, `${filled(route)}?q=1`)).toBe(key)
+    }
+  })
+
+  it('answers what the operation decodes to', () => {
+    expectTypeOf<RequestAnswer<'GET', '/api/v1/settings'>>().toEqualTypeOf<SettingsView>()
+    expectTypeOf<RequestAnswer<'PATCH', '/api/v1/settings'>>().toEqualTypeOf<SettingsView>()
+    expectTypeOf<
+      RequestAnswer<'GET', `/api/v1/review-cases/${string}/evidence?${string}`>
+    >().toEqualTypeOf<Answer<'_EvidenceResponse'>>()
+    expectTypeOf<RequestAnswer<'GET', `/api/v1/review-cases/${string}`>>().toEqualTypeOf<
+      Answer<'_CaseDetailResponse'>
+    >()
+    expectTypeOf<
+      RequestAnswer<'GET', '/api/v1/metadata-policy/transition'>
+    >().toEqualTypeOf<PolicyTransitionView | null>()
+    expectTypeOf<
+      RequestAnswer<'POST', `/api/v1/review-preparation/${PreparationActionPath}`>
+    >().toEqualTypeOf<Answer<'_PreparationResponse'> | Answer<'_PreparationProgress'>>()
+    expectTypeOf<RequestAnswer<'POST', `/api/v1/review-cases/${string}/decisions`>>().toEqualTypeOf<
+      Answer<'_DecisionAcknowledgement'>
+    >()
+    // An operation with no decoder documents only 204; a body would not be decoded.
+    expectTypeOf<RequestAnswer<'POST', '/api/v1/session/logout'>>().toEqualTypeOf<unknown>()
+  })
+
+  it('names no operation for a path that matches none, or matches through a hole', () => {
+    expectTypeOf<RequestAnswer<'GET', '/api/v1/nothing'>>().toEqualTypeOf<Unrouted>()
+    expectTypeOf<RequestAnswer<'POST', '/api/v1/settings'>>().toEqualTypeOf<Unrouted>()
+    // A hole is one segment, so it cannot stand for `x-1/evidence`.
+    expectTypeOf<
+      RequestAnswer<'GET', `/api/v1/review-cases/${string}/x/evidence`>
+    >().toEqualTypeOf<Unrouted>()
+    expectTypeOf<RequestAnswer<'GET', '/api/v1/review-cases/'>>().toEqualTypeOf<Unrouted>()
+    expectTypeOf<Unrouted>().not.toExtend<Answer<'_CaseDetailResponse'>>()
+    expectTypeOf<'/api/v1/settings'>().toExtend<RoutablePath<'GET'>>()
+    expectTypeOf<'/api/v1/nothing'>().not.toExtend<RoutablePath<'GET'>>()
+    expectTypeOf<`/api/v1/attention${string}`>().not.toExtend<RoutablePath<'GET'>>()
+    expectTypeOf<'/api/v1/session/logout'>().toExtend<RoutablePath<'POST'>>()
   })
 })
 
