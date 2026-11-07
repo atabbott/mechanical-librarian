@@ -502,9 +502,7 @@ keeps its own draft, validation and save.
 Copy is as long as it takes to explain the core idea or use case and no
 longer. It is plain: no emphasis, no explanation the reader did not need, no
 promotion. The first-run walkthrough explains the product; a screen does not
-explain itself through labels.
-
-### Named Rules
+explain itself through labels. Sub-headings are rare.
 
 **The Walkthrough Rule.** A screen carries short labels and the values the
 owner acts on. Explanation lives in the first-run walkthrough and the product
@@ -528,7 +526,7 @@ reassurance the reader did not ask for, no hedging around a fact the product
 knows, no lists of three for rhythm, no "not X but Y", no em dashes, no bold
 for emphasis, no exclamation marks, and no promotional vocabulary (seamless,
 powerful, effortless, unlock, leverage). The product never says it learns or
-understands; it picks, suggests and switches.
+understands; it says what it did.
 
 The working checklist a change is held to, with the full vocabulary and the
 scan to run before review, is the development controls' `product-copy.md`,
