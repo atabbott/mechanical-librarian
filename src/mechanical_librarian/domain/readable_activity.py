@@ -113,6 +113,8 @@ _FAILURE_REASONS = {
     "consent": "Write permission was not in place",
     "consent_revoked": "Write permission was withdrawn",
     "cover_recovery": "Cover recovery took this change over",
+    "cover_retention": "The current cover could not be kept to put back, so it "
+    "was not replaced",
     "dependency": "Something this change depended on moved",
     "not_applied": "Audiobookshelf did not apply the change",
     "not_sent": "This change was not sent to Audiobookshelf",

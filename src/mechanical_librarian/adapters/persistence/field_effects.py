@@ -53,6 +53,9 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _consent_state,
 )
+from mechanical_librarian.adapters.persistence.retained_covers import (
+    schedule_retained_cover_removal,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _ATTENTION_FACTS_JOIN_SQL,
@@ -1058,19 +1061,29 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     == (1,)
                     # A plan whose request may have reached Audiobookshelf is
                     # never planned afresh: that would send an unknown outcome
-                    # again. A cover's recovery bytes must be gone before its
-                    # discharged cleanup is retired with the terminal state it
-                    # belonged to (#1402).
+                    # again. A cover's recovery bytes, and any original kept
+                    # for Put back, must be gone before their discharged
+                    # obligations are retired with the terminal state they
+                    # belonged to (#1402, #1363).
                     and self._connection.execute(
                         "SELECT 1 FROM field_effect_events WHERE plan_id=? AND kind='applying' "
                         "UNION ALL SELECT 1 FROM field_effect_cleanups WHERE plan_id=? "
-                        "AND state='pending'",
-                        (operation.plan.plan_id, operation.plan.plan_id),
+                        "AND state='pending' UNION ALL SELECT 1 FROM "
+                        "retained_cover_removals WHERE plan_id=? AND state='pending'",
+                        (
+                            operation.plan.plan_id,
+                            operation.plan.plan_id,
+                            operation.plan.plan_id,
+                        ),
                     ).fetchone()
                     is None
                 ):
                     self._connection.execute(
                         "DELETE FROM field_effect_cleanups WHERE plan_id=?",
+                        (operation.plan.plan_id,),
+                    )
+                    self._connection.execute(
+                        "DELETE FROM retained_cover_removals WHERE plan_id=?",
                         (operation.plan.plan_id,),
                     )
                     # A clock stepped back never dates it before its history (#1386).
@@ -2126,6 +2139,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             self._upsert_field_effect_cleanup(
                 operation.plan.plan_id, "pending", 0, changed_at
             )
+            # An original kept for Put back stays only behind a verified write.
+            if operation.state != "verified":
+                schedule_retained_cover_removal(
+                    self._connection, operation.plan.plan_id, changed_at
+                )
 
     def _upsert_field_effect_cleanup(
         self, plan_id: str, state: str, attempt: int, changed_at: int

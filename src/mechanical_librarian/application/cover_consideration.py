@@ -89,8 +89,13 @@ from mechanical_librarian.domain.proposal_set import (
     work_route_cover_offered,
     work_route_cover_sources,
 )
+from mechanical_librarian.domain.validation import (
+    closed_document,
+    nonempty_text,
+    prefixed_hex_identity,
+)
 
-SCHEMA_VERSION = "cover-consideration-v4"
+SCHEMA_VERSION = "cover-consideration-v5"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -113,6 +118,7 @@ _CONSIDERATION_FIELDS = frozenset(
         "replay_reference",
         "report_document",
         "report_id",
+        "retained_original",
         "review_case_id",
         "reviewer_access_revision",
         "reviewer_engine",
@@ -170,6 +176,41 @@ def _cover_incumbent(
         },
         None if incumbent is None else cast("str", incumbent["original_sha256"]),
     )
+
+
+_RETAINED_ORIGINAL = closed_document(
+    artifact_id=prefixed_hex_identity("cover_"),
+    decision_id=nonempty_text,
+    original_sha256=prefixed_hex_identity(""),
+    plan_id=prefixed_hex_identity("effect_plan_"),
+)
+
+
+def _retained_original_shape(value: object) -> bool:
+    return value is None or (
+        _RETAINED_ORIGINAL(value)
+        and cast("dict[str, str]", value)["artifact_id"]
+        == "cover_" + cast("dict[str, str]", value)["original_sha256"]
+    )
+
+
+def _retained_original(
+    retained: tuple[str, str, str] | None, incumbent_digest: str | None
+) -> dict[str, str] | None:
+    """The original an automatic switch replaced, while it is not the current cover.
+
+    Inert until activation (#1363 PR 4): it is recorded on the consideration
+    but never projected, offered or selectable.
+    """
+    if retained is None or retained[0] == incumbent_digest:
+        return None
+    digest, plan_id, decision_id = retained
+    return {
+        "artifact_id": "cover_" + digest,
+        "decision_id": decision_id,
+        "original_sha256": digest,
+        "plan_id": plan_id,
+    }
 
 
 def _validated_cover_consideration(
@@ -263,6 +304,12 @@ def _validated_cover_consideration(
         or (
             policy_report_document is not None
             and type(policy_report_document) is not str
+        )
+        or not _retained_original_shape(value.get("retained_original"))
+        or (
+            value.get("retained_original") is not None
+            and cast("dict[str, str]", value["retained_original"])["original_sha256"]
+            == value.get("incumbent_digest")
         )
     ):
         raise ValueError("cover consideration document is invalid")
@@ -750,6 +797,9 @@ class CoverConsiderationService:
         reviewer_unavailable_reason: str | None = None,
         bind_policy: Callable[[str, str], None] | None = None,
         provider_fetching: Callable[[MetadataReport], bool] | None = None,
+        retained_original: (
+            Callable[[str, str, str], tuple[str, str, str] | None] | None
+        ) = None,
     ) -> None:
         self._store = store
         self._require_artifact = require_artifact
@@ -771,6 +821,7 @@ class CoverConsiderationService:
         self._reviewer_unavailable_reason = reviewer_unavailable_reason
         self._bind_policy = bind_policy or (lambda _policy, _replay: None)
         self._provider_fetching = provider_fetching or (lambda _report: False)
+        self._retained_original = retained_original or (lambda *_target: None)
 
     def update_policy(self, policy: CoverPolicy) -> None:
         """Bind a validated policy before publishing its immutable snapshot."""
@@ -1307,6 +1358,12 @@ class CoverConsiderationService:
             candidates = []
 
         incumbent, incumbent_digest = _cover_incumbent(report, candidates)
+        retained = _retained_original(
+            self._retained_original(
+                report.target.connection, report.target.library, report.target.item
+            ),
+            incumbent_digest,
+        )
         body: dict[str, object] = {
             "candidates": candidates,
             "created_at": self._clock(),
@@ -1324,6 +1381,7 @@ class CoverConsiderationService:
             "report_document": report_document,
             "report_id": report.report_id,
             "replay_digest": replay_digest,
+            "retained_original": retained,
             "replay_reference": (
                 evidence.replay_reference
                 if evidence is not None and evidence.replay_reference is not None

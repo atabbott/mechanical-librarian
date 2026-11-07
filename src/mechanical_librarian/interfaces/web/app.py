@@ -559,7 +559,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v4"]
+    schema_version: Literal["cover-consideration-v5"]
     supersedes_id: str | None
     target_fingerprint: str
 

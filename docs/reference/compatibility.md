@@ -101,7 +101,7 @@ refused.
 | --- | --- |
 | `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
-| `cover-consideration-v4` | A cover consideration, bound to its report by identity and digest |
+| `cover-consideration-v5` | A cover consideration, bound to its report by identity and digest |
 | `cover-policy-report-v2` | Cover policy evaluation; owner readiness and automatic recommendation are independent |
 | `cover-automatic-decision-v3` | An automatic cover decision |
 | `cover-selection-authority-v1`, `cover-selection-authority-v2` | Cover selections: v1 wraps an automatic choice, v2 an owner choice |

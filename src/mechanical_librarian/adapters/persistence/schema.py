@@ -1038,6 +1038,37 @@ _FIELD_EFFECT_CLEANUPS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
 )
+# An automatic cover write that replaces a populated cover binds the original
+# it keeps for Put back to its plan before the write; the row never changes
+# (#1363, ADR-0093). A plan that ends unverified owes the removal below.
+_RETAINED_COVER_BINDINGS_SQL = (
+    "CREATE TABLE retained_cover_bindings ("
+    "plan_id TEXT PRIMARY KEY NOT NULL REFERENCES field_effects(plan_id), "
+    "decision_id TEXT NOT NULL, connection_name TEXT NOT NULL, "
+    "library_name TEXT NOT NULL, work_id TEXT NOT NULL, "
+    "original_digest TEXT NOT NULL CHECK(length(original_digest)=64 "
+    "AND original_digest NOT GLOB '*[^0-9a-f]*'), "
+    "byte_count INTEGER NOT NULL CHECK(byte_count BETWEEN 1 AND 8388608), "
+    "retained_at INTEGER NOT NULL CHECK(retained_at>=0)) WITHOUT ROWID"
+)
+_RETAINED_COVER_BINDINGS_TARGET_INDEX_SQL = (
+    "CREATE INDEX retained_cover_bindings_target ON retained_cover_bindings("
+    "connection_name,library_name,work_id)"
+)
+_RETAINED_COVER_BINDINGS_DIGEST_INDEX_SQL = (
+    "CREATE INDEX retained_cover_bindings_digest "
+    "ON retained_cover_bindings(original_digest)"
+)
+_RETAINED_COVER_BINDING_NO_UPDATE_SQL = "CREATE TRIGGER retained_cover_bindings_no_update BEFORE UPDATE ON retained_cover_bindings BEGIN SELECT RAISE(ABORT, 'retained cover bindings are append-only'); END"
+_RETAINED_COVER_BINDING_NO_DELETE_SQL = "CREATE TRIGGER retained_cover_bindings_no_delete BEFORE DELETE ON retained_cover_bindings BEGIN SELECT RAISE(ABORT, 'retained cover bindings are append-only'); END"
+_RETAINED_COVER_REMOVALS_SQL = (
+    "CREATE TABLE retained_cover_removals ("
+    "plan_id TEXT PRIMARY KEY NOT NULL REFERENCES retained_cover_bindings(plan_id), "
+    "reason TEXT NOT NULL CHECK(reason IN ('unverified')), "
+    "state TEXT NOT NULL CHECK(state IN ('pending','completed')), "
+    "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0)) WITHOUT ROWID"
+)
 _FIELD_EFFECT_EVENTS_SQL = (
     "CREATE TABLE field_effect_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'effect_event_[0-9a-f]*' AND length(event_id)=77), "
@@ -1534,6 +1565,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
     connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
     connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
+    connection.execute(_RETAINED_COVER_BINDINGS_SQL)
+    connection.execute(_RETAINED_COVER_BINDINGS_TARGET_INDEX_SQL)
+    connection.execute(_RETAINED_COVER_BINDINGS_DIGEST_INDEX_SQL)
+    connection.execute(_RETAINED_COVER_REMOVALS_SQL)
     connection.execute(_OWNER_SETTINGS_SQL)
     connection.execute(_OWNER_SETTING_SECRETS_SQL)
     connection.execute(_REVIEWER_ACCESS_SQL)
@@ -1566,6 +1601,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_DELETE_SQL)
+    connection.execute(_RETAINED_COVER_BINDING_NO_UPDATE_SQL)
+    connection.execute(_RETAINED_COVER_BINDING_NO_DELETE_SQL)
     connection.execute(_AUTOMATIC_DECISION_NO_UPDATE_SQL)
     connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
     connection.execute(_FIELD_EFFECT_EVENT_NO_UPDATE_SQL)
@@ -1703,6 +1740,16 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "field_effects_ready", _FIELD_EFFECTS_READY_INDEX_SQL),
             ("index", "field_effects_waiting", _FIELD_EFFECTS_WAITING_INDEX_SQL),
             ("index", "field_effects_target", _FIELD_EFFECTS_TARGET_INDEX_SQL),
+            (
+                "index",
+                "retained_cover_bindings_target",
+                _RETAINED_COVER_BINDINGS_TARGET_INDEX_SQL,
+            ),
+            (
+                "index",
+                "retained_cover_bindings_digest",
+                _RETAINED_COVER_BINDINGS_DIGEST_INDEX_SQL,
+            ),
             ("index", "sqlite_autoindex_metadata_reports_1", None),
             ("index", "sqlite_autoindex_metadata_reports_2", None),
             ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
@@ -1820,6 +1867,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
             ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
             ("table", "field_effects", _FIELD_EFFECTS_SQL),
+            ("table", "retained_cover_bindings", _RETAINED_COVER_BINDINGS_SQL),
+            ("table", "retained_cover_removals", _RETAINED_COVER_REMOVALS_SQL),
             ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
             ("table", "metadata_reports", _REPORTS_SQL),
             ("table", "metadata_report_browse_facts", _REPORT_BROWSE_FACTS_SQL),
@@ -1971,6 +2020,16 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "trigger",
                 "field_effect_no_changes_no_update",
                 _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "retained_cover_bindings_no_delete",
+                _RETAINED_COVER_BINDING_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "retained_cover_bindings_no_update",
+                _RETAINED_COVER_BINDING_NO_UPDATE_SQL,
             ),
             ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
             (
