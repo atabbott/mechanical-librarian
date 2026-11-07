@@ -145,13 +145,13 @@ export function ProviderRecoveryPanel({
           {item.next_eligible_at === null
             ? ''
             : ` · next eligible ${formatWhen(item.next_eligible_at, new Date())}`}
-          {item.failure_reasons?.length ? (
+          {item.failure_reasons.length ? (
             <span>
               {' '}
               · {item.failure_reasons.map((reason) => recoveryFailureLabel[reason]).join('; ')}
             </span>
           ) : null}
-          {item.dispatch_reasons?.length ? (
+          {item.dispatch_reasons.length ? (
             <span>
               {' '}
               · Priority:{' '}

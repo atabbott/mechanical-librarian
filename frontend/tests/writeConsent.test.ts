@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import { mapActivity, mapActivityConsent } from '../src/api/http'
 import type { ActivityCapabilityView, DestinationState, TargetDestination } from '../src/api/http'
 import {
   consentBasis,
@@ -11,7 +10,8 @@ import {
   writesOffSentence,
 } from '../src/writeConsent'
 import currentActivity from './descriptionAdviceActivityFixture.json'
-import { activity } from './fixtures'
+import { responseDecoders } from '../src/generated/review-decoders'
+import { activity, readActivity } from './fixtures'
 
 const view = (value: Partial<Parameters<typeof readWriteConsent>[0]>) => ({
   ...activity(),
@@ -43,7 +43,7 @@ describe('the write consent offer', () => {
   it('offers every eligible destination, names why each other is left out, and counts only what it would carry', () => {
     const offer = readWriteConsent(
       view({
-        configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+        configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         capabilities: [
           capability('fiction', [
             { destination: 'title', state: 'allowed', prepared: 2 },
@@ -80,8 +80,8 @@ describe('the write consent offer', () => {
     })
     const scoped = (consented: boolean, lapsed = [lapse('history'), lapse('fiction')]) => ({
       configured_libraries: [
-        { connection: 'primary', library: 'fiction' },
-        { connection: 'primary', library: 'history' },
+        { connection: 'primary', library: 'fiction', prepared: null },
+        { connection: 'primary', library: 'history', prepared: null },
       ],
       capabilities: [
         capability('fiction', [{ destination: 'title', state: 'allowed', consented }]),
@@ -122,7 +122,7 @@ describe('the write consent offer', () => {
 
   it('reads its state from the queue rather than from the last command', () => {
     const scoped = {
-      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         capability('fiction', [{ destination: 'title', state: 'allowed', prepared: 1 }]),
       ],
@@ -153,7 +153,7 @@ describe('the write consent offer', () => {
     const capabilities = [
       capability('fiction', [{ destination: 'cover', state: 'connection_unavailable' }]),
     ]
-    const configured = [{ connection: 'primary', library: 'fiction' }]
+    const configured = [{ connection: 'primary', library: 'fiction', prepared: null }]
     const waiting = {
       applying: 0,
       awaiting_permission: 4,
@@ -182,7 +182,7 @@ describe('the write consent offer', () => {
 
 it('does not offer readiness, a destination or a count from unchecked history', () => {
   const unchecked = activity({
-    configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+    configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
     capabilities: [
       capability('fiction', [{ destination: 'title', state: 'allowed', prepared: 5 }]),
     ],
@@ -263,17 +263,15 @@ describe('the Library notice and Activity state one offer', () => {
       }
       const { backup_ready, capabilities, configured_libraries, lapsed_consents, waiting } = raw
       const options = { enabling, connectionUnavailable }
+      // Each read as the client gives it: decoded, then mapped (#1691).
       const notice = readWriteConsent(
-        mapActivityConsent({
-          backup_ready,
-          capabilities,
-          configured_libraries,
-          lapsed_consents,
-          waiting,
-        }),
+        responseDecoders['GET /api/v1/activity/consent-state']['200'](
+          { backup_ready, capabilities, configured_libraries, lapsed_consents, waiting },
+          '',
+        ),
         options,
       )
-      expect(notice).toEqual(readWriteConsent(mapActivity(raw), options))
+      expect(notice).toEqual(readWriteConsent(readActivity(raw), options))
       expect(notice.state).toBe(enabling ? 'enabling' : state)
     },
   )
@@ -388,7 +386,7 @@ it('explains an exclusion after a lapse by what is prepared, not readiness (#128
     'the connection lacks permission for it',
   )
   const lapsed = activity({
-    configured_libraries: [{ connection: 'primary', library: 'history' }],
+    configured_libraries: [{ connection: 'primary', library: 'history', prepared: null }],
     capabilities: [
       capability('history', [{ destination: 'title', state: 'not_ready', prepared: 0 }]),
     ],

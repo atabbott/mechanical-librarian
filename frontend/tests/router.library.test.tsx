@@ -11430,7 +11430,7 @@ describe('Library route', () => {
 
   it('refreshes the notice on an activity invalidation and polls only while the stream is degraded', async () => {
     const off = activity({
-      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         {
           connection: 'primary',
@@ -13366,7 +13366,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
   })
   const writesOff = () =>
     activity({
-      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         {
           connection: 'primary',
@@ -13754,7 +13754,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
 
   it('states a lapse in the write notice even with nothing prepared (#1370)', async () => {
     const lapsed = activity({
-      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         {
           connection: 'primary',
@@ -13804,6 +13804,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       configured_libraries: ['fiction', 'history'].map((library) => ({
         connection: 'primary',
         library,
+        prepared: null,
       })),
       capabilities: ['fiction', 'history'].map((library) => ({
         connection: 'primary',
@@ -13842,6 +13843,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       configured_libraries: ['fiction', 'history'].map((library) => ({
         connection: 'primary',
         library,
+        prepared: null,
       })),
       capabilities: [
         {
@@ -13889,7 +13891,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
 
   it('announces a lapse once, by its Settings name (#1370)', async () => {
     const view = activity({
-      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         {
           connection: 'primary',
