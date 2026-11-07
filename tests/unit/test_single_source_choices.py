@@ -216,6 +216,12 @@ def test_an_ebooks_single_source_title_is_choosable_and_asks_only_under_ask(
     wording, and an explicit Ask for titles still asks.
     """
     report = _report(competing=False)
+    title = next(
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.TITLE
+    )
+    assert title.reasons == ("insufficient_independent_corroboration",)
     database = tmp_path / "application.sqlite3"
     with closing(open_repository(database)) as repository:
         case_id, _ = publish_audiobook_preview(
