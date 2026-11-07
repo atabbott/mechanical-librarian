@@ -1155,7 +1155,12 @@ export default function LibraryPage({
     activeLineageReconciliation ||
     controller.recording ||
     (reconciledSuccessorIdentity === search.preview && detail.isPending)
-  const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
+  // Exactly when the workspace shows "Loading selected work…": a retry settles
+  // only once this clears, since until then its Try again or Reload is not there
+  // to take focus, even when every read has already failed (#1742).
+  const selectedReadLoading = !displayedIdentity
+    ? !staleCoverNotice && (identityPending || leaving || successorPending === search.preview)
+    : detail.isPending || (detail.isError && leaving)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   // A works retry that meets a newer build can leave the identity in error
   // throughout, so the switch to the reload is what settles the retry.
@@ -1165,7 +1170,7 @@ export default function LibraryPage({
     Boolean(search.preview) &&
     search.attention !== 'open' &&
     Boolean(displayedIdentity) &&
-    !selectedReadPending &&
+    !selectedReadLoading &&
     !selectedReadError
   useEffect(() => {
     selectedDetailRetry.current = null
@@ -1175,7 +1180,7 @@ export default function LibraryPage({
     // An error is settled only once it renders: while another read is still
     // in flight the work shows as loading, and its Try again or Reload does
     // not exist yet to take focus.
-    const selectedDetailSettled = selectedDetailReady || (selectedReadError && !selectedReadPending)
+    const selectedDetailSettled = selectedDetailReady || (selectedReadError && !selectedReadLoading)
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
@@ -1192,7 +1197,7 @@ export default function LibraryPage({
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
   }, [
     selectedReadError,
-    selectedReadPending,
+    selectedReadLoading,
     selectedReadStale,
     search.preview,
     selectedDetailReady,
@@ -2211,7 +2216,7 @@ export default function LibraryPage({
           {...(!selectedWork &&
           search.preview &&
           search.attention !== 'open' &&
-          (!displayedIdentity || selectedReadPending || selectedReadError)
+          (!displayedIdentity || selectedReadLoading || selectedReadError)
             ? { 'data-route-focus': 'true' }
             : {})}
         >
@@ -2237,7 +2242,7 @@ export default function LibraryPage({
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
           ) : !displayedIdentity ? (
-            identityPending || leaving || successorPending === search.preview ? (
+            selectedReadLoading ? (
               <p role="status">Loading selected work…</p>
             ) : identityStale ? (
               <StaleBuildRead
@@ -2277,7 +2282,9 @@ export default function LibraryPage({
                 <p role="status">This work is not available in the current Library result.</p>
               </div>
             )
-          ) : detail.isPending || (detail.isError && leaving) ? (
+          ) : // `detail.isPending` is part of `selectedReadLoading` here; naming it
+          // narrows the read for the branches below.
+          selectedReadLoading || detail.isPending ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice

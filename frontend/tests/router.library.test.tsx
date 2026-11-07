@@ -337,6 +337,59 @@ it('moves focus to Reload when a selected detail retry meets a newer build (#128
   expect(document.body).not.toHaveFocus()
 })
 
+it('moves focus to Reload when a lineage check outlasts a selected-work retry (#1742)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  let released = false
+  const heldWorks: (() => void)[] = []
+  let releaseSuccessor: (successor: string | null) => void = () => undefined
+  const updates = createLiveStream()
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getLibrary: vi.fn(async () => {
+      if (!retried) throw new ApiError(503, 'unavailable')
+      if (!released) await new Promise<void>((resolve) => heldWorks.push(resolve))
+      throw new BuildMismatchError()
+    }),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      if (retried) throw new BuildMismatchError()
+      throw new ApiError(503, 'unavailable')
+    }),
+    getCaseSuccessor: vi.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          releaseSuccessor = resolve
+        }),
+    ),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http, updates)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByText('Loading selected work…')).toBeVisible()
+  // A Library update with no subject starts a lineage check while the retry reads.
+  await act(async () => {
+    updates.announce({ sequence: 1, subject: null, topic: 'library' })
+  })
+  await waitFor(() => expect(http.getCaseSuccessor).toHaveBeenCalled())
+  await act(async () => {
+    released = true
+    for (const release of heldWorks) release()
+  })
+  // Every read has failed, but the check still shows the work as loading.
+  expect(screen.getByText('Loading selected work…')).toBeVisible()
+  await act(async () => {
+    releaseSuccessor(null)
+  })
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  const reload = await within(workspace).findByRole('button', {
+    name: 'Reload the current application',
+  })
+  await waitFor(() => expect(reload).toHaveFocus())
+  expect(document.body).not.toHaveFocus()
+})
+
 it('holds Library in its pending state until the handoff consent read settles', async () => {
   let release: (value: ReturnType<typeof consentOf>) => void = () => undefined
   const getActivityConsent = vi.fn(
