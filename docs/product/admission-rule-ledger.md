@@ -114,12 +114,19 @@ leave them.
 - **Ranking.** Score = actionable fields, summed over the snapshots where the
   gate is measurable, × the pooled identity-precision Wilson lower limit. Rows with no estimable
   precision, or measurable on neither snapshot, score 0 and follow the scored
-  rows by blocked count, then ID. A6 is measured but unranked: its signal
-  counts fields the proposal set had already refused (T1, A2 and A3's cost)
-  and, on the ebook source, rich-preview refusals collapsed into
-  `no_eligible_action`, while it misses proposed fields the automatic
-  decision abstained on. #1745 re-measures it. A7 (owner-reserved and
-  write-safety holds) is listed last and is out of scope.
+  rows by blocked count, then ID. A7 (owner-reserved and write-safety holds)
+  is listed last and is out of scope.
+- **Automatic-decision abstention (#1745).** A6 is split by engine and
+  unranked; [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
+  keeps both rows. A6a is the scalar decision engine: the source revision's
+  own `shadow_decision._SUPPORTED_DESTINATIONS`, read through the source
+  child, abstaining with `insufficient_support` or `no_eligible_action`. A6b
+  is the rich-preview `no_eligible_action` residual on every other
+  destination, "not separable on that snapshot: rich refusals collapsed"
+  where the source kept no rich reasons. An `evidence_sufficiency_manual`
+  abstention repeats the proposal set's refusal, so A6a shows it as
+  "upstream echo not counted". A6's own cost is not a blocked field; the
+  [A6 breakdown](automatic-decision-abstention.md) measures it.
 - **Attention per case.** Attention follows the
   [per-case definition](../operations/cold-start-report.md#attention-per-case).
   It is read under each snapshot's own source: a child process imports only
@@ -146,8 +153,9 @@ The origin ADRs are
 [0067](../architecture/decisions/0067-decoration-equivalence-and-compound-admission.md),
 [0068](../architecture/decisions/0068-latin-combining-mark-work-identity.md),
 [0070](../architecture/decisions/0070-isbn-backed-series-identity.md),
-[0075](../architecture/decisions/0075-independent-evidence-led-titles.md) and
-[0080](../architecture/decisions/0080-isbn-evidence-without-image.md).
+[0075](../architecture/decisions/0075-independent-evidence-led-titles.md),
+[0080](../architecture/decisions/0080-isbn-evidence-without-image.md) and
+[0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md).
 
 ## Ledger
 
@@ -196,7 +204,8 @@ The origin ADRs are
 | 39 | W8 | Alternative WORK lane permission | every destination its provider lanes feed (audiobook only) | #1269 (906e9a2a) | not recorded | not measurable on that snapshot: gate postdates source | not measurable on that snapshot: block not retained | run the alternative WORK lane after any asserted outcome | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | kept |
 | 40 | X2 | Edition-enrichment overflow keeps a work-only witness | every destination its provider lanes feed | #621 (254ed08f); ADR-0056 | not recorded | 0 / 0 | 0 / 0 | keep the overflowing editions | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | kept |
 | 41 | X3 | Wrong-language, control-number and untidy-author value exclusion | language-bearing and creator destinations | #1497/#1560 (ce3a172d) | not recorded | not measurable on that snapshot: gate postdates source | not measurable on that snapshot: gate postdates source | admit the excluded values | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | kept |
-| unranked | A6 | Automatic-decision abstention (mis-scoped: counts upstream refusals and pre-election rich destinations; re-measured under #1745) | every automatic destination | #442 (593e6198); ADR-0036 | development 159/172 correct at 100% precision; sealed 12/12 and 43/43 | 5,481 / 1,745 (830 actionable; 187 stale: later election) | 6 / 6 (6 actionable) | admit the lowest-identifier alternative an automatic decision abstained on | ebook-744 783/43/436 (4,786 fields reach no record); audiobook-1294 1/0/9 (2 fields reach no record); n = 827 | 0.948 (0.931) | 108/184 0.587 (0.515); 145 tied | 0.0 | filed as #1745 |
+| unranked | A6a | Automatic-decision abstention, scalar engine (insufficient support, no eligible action) (kept by ADR-0092; its own cost is the proposable population in the A6 breakdown) | the source's scalar decision destinations | #442 (593e6198); ADR-0036; re-scoped #1745, ADR-0092 | development 159/172 correct at 100% precision; sealed 12/12 and 43/43 | 80 / 80 (80 actionable; 80 stale: later election; 162 upstream echo not counted) | 5 / 5 (5 actionable; 1 upstream echo not counted) | none: the lowest-identifier rule is rejected; closed relaxations in the A6 breakdown | ebook-744 41/0/58 (35 fields reach no record); audiobook-1294 1/0/9 (1 fields reach no record); n = 42 | 1.000 (0.916) | 17/23 0.739 (0.535); 1 tied | 0.0 | kept (ADR-0092) |
+| unranked | A6b | Rich-preview no-eligible-action residual (residual of rich refusals outside their own reasons) | rich-preview destinations | #442 (593e6198); #1745, ADR-0092 | not recorded | not separable on that snapshot: rich refusals collapsed | 0 / 0 | none: refile under the rich reason's own row | not estimable from natural controls | not estimable | not applicable | 0.0 | kept (ADR-0092) |
 | out of scope | A7 | Owner-reserved and write-safety holds | subjective and unusable-target destinations | #351 (d35215e8) | not applicable | 372 / 337 (220 actionable) | 145 / 100 (142 actionable) | none: listed for completeness | ebook-744 178/9/140 (156 fields reach no record); audiobook-1294 76/0/94 (10 fields reach no record); n = 263 | 0.966 (0.936) | 6/8 0.750 (0.409); 0 tied | 0.0 | kept (out of scope) |
 
 - ebook-744: source predates #974, #978, #979, #981, #1040.
@@ -262,21 +271,22 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Follow-ons.** Five rows are filed:
+- **Follow-ons.** Five rows were filed:
   T1 as [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744) (1,332 actionable fields),
-  A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745) (836),
+  A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745),
   A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333),
   A2 as [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747) (135) and
   W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
-  a measurement task rather than a loosening. A6 is now unranked as
-  mis-scoped; with it out, T1, A3, A2 and W9 are the only scored rows not
-  filed under an earlier issue.
+  a measurement task rather than a loosening. #1745 kept A6 (ADR-0092), so
+  T1, A3, A2 and W9 are the only scored rows not filed under an earlier
+  issue. The old A6 row's 5,481 blocked ebook-744 fields were 80 A6a
+  fields, 162 upstream echoes and 5,239 collapsed rich refusals.
 - **Identity precision is not a case for loosening.** Where the controls can
   decide, the lowest-identifier pick agrees with the one right-work
   alternative in about half the fields: T1 247 of 480 (0.515, lower limit
-  0.470), A6 108 of 184 (0.587, 0.515; unranked), A3 12 of 20 (0.600, 0.387). A2 has no
-  decidable field. Most of T1's ebook fields (759 of 1,141) and some of A6's
-  (187) compete on destinations a later election decides on main, so those
+  0.470), A6a 17 of 23 (0.739, 0.535; unranked), A3 12 of 20 (0.600, 0.387). A2 has no
+  decidable field. Most of T1's ebook fields (759 of 1,141) and all of A6a's
+  (80) compete on destinations a later election decides on main, so those
   ceilings are stale.
 - **Dispositions.** `kept` rows stay as they are. Rows already covered by an
   issue link it: W1, W5 and the cover-identity part of C1 (#1355), I3 (#1356,
@@ -327,7 +337,7 @@ uv run python scripts/admission_rule_ledger.py \
         32360e99c708ea2ac346a7bf4cb157711fd74049 \
     --source-root audiobook-1294 "$SCRATCH/src-32360e99" \
     --source-report audiobook-1294 "$AUDIO/final-report.json" \
-    --follow-on T1=1744 --follow-on A6=1745 --follow-on A3=1746 \
+    --follow-on T1=1744 --follow-on A3=1746 \
     --follow-on A2=1747 --follow-on W9=1748 \
     --format markdown
 ```

@@ -98,3 +98,4 @@ preference; supersede or amend it.
 | [0089](0089-unmatched-audiobook-research.md) | accepted | Search an unmatched audiobook again |
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |
+| [0092](0092-keep-the-automatic-decision-abstention-gate.md) | proposed | Keep the automatic-decision abstention gate and define the would-admit note |
