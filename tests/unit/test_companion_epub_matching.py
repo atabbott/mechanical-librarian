@@ -760,6 +760,352 @@ def test_a_report_refuses_a_companion_search_it_did_not_plan(
         )
 
 
+# --- Replay requires the planned companion lane (#1724) ----------------------
+
+
+def _asin_claims(count: int) -> tuple[LocalClaim, ...]:
+    from tests.support.audiobook_providers import audio_claim
+
+    return tuple(
+        audio_claim(ClaimKind.ASIN, f"B0LOCAL{index:03d}", 4 + index)
+        for index in range(count)
+    )
+
+
+def _audiobook_plan(
+    title: str | None,
+    authors: tuple[str, ...],
+    claims: tuple[LocalClaim, ...],
+    companion: CompanionEbook | None,
+) -> app.MetadataDiscoveryPlan:
+    return audiobook_discovery_plan(
+        _target(title, authors),
+        claims,
+        audio=single_track_audio_facts(),
+        companion=companion,
+    )
+
+
+def _observed(
+    lanes: tuple[app.MetadataDiscoveryLane, ...],
+    status: ProviderStatus = ProviderStatus.NO_MATCH,
+    *,
+    provider: str = "hardcover-main",
+    authority: str = "hardcover",
+) -> ProviderObservation:
+    from tests.support.audiobook_reports import recorded_dispatch
+
+    return recorded_dispatch(
+        app.provider_observation(
+            provider,
+            tuple(app.ProviderLaneResult(lane, status) for lane in lanes),
+            authority=authority,
+        )
+    )
+
+
+def _lane_report(
+    title: str | None,
+    authors: tuple[str, ...],
+    claims: tuple[LocalClaim, ...],
+    providers: tuple[ProviderObservation, ...],
+    companion: CompanionEbook | None,
+) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audiobooks", "item-1", _fields(title, authors)),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("no_local_audio_claims",),
+        providers=tuple(sorted(providers, key=lambda value: value.provider)),
+        audio=single_track_audio_facts(),
+        companion=companion,
+    )
+
+
+def _lanes_of(
+    plan: app.MetadataDiscoveryPlan, kind: ProviderQueryKind
+) -> tuple[app.MetadataDiscoveryLane, ...]:
+    # Hardcover suppresses alternative titles, so it asks the asserted WORK
+    # lane (or the fallback) and the companion lane only.
+    return tuple(
+        lane
+        for lane in companion_binding_plan(plan, "hardcover").lanes
+        if lane.kind is kind
+        and (kind is not ProviderQueryKind.WORK or lane.title_basis is None)
+    )
+
+
+# Each case: the target's title and authors, its local claims, and what
+# Hardcover is handed beside the companion lane.
+_ASSERTED = (
+    "Asserted Title",
+    ("Ada Author",),
+    (_target_title_claim("Asserted Title"), _duration_claim()),
+)
+_ASIN_ONLY = (
+    "Asserted Title",
+    ("Ada Author",),
+    (_target_title_claim("Asserted Title"), _duration_claim(), *_asin_claims(1)),
+)
+_FALLBACK: tuple[str | None, tuple[str, ...], tuple[LocalClaim, ...]] = (
+    None,
+    (),
+    (_duration_claim(),),
+)
+
+
+@pytest.mark.parametrize(
+    "with_search", [True, False], ids=["asserted_work_lane_only", "no_lanes"]
+)
+def test_a_report_refuses_a_hardcover_observation_missing_the_companion_lane(
+    with_search: bool,
+) -> None:
+    title, authors, claims = _ASSERTED
+    companion = _companion()
+    plan = _audiobook_plan(title, authors, claims, companion)
+    assert _lanes_of(plan, ProviderQueryKind.ISBN)
+    lanes = _lanes_of(plan, ProviderQueryKind.WORK) if with_search else ()
+    assert bool(lanes) is with_search
+    with pytest.raises(ReportValueError, match="companion lane is missing"):
+        _lane_report(title, authors, claims, (_observed(lanes),), companion)
+
+
+@pytest.mark.parametrize(
+    ("case", "kinds"),
+    [
+        (_ASSERTED, {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}),
+        (_ASIN_ONLY, {ProviderQueryKind.ISBN}),
+        (_FALLBACK, {ProviderQueryKind.ISBN}),
+    ],
+    ids=["beside_its_search", "alone_beside_a_local_asin", "alone_beside_fallback"],
+)
+def test_a_report_accepts_the_companion_lane_alone_or_beside_its_search(
+    case: tuple[str | None, tuple[str, ...], tuple[LocalClaim, ...]],
+    kinds: set[ProviderQueryKind],
+) -> None:
+    title, authors, claims = case
+    companion = _companion()
+    plan = _audiobook_plan(title, authors, claims, companion)
+    lanes = (
+        *_lanes_of(plan, ProviderQueryKind.WORK),
+        *_lanes_of(plan, ProviderQueryKind.ISBN),
+    )
+    assert {lane.kind for lane in lanes} == kinds
+    report = _lane_report(title, authors, claims, (_observed(lanes),), companion)
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ProviderStatus.UNAVAILABLE, ProviderStatus.DISABLED, ProviderStatus.NO_MATCH],
+    ids=["unavailable", "disabled", "no_match"],
+)
+def test_the_companion_lane_is_required_whatever_its_status(
+    status: ProviderStatus,
+) -> None:
+    title, authors, claims = _ASIN_ONLY
+    companion = _companion()
+    plan = _audiobook_plan(title, authors, claims, companion)
+    isbn = _lanes_of(plan, ProviderQueryKind.ISBN)
+    report = _lane_report(title, authors, claims, (_observed(isbn, status),), companion)
+    assert MetadataReport.from_json(report.to_json()) == report
+    with pytest.raises(ReportValueError, match="companion lane is missing"):
+        _lane_report(title, authors, claims, (_observed((), status),), companion)
+
+
+@pytest.mark.parametrize(
+    ("title", "authors", "claims", "companion", "planned"),
+    [
+        (*_ASIN_ONLY, _companion(), True),
+        (
+            "Asserted Title",
+            ("Ada Author",),
+            (_target_title_claim("Asserted Title"), *_asin_claims(4)),
+            _companion(),
+            True,
+        ),
+        (
+            "Asserted Title",
+            ("Ada Author",),
+            (_target_title_claim("Asserted Title"), *_asin_claims(5)),
+            _companion(),
+            False,
+        ),
+        (*_ASSERTED, _companion(title=None), True),
+        (*_ASSERTED, _companion(), True),
+        (
+            "Part II",
+            ("Ada Author",),
+            (_target_title_claim("Part II"), _duration_claim()),
+            _companion(),
+            True,
+        ),
+        (*_FALLBACK, _companion(), True),
+        # Zero local ASINs and no target title claim: no WORK lane at all.
+        ("Asserted Title", ("Ada Author",), (_duration_claim(),), _companion(), True),
+        (*_ASSERTED, _companion(isbns=()), False),
+        (*_ASSERTED, _companion(isbns=(_ISBN, _OTHER_ISBN)), False),
+    ],
+    ids=[
+        "one_local_asin",
+        "four_local_asins",
+        "five_local_asins_overflow",
+        "asserted_only",
+        "asserted_and_alternative",
+        "collapsed_alternative",
+        "companion_work_fallback",
+        "no_work_lane",
+        "no_isbn_family",
+        "two_isbn_families",
+    ],
+)
+def test_plan_and_replay_agree_on_the_companion_lane(
+    title: str | None,
+    authors: tuple[str, ...],
+    claims: tuple[LocalClaim, ...],
+    companion: CompanionEbook,
+    planned: bool,
+) -> None:
+    plan = _audiobook_plan(title, authors, claims, companion)
+    isbn = [lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN]
+    replayed = dom.planned_companion_isbn_lane(
+        _fields(title, authors),
+        claims,
+        single_track_audio_facts().discovery_titles,
+        companion,
+    )
+    assert bool(isbn) is planned
+    assert (replayed is not None) is planned
+    if replayed is not None:
+        assert [lane.identity for lane in isbn] == [replayed.identity]
+
+
+def test_the_plan_matrix_reaches_each_shape() -> None:
+    """The matrix above plans the lane shapes its names say."""
+    companion = _companion()
+    collapsed = _audiobook_plan(
+        "Part II",
+        ("Ada Author",),
+        (_target_title_claim("Part II"), _duration_claim()),
+        companion,
+    )
+    works = [lane for lane in collapsed.lanes if lane.kind is ProviderQueryKind.WORK]
+    assert [lane.title_basis for lane in works] == [COMPANION_TITLE_BASIS]
+    both = _audiobook_plan(*_ASSERTED, companion)
+    assert sorted(
+        str(lane.title_basis)
+        for lane in both.lanes
+        if lane.kind is ProviderQueryKind.WORK
+    ) == sorted([str(None), COMPANION_TITLE_BASIS])
+    fallback = _audiobook_plan(*_FALLBACK, companion)
+    assert [
+        lane.title_basis
+        for lane in fallback.lanes
+        if lane.kind is ProviderQueryKind.WORK
+    ] == [COMPANION_WORK_BASIS]
+    overflow = _audiobook_plan(
+        "Asserted Title",
+        ("Ada Author",),
+        (_target_title_claim("Asserted Title"), *_asin_claims(5)),
+        companion,
+    )
+    assert overflow.overflow and overflow.lanes == ()
+
+
+def test_an_exhausted_budget_plans_and_requires_no_companion_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    title, authors, claims = _ASSERTED
+    companion = _companion(title=None)
+    roomy = _audiobook_plan(title, authors, claims, companion)
+    (isbn,) = _lanes_of(roomy, ProviderQueryKind.ISBN)
+    works = tuple(lane for lane in roomy.lanes if lane.kind is ProviderQueryKind.WORK)
+    base = app._metadata_discovery_query_count(works, audiobook=True)
+    monkeypatch.setattr(dom, "MAX_PROVIDER_DISCOVERY_QUERIES", base)
+
+    plan = _audiobook_plan(title, authors, claims, companion)
+    assert not plan.overflow
+    assert plan.lanes == works
+    search = _lanes_of(plan, ProviderQueryKind.WORK)
+    _lane_report(title, authors, claims, (_observed(search),), companion)
+    with pytest.raises(ReportValueError, match="companion lane is invalid"):
+        _lane_report(title, authors, claims, (_observed((*search, isbn)),), companion)
+
+
+def test_no_companion_lane_is_required_where_none_is_planned() -> None:
+    from mechanical_librarian.application.failure_diagnostics import (
+        provider_attempt_diagnostics,
+    )
+
+    companion = _companion()
+    title, authors = "Asserted Title", ("Ada Author",)
+    overflowing = (_target_title_claim("Asserted Title"), *_asin_claims(5))
+    exceeded = ProviderObservation(
+        "hardcover-main",
+        ProviderStatus.QUERY_LIMIT_EXCEEDED,
+        authority="hardcover",
+        diagnostics=provider_attempt_diagnostics(
+            (), status=ProviderStatus.QUERY_LIMIT_EXCEEDED.value
+        ),
+    )
+    _lane_report(title, authors, overflowing, (exceeded,), companion)
+    roomy = _audiobook_plan(*_ASSERTED, companion)
+    (isbn,) = _lanes_of(roomy, ProviderQueryKind.ISBN)
+    with pytest.raises(ReportValueError, match="companion lane is invalid"):
+        _lane_report(title, authors, overflowing, (_observed((isbn,)),), companion)
+    # Only Hardcover is asked the lane; another authority never carries it.
+    title, authors, claims = _ASSERTED
+    plan = _audiobook_plan(title, authors, claims, companion)
+    searches = tuple(
+        lane
+        for lane in companion_binding_plan(plan, "audible_catalog").lanes
+        if lane.kind is ProviderQueryKind.WORK
+    )
+    other = _observed(searches, provider="audible", authority="audible_catalog")
+    _lane_report(title, authors, claims, (other,), companion)
+    # A report with no Hardcover observation has nothing to check.
+    _lane_report(title, authors, claims, (), companion)
+
+
+class _FailingProvider:
+    def observe(
+        self, plan: app.MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> app.ProviderResult:
+        raise RuntimeError("adapter fault")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [_ASSERTED, _ASIN_ONLY, _FALLBACK],
+    ids=["asserted_work", "local_asin", "companion_work_fallback"],
+)
+def test_a_disabled_or_failed_hardcover_binding_records_the_companion_lane(
+    case: tuple[str | None, tuple[str, ...], tuple[LocalClaim, ...]],
+) -> None:
+    title, authors, claims = case
+    companion = _companion()
+    plan = companion_binding_plan(
+        _audiobook_plan(title, authors, claims, companion), "hardcover"
+    )
+    binding = app.ProviderBinding(
+        "hardcover-main", False, lambda: _FailingProvider(), "hardcover"
+    )
+    disabled = app._undispatched_observation(
+        binding,
+        plan,
+        ProviderStatus.DISABLED,
+        tuple(lane for lane in plan.lanes if lane.title_basis is None),
+    )
+    failed = app.observe_provider(
+        "hardcover-main", "hardcover", _FailingProvider(), plan
+    ).observation
+    planned = companion_isbn_lane(companion)
+    assert planned is not None
+    for observation in (disabled, failed):
+        assert planned.identity in {lane.identity for lane in observation.lanes}
+        _lane_report(title, authors, claims, (observation,), companion)
+
+
 # --- Admission: the ISBN confirms the work, never the recording ---------------
 
 
