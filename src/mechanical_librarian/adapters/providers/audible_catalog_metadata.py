@@ -864,6 +864,8 @@ def _lane_lookup(
         lane.title if lane.kind is ProviderQueryKind.WORK else None,
         lane.authors if lane.kind is ProviderQueryKind.WORK else (),
         audio=plan.audio,
+        companion=plan.companion,
+        companion_linked_asins=plan.companion_linked_asins,
         work_title=plan.work_title,
         work_authors=plan.work_authors,
         recording_corroboration=plan.recording_corroboration,

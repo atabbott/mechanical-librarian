@@ -4072,6 +4072,7 @@ def _asserted_lane_band_claims(
                 report.target.fields,
                 report.local_claims,
                 report.audio.discovery_titles,
+                report.companion,
             )
         )
         else None

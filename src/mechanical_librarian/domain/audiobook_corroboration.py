@@ -37,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
     ClaimScope,
+    CompanionEbook,
     FieldState,
     LocalClaim,
     MetadataReport,
@@ -54,6 +55,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     candidate_asins,
     canonical_asin,
+    companion_isbn_lane,
     discovery_lane_identity,
     duration_milliseconds,
     provider_candidate_exact_work_identity_admission,
@@ -1119,6 +1121,10 @@ def _chapter_candidate_support(
     library_languages: tuple[str, ...] = (),
 ) -> bool:
     """Qualify raw recording evidence before shaping can discard its vetoes."""
+    # The chapter route needs exact work admission, which a target with no
+    # title cannot give: a lead fed by the companion ISBN alone has none (#1468).
+    if not title:
+        return False
     if (
         recording_variant_conflict(
             candidate, local_claims, title or "", library_languages
@@ -1224,6 +1230,10 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
     authors = (
         cast("tuple[str, ...]", authors_value) if type(authors_value) is tuple else ()
     )
+    # Every route below needs exact work admission against the target's title,
+    # so a target with none has no chapter basis (#1468).
+    if not report.target.current_title:
+        return None
     support: list[tuple[str, str, str]] = []
     vetoed: set[str] = set()
     for observation in report.providers:
@@ -2124,6 +2134,46 @@ def hardcover_edition_leads(
             ):
                 leads[asin] = None
     return tuple(leads)
+
+
+def companion_linked_asins(
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None,
+    observations: tuple[ProviderObservation, ...],
+    companion: CompanionEbook | None,
+) -> tuple[str, ...]:
+    """The ASINs the companion ISBN's own book links to this recording (#1468).
+
+    They are the ASINs of the Hardcover audio editions, counted against the
+    file, of the books the companion ISBN lane kept. The ISBN names the book,
+    so a product with one of these ASINs is that book's work whatever its
+    title says. It confirms the work only: the recording is still judged by
+    its runtime, its narrators and its variant, exactly as any other.
+    """
+    lane = companion_isbn_lane(companion)
+    if lane is None:
+        return ()
+    witness, editions = _edition_witness(local_claims, audio, observations)
+    # Editions that credit disjoint casts name no one recording (ADR-0090).
+    if witness is HardcoverEditionWitness.EDITIONS_DISAGREE:
+        return ()
+    books = {
+        value.edition_identity
+        for observation in observations
+        if observation.authority == "hardcover"
+        and observation.status is ProviderStatus.CANDIDATES
+        for value_lane in observation.lanes
+        if value_lane.identity == lane.identity
+        and value_lane.status is ProviderStatus.CANDIDATES
+        for value in value_lane.candidates
+    }
+    linked: dict[str, None] = {}
+    for edition in sorted(editions, key=lambda value: value.identity):
+        if edition.work_identity not in books:
+            continue
+        for asin in _edition_asins(edition):
+            linked[asin] = None
+    return tuple(sorted(linked))
 
 
 def admitted_recording_asin(report: MetadataReport) -> str | None:

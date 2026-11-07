@@ -930,7 +930,7 @@ def test_main_rejects_a_malformed_mount_root() -> None:
 
 
 def test_the_schema_is_pinned_at_its_sixth_version() -> None:
-    assert "cold-start-report-v6" == cold_start.COLD_START_REPORT_SCHEMA
+    assert "cold-start-report-v7" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:
@@ -1689,6 +1689,16 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             "unmatched": 0,
             "agrees": 0,
             "challenged": 0,
+        },
+        "companion": {
+            "reports": 0,
+            "unreadable": 0,
+            "isbn_lane_kept_book": 0,
+            "linked_edition": 0,
+            "title_alternative": 0,
+            "work_fallback": 0,
+            "recording_admitted": 0,
+            "linked_recording_admitted": 0,
         },
     } == audiobooks["audiobook_outcomes"]
     assert {

@@ -369,3 +369,13 @@ work's first publication date, narrators from audio editions Audible cannot
 confirm, and a work-bound cover, so an earlier proposal set is not what this
 policy prepares. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1468 also takes the clean-rebuild branch. `metadata-report-v69` plans
+an audiobook's companion EPUB into its discovery: one ISBN lane at Hardcover,
+the companion's title as the first alternative search title, and the
+companion's title and creators as the search when the target names no complete
+work. A v68 report replays none of these lanes, and a report carries forward
+while its file and configuration fingerprints are unchanged, so a stored report
+would keep the earlier plan. The proposal policy is unchanged. Every earlier
+application database is rejected before mutation and needs a clean rebuild; no
+adoption is supplied.
