@@ -54,10 +54,10 @@ import {
   UncertainMutationError,
   mapCodexDevice,
   mapReviewerAccess,
-  mapSettings,
 } from '../src/api/http'
-import type { PolicyStateView } from '../src/api/http'
+import type { PolicyStateView, SettingsWrite } from '../src/api/http'
 import { classifyDecisionFailure } from '../src/reviewDecisionController'
+import { view as settingsView } from './settingsFixtures'
 
 const token = 'a'.repeat(32)
 const renewedToken = 'b'.repeat(32)
@@ -97,6 +97,12 @@ const readCase = (document: unknown) =>
     csrf,
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getCaseDetail('case-1')
+// The settings family is decoded centrally too (#1689).
+const readSettings = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getSettings()
 const readEvidence = (document: unknown) =>
   new ReviewApiClient({
     csrf,
@@ -2597,7 +2603,7 @@ describe('ReviewApiClient', () => {
       ).rejects.toMatchObject(refused(failure))
   })
 
-  it("accepts a library's languages only when absent or a list of strings", async () => {
+  it("reads a library's absent languages as the empty list and refuses any but a list of strings", async () => {
     const { view } = await import('./settingsFixtures')
     const withLanguages = (languages: unknown) => {
       const value = view()
@@ -2612,18 +2618,90 @@ describe('ReviewApiClient', () => {
     const absent = Object.fromEntries(
       Object.entries(view().document.libraries[0] ?? {}).filter(([key]) => key !== 'languages'),
     )
+    // The decoder fills the documented default (#1689).
     expect(
-      mapSettings({ ...view(), document: { ...view().document, libraries: [absent] } }).document
-        .libraries[0]?.languages,
+      (await readSettings({ ...view(), document: { ...view().document, libraries: [absent] } }))
+        .document.libraries[0]?.languages,
     ).toEqual([])
-    expect(mapSettings(withLanguages(['de', 'en'])).document.libraries[0]?.languages).toEqual([
-      'de',
-      'en',
-    ])
-    for (const invalid of ['de', [1], [null], null, { de: true }])
-      expect(() => mapSettings(withLanguages(invalid))).toThrow(
-        expect.objectContaining({ status: 502 }),
-      )
+    expect(
+      (await readSettings(withLanguages(['de', 'en']))).document.libraries[0]?.languages,
+    ).toEqual(['de', 'en'])
+    const at = '/document/libraries/0/languages'
+    for (const [invalid, failure] of [
+      ['de', `type@${at}`],
+      [[1], `type@${at}/0`],
+      [[null], `type@${at}/0`],
+      [null, `type@${at}`],
+      [{ de: true }, `type@${at}`],
+    ] as const)
+      await expect(readSettings(withLanguages(invalid))).rejects.toMatchObject(refused(failure))
+  })
+
+  // The checks the settings mapper made by hand, each now the decoder's
+  // (2b inventory E list for `mapSettings`, and the presence site at
+  // d53effa `:2389`) (#1689).
+  it('refuses a malformed settings answer at the decoder', async () => {
+    const { view } = await import('./settingsFixtures')
+    const base = view()
+    const doc = base.document
+    const library = doc.libraries[0]
+    for (const [invalid, failure] of [
+      [{ ...base, authority: 'deploy' }, 'enum@/authority'],
+      [
+        { ...base, document: { ...doc, schema_version: 'owner-settings-v3' } },
+        'const@/document/schema_version',
+      ],
+      [
+        {
+          ...base,
+          document: { ...doc, description_advice: { ...doc.description_advice, extra: true } },
+        },
+        'unknown_key@/document/description_advice/extra',
+      ],
+      [
+        {
+          ...base,
+          document: {
+            ...doc,
+            description_advice: { ...doc.description_advice, remove_praise: 'yes' },
+          },
+        },
+        'type@/document/description_advice/remove_praise',
+      ],
+      [{ ...base, document: { ...doc, connections: {} } }, 'type@/document/connections'],
+      [{ ...base, document: { ...doc, providers: null } }, 'type@/document/providers'],
+      [{ ...base, fields: {} }, 'type@/fields'],
+      [{ ...base, secrets: null }, 'type@/secrets'],
+      [
+        {
+          ...base,
+          document: { ...doc, connections: [{ ...doc.connections[0], adapter: 'plex' }] },
+        },
+        'const@/document/connections/0/adapter',
+      ],
+      [
+        { ...base, document: { ...doc, libraries: [{ ...library, library_id: 7 }] } },
+        'type@/document/libraries/0/library_id',
+      ],
+      [
+        {
+          ...base,
+          document: { ...doc, libraries: [{ ...library, provider_connections: 'hardcover' }] },
+        },
+        'type@/document/libraries/0/provider_connections',
+      ],
+      [
+        { ...base, fields: [{ ...base.fields[0], apply_effect: 'restart' }] },
+        'enum@/fields/0/apply_effect',
+      ],
+      [
+        { ...base, fields: [{ ...base.fields[0], managed_by_file: 'no' }] },
+        'type@/fields/0/managed_by_file',
+      ],
+      [{ ...base, secrets: [{ ...base.secrets[0], indicator: 7 }] }, 'type@/secrets/0/indicator'],
+      [{ ...base, secrets: [{ ...base.secrets[0], configured: 1 }] }, 'type@/secrets/0/configured'],
+    ] as const)
+      await expect(readSettings(invalid)).rejects.toMatchObject(refused(failure))
   })
 
   it('posts Retry now with the expected generation and resends it once after CSRF renewal', async () => {
@@ -3945,8 +4023,20 @@ describe('central response decoding (#1685)', () => {
       {},
       '/review_case_id',
     ],
+    [
+      'GET /api/v1/settings',
+      (client: ReviewApiClient) => client.getSettings(),
+      { ...settingsView(), managed_path: undefined },
+      '/managed_path',
+    ],
+    [
+      'GET /api/v1/appearance',
+      (client: ReviewApiClient) => client.getAppearance(),
+      {},
+      '/reduced_motion',
+    ],
   ] as const)(
-    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1688)',
+    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1689)',
     async (operation, read, document, at) => {
       const failure = await read(answering(document)).catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(ResponseDecodeError)
@@ -4314,6 +4404,78 @@ describe('case-detail write decoding (#1688)', () => {
     expect((await decide(answering(selectionAcknowledgement()), true)).confirmation.status).toBe(
       'confirmed',
     )
+  })
+})
+
+describe('settings write decoding (#1689)', () => {
+  const answering = (body: unknown) =>
+    new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () => Response.json(body)),
+    })
+  const write: SettingsWrite = {
+    expected_revision: 3,
+    document: settingsView().document,
+    secrets: [],
+  }
+  type Write = readonly [
+    operation: string,
+    send: (client: ReviewApiClient) => Promise<unknown>,
+    body: unknown,
+    failure: string,
+  ]
+  it.each<Write>([
+    [
+      'PATCH /api/v1/settings',
+      (client) => client.writeSettings(write),
+      { ...settingsView(), fields: undefined },
+      'required@/fields',
+    ],
+    [
+      'PATCH /api/v1/settings',
+      (client) => client.writeSettings(write),
+      { ...settingsView(), authority: 'deploy' },
+      'enum@/authority',
+    ],
+    [
+      'POST /api/v1/provider-recovery/retry',
+      (client) => client.retryProviderRecovery(1),
+      { ...settingsView(), secrets: undefined },
+      'required@/secrets',
+    ],
+    [
+      'POST /api/v1/provider-recovery/retry',
+      (client) => client.retryProviderRecovery(1),
+      {
+        ...settingsView(),
+        document: { ...settingsView().document, provider_recovery_generation: 0 },
+      },
+      'min@/document/provider_recovery_generation',
+    ],
+  ])(
+    'reports an unreadable %s answer as uncertain (%#)',
+    async (operation, send, body, failure) => {
+      const refusal = await send(answering(body)).catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UncertainMutationError)
+      expect(refusal).toBeInstanceOf(AmbiguousMutationError)
+      expect(refusal).toMatchObject({ ...uncertain(failure), operation, responseStatus: 200 })
+      expect((refusal as Error).message).not.toContain('/')
+      expect(uncertainWriteOutcome(refusal)).toBe(true)
+    },
+  )
+
+  it('accepts the documented answers to the settings writes', async () => {
+    const saved = settingsView()
+    const library = Object.fromEntries(
+      Object.entries(saved.document.libraries[0] ?? {}).filter(([key]) => key !== 'languages'),
+    )
+    const answer = { ...saved, document: { ...saved.document, libraries: [library] } }
+    // The decoder fills an omitted language list with its default.
+    expect((await answering(answer).writeSettings(write)).document.libraries[0]?.languages).toEqual(
+      [],
+    )
+    expect((await answering(saved).retryProviderRecovery(1)).authority).toBe('store')
   })
 })
 

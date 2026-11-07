@@ -44,9 +44,9 @@ type RecordingIdentityBasisDto = ResponseSchema<'_RecordingIdentityBasis'>
 type DecisionAcknowledgementDto =
   | ResponseSchema<'_DecisionAcknowledgement'>
   | ResponseSchema<'_DescriptionSelectionAcknowledgement'>
-export type SettingsView = Schema<'SettingsView'>
+export type SettingsView = ResponseSchema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
-export type AppearanceView = Schema<'_AppearanceResponse'>
+export type AppearanceView = ResponseSchema<'_AppearanceResponse'>
 // The closed OpenRouter failures an owner may see, each with its own remedy.
 const reviewerFailureCodes = [
   'invalid_key',
@@ -1416,6 +1416,10 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'POST /api/v1/review-cases/{review_case_id}/decisions',
   'POST /api/v1/review-cases/{review_case_id}/description-advice/retry',
   'POST /api/v1/review-cases/{review_case_id}/description-advice/selection',
+  'GET /api/v1/settings',
+  'PATCH /api/v1/settings',
+  'POST /api/v1/provider-recovery/retry',
+  'GET /api/v1/appearance',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1522,20 +1526,25 @@ export class ReviewApiClient implements ReviewHttp {
       })
     return mapReportDetail((await this.read(detailUrl, signal, workClass)) as ReportDetailDto)
   }
+  // The settings and appearance answers are decoded whole; the settings view
+  // is the document itself, with no mapping and no named check (#1689).
   async getSettings(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return mapSettings(await this.read('/api/v1/settings', signal, workClass))
+    return (await this.read('/api/v1/settings', signal, workClass)) as SettingsView
   }
   async getAppearance(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    const value: unknown = await this.read('/api/v1/appearance', signal, workClass)
-    if (
-      !record(value) ||
-      (value.reduced_motion !== 'follow_system' && value.reduced_motion !== 'always_reduced')
-    )
-      throw new ApiError(502, 'invalid_appearance_response')
-    return value as AppearanceView
+    return (await this.read('/api/v1/appearance', signal, workClass)) as AppearanceView
   }
   async writeSettings(value: SettingsWrite, signal?: AbortSignal) {
-    return mapSettings(await this.mutate('/api/v1/settings', value, signal, undefined, 'PATCH'))
+    return this.mutate(
+      '/api/v1/settings',
+      value,
+      signal,
+      undefined,
+      'PATCH',
+      false,
+      false,
+      settingsView,
+    )
   }
   async getReviewerAccess(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal, workClass))
@@ -1742,16 +1751,15 @@ export class ReviewApiClient implements ReviewHttp {
   // The expected generation makes a resend a refusal, never a second raise, so
   // a CSRF-renewed press is sent once more (#1018). The command still writes.
   async retryProviderRecovery(expectedGeneration: number, signal?: AbortSignal) {
-    return mapSettings(
-      await this.mutate(
-        '/api/v1/provider-recovery/retry',
-        { expected_generation: expectedGeneration },
-        signal,
-        undefined,
-        'POST',
-        true,
-        false,
-      ),
+    return this.mutate(
+      '/api/v1/provider-recovery/retry',
+      { expected_generation: expectedGeneration },
+      signal,
+      undefined,
+      'POST',
+      true,
+      false,
+      settingsView,
     )
   }
   async dismissPreparation(runId: string, signal?: AbortSignal) {
@@ -2566,78 +2574,9 @@ const coverObservationValue = <T extends string>(
   if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
   return result as T
 }
-export const mapSettings = (value: unknown): SettingsView => {
-  if (
-    !record(value) ||
-    (value.authority !== 'file' && value.authority !== 'store') ||
-    !record(value.document) ||
-    value.document.schema_version !== 'owner-settings-v4' ||
-    !record(value.document.description_advice) ||
-    !exactKeys(value.document.description_advice, [
-      'remove_marketing',
-      'remove_sales_boasts',
-      'remove_praise',
-      'automatic_application',
-    ]) ||
-    !Object.values(value.document.description_advice).every((item) => typeof item === 'boolean') ||
-    !Array.isArray(value.document.connections) ||
-    !Array.isArray(value.document.providers) ||
-    !Array.isArray(value.document.libraries) ||
-    !Array.isArray(value.fields) ||
-    !Array.isArray(value.secrets)
-  )
-    throw new ApiError(502, 'invalid_settings_response')
-  if (
-    !value.document.connections.every(
-      (item) =>
-        record(item) &&
-        typeof item.name === 'string' &&
-        typeof item.endpoint === 'string' &&
-        item.adapter === 'audiobookshelf',
-    ) ||
-    !value.document.libraries.every(
-      (item) =>
-        record(item) &&
-        typeof item.name === 'string' &&
-        typeof item.connection === 'string' &&
-        typeof item.library_id === 'string' &&
-        Array.isArray(item.provider_connections) &&
-        (item.languages === undefined ||
-          (Array.isArray(item.languages) &&
-            item.languages.every((language) => typeof language === 'string'))),
-    ) ||
-    !value.fields.every(
-      (item) =>
-        record(item) &&
-        typeof item.field_id === 'string' &&
-        typeof item.group === 'string' &&
-        typeof item.managed_by_file === 'boolean' &&
-        ['applied_live', 'deploy_managed'].includes(String(item.apply_effect)),
-    ) ||
-    !value.secrets.every(
-      (item) =>
-        record(item) &&
-        typeof item.field_id === 'string' &&
-        typeof item.configured === 'boolean' &&
-        (item.indicator === undefined ||
-          item.indicator === null ||
-          typeof item.indicator === 'string'),
-    )
-  )
-    throw new ApiError(502, 'invalid_settings_response')
-  // The server leaves an empty language list out, as the contract's default;
-  // the page reads it as that empty list.
-  return {
-    ...value,
-    document: {
-      ...value.document,
-      libraries: value.document.libraries.map((item: unknown) => ({
-        languages: [],
-        ...(item as Record<string, unknown>),
-      })),
-    },
-  } as unknown as SettingsView
-}
+// A settings answer is decoded before `mutate` hands it here; the decoder
+// fills a library's omitted language list with its default, the empty list.
+const settingsView = (value: unknown) => value as SettingsView
 // The media-health and provider-outcome lists are decoded with the document
 // that carries them (report, works list, case detail, evidence); these only
 // rename (#1688).
@@ -2695,9 +2634,10 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
 // asserts for them is the version handshake: a hand-written copy of
 // docs/reference/review-openapi-v1.json would become a second contract and
 // would fail closed on responses the server is entitled to send. The families
-// that are decoded (`DECODED`: preparation, library, attention and the case
-// detail) are checked field by field by their generated decoders instead, and
-// their mappers keep only the checks the schema cannot state (ADR-0091). This
+// that are decoded (`DECODED`: preparation, library, attention, the case
+// detail and settings) are checked field by field by their generated decoders
+// instead, and their mappers keep only the checks the schema cannot state
+// (ADR-0091). This
 // is the one place in the file allowed to widen an unchecked document to a DTO
 // type, which is why the call sites carry no cast of their own.
 // The lint rule below objects that a type parameter used once is an assertion in
