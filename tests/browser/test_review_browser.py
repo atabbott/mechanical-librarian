@@ -648,6 +648,7 @@ def _server(
                     state=CoverSourceState.TIMEOUT,
                     artifact=None,
                     timeout_scope="attempted",
+                    final_host=None,
                 ),
             )
             if sole_cover_timeout

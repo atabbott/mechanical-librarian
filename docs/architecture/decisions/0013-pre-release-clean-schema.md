@@ -389,3 +389,11 @@ never explain its match. The proposal policy is unchanged. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
 
+Issue #1752 also takes the clean-rebuild branch. `metadata-report-v71` adds
+`final_host` to every cover source: the closed host family that served a
+retrieved Open Library cover, now that Open Library covers follow the fixed
+Internet Archive route. A v70 report states no such key, and a report carries
+forward while its file and configuration fingerprints are unchanged, so a
+stored report would keep its `unavailable` Open Library covers. The proposal
+policy is unchanged. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.

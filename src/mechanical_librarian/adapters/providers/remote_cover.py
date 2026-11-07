@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import cast
 from urllib.parse import SplitResult, urljoin, urlsplit
 
+from mechanical_librarian.application.metadata_report import CoverRedirects
+
 # One ``socket.getaddrinfo`` row: (family, kind, protocol, canonical name,
 # socket address).  Only the address element is read here.
 _AddressInfo = tuple[
@@ -28,6 +30,22 @@ _MAX_CHUNK_LINE_BYTES = 1_024
 _IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _STATUS = re.compile(r"^HTTP/1\.[01] ([0-9]{3}) [\x20-\x7e]*$")
+# Open Library's closed archive route (security.md › Provider cover admission).
+# Every pattern is applied with ``fullmatch`` to the exact header string, so a
+# trailing newline or any normalisation difference cannot pass.
+_OPEN_LIBRARY_COVER = re.compile(
+    r"https://covers\.openlibrary\.org/b/id/([1-9][0-9]{0,9})-L\.jpg\?default=false"
+)
+_ARCHIVE_SEGMENT = r"([A-Za-z0-9_.-]{1,64})"
+_ARCHIVE_DOWNLOAD = re.compile(
+    rf"https://archive\.org(?::443)?/download/{_ARCHIVE_SEGMENT}/{_ARCHIVE_SEGMENT}"
+    rf"/{_ARCHIVE_SEGMENT}"
+)
+_ARCHIVE_DATANODE = re.compile(
+    r"https://ia[0-9]{1,6}\.us\.archive\.org(?::443)?/view_archive\.php\?([^#%]*)"
+)
+_ARCHIVE_ITEM_PATH = re.compile(r"/[0-9]{1,4}/items/(.*)")
+_UNSAFE_REDIRECT = "unsafe remote redirect"
 
 
 class RemoteCoverError(RuntimeError):
@@ -323,10 +341,121 @@ def _admitted_media_type(headers: dict[str, str]) -> str:
     return media_type.lower()
 
 
+def _raw_archive_location(location: str) -> None:
+    """Refuse anything but printable, absolute, lowercase ``https://`` text.
+
+    This runs on the exact header value before any join, split or decoding:
+    ``urljoin`` and ``urlsplit`` silently drop a tab or line feed, so checking
+    their output would check a different string from the one the server sent.
+    """
+    if (
+        any(ord(character) < 0x21 or ord(character) > 0x7E for character in location)
+        or "\\" in location
+        or "@" in location
+        or not location.startswith("https://")
+    ):
+        raise RemoteCoverError(_UNSAFE_REDIRECT)
+
+
+def _archive_download(location: str, names: tuple[str, str]) -> tuple[str, str, str]:
+    """Admit hop 1, ``archive.org/download/<item>/<zip>/<file>``, or refuse."""
+    _raw_archive_location(location)
+    match = _ARCHIVE_DOWNLOAD.fullmatch(location)
+    if match is None:
+        raise RemoteCoverError(_UNSAFE_REDIRECT)
+    item, archive, file = match.groups()
+    if {item, archive, file} & {".", ".."} or file not in names:
+        raise RemoteCoverError(_UNSAFE_REDIRECT)
+    return item, archive, file
+
+
+def _archive_datanode(location: str, download: tuple[str, str, str]) -> None:
+    """Admit hop 2, a datanode's ``view_archive.php`` bound to hop 1, or refuse.
+
+    The query is split on ``&`` only, never with ``parse_qs``: no ``;``
+    separator, no ``+`` to space and no percent-decoding.
+    """
+    _raw_archive_location(location)
+    match = _ARCHIVE_DATANODE.fullmatch(location)
+    if match is None:
+        raise RemoteCoverError(_UNSAFE_REDIRECT)
+    values: dict[str, str] = {}
+    for pair in match.group(1).split("&"):
+        key, separator, value = pair.partition("=")
+        if (
+            not separator
+            or "=" in value
+            or key not in {"archive", "file"}
+            or key in values
+        ):
+            raise RemoteCoverError(_UNSAFE_REDIRECT)
+        values[key] = value
+    item, archive, file = download
+    path = _ARCHIVE_ITEM_PATH.fullmatch(values.get("archive", ""))
+    if (
+        len(values) != 2
+        or path is None
+        or path.group(1) != f"{item}/{archive}"
+        or values["file"] != file
+    ):
+        raise RemoteCoverError(_UNSAFE_REDIRECT)
+
+
+def _open_library_archive_cover(
+    url: str, deadline: float | CoverDeadline | None, user_agent: str | None
+) -> RemoteCover:
+    """Follow only Open Library's fixed route, each hop bound to the cover id.
+
+    Position 0 is the constructed ``covers.openlibrary.org`` URL, position 1
+    ``archive.org`` and position 2 an ``ia<N>.us.archive.org`` datanode. Only
+    positions 0 and 1 may redirect, each to the next position. Every refusal
+    happens before any DNS lookup or socket for the refused target, and only
+    position 0 carries the User-Agent, which holds the owner's contact email.
+    """
+    match = _OPEN_LIBRARY_COVER.fullmatch(url) if type(url) is str else None
+    if match is None or int(match.group(1)) > 2_147_483_647:
+        raise RemoteCoverError("unsafe remote cover")
+    if type(deadline) is not CoverDeadline:
+        raise RemoteCoverError("remote cover request is invalid")
+    requested = int(match.group(1))
+    names = (f"{requested}-L.jpg", f"{requested:010d}-L.jpg")
+    current = url
+    download: tuple[str, str, str] | None = None
+    for position in range(3):
+        deadline.remaining_phase()
+        status, headers, content = _pinned_fetch(
+            current,
+            deadline,
+            user_agent if position == 0 else None,
+            generic_redirects=False,
+        )
+        if status in _REDIRECT_STATUSES:
+            if position == 2:
+                raise RemoteCoverError(_UNSAFE_REDIRECT)
+            location = headers.get("location")
+            if not location:
+                raise RemoteCoverError("remote cover unavailable")
+            if download is None:
+                download = _archive_download(location, names)
+            else:
+                _archive_datanode(location, download)
+            current = location
+            continue
+        if status != 200:
+            raise RemoteCoverError("remote cover unavailable")
+        media_type = _admitted_media_type(headers)
+        if not content:
+            raise RemoteCoverError("remote cover unavailable")
+        return RemoteCover(current, media_type, content)
+    raise RemoteCoverError(_UNSAFE_REDIRECT)
+
+
 def _pinned_fetch(
     url: str,
     deadline: float | CoverDeadline | None,
     user_agent: str | None = None,
+    *,
+    generic_redirects: bool = True,
 ) -> tuple[int, dict[str, str], bytes]:
     host, address, path = _pinned_address(url, deadline)
     query = _parts(url).query
@@ -346,7 +475,8 @@ def _pinned_fetch(
             secured.sendall(request)
             status, headers = _response_headers(secured, deadline)
             if status in _REDIRECT_STATUSES:
-                _redirect_target(url, headers.get("location"))
+                if generic_redirects:
+                    _redirect_target(url, headers.get("location"))
                 return status, headers, b""
             if status != 200:
                 return status, headers, b""
@@ -363,11 +493,11 @@ def fetch_remote_cover(
     url: str,
     *,
     deadline: float | CoverDeadline | None = None,
-    allow_redirects: bool = True,
+    redirects: CoverRedirects = CoverRedirects.PUBLIC_HTTPS,
     user_agent: str | None = None,
 ) -> RemoteCover:
     """One no-retry request chain; every redirect is revalidated before use."""
-    if type(allow_redirects) is not bool or (
+    if type(redirects) is not CoverRedirects or (
         user_agent is not None
         and (
             type(user_agent) is not str
@@ -382,6 +512,8 @@ def fetch_remote_cover(
         raise RemoteCoverError("remote cover request is invalid")
     current = url
     try:
+        if redirects is CoverRedirects.OPEN_LIBRARY_ARCHIVE:
+            return _open_library_archive_cover(url, deadline, user_agent)
         for _ in range(4):
             if type(deadline) is CoverDeadline and deadline.remaining_phase() <= 0:
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
@@ -393,7 +525,7 @@ def fetch_remote_cover(
                 user_agent,
             )
             if status in _REDIRECT_STATUSES:
-                if not allow_redirects:
+                if redirects is CoverRedirects.NONE:
                     raise RemoteCoverError("remote cover unavailable")
                 current = _redirect_target(current, headers.get("location"))
                 continue
