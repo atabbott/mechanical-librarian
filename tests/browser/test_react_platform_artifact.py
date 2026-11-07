@@ -2311,7 +2311,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("button", name="Resume after fresh checks").click()
         page.get_by_text(
-            "Fresh checks requested. Your value stays until they finish.",
+            "Fresh checks requested.",
             exact=True,
         ).wait_for()
         assert return_automatic_requests == 1
@@ -2338,7 +2338,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("button", name="Resume after fresh checks").click()
         page.get_by_text(
-            "Fresh checks requested. Your value stays until they finish.",
+            "Fresh checks requested.",
             exact=True,
         ).wait_for()
         assert return_automatic_requests == 2

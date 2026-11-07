@@ -967,7 +967,7 @@ describe('Library review ownership', () => {
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     settleRequest?.()
     expect(
-      await screen.findByText('Fresh checks requested. Your value stays until they finish.'),
+      await screen.findByText('Fresh checks requested.'),
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
     expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
@@ -1006,7 +1006,7 @@ describe('Library review ownership', () => {
   const U1 = 'No answer came back. Reloading this work to check…'
   const U2 =
     "No answer came back. This work doesn't show fresh checks as requested. Request them again."
-  const S0 = 'Fresh checks requested. Your value stays until they finish.'
+  const S0 = 'Fresh checks requested.'
   const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
@@ -1341,12 +1341,12 @@ describe('Library review ownership', () => {
     await screen.findByRole('heading', { name: 'Which authors should this work use?' })
     await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
     expect(
-      screen.queryByText('Fresh checks requested. Your value stays until they finish.'),
+      screen.queryByText('Fresh checks requested.'),
     ).toBeNull()
     resolveRequest?.()
     await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
     expect(
-      screen.queryByText('Fresh checks requested. Your value stays until they finish.'),
+      screen.queryByText('Fresh checks requested.'),
     ).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Title/u }))
     await screen.findByRole('heading', { name: 'Which title should this work use?' })

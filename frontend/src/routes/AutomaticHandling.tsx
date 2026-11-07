@@ -46,7 +46,7 @@ export const AutomaticHandlingPanel = ({
           </p>
           {automaticShown === 'success' ? (
             <p className="automatic-handling-result is-success" role="status">
-              Fresh checks requested. Your value stays until they finish.
+              Fresh checks requested.
             </p>
           ) : automaticShown === 'error' ? (
             <p className="automatic-handling-result is-error" role="alert">
