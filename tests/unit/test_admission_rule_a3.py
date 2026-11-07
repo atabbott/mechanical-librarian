@@ -648,6 +648,118 @@ def test_value_agreement_never_counts_a_record_the_field_cites() -> None:
     assert a3.value_agreement(case, "series", agreeing) is None
 
 
+def _claim(kind: str, value: str | None, state: str = "valid") -> dict[str, object]:
+    return {
+        "reference": kind,
+        "kind": kind,
+        "value": value,
+        "state": state,
+        "scope": "work",
+    }
+
+
+def _series_agreement(claims: list[dict[str, object]]) -> tuple[ledger.Case, str]:
+    """An uncited, identifier-accepted record stating `claims`."""
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    first, second = fixture.provider(), fixture.provider()
+    work = text()
+    cited, cited_claim = fixture.record(first, work)
+    other, _claim_reference = fixture.record(second, work)
+    fixture.bind(first, cited, work, "accepted")
+    fixture.bind(second, other, work, "accepted")
+    candidates = cast(
+        "list[dict[str, object]]", fixture._providers()[second]["candidates"]
+    )
+    candidates[0]["claims"] = claims
+    case = ledger._build_case(
+        {"results": fixture.results}, fixture.report, {"outcomes": []}, {}
+    )
+    return case, cited_claim
+
+
+def _admitted_series(cited: str, *items: tuple[str, str | None]) -> dict[str, object]:
+    return {
+        "value": {
+            "kind": "series",
+            "value": [{"name": name, "sequence": sequence} for name, sequence in items],
+        },
+        "evidence_references": [cited],
+    }
+
+
+@pytest.mark.parametrize(
+    ("claims", "admitted", "expected"),
+    [
+        (
+            [_claim("series", "Alpha"), _claim("series_sequence", "2")],
+            ("alpha", "2"),
+            True,
+        ),
+        (
+            [_claim("series", "Alpha"), _claim("series_sequence", "2")],
+            ("Alpha", "1"),
+            False,
+        ),
+        (
+            [_claim("series_sequence", "2"), _claim("series", "Alpha")],
+            ("Alpha", "2"),
+            True,
+        ),
+        (
+            [_claim("series", "Alpha"), _claim("series_sequence", None, "absent")],
+            ("Alpha", None),
+            True,
+        ),
+        ([_claim("series", "Alpha")], ("Alpha", "1"), False),
+        (
+            [_claim("series", "Alpha", "malformed"), _claim("series_sequence", "2")],
+            ("Alpha", "2"),
+            None,
+        ),
+        ([_claim("series", "Alpha"), _claim("series", "Beta")], ("Alpha", None), None),
+    ],
+    ids=[
+        "same-name-and-sequence",
+        "same-name-other-sequence",
+        "sequence-before-name",
+        "absent-sequence",
+        "record-without-sequence",
+        "invalid-name-states-nothing",
+        "two-names-without-sequences",
+    ],
+)
+def test_series_agreement_compares_each_name_with_its_sequence(
+    claims: list[dict[str, object]],
+    admitted: tuple[str, str | None],
+    expected: bool | None,
+) -> None:
+    case, cited = _series_agreement(claims)
+    assert (
+        a3.value_agreement(case, "series", _admitted_series(cited, admitted))
+        is expected
+    )
+
+
+def test_series_agreement_needs_every_admitted_series() -> None:
+    claims = [_claim("series", "Alpha"), _claim("series_sequence", "2")]
+    case, cited = _series_agreement(claims)
+    both = _admitted_series(cited, ("Alpha", "2"), ("Beta", "1"))
+    assert a3.value_agreement(case, "series", both) is False
+
+
+def test_exact_field_decoding_rejects_subclasses() -> None:
+    class Text(str):
+        pass
+
+    assert ledger._exact(str, "x") == "x"
+    assert ledger._exact(int, 3) == 3
+    assert ledger._exact(bool, False) is False
+    for kind, value in [(int, True), (str, Text("x")), (bool, 1), (int, "3")]:
+        with pytest.raises(ValueError):
+            ledger._exact(kind, value)
+
+
 # --- The analysis through the ledger ---------------------------------------
 
 
@@ -830,6 +942,28 @@ def test_a_source_with_the_elections_has_no_stale_competing_title(
     title = next(row for row in entry["populations"] if row["destination"] == "title")
     assert (title["held_first"], title["held_first_later_election"]) == (1, 0)
     assert entry["withheld_title_rule_at_source"] is True
+
+
+@pytest.mark.parametrize(
+    ("alternatives", "stale"),
+    [(256, True), (257, False), (1, True)],
+    ids=["at-the-limit", "over-the-limit", "one-survivor"],
+)
+def test_main_forms_nothing_when_too_many_combinations_survive(
+    alternatives: int, stale: bool
+) -> None:
+    combinations = [
+        _same_name(series=_part(C, f"series-{index}", items=[_series(TITLE)]))
+        for index in range(alternatives)
+    ]
+    # A repeated combination is one combination, as main keys them.
+    combinations.append(combinations[0])
+    replay = _replay(combinations, {"title": _prior("keep")})
+    assert a3.stale_for_main(replay) is stale
+
+
+def test_main_forms_nothing_when_no_combination_survives() -> None:
+    assert a3.stale_for_main(_replay([_r1_combination()], {})) is False
 
 
 def test_r3_counts_a_case_only_when_no_sibling_stays_held(tmp_path: Path) -> None:
