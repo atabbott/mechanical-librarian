@@ -14711,7 +14711,10 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const completeUnderSearch = async (
     entry: string,
     summary: (decided: boolean) => Promise<LibraryView>,
-    attention?: (decided: boolean) => ReturnType<ReviewHttp['getAttention']>,
+    attention?: (
+      decided: boolean,
+      search: AttentionSearch,
+    ) => ReturnType<ReviewHttp['getAttention']>,
   ) => {
     const user = userEvent.setup()
     let decided = false
@@ -14723,9 +14726,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       getLibrary: vi.fn(async (search: LibrarySearch) =>
         search.q ? counted(decided ? 0 : 1, 1) : summary(decided),
       ),
-      getAttention: vi.fn(async () =>
+      getAttention: vi.fn(async (search: AttentionSearch) =>
         attention
-          ? attention(decided)
+          ? attention(decided, search)
           : decided
             ? { total: 0, items: [] }
             : { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] },
@@ -14855,6 +14858,43 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     ).toBeVisible()
     expect(within(footer).queryByText(/This tab is running an earlier build/u)).toBeNull()
   })
+
+  it.each([
+    ['first page', 'mismatch'],
+    ['first page', 'next work'],
+    ['next page', 'mismatch'],
+    ['next page', 'next work'],
+  ] as const)(
+    'V4: the %s next work retry hands focus to what replaced it after a %s (#1742)',
+    async (path, outcome) => {
+      let reads = 0
+      const footer = await completeUnderSearch(
+        '/library?lens=all&q=needle&preview=case-1&field=title',
+        async (decided) => counted(decided ? 0 : 1, 4),
+        async (decided, search) => {
+          const decidedItem = railItem('case-1', 'title', 'A Book', 1)
+          if (!decided) return { total: 1, items: [decidedItem] }
+          // The next-page path reads the first page, then fails on the next.
+          if (path === 'next page' && !search.cursor)
+            return { total: 2, nextCursor: 'next', items: [decidedItem] }
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { total: 1, items: [railItem('case-2', 'title', 'Another Book', 1)] }
+        },
+      )
+      if (!footer) throw new Error('completion footer is required')
+      await userEvent
+        .setup()
+        .click(await within(footer).findByRole('button', { name: 'Try finding next work again' }))
+      const target =
+        outcome === 'mismatch'
+          ? await within(footer).findByRole('button', { name: 'Reload the current application' })
+          : await within(footer).findByRole('button', { name: 'Review next work →' })
+      await waitFor(() => expect(target).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    },
+  )
 
   it('V5: the default landing and the summary share one request', async () => {
     const user = userEvent.setup()

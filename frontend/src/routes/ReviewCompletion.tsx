@@ -3,6 +3,7 @@
 // the Library route under the route-size rule (#1742); the page keeps the
 // attention read, the completion record, the next work and the card's focus.
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query'
+import { useRef } from 'react'
 import type { RefObject } from 'react'
 
 import { BuildMismatchError } from '../api/http'
@@ -10,6 +11,7 @@ import type { AttentionView } from '../api/http'
 import { Button } from '../components/Button'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { completionOutcome, decisionValue } from '../fieldDecision'
+import { focusAfterRetry } from '../focusAfterRetry'
 import type { ReviewField } from '../fieldDecision'
 import { destinationLabel } from '../labels'
 
@@ -37,9 +39,22 @@ export const ReviewCompletion = ({
   inspect: (destination: string) => void
   reviewNextWork: () => void
 }) => {
+  // Try finding next work again, or Reload once the tab is on an earlier build.
+  const nextWorkRetry = useRef<HTMLButtonElement>(null)
   const retryNextWork = () => {
-    if (attention.isFetchNextPageError) void attention.fetchNextPage()
-    else void attention.refetch()
+    const nextPage = attention.isFetchNextPageError
+    // The next-page read shows its loading line, which removes this control:
+    // the card holds focus until the outcome takes it.
+    if (nextPage) completionRegion.current?.focus({ preventScroll: true })
+    void (nextPage ? attention.fetchNextPage() : attention.refetch()).then(() =>
+      focusAfterRetry(
+        () =>
+          completionRegion.current?.querySelector<HTMLElement>('[data-next-work]') ??
+          nextWorkRetry.current ??
+          completionRegion.current,
+        () => completionRegion.current,
+      ),
+    )
   }
   return (
     <article className="review-complete" aria-live="polite" tabIndex={-1} ref={completionRegion}>
@@ -75,19 +90,24 @@ export const ReviewCompletion = ({
       {writesActive ? <p>Every write is logged in Activity.</p> : null}
       <footer>
         {hasNextWork ? (
-          <Button variant="primary" type="button" onClick={reviewNextWork}>
+          <Button variant="primary" type="button" data-next-work onClick={reviewNextWork}>
             Review next work →
           </Button>
         ) : attention.isPending || attention.isPlaceholderData || attention.isFetchingNextPage ? (
           <span>Looking for the next visible work…</span>
         ) : attention.isError && attention.error instanceof BuildMismatchError ? (
-          <StaleBuildRead lead="The next attention work was not loaded." />
+          <StaleBuildRead lead="The next attention work was not loaded." ref={nextWorkRetry} />
         ) : attention.isError ? (
           <>
             <span>The next attention work could not be loaded.</span>
-            <Button variant="primary" type="button" onClick={retryNextWork}>
+            <button
+              ref={nextWorkRetry}
+              className="button-primary"
+              type="button"
+              onClick={retryNextWork}
+            >
               Try finding next work again
-            </Button>
+            </button>
           </>
         ) : !searching ? (
           <span>All visible review work is complete.</span>
