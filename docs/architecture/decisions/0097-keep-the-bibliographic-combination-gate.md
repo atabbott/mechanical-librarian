@@ -105,8 +105,8 @@ That gives each field's outcome before the overwrite.
   audiobook-1294 source has those. None of these can be replayed offline
   (ADR-0013), so they stay unmeasured until #1418's full-library run.
 
-The script then tries three relaxations, each a predicate over the whole
-combination under main's checks. Decision 4 lists them.
+The script then tries three relaxations under main's checks. Decision 4
+lists them and says which of them look at the whole combination.
 
 | Relaxation | Works or fields evaluated | Main already forms one | Admitted | Cited records: right work / wrong work / unlabelled | Identity precision (Wilson 95% lower limit) |
 |---|---|---|---|---|---|
