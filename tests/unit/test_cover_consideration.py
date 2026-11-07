@@ -233,6 +233,11 @@ def test_model_free_manual_path_is_persisted_before_exact_selection(
     assert value["candidates"][0]["incumbent"]
     alternative = value["candidates"][1]
     assert alternative["selectable"]
+    # Only a work-route audiobook cover carries the matched-book note (#1642).
+    assert [candidate["match_reason"] for candidate in value["candidates"]] == [
+        None,
+        None,
+    ]
     case.service.validate_decision(
         "review_case_" + "b" * 64,
         value["consideration_id"],
@@ -1293,6 +1298,8 @@ def test_an_audiobook_consideration_dispatches_no_observer(
             assert candidate["identity"]["outcome"] == "unknown"
             assert "unbound_provider_identity" in candidate["identity"]["reasons"]
             assert candidate["observation"] is None
+            # A recording-route cover carries no matched-book note (#1642).
+            assert candidate["match_reason"] is None
             service.validate_decision(
                 "review_case_" + "e" * 64,
                 projected["consideration_id"],
@@ -1718,6 +1725,18 @@ def test_a_work_route_cover_is_an_owner_choice_with_no_observer() -> None:
             "verified_manifestation_match",
             "verified_work_match",
         }
+        # The cover from the matched book says so, display only: the stored
+        # consideration is unchanged and History projects the same note.
+        assert candidate["match_reason"] == "matched_book"
+        assert candidate["deterministic_rank"] is None
+        assert candidate["state"] == "excluded"
+        stored = cast("_Store", service._store).current["review_case_" + "e" * 64]
+        assert "match_reason" not in stored
+        (historical,) = cast(
+            "list[dict[str, object]]",
+            service.project_historical(stored)["candidates"],
+        )
+        assert historical["match_reason"] == "matched_book"
         service.validate_decision(
             "review_case_" + "e" * 64,
             projected["consideration_id"],

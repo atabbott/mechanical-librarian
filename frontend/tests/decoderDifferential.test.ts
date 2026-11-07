@@ -730,6 +730,29 @@ const consideration = () =>
     ready: true,
   })
 const covered = builder('CaseDetail', 'coverConsideration.candidate', COVER, consideration)
+// The work-route shape the server sends for an audiobook with no admitted
+// recording: an unconfirmed, unranked cover from the matched book (#1642).
+builder('CaseDetail', 'coverConsideration.matched-book', COVER, () =>
+  coverConsideration({
+    candidates: [
+      coverCandidate({
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        identity: coverIdentity({ outcome: 'unknown' }),
+        match_reason: 'matched_book',
+        match_state: 'match_not_confirmed',
+        selectable: false,
+        state: 'excluded',
+      }),
+    ],
+    choice_contexts: [
+      choiceContext(),
+      choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+    ],
+    policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+    ready: true,
+  }),
+)
 // One item of each kind mapHistory reads: transition, preview, two owner
 // decisions (text and authors, then series) and a cover consideration.
 builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
@@ -955,6 +978,23 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     }),
     'mapCoverConsideration http.ts:3668: an unconfirmed candidate is neither selectable nor ranked; cross-field',
     'reject:mutation_outcome_unknown:invariant@contradictory_cover_identity',
+  ],
+  [
+    'check:mapCoverConsideration.match-reason',
+    covered,
+    '/candidates/0',
+    coverCandidate({
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      identity: coverIdentity({ outcome: 'conflict' }),
+      manual_eligible: false,
+      match_reason: 'matched_book',
+      match_state: 'match_not_confirmed',
+      selectable: false,
+      state: 'excluded',
+    }),
+    'mapCoverConsideration http.ts:3689-3690: only a proposed cover whose identity is not a conflict comes from the matched book; cross-field',
+    'reject:mutation_outcome_unknown:invariant@contradictory_cover_match_reason',
   ],
   [
     'check:mapCoverObservation.binding',

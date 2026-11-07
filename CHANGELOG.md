@@ -104,7 +104,8 @@ brackets are GitHub issues.
   book is matched exactly, you can also choose the book's first publication
   date from Hardcover, a cover for an empty or tiny one, and, for an empty
   narrator field, the narrators of a Hardcover audio edition Audible cannot
-  confirm. Each is your choice; nothing changes automatically (#1642).
+  confirm. Each is your choice; nothing changes automatically. Such a cover
+  reads "Same book · recording not confirmed" (#1642).
 - Tooling: a read-only workbench script measures, per field and provider, how
   often Hardcover's and Open Library's exact book matches agree with admitted
   recordings and owner decisions, the evidence for letting the work route fill
