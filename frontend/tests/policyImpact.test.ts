@@ -109,7 +109,7 @@ describe('policy impact projections', () => {
       changed: true,
       title: 'Change',
       detail:
-        'fills the empty field with 9780306406157 because deterministic identity evidence binds it to this file’s work',
+        'fills the empty field with 9780306406157 because it is verified for this edition',
     })
     expect(
       policyImpactDisplay({

@@ -87,10 +87,8 @@ const humanReason = (reason: string | null) => {
   if (reason === 'source_values_conflict') return 'sources supply competing ISBNs'
   if (reason === 'source_value_insufficient_association')
     return 'the supplied ISBN is not sufficiently linked to this recording'
-  if (reason === 'verified_manifestation_isbn')
-    return 'deterministic identity evidence binds it to this file’s work'
-  if (reason === 'target_work_contradicted')
-    return 'the retained provider evidence names a different work'
+  if (reason === 'verified_manifestation_isbn') return 'it is verified for this edition'
+  if (reason === 'target_work_contradicted') return 'the sources name a different work'
   if (reason === 'target_preserved' || reason === 'unchanged')
     return 'the exact current value is preserved'
   return 'no supported value found'
