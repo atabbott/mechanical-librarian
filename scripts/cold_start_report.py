@@ -1069,9 +1069,7 @@ def _companion_counts(rows: list[tuple[object, ...]]) -> dict[str, object]:
         ),
         # The recording admitted, and an ASIN lane kept a linked product.
         "linked_recording_admitted": sum(
-            1
-            for use, outcome in present
-            if use[4] and outcome == "recording_admitted"
+            1 for use, outcome in present if use[4] and outcome == "recording_admitted"
         ),
     }
 

@@ -20,14 +20,17 @@ class Capability:
     def to_json(self) -> str:
         return json.dumps(
             {"kind": self.kind, "name": self.name, "operations": list(self.operations)},
-            separators=(",", ":"), sort_keys=True,
+            separators=(",", ":"),
+            sort_keys=True,
         )
 
 
 CAPABILITIES = (
     Capability("report-observe", "scenario", "run_metadata_report"),
     Capability(
-        "report-inspect", "inspector", "reopen_metadata_report",
+        "report-inspect",
+        "inspector",
+        "reopen_metadata_report",
         ("reopen_current_metadata_report",),
     ),
     Capability("cover-inspect", "inspector", "reopen_cover_preview"),
@@ -44,19 +47,27 @@ CAPABILITIES = (
     Capability("decision-preview", "inspector", "preview_shadow_decision_case"),
     Capability("contained-reviewer", "scenario", "run_contained_reviewer"),
     Capability(
-        "cover-packet-review", "scenario", "run_cover_packet_reviewer",
+        "cover-packet-review",
+        "scenario",
+        "run_cover_packet_reviewer",
         ("reopen_metadata_report", "reopen_cover_preview"),
     ),
     Capability(
-        "cover-identity-report", "inspector", "reopen_metadata_report",
+        "cover-identity-report",
+        "inspector",
+        "reopen_metadata_report",
         ("reopen_cover_preview",),
     ),
     Capability(
-        "cover-observation-report", "scenario", "run_cover_packet_reviewer",
+        "cover-observation-report",
+        "scenario",
+        "run_cover_packet_reviewer",
         ("reopen_metadata_report", "reopen_cover_preview"),
     ),
     Capability(
-        "cover-policy-report", "inspector", "reopen_metadata_report",
+        "cover-policy-report",
+        "inspector",
+        "reopen_metadata_report",
         ("reopen_cover_preview",),
     ),
 )
