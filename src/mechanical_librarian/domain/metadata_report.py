@@ -1214,6 +1214,12 @@ AUDIO_DISCOVERY_TITLE_BASES = ("path_leaf", "title_tag")
 # audio section, which states only what the audio files themselves carry.
 COMPANION_TITLE_BASIS = "companion_title"
 DISCOVERY_TITLE_BASES = (COMPANION_TITLE_BASIS, *AUDIO_DISCOVERY_TITLE_BASES)
+# The WORK lane an audiobook asks from its companion EPUB's own title and
+# creators when the target states no complete work (#1468). It is planned in
+# place of the asserted lane, never beside it, and like an alternative it
+# keeps only a recording the runtime band corroborates.
+COMPANION_WORK_BASIS = "companion_work"
+LANE_TITLE_BASES = (*DISCOVERY_TITLE_BASES, COMPANION_WORK_BASIS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3745,7 +3751,12 @@ def work_discovery_lane_payloads(
         == len(authors.value)
     )
     if not complete_work:
-        return ()
+        # The one seam for the search fallback (#1468): an audiobook whose
+        # target names no complete work asks with its companion EPUB's.
+        fallback = (
+            None if discovery_titles is None else companion_work_payload(companion)
+        )
+        return () if fallback is None else (fallback,)
     # ``complete_work`` is exactly the conjunction that proved the title is a
     # ``str`` and the authors are a non-empty tuple of ``str``.
     normalized_title = normalize_title(cast("str", title.value))
@@ -3910,6 +3921,50 @@ def companion_isbn_books(
                 ).admitted
             )
         )
+    )
+
+
+def companion_work_payload(
+    companion: CompanionEbook | None,
+) -> WorkLanePayload | None:
+    """The WORK lane a companion EPUB's own title and creators ask (#1468).
+
+    It is discovery identity only: the claims it is read from stay in the
+    companion and are never local claims, so nothing proposes them. A lane
+    needs one title and a complete, distinct creator set, as the target's own
+    lane does.
+    """
+    if companion is None:
+        return None
+    titles = tuple(
+        claim
+        for claim in companion.claims
+        if claim.kind is ClaimKind.TITLE and claim.state is FieldState.VALID
+    )
+    # An EPUB creator with a role other than author (an illustrator, a
+    # narrator) names no one the work is by.
+    creators = tuple(
+        claim
+        for claim in companion.claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.state is FieldState.VALID
+        and (claim.role is None or claim.role.casefold() == "aut")
+    )
+    if len(titles) != 1 or titles[0].canonical is None or not creators:
+        return None
+    title = normalize_title(titles[0].canonical)
+    authors = tuple(normalize_title(claim.canonical or "") for claim in creators)
+    if (
+        not title
+        or any(not value for value in authors)
+        or len({value.casefold() for value in authors}) != len(authors)
+    ):
+        return None
+    return WorkLanePayload(
+        title,
+        authors,
+        tuple(sorted(claim.reference for claim in (*titles, *creators))),
+        COMPANION_WORK_BASIS,
     )
 
 
@@ -4652,8 +4707,8 @@ class MetadataReport:
 
         Its ISBN lane is the one the companion plans, at Hardcover alone, and
         keeps only the books the companion rule keeps. A companion claim
-        stands behind no other lane than that one and the alternative WORK
-        lane its title asks, which the work-lane replay checks.
+        stands behind no other ISBN lane; the WORK lanes it asks are replayed
+        with the plan's other WORK lanes.
         """
         companion_references = (
             set()
@@ -4687,8 +4742,8 @@ class MetadataReport:
                     raise ReportValueError("provider companion lane is invalid")
                 if (
                     set(lane.input_references) & companion_references
+                    and lane.kind is ProviderQueryKind.ISBN
                     and not companion_lane
-                    and lane.kind is not ProviderQueryKind.WORK
                 ):
                     raise ReportValueError("provider companion lane is invalid")
                 if not companion_lane or lane.status is not ProviderStatus.CANDIDATES:
@@ -5025,7 +5080,14 @@ class MetadataReport:
                         if payload is not None and payload.title_basis is not None
                         else target_title or ""
                     ),
-                    target_authors,
+                    # The companion fallback (#1468) asks with the
+                    # companion's creators, since the target names none.
+                    (
+                        payload.authors
+                        if payload is not None
+                        and payload.title_basis == COMPANION_WORK_BASIS
+                        else target_authors
+                    ),
                     lane.dispatch_lineage,
                     audiobook=self.audio is not None,
                     band_claims=(
@@ -8060,6 +8122,9 @@ __all__ = [
     "COMPANION_ISBN_AUTHORITIES",
     "COMPANION_TITLE_BASIS",
     "DISCOVERY_TITLE_BASES",
+    "COMPANION_WORK_BASIS",
+    "LANE_TITLE_BASES",
+    "companion_work_payload",
     "CompanionIsbnLanePayload",
     "companion_discovery_title",
     "companion_isbn_books",

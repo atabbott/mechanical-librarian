@@ -86,7 +86,7 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_EBOOK_CLAIM_KINDS,
     COMPANION_ISBN_AUTHORITIES,
     CORROBORATED_RULE_AUTHORITY,
-    DISCOVERY_TITLE_BASES,
+    LANE_TITLE_BASES,
     MAX_AUDIO_EDITIONS,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
@@ -373,7 +373,7 @@ class MetadataLookup:
             or any(type(value) is not str for value in self.authors)
             or self.title_basis is not None
             and (
-                self.title_basis not in DISCOVERY_TITLE_BASES
+                self.title_basis not in LANE_TITLE_BASES
                 or self.kind is not ProviderQueryKind.WORK
                 or self.audio is None
             )
@@ -445,7 +445,7 @@ class MetadataDiscoveryLane:
             or tuple(sorted(set(self.input_references))) != self.input_references
             or self.title_basis is not None
             and (
-                self.title_basis not in DISCOVERY_TITLE_BASES
+                self.title_basis not in LANE_TITLE_BASES
                 or self.kind is not ProviderQueryKind.WORK
             )
         ):
@@ -558,8 +558,9 @@ class MetadataDiscoveryPlan:
             raise MetadataReportError("provider discovery plan is invalid")
         known = {value.reference for value in self.local_claims}
         companion = companion_isbn_lane(self.companion)
-        # A companion claim may stand behind a lane only as that lane's input:
-        # its ISBN lane, or the alternative its title asks (#1468).
+        # A companion claim stands behind an ISBN lane only as the companion's
+        # own ISBN lane (#1468); its title and creators may stand behind the
+        # WORK lane they ask and the product lanes that search fed.
         companion_references = (
             set()
             if self.companion is None
@@ -567,14 +568,8 @@ class MetadataDiscoveryPlan:
         )
         if any(
             set(lane.input_references) & companion_references
-            and not (
-                lane.kind is ProviderQueryKind.ISBN
-                and companion is not None
-                and lane.identity == companion.identity
-            )
-            and not (
-                lane.kind is ProviderQueryKind.WORK and lane.title_basis is not None
-            )
+            and lane.kind is ProviderQueryKind.ISBN
+            and not (companion is not None and lane.identity == companion.identity)
             for lane in self.lanes
         ):
             raise MetadataReportError("provider discovery plan is invalid")
