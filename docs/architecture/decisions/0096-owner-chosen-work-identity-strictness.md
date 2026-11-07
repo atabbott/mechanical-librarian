@@ -165,7 +165,7 @@ readable in Git history and grant no authority.
 
 - At either title-and-creator level some records count as negatives on the
   natural controls: about 4.5%, of which about two thirds are duplicate
-  provider records for the same book. Today's work-lane predicate measures the
+  provider records for the same book. Today's predicate measures about the
   same (0.953). Those records reach owner review and proposals.
 - Audiobook precision cannot be measured without owner labels.
 
