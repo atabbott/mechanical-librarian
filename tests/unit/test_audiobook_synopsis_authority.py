@@ -1604,7 +1604,7 @@ def test_praise_is_never_recommended_but_stays_choosable(tmp_path):
         )
         assert field["automatic_decision"] is None
         assert field["automatic_withheld_reason"] == (
-            "No source description meets the rules for a synopsis."
+            "No source description meets the rules for choosing one for you."
         )
         assert field["proposed_values"] == [{"kind": "text", "value": _PRAISE}]
         assert "accept" in field["decision_actions"]

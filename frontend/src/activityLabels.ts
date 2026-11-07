@@ -21,8 +21,8 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
 // that closed because the item changed says so, without claiming nothing was
 // written: an earlier attempt may have landed (#1542).
 const staleLabels: Readonly<Record<string, string>> = {
-  connection: 'Waiting safely',
-  target_changed: 'Item changed; closed safely',
+  connection: 'Waiting to retry',
+  target_changed: 'Closed because the item changed',
 }
 export const stateLabel = (
   state: string,
@@ -34,13 +34,13 @@ export const stateLabel = (
     ? {
         completed: 'Description advice completed',
         succeeded: 'Description advice completed',
-        failed: 'Description advice failed safely',
+        failed: 'Description advice failed',
       }[state]
     : advice === 'cover'
       ? {
           completed: 'Cover advice completed',
           unavailable: 'Cover advice unavailable',
-          failed: 'Cover advice failed safely',
+          failed: 'Cover advice failed',
           selected: 'Owner cover choice recorded',
           retry: 'Manual cover retry',
         }[state]
