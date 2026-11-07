@@ -12,7 +12,8 @@ import {
 export interface RouteFailureCopy {
   message: string
   detail: string | null
-  action: 'retry' | 'sign-in'
+  // A refusal is not fixed by trying again, so it offers no action.
+  action: 'retry' | 'sign-in' | 'none'
 }
 
 const copy = {
@@ -20,7 +21,7 @@ const copy = {
   network: "Couldn't reach the server. Check that Mechanical Librarian is running, then try again.",
   unreadable: "The server sent an answer this page couldn't read. Try again.",
   server: "The server couldn't answer. Try again in a moment.",
-  refused: "The server wouldn't show this page. Try again.",
+  refused: "This page isn't available.",
   unexpected: 'Something went wrong showing this page. Try again.',
 } as const
 
@@ -37,11 +38,9 @@ export const routeFailureCopy = (error: unknown): RouteFailureCopy => {
   )
     return { message: copy.unreadable, detail: apiDetail(error), action: 'retry' }
   if (error instanceof ApiError)
-    return {
-      message: error.status >= 500 ? copy.server : copy.refused,
-      detail: apiDetail(error),
-      action: 'retry',
-    }
+    return error.status >= 500
+      ? { message: copy.server, detail: apiDetail(error), action: 'retry' }
+      : { message: copy.refused, detail: apiDetail(error), action: 'none' }
   return {
     message: copy.unexpected,
     detail: error instanceof Error ? error.name : null,

@@ -1321,9 +1321,9 @@ const RouteFailure = ({
       ) : null}
       {copy.action === 'sign-in' ? (
         <a href={signInLocation()}>Sign in again</a>
-      ) : (
+      ) : copy.action === 'retry' ? (
         <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
-      )}
+      ) : null}
     </section>
   )
 }

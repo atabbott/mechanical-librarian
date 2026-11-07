@@ -12,7 +12,7 @@ const network =
   "Couldn't reach the server. Check that Mechanical Librarian is running, then try again."
 const unreadable = "The server sent an answer this page couldn't read. Try again."
 const server = "The server couldn't answer. Try again in a moment."
-const refused = "The server wouldn't show this page. Try again."
+const refused = "This page isn't available."
 const unexpected = 'Something went wrong showing this page. Try again.'
 
 const decodeFailure = new ResponseDecodeError({
@@ -72,7 +72,7 @@ describe('routeFailureCopy', () => {
     {
       id: 'refused',
       error: new ApiError(404, 'not_found'),
-      copy: { message: refused, detail: '404 · not_found', action: 'retry' },
+      copy: { message: refused, detail: '404 · not_found', action: 'none' },
     },
     {
       id: 'render defect',
