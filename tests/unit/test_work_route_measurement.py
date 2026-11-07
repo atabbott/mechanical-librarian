@@ -248,8 +248,14 @@ def _report(
     return MetadataReport.from_json(report.to_json())
 
 
-def _publish(repository: SQLiteMetadataReportRepository, report: MetadataReport) -> str:
-    repository.publish(report, lambda: True)
+def _publish(
+    repository: SQLiteMetadataReportRepository,
+    report: MetadataReport,
+    replacing: MetadataReport | None = None,
+) -> str:
+    repository.publish(
+        report, lambda: True, None if replacing is None else replacing.report_id
+    )
     proposal = evaluate_report(report)
     repository.publish_proposal(proposal)
     return cast(
@@ -405,7 +411,8 @@ def test_recording_comparators_count_every_agreement_and_disagreement(
     cross = cast("dict[str, object]", date["cross_provider"])
     assert (cross["compared"], cross["agree"], cross["disagree"]) == (2, 1, 1)
     pooled = cast("dict[str, object]", date["pooled"])
-    assert (pooled["compared"], pooled["agree"], pooled["agreement"]) == (6, 3, 0.5)
+    # Pooled counts books: r3's and r4's two providers compare one pair once.
+    assert (pooled["compared"], pooled["agree"], pooled["agreement"]) == (4, 2, 0.5)
     assert _fields(report)["cover"] == {
         "method": "not_measured",
         "reason": "no_identity_basis",
@@ -802,3 +809,207 @@ def test_the_schema_is_pinned_at_its_first_version() -> None:
     ]
     assert measurement.DEFAULT_MARKS[0].agreement == Fraction(19, 20)
     assert Counter(measurement.FILL_FIELDS)["cover"] == 1
+
+
+def test_pooled_counts_one_book_once_when_both_providers_compare_it(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    # Both providers compare with the owner's year: Hardcover agrees, Open
+    # Library does not, so the one book disagrees.
+    _publish(
+        repository,
+        _report(
+            "split",
+            _recording(),
+            _hardcover({"release_date": "2001"}),
+            _open_library("1999"),
+            current={TargetDestination.PUBLISHED_DATE: "2001-02-03"},
+        ),
+    )
+    repository.close()
+
+    date = _fields(_measure(database))["publishedDate"]
+
+    assert _counts(_provider(_measure(database), "publishedDate", "hardcover"))[:3] == (
+        1,
+        1,
+        0,
+    )
+    pooled = cast("dict[str, object]", date["pooled"])
+    assert (pooled["compared"], pooled["agree"], pooled["disagree"]) == (1, 0, 1)
+    assert pooled["references"] == {"owner": 1}
+
+
+def test_the_cross_provider_date_pair_counts_once_in_pooled(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    _publish(
+        repository,
+        _report(
+            "pair",
+            _recording(),
+            _hardcover({"release_date": "2001"}),
+            _open_library("2001"),
+        ),
+    )
+    repository.close()
+
+    date = _fields(_measure(database))["publishedDate"]
+
+    for provider in ("hardcover", "open_library"):
+        assert (
+            cast("dict[str, dict[str, object]]", date["providers"])[provider][
+                "compared"
+            ]
+            == 1
+        )
+    pooled = cast("dict[str, object]", date["pooled"])
+    assert (pooled["compared"], pooled["agree"]) == (1, 1)
+    assert cast("dict[str, object]", date["cross_provider"])["compared"] == 1
+
+
+@pytest.mark.parametrize(
+    ("source", "reference", "expected"),
+    [
+        ("3", None, measurement.Outcome("not_comparable", "reference_position_absent")),
+        ("2", "2.0", measurement.Outcome("agree", "owner")),
+        ("2", "3", measurement.Outcome("disagree", "owner")),
+        (None, "2", measurement.Outcome("agree", "owner", True)),
+    ],
+    ids=("reference_absent", "unsigned_decimal", "different", "source_absent"),
+)
+def test_series_positions_follow_the_products_rule(
+    source: str | None, reference: str | None, expected: measurement.Outcome
+) -> None:
+    assert (
+        measurement._compare_series(
+            (("Tidewater", source),), (("tidewater", reference),), "owner"
+        )
+        == expected
+    )
+
+
+def test_a_later_unqualified_decision_cannot_hide_an_owner_label(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    first = _unmatched("u1")
+    empty = _publish(repository, first)
+    # Description takes no owner-entered value, so keeping it empty is the
+    # disagreement; a later decision against the filled field must not hide it.
+    _decide(repository, empty, "keep_current", "kept-empty")
+    filled = _publish(repository, _unmatched("u1", description="My own words."), first)
+    _decide(repository, filled, "keep_current", "kept-filled")
+    repository.close()
+
+    report = _measure(database)
+
+    assert _fields(report)["description"]["labels"] == {
+        "labelled": 1,
+        "outside_work_route_fill": 1,
+        "withdrawn": 0,
+    }
+    assert _counts(_provider(report, "description", "hardcover"))[:3] == (1, 0, 1)
+    pooled = cast("dict[str, object]", _fields(report)["description"]["pooled"])
+    assert (pooled["compared"], pooled["disagree"]) == (1, 1)
+
+
+def test_an_owner_label_for_a_provider_without_an_exact_source_is_not_compared() -> (
+    None
+):
+    report = _report("u1", _hardcover({"description": "A tide that keeps time."}))
+    value = {"kind": "text", "value": "A tide that keeps time."}
+    proposal = {
+        "results": [
+            {
+                "destination": "description",
+                "alternatives": [
+                    {
+                        "value": value,
+                        "correlations": [
+                            _HARDCOVER,
+                            correlation_identity("provider:open_library"),
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    measured = measurement.Measurement()
+
+    measurement._label(measured, "description", "accept", value, report, proposal)
+
+    assert measured.fields["description"]["hardcover"].agree == 1
+    assert measured.fields["description"]["open_library"].not_comparable == Counter(
+        {"no_exact_source": 1}
+    )
+    assert (
+        measured.pooled["description"].agree,
+        measured.pooled["description"].disagree,
+    ) == (1, 0)
+
+
+def test_an_owner_value_the_librarian_wrote_is_no_reference(tmp_path: Path) -> None:
+    """The store's own write record marks the owner's series as the Librarian's.
+
+    Driving a verified Audiobookshelf write is out of scope here, so the
+    effect row is inserted beside the reports the repository published.
+    """
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    owner: dict[TargetDestination, _Current] = {
+        TargetDestination.SERIES: _series("Tidewater", "2"),
+        TargetDestination.PUBLISHED_DATE: "2001",
+    }
+    for item in ("written", "untouched"):
+        _publish(
+            repository,
+            _report(
+                item,
+                _recording(),
+                _hardcover(
+                    {"series": "Tidewater", "position": "2", "release_date": "2001"}
+                ),
+                current=owner,
+            ),
+        )
+    repository.close()
+    connection = sqlite3.connect(database)
+    with connection:
+        for index, (destination, state) in enumerate(
+            (("series", "verified"), ("publishedDate", "stale"))
+        ):
+            connection.execute(
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+                "library_name,work_id,destination,state,attempt,updated_at,document) "
+                "VALUES(?,?,?,?,?,?,?,0,1,'{}')",
+                (
+                    "effect_plan_" + f"{index:x}" * 64,
+                    "decision",
+                    "primary",
+                    "audio",
+                    "written",
+                    destination,
+                    state,
+                ),
+            )
+    connection.close()
+
+    report = _measure(database)
+
+    assert _counts(_provider(report, "series", "hardcover"))[:4] == (
+        1,
+        1,
+        0,
+        {"reference_written_by_librarian": 1},
+    )
+    # A stale effect never wrote, so the owner's year still counts.
+    assert _counts(_provider(report, "publishedDate", "hardcover"))[:4] == (
+        2,
+        2,
+        0,
+        {},
+    )

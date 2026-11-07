@@ -34,7 +34,11 @@ measured: no identity basis compares a cover yet.
 
 Every field reports compared, agree, disagree, not_comparable (with closed
 reasons), contradictions, the point agreement and a 95% Wilson interval for
-information. Each mark ``N:P:C`` passes when at least N were compared, the
+information. Pooled figures count items: an item is compared when either
+provider was, and agrees only when every compared provider agrees. A series
+position agrees when the source states none, or when both state the same
+number; a source position the reference lacks is not comparable. An owner
+series or year this store records the Librarian writing is no reference. Each mark ``N:P:C`` passes when at least N were compared, the
 point agreement is at least P and there are at most C contradictions. The
 output holds providers, field names, closed reason codes and counts only:
 never a title, author, value, path, name or identifier.
@@ -53,10 +57,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sqlite3
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
 from typing import TextIO, cast
@@ -128,6 +134,14 @@ _DECISIONS_SQL = (
     + ",".join(f"'{name}'" for name in OWNER_LABELLED_FIELDS)
     + ") ORDER BY hd.ordinal"
 )
+# The fields this store records the Librarian writing, or still writing: a
+# current value it wrote is no independent reference.
+_WRITTEN_SQL = (
+    "SELECT DISTINCT connection_name,library_name,work_id,destination "
+    "FROM field_effects WHERE state IN ('verified','applying','reconciling') "
+    "AND destination IN ('series','publishedDate','publishedYear')"
+)
+_POSITION = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,12 +176,54 @@ class Tally:
     references: Counter[str] = field(default_factory=Counter)
     position_absent: int = 0
 
-    def add(self, other: Tally) -> None:
-        self.agree += other.agree
-        self.disagree += other.disagree
-        self.not_comparable.update(other.not_comparable)
-        self.references.update(other.references)
-        self.position_absent += other.position_absent
+
+@dataclass(frozen=True, slots=True)
+class Outcome:
+    """One provider's closed outcome for one field of one item.
+
+    `detail` is the reference a comparison used, or why none was possible.
+    """
+
+    result: str
+    detail: str
+    position_absent: bool = False
+
+
+def _not_comparable(reason: str) -> Outcome:
+    return Outcome("not_comparable", reason)
+
+
+def _record(
+    provider_tallies: dict[str, Tally], pooled: Tally, outcomes: dict[str, Outcome]
+) -> None:
+    """Count one item per provider, and once in the pooled tally.
+
+    Pooled counts items, not provider rows: an item is compared when any
+    provider was, and agrees only when every compared provider agrees.
+    """
+    for authority, outcome in outcomes.items():
+        tally = provider_tallies[authority]
+        if outcome.result == "not_comparable":
+            tally.not_comparable[outcome.detail] += 1
+            continue
+        tally.references[outcome.detail] += 1
+        if outcome.result == "agree":
+            tally.agree += 1
+            tally.position_absent += outcome.position_absent
+        else:
+            tally.disagree += 1
+    compared = [
+        value for value in outcomes.values() if value.result != "not_comparable"
+    ]
+    if not compared:
+        pooled.not_comparable.update({value.detail for value in outcomes.values()})
+        return
+    pooled.references.update({value.detail for value in compared})
+    if all(value.result == "agree" for value in compared):
+        pooled.agree += 1
+        pooled.position_absent += any(value.position_absent for value in compared)
+    else:
+        pooled.disagree += 1
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
@@ -383,28 +439,42 @@ def _owner_series(
     )
 
 
+def _positions_equal(left: str, right: str) -> bool:
+    """Known positions agree exactly or as unsigned decimals, as the product rules."""
+    return left == right or (
+        _POSITION.fullmatch(left) is not None
+        and _POSITION.fullmatch(right) is not None
+        and Decimal(left) == Decimal(right)
+    )
+
+
 def _compare_series(
-    tally: Tally,
     source: tuple[tuple[str, str | None], ...],
     reference: tuple[tuple[str, str | None], ...],
-) -> None:
-    """Names compare as values do; a position agrees when equal or absent."""
+    detail: str,
+) -> Outcome:
+    """Names compare as values do; absent numbers stay absent.
+
+    A source with no position agrees and says so; a source position the
+    reference lacks cannot be checked; known positions must be equal.
+    """
     if not values_match(
         TargetDestination.SERIES,
         tuple(TargetSeries(name) for name, _ in reference),
         tuple(TargetSeries(name) for name, _ in source),
     ):
-        tally.disagree += 1
-        return
-    absent = False
+        return Outcome("disagree", detail)
+    absent = unverifiable = False
     for (_name, left), (_other, right) in zip(source, reference, strict=True):
-        if left is None or right is None:
+        if left is None:
             absent = True
-        elif left != right:
-            tally.disagree += 1
-            return
-    tally.agree += 1
-    tally.position_absent += absent
+        elif right is None:
+            unverifiable = True
+        elif not _positions_equal(left, right):
+            return Outcome("disagree", detail)
+    if unverifiable:
+        return _not_comparable("reference_position_absent")
+    return Outcome("agree", detail, absent)
 
 
 @dataclass(slots=True)
@@ -425,6 +495,12 @@ class Measurement:
             for name in (*RECORDING_FIELDS, *OWNER_LABELLED_FIELDS)
         }
     )
+    pooled: dict[str, Tally] = field(
+        default_factory=lambda: {
+            name: Tally() for name in (*RECORDING_FIELDS, *OWNER_LABELLED_FIELDS)
+        }
+    )
+    written: frozenset[tuple[object, ...]] = frozenset()
     cross_provider_year: Tally = field(default_factory=Tally)
     owner_labels: dict[str, Counter[str]] = field(
         default_factory=lambda: {name: Counter() for name in OWNER_LABELLED_FIELDS}
@@ -464,27 +540,38 @@ def _measure_recording(
             TargetDestination.PUBLISHED_DATE
         ].value
     )
+    target = report.target
+    written = {
+        destination
+        for connection, library, item, destination in measurement.written
+        if (connection, library, item)
+        == (target.connection, target.library, target.item)
+    }
     owner_series = _owner_series(report)
     elected = _elected_series(proposal)
+    series: dict[str, Outcome] = {}
+    dates: dict[str, Outcome] = {}
     for authority, found in compared.items():
-        series = measurement.fields["series"][authority]
         stated = _source_series(found)
         if len(stated) != 1:
-            series.not_comparable[
+            series[authority] = _not_comparable(
                 "no_source_value" if not stated else "source_values_differ"
-            ] += 1
+            )
+        elif owner_series is not None and "series" in written:
+            series[authority] = _not_comparable("reference_written_by_librarian")
         elif owner_series is not None:
-            series.references["owner"] += 1
-            _compare_series(series, next(iter(stated)), owner_series)
+            series[authority] = _compare_series(
+                next(iter(stated)), owner_series, "owner"
+            )
         elif elected is None:
-            series.not_comparable["no_reference"] += 1
+            series[authority] = _not_comparable("no_reference")
         elif elected[1] <= {_provider_correlation(authority)}:
             # Only this provider voted for the elected series: no reference.
-            series.not_comparable["reference_from_same_provider"] += 1
+            series[authority] = _not_comparable("reference_from_same_provider")
         else:
-            series.references["elected"] += 1
-            _compare_series(series, next(iter(stated)), elected[0])
-        date = measurement.fields["publishedDate"][authority]
+            series[authority] = _compare_series(
+                next(iter(stated)), elected[0], "elected"
+            )
         own = years[authority]
         others = [
             years[other]
@@ -492,23 +579,23 @@ def _measure_recording(
             if other != authority and len(years.get(other, ())) == 1
         ]
         if len(own) != 1:
-            date.not_comparable[
+            dates[authority] = _not_comparable(
                 "no_source_value" if not own else "source_values_differ"
-            ] += 1
-            continue
-        if owner_year is not None:
-            date.references["owner"] += 1
-            reference = owner_year
+            )
+        elif owner_year is not None and written & {"publishedDate", "publishedYear"}:
+            dates[authority] = _not_comparable("reference_written_by_librarian")
+        elif owner_year is not None:
+            dates[authority] = Outcome(
+                "agree" if next(iter(own)) == owner_year else "disagree", "owner"
+            )
         elif others:
-            date.references["other_source"] += 1
-            reference = next(iter(others[0]))
+            dates[authority] = Outcome(
+                "agree" if own == others[0] else "disagree", "other_source"
+            )
         else:
-            date.not_comparable["no_reference"] += 1
-            continue
-        if next(iter(own)) == reference:
-            date.agree += 1
-        else:
-            date.disagree += 1
+            dates[authority] = _not_comparable("no_reference")
+    for name, outcomes in (("series", series), ("publishedDate", dates)):
+        _record(measurement.fields[name], measurement.pooled[name], outcomes)
 
 
 def _measure_unmatched(
@@ -570,6 +657,18 @@ def _classify(
         _measure_unmatched(measurement, report, proposal, sources)
 
 
+def _qualifies(destination: str, report: MetadataReport) -> bool:
+    """Whether a decision was on a work-route offer into a strictly empty field."""
+    targets = canonical_target_fields(report.target.fields)
+    target = TargetDestination(destination)
+    return (
+        report.audio is not None
+        and not admitted_audiobook_identity(report)
+        and target in _work_route_offers(report, targets)
+        and _target_explicitly_empty(targets[target])
+    )
+
+
 def _label(
     measurement: Measurement,
     destination: str,
@@ -578,20 +677,10 @@ def _label(
     report: MetadataReport,
     proposal: object,
 ) -> None:
-    """Count one owner decision on a work-route offer into an empty field."""
+    """Count one item's latest qualifying owner decision for one field."""
     labels = measurement.owner_labels[destination]
     if outcome == "withdraw":
         labels["withdrawn"] += 1
-        return
-    targets = canonical_target_fields(report.target.fields)
-    target = TargetDestination(destination)
-    if (
-        report.audio is None
-        or admitted_audiobook_identity(report)
-        or target not in _work_route_offers(report, targets)
-        or not _target_explicitly_empty(targets[target])
-    ):
-        labels["outside_work_route_fill"] += 1
         return
     alternatives = _alternatives(_proposal_result(proposal, destination))
     accepted = next(
@@ -603,18 +692,21 @@ def _label(
         frozenset[str](),
     )
     labels["labelled"] += 1
+    outcomes: dict[str, Outcome] = {}
     for authority in PROVIDERS:
         correlation = _provider_correlation(authority)
         if not any(correlation in _correlations(value) for value in alternatives):
             continue
-        tally = measurement.fields[destination][authority]
         found = _authority_sources(report, authority)
-        if len({candidate.work_identity for candidate in found}) > 1:
-            tally.not_comparable["duplicate_sources"] += 1
-        elif correlation in accepted:
-            tally.agree += 1
+        if not found:
+            outcomes[authority] = _not_comparable("no_exact_source")
+        elif len({candidate.work_identity for candidate in found}) > 1:
+            outcomes[authority] = _not_comparable("duplicate_sources")
         else:
-            tally.disagree += 1
+            outcomes[authority] = Outcome(
+                "agree" if correlation in accepted else "disagree", "owner"
+            )
+    _record(measurement.fields[destination], measurement.pooled[destination], outcomes)
 
 
 def _load_report(document: object) -> MetadataReport:
@@ -629,26 +721,37 @@ def _load_json(document: object) -> object:
 
 def measure(connection: sqlite3.Connection) -> Measurement:
     """Read every closed outcome inside one deferred read transaction."""
-    measurement = Measurement()
     connection.execute("BEGIN")
     try:
+        measurement = Measurement(
+            written=frozenset(tuple(row) for row in connection.execute(_WRITTEN_SQL))
+        )
         for report_document, proposal_document in connection.execute(_REPORTS_SQL):
             _classify(
                 measurement,
                 _load_report(report_document),
                 _load_json(proposal_document),
             )
-        latest: dict[tuple[object, ...], tuple[object, ...]] = {}
+        # The latest decision per item and field is chosen only among those
+        # that qualify, so a later decision elsewhere cannot hide a label.
+        latest: dict[
+            tuple[object, ...], tuple[str, object, MetadataReport, object]
+        ] = {}
         for row in connection.execute(_DECISIONS_SQL):
-            latest[tuple(row[:4])] = tuple(row[3:])
-        for destination, outcome, selected, report, proposal in latest.values():
+            destination = cast("str", row[3])
+            report = _load_report(row[6])
+            if not _qualifies(destination, report):
+                measurement.owner_labels[destination]["outside_work_route_fill"] += 1
+                continue
+            latest[tuple(row[:4])] = (
+                cast("str", row[4]),
+                _load_json(row[5]),
+                report,
+                _load_json(row[7]),
+            )
+        for key, (outcome, selected, report, proposal) in latest.items():
             _label(
-                measurement,
-                cast("str", destination),
-                cast("str", outcome),
-                _load_json(selected),
-                _load_report(report),
-                _load_json(proposal),
+                measurement, cast("str", key[3]), outcome, selected, report, proposal
             )
     finally:
         connection.execute("COMMIT")
@@ -720,11 +823,10 @@ def assemble_report(
         *((value, "recording") for value in RECORDING_FIELDS),
         *((value, "owner_labelled") for value in OWNER_LABELLED_FIELDS),
     ):
-        pooled = Tally()
+        pooled = measurement.pooled[name]
         providers: dict[str, object] = {}
         for authority in PROVIDERS:
             tally = measurement.fields[name][authority]
-            pooled.add(tally)
             providers[authority] = _statistics(
                 tally, contradictions[authority], marks, method
             )
