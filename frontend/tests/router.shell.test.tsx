@@ -15,7 +15,8 @@ import {
 import type { LibraryView, PreparationView, ReviewHttp, ScanState } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
-import { RoutePending, createApplicationRouter, preparationQuery } from '../src/router'
+import { RoutePending } from '../src/components/RouteStates'
+import { createApplicationRouter, preparationQuery } from '../src/router'
 import {
   createHttp,
   createLiveStream,
