@@ -15,7 +15,7 @@ import {
   claimKindLabels,
   destinationLabel,
   fieldStateLabels,
-  lookupLabels,
+  sourceLookupLabel,
   mediaKindLabels,
   preparationStageLabels,
   preparationStatusLabels,
@@ -68,7 +68,7 @@ export function WorkSources({
             <b>{sourceStatusLabels[outcome.status]}</b>
             <span>{outcome.reason}</span>
             <small>
-              {lookupLabels[outcome.laneKind]} · {String(outcome.providerRequests)}{' '}
+              {sourceLookupLabel(outcome)} · {String(outcome.providerRequests)}{' '}
               {outcome.providerRequests === 1 ? 'request' : 'requests'}
             </small>
           </li>
@@ -114,6 +114,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
       <h3>Recorded evidence</h3>
       <RecordingIdentityBasis
         value={data.recordingIdentityBasis}
+        admission={data.recordingAdmissionBasis}
         scope={data.audiobookReviewScope}
         offered={[]}
       />

@@ -2166,6 +2166,7 @@ describe('Library route', () => {
       },
       preparationOutcomes: [
         {
+          companionIsbn: false,
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
@@ -2324,6 +2325,7 @@ describe('Library route', () => {
         mediaKind: 'm4b' as const,
         providerSources: [
           {
+            companionIsbn: false,
             providerRequests: 1,
             laneKind: 'asin' as const,
             provider: 'Audnexus',
@@ -2341,6 +2343,7 @@ describe('Library route', () => {
               candidate: 'recording-1',
             }
           : null,
+        recordingAdmissionBasis: null,
         reportId: 'report_' + 'a'.repeat(64),
         title: 'Recorded work',
       }))
@@ -2395,13 +2398,13 @@ describe('Library route', () => {
       const evidence = await screen.findByRole('region', { name: 'Recorded evidence' })
       if (chapterBasis) {
         expect(
-          within(evidence).getByRole('region', { name: 'Recording identity evidence' }),
+          within(evidence).getByRole('region', { name: 'How this recording was matched' }),
         ).toHaveTextContent(
           'Complete chapter timing and structure corroborate this recording where overall runtime is unavailable.',
         )
       } else {
         expect(
-          within(evidence).queryByRole('region', { name: 'Recording identity evidence' }),
+          within(evidence).queryByRole('region', { name: 'How this recording was matched' }),
         ).toBeNull()
       }
       expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything(), 'foreground')
@@ -2499,6 +2502,7 @@ describe('Library route', () => {
         providerEvidenceTruncated: false,
         audiobookReviewScope: null,
         recordingIdentityBasis: null,
+        recordingAdmissionBasis: null,
         reportId: 'report_' + 'b'.repeat(64),
         title: 'Long description work',
       })),
@@ -7173,6 +7177,7 @@ describe('Library route', () => {
           workAttentionCount: 0,
           preparationOutcomes: [
             {
+              companionIsbn: false,
               providerRequests: 1,
               laneKind: 'work' as const,
               provider: 'synthetic-catalogue',
@@ -9418,6 +9423,7 @@ describe('Library route', () => {
                   ...work,
                   preparationOutcomes: [
                     {
+                      companionIsbn: false,
                       providerRequests: 1,
                       laneKind: 'work' as const,
                       provider: 'catalogue',
@@ -10534,6 +10540,7 @@ describe('Library route', () => {
       ...first,
       preparationOutcomes: [
         {
+          companionIsbn: false,
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
@@ -11965,6 +11972,7 @@ describe('Provider evidence rail', () => {
               laneKind: 'isbn' as const,
               status: 'no_match' as const,
               reason: 'No match',
+              companionIsbn: false,
               providerRequests: 1,
             },
           ],
@@ -11980,6 +11988,7 @@ describe('Provider evidence rail', () => {
               laneKind: 'isbn' as const,
               status: 'unavailable' as const,
               reason: 'Unavailable',
+              companionIsbn: false,
               providerRequests: 1,
             },
           ],
@@ -12047,6 +12056,7 @@ describe('Provider evidence rail', () => {
                   laneKind: 'discovery' as const,
                   status,
                   reason: 'Bounded status',
+                  companionIsbn: false,
                   providerRequests: 0,
                 },
               ],
@@ -12110,6 +12120,7 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
           laneKind: 'isbn' as const,
           status: 'no_match' as const,
           reason: 'No match',
+          companionIsbn: false,
           providerRequests: 1,
         })),
       },

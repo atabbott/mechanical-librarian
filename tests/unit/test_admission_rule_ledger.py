@@ -679,8 +679,8 @@ def test_blocked_fields_count_per_gate_destination_and_work(tmp_path: Path) -> N
     assert (competing["fields"], competing["works"]) == (3, 2)
     assert competing["by_destination"] == {"authors": 1, "title": 2}
     assert competing["by_medium"] == {"ebook": 3}
-    # Non-exclusive: the first case's title counts under T1 and A6 alike.
-    abstained = _snapshot(rows["A6"], "snap-a")
+    # Non-exclusive: the first case's title counts under T1 and A6a alike.
+    abstained = _snapshot(rows["A6a"], "snap-a")
     assert (abstained["fields"], abstained["by_destination"]) == (1, {"title": 1})
     unresolved = _snapshot(rows["I3"], "snap-a")
     assert (unresolved["fields"], unresolved["works"]) == (1, 1)
@@ -921,33 +921,95 @@ def test_fields_a_later_election_decides_are_marked_stale(tmp_path: Path) -> Non
     assert default["election_fields"] == 0
 
 
-def test_a6_is_kept_out_of_the_ranking_as_mis_scoped(tmp_path: Path) -> None:
-    text = Sentinels()
+def _engine_probe(scalar: Sequence[str], *, rich_split: bool) -> ledger.AttentionReader:
+    def probe(_root: Path, _database: Path) -> ledger.AttentionProbe:
+        return ledger.AttentionProbe((), 0, 0, tuple(scalar), rich_split)
+
+    return probe
+
+
+def _a6_split_fixture(text: Sentinels) -> Fixture:
     fixture = Fixture(text, "v26-like")
     provider = fixture.provider()
     work = text()
     accepted, claim = fixture.record(provider, work)
     fixture.bind(provider, accepted, work, "accepted")
+    # Scalar, the decision's own reason: A6a.
     fixture.result("title", "defer", ["insufficient_support"], [claim])
     fixture.abstain("title", "insufficient_support")
-    database = _database(tmp_path / "m.sqlite3", "v26-like", [fixture])
-    arguments = _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
-    code, stdout, _ = _run(arguments)
-    assert code == 0
-    row = _rows(stdout)["A6"]
-    # Measured as before, but neither scored, ranked nor proposed.
-    assert _snapshot(row, "snap-a")["true_positive"] == 1
-    assert (row["rank"], row["score"], row["proposed_follow_on"]) == (None, 0.0, False)
-    assert row["note"] == (
-        "mis-scoped: counts upstream refusals and pre-election rich destinations; "
-        "re-measured under #1745"
+    # Scalar, an echo of the proposal set's refusal: not A6a (#1745).
+    fixture.result("publisher", "defer", ["no_positive_preservation_evidence"])
+    fixture.abstain("publisher", "evidence_sufficiency_manual")
+    # Not scalar for this source: the rich residual, A6b.
+    fixture.result("series", "defer", ["no_supported_evidence"], [claim])
+    fixture.abstain("series", "no_eligible_action")
+    # A proposed field the decision abstained on is not blocked.
+    fixture.result("language", "propose_change", ["unique_typed_candidate"], [claim])
+    fixture.abstain("language", "insufficient_support")
+    return fixture
+
+
+@pytest.mark.parametrize(
+    ("rich_split", "a6b_status"),
+    [(True, "measurable"), (False, "rich_refusals_collapsed")],
+    ids=["rich-reasons-split", "rich-reasons-collapsed"],
+)
+def test_a6_splits_scalar_abstention_from_the_rich_residual(
+    tmp_path: Path, rich_split: bool, a6b_status: str
+) -> None:
+    database = _database(
+        tmp_path / "m.sqlite3", "v26-like", [_a6_split_fixture(Sentinels())]
     )
-    markdown = _run([*arguments, "--format", "markdown"])[1]
+    arguments = _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
+    probe = _engine_probe(
+        ["title", "authors", "publisher", "language"], rich_split=rich_split
+    )
+    code, stdout, _ = _run(arguments, attention=probe)
+    assert code == 0
+    rows = _rows(stdout)
+    scalar = _snapshot(rows["A6a"], "snap-a")
+    # Only the source's scalar destinations, only the decision's own reasons.
+    assert (scalar["fields"], scalar["by_destination"]) == (1, {"title": 1})
+    assert "echo_fields" not in scalar
+    assert scalar["true_positive"] == 1
+    residual = _snapshot(rows["A6b"], "snap-a")
+    assert residual["status"] == a6b_status
+    if rich_split:
+        assert residual["by_destination"] == {"series": 1}
+    else:
+        assert "fields" not in residual
+    for gate_id in ("A6a", "A6b"):
+        row = rows[gate_id]
+        assert (row["rank"], row["score"], row["proposed_follow_on"]) == (
+            None,
+            0.0,
+            False,
+        )
+        assert row["disposition"] == "kept (ADR-0092)"
+    markdown = _run([*arguments, "--format", "markdown"], attention=probe)[1]
+    assert "upstream echo" not in markdown
+    if not rich_split:
+        assert (
+            "not separable on that snapshot: rich-preview refusals collapsed"
+            in markdown
+        )
+
+
+def test_a_scalar_destination_set_outside_the_vocabulary_refuses(
+    tmp_path: Path,
+) -> None:
+    database = _database(
+        tmp_path / "m.sqlite3", "v26-like", [Fixture(Sentinels(), "v26-like")]
+    )
+    code, stdout, stderr = _run(
+        _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path),
+        attention=_engine_probe([f"{_SENTINEL}9999"], rich_split=True),
+    )
+    assert (code, stdout) == (2, "")
     assert (
-        "| unranked | A6 | Automatic-decision abstention (mis-scoped: counts "
-        "upstream refusals and pre-election rich destinations; re-measured under "
-        "#1745) |"
-    ) in markdown
+        stderr
+        == "admission-rule-ledger: attention probe returned an unknown vocabulary\n"
+    )
 
 
 def test_wilson_lower_bound_matches_the_closed_form() -> None:
@@ -1526,11 +1588,11 @@ def test_every_catalogue_row_has_an_origin_and_a_full_introducing_commit() -> No
         assert gate.introduced_in[:8] in gate.origin
         assert gate.loosened and gate.destinations
     unranked = [gate.gate_id for gate in ledger.CATALOGUE if not gate.ranked]
-    assert unranked == ["A6", "A7"]
+    assert unranked == ["A6a", "A6b", "A7"]
     # Every unranked row but the out-of-scope one says why.
     assert [
         gate.gate_id for gate in ledger.CATALOGUE if gate.unranked_note is not None
-    ] == ["A6"]
+    ] == ["A6a", "A6b"]
 
 
 def test_mirrored_bounds_match_the_product() -> None:

@@ -379,3 +379,13 @@ while its file and configuration fingerprints are unchanged, so a stored report
 would keep the earlier plan. The proposal policy is unchanged. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
+
+Issue #1723 also takes the clean-rebuild branch. `metadata-report-v70` records
+on each lane candidate how that lane kept the corroborated recording, and the
+report refuses a value that does not replay and a corroborated recording no
+lane explains. A v69 report states none, and a report carries forward while
+its file and configuration fingerprints are unchanged, so a stored report would
+never explain its match. The proposal policy is unchanged. Every earlier
+application database is rejected before mutation and needs a clean rebuild; no
+adoption is supplied.
+

@@ -23,12 +23,15 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
+    TARGET_ADMISSION_BASIS,
     ClaimKind,
     Comparison,
     ComparisonMethod,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    candidate_admission_basis,
+    edition_marketplace_evidence,
 )
 from tests.support.audiobook_providers import (
     asin_plan,
@@ -648,3 +651,21 @@ def test_regional_copies_that_disagree_on_a_claim_are_still_a_conflict() -> None
     assert [FailureCategory.IDENTITY] == [
         value.category for value in observation.diagnostics
     ]
+
+
+def test_an_asin_lane_states_how_it_kept_each_marketplace_product() -> None:
+    """The real adapter qualifies its ASIN lane, so every kept product with
+    marketplace evidence carries a value into the report (#1723)."""
+    _seen, handle = _recorder()
+    observation = _provider(handle).observe(asin_plan()).observation
+
+    kept = tuple(
+        candidate
+        for candidate in observation.candidates
+        if edition_marketplace_evidence(candidate)
+    )
+    assert kept
+    assert all(
+        TARGET_ADMISSION_BASIS == candidate_admission_basis(observation, candidate)
+        for candidate in kept
+    )
