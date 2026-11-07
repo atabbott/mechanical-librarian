@@ -124,7 +124,11 @@ leave them.
   declines to fill a field (#1745), are measured but not ranked.
   [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
   keeps that gate, and the [A6 analysis](automatic-decision-abstention.md)
-  measures what declining costs. A7 (owner-reserved and write-safety holds)
+  measures what declining costs. Row A3 keeps its rank and score.
+  [ADR-0097](../architecture/decisions/0097-keep-the-bibliographic-combination-gate.md)
+  keeps that gate, and the
+  [A3 analysis](bibliographic-combination-gate.md) says what it alone costs.
+  A7 (owner-reserved and write-safety holds)
   is listed last and is out of scope.
 - **Attention per case.** Attention follows the
   [per-case definition](../operations/cold-start-report.md#attention-per-case).
@@ -162,7 +166,7 @@ The origin ADRs are
 | Rank | ID | Gate | Fields | Origin | Origin corpus / precision | ebook-744 fields / works | audiobook-1294 fields / works | Loosened rule | Controls TP/FP/unlabelled | Identity precision (Wilson 95% lower) | Pick agrees where controls decide (Wilson 95% lower) | Score | Disposition |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | T1 | More than one value group is an unresolved choice (equality by closed title and complete-creator agreement) | every compared destination except cover | #351 (d35215e8); ADR-0020; equality forms #414 (3586e1be), #815 (ce76c7fd), ADR-0018 | not recorded | 1,141 / 856 (1,141 actionable; 759 stale: later election) | 191 / 125 (191 actionable) | admit the lowest-identifier of the competing values | ebook-744 773/80/500 (321 fields reach no record); audiobook-1294 47/0/160 (44 fields reach no record); n = 900 | 0.911 (0.891) | 247/480 0.515 (0.470); 246 tied | 1,186.5 | kept (#1744) |
-| 2 | A3 | Coherent bibliographic combination | bibliographic destinations | #429 (cef7644a); ADR-0021 | not recorded | 327 / 162 (327 actionable) | 6 / 3 (6 actionable) | admit the lowest-identifier alternative without a coherent combination | ebook-744 392/13/243 (32 fields reach no record); audiobook-1294 2/0/14 (0 fields reach no record); n = 407 | 0.968 (0.946) | 12/20 0.600 (0.387); 7 tied | 315.1 | filed as #1746 |
+| 2 | A3 | Coherent bibliographic combination | title, subtitle and series | #429 (cef7644a); ADR-0021; same-name series #1099 (79dbbf4c); withheld titles #1497 (ce3a172d) | not recorded | 327 / 162 (327 actionable) | 6 / 3 (6 actionable) | none: the lowest-identifier rule is rejected; closed relaxations in the A3 analysis | ebook-744 392/13/243 (32 fields reach no record); audiobook-1294 2/0/14 (0 fields reach no record); n = 407 | 0.968 (0.946) | 12/20 0.600 (0.387); 7 tied | 315.1 | kept (ADR-0097) |
 | 3 | C1 | Classifier outcomes (unknown, conflict block election) | cover | #577 (f7e974d0), #588 (40a97a54); ADR-0046, ADR-0047, ADR-0059 | 96/99 exact agreement; plausible 18/21, none falsely plausible | 385 / 385 (385 actionable) | 97 / 97 (97 actionable) | admit unknown and conflict cover candidates | ebook-744 42/45/343 (39 fields reach no record); audiobook-1294 0/0/24 (76 fields reach no record); n = 87 | 0.483 (0.381) | not applicable | 183.5 | already filed as #1355 |
 | 4 | A2 | Independent corroboration required | every proposable destination | #351 (d35215e8) | as A1 | 50 / 49 (50 actionable) | 85 / 62 (85 actionable) | admit the lowest-identifier single-source alternative | ebook-744 37/0/10 (20 fields reach no record); audiobook-1294 8/0/79 (0 fields reach no record); n = 45 | 1.000 (0.921) | not estimable (0 decidable; 0 tied) | 124.4 | filed as #1747 |
 | 5 | C2 | Plausible only for ISBN-search records | cover | #577 (f7e974d0), #588 (40a97a54) | not measured at origin | 134 / 134 (134 actionable) | 19 / 19 (19 actionable) | admit unknown cover candidates reached only by work search | ebook-744 36/4/94 (0 fields reach no record); audiobook-1294 0/0/20 (0 fields reach no record); n = 40 | 0.900 (0.769) | not applicable | 117.7 | already filed as #1380 |
@@ -269,14 +273,15 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Follow-ons.** Four rows are filed:
+- **Follow-ons.** Three rows are filed:
   A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745),
-  A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333),
   A2 as [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747) (135) and
   W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
   a measurement task rather than a loosening. #1745 kept the A6 gate
-  (ADR-0092) and its rows are unranked, so A3, A2 and W9 are the only scored
-  rows not filed under an earlier issue. T1 was measured under
+  (ADR-0092) and its rows are unranked. A3 was measured under
+  [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333)
+  and kept (ADR-0097), so A2 and W9 are the only scored rows not filed under
+  an earlier issue. T1 was measured under
   [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744)
   (1,332 actionable fields) and kept.
 - **Identity precision is not a case for loosening.** Where the controls can
@@ -287,8 +292,8 @@ The origin ADRs are
   destination's lower limit reaches 0.46. Most of T1's ebook fields (759 of 1,141) and all of A6a's
   (80) compete on destinations a later election decides on main, so those
   ceilings are stale.
-- **Dispositions.** `kept` rows stay as they are; `kept (#1744)` was decided
-  after measurement under that issue. Rows already covered by an
+- **Dispositions.** `kept` rows stay as they are; `kept (#1744)` and
+  `kept (ADR-0097)` were decided after measurement under #1744 and #1746. Rows already covered by an
   issue link it: W1, W5 and the cover-identity part of C1 (#1355), I3 (#1356,
   closed after measurement), C4's EPUB `invalid_declaration` part (#1357,
   closed) and C2's work-search records (#1380). A filed follow-on's row gets
@@ -337,7 +342,6 @@ uv run python scripts/admission_rule_ledger.py \
         32360e99c708ea2ac346a7bf4cb157711fd74049 \
     --source-root audiobook-1294 "$SCRATCH/src-32360e99" \
     --source-report audiobook-1294 "$AUDIO/final-report.json" \
-    --follow-on A3=1746 \
     --follow-on A2=1747 --follow-on W9=1748 \
     --format markdown
 ```

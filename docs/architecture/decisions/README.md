@@ -99,3 +99,4 @@ preference; supersede or amend it.
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |
 | [0092](0092-keep-the-automatic-decision-abstention-gate.md) | proposed | Keep the automatic-decision abstention gate and define the would-admit note |
+| [0097](0097-keep-the-bibliographic-combination-gate.md) | proposed | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
