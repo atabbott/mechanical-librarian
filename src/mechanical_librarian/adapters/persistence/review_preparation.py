@@ -78,6 +78,9 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.audiobook_corroboration import recording_unmatched
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.preparation_presentation import (
+    PreparationTrigger,
+)
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionStaleError,
     ReviewCase,
@@ -1857,7 +1860,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             # successor carries it with nothing yet to hold, and it acts when a
             # write would be planned, never when the decision is made (ADR-0085).
         ).fetchall()
-        self._requeue_projection_work(rows, updated_at)
+        self._requeue_projection_work(
+            rows, updated_at, PreparationTrigger.TITLE_RECOVERY
+        )
 
     def _requeue_current_case_projections(self, updated_at: int) -> None:
         """Project every complete current case work again, in the caller's transaction.
@@ -1869,10 +1874,15 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         rows = self._connection.execute(
             _COMPLETE_CURRENT_CASE_WORK_SQL + _COMPLETE_CASE_WORK_WHERE_SQL
         ).fetchall()
-        self._requeue_projection_work(rows, updated_at)
+        self._requeue_projection_work(
+            rows, updated_at, PreparationTrigger.AUTOMATIC_CONFIRMED
+        )
 
     def _requeue_projection_work(
-        self, rows: list[tuple[str, str]], updated_at: int
+        self,
+        rows: list[tuple[str, str]],
+        updated_at: int,
+        trigger: PreparationTrigger,
     ) -> None:
         for work_id, scan_id in rows:
             self._connection.execute(
@@ -1888,7 +1898,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             )
         if rows:
             reopen_preparation_projection(
-                self._connection, tuple(row[0] for row in rows), updated_at
+                self._connection, tuple(row[0] for row in rows), updated_at, trigger
             )
             refresh_preparation_presentation(self._connection, updated_at)
 

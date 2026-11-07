@@ -31,7 +31,9 @@ Preview is still non-authoritative. It may be explicitly confirmed back to
 automatic only after persistence rechecks the sealed option set. Confirming
 requeues every complete current work to projection in the same transaction, so
 each is decided again in Automatic from the outcome Preview showed, including a
-work first prepared in Preview (#1573). Owner pause
+work first prepared in Preview (#1573). The preparation run records that
+pass under its own `automatic_confirmed` trigger, never title recovery.
+Owner pause
 and durable category/global suspension make would-be automatic fields ordinary
 human attention; recovery is explicit.
 

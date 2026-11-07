@@ -416,6 +416,17 @@ PRIOR_AUTOMATIC_DECISIONS_SQL = persistence_schema._AUTOMATIC_DECISIONS_SQL.repl
 assert PRIOR_AUTOMATIC_DECISIONS_SQL != persistence_schema._AUTOMATIC_DECISIONS_SQL
 
 
+# Every producer before #1573 had four preparation triggers; confirming
+# Automatic reopened preparation under title recovery.
+PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL = (
+    persistence_schema._REVIEW_PREPARATION_PRESENTATION_SQL.replace(
+        "'title_recovery','automatic_confirmed')", "'title_recovery')"
+    ).replace("trigger_ordinal BETWEEN 0 AND 4", "trigger_ordinal BETWEEN 0 AND 3")
+)
+assert PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL.count("'title_recovery')") == 1
+assert PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL.count("BETWEEN 0 AND 3") == 1
+
+
 # Every producer before #1407 derived no provider match state for a report.
 PRIOR_REPORT_BROWSE_FACTS_SQL = persistence_schema._REPORT_BROWSE_FACTS_SQL.replace(
     ", provider_match_state TEXT NOT NULL CHECK(provider_match_state IN "

@@ -531,27 +531,30 @@ def record_preparation_names(
 
 
 def reopen_preparation_projection(
-    connection: sqlite3.Connection, work_ids: tuple[str, ...], updated_at: int
+    connection: sqlite3.Connection,
+    work_ids: tuple[str, ...],
+    updated_at: int,
+    trigger: PreparationTrigger = PreparationTrigger.TITLE_RECOVERY,
 ) -> None:
-    """Attach recovered projections without losing unrelated or completed history."""
+    """Attach recovered projections without losing unrelated or completed history.
+
+    ``trigger`` names why the projections were requeued: title recovery, or
+    confirming Automatic (#1573).
+    """
     run = connection.execute(
         "SELECT run_id FROM review_preparation_presentation WHERE row_id='run'"
     ).fetchone()
     run_id = (
         cast(str, run[0])
         if run is not None
-        else _visible_preparation_run(
-            connection, PreparationTrigger.TITLE_RECOVERY, work_ids[0], updated_at
-        )[0]
+        else _visible_preparation_run(connection, trigger, work_ids[0], updated_at)[0]
     )
     connection.execute(
         "UPDATE review_preparation_presentation SET state='starting',completed_at=NULL,updated_at=? "
         "WHERE row_id='run'",
         (updated_at,),
     )
-    _record_preparation_trigger(
-        connection, run_id, PreparationTrigger.TITLE_RECOVERY, updated_at
-    )
+    _record_preparation_trigger(connection, run_id, trigger, updated_at)
     scans: set[str] = set()
     for work_id in work_ids:
         row = connection.execute(
@@ -575,7 +578,7 @@ def reopen_preparation_projection(
                 "SELECT COUNT(*) FROM review_preparation_presentation "
                 "WHERE row_kind IN ('enrollment','deferred_enrollment')"
             ).fetchone()[0]
-            material = f"preparation-cycle-v1\0{run_id}\0{scan_id}\0{updated_at}\0title_recovery"
+            material = f"preparation-cycle-v1\0{run_id}\0{scan_id}\0{updated_at}\0{trigger.value}"
             cycle_id = (
                 "preparation_cycle_" + hashlib.sha256(material.encode()).hexdigest()
             )

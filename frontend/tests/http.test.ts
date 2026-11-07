@@ -2600,21 +2600,28 @@ describe('ReviewApiClient', () => {
     const read = (changes: Record<string, unknown>) =>
       readPreparation({ ...base, presentation: { ...presentation, ...changes } })
     expect((await readPreparation(base)).presentation?.passage.ready).toBe(1)
-    const fourTriggers = ['initial_setup', 'manual_scan', 'library_added', 'title_recovery'].map(
-      (trigger) => ({ ...presentation.triggers[0], trigger }),
-    )
-    expect((await read({ triggers: fourTriggers })).presentation?.triggers).toHaveLength(4)
-    expect((await read({ triggers: [fourTriggers[3]] })).presentation?.triggers[0]?.trigger).toBe(
+    const allTriggers = [
+      'initial_setup',
+      'manual_scan',
+      'library_added',
+      'title_recovery',
+      'automatic_confirmed',
+    ].map((trigger) => ({ ...presentation.triggers[0], trigger }))
+    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(5)
+    expect((await read({ triggers: [allTriggers[3]] })).presentation?.triggers[0]?.trigger).toBe(
       'title_recovery',
     )
+    expect((await read({ triggers: [allTriggers[4]] })).presentation?.triggers[0]?.trigger).toBe(
+      'automatic_confirmed',
+    )
     await expect(
-      read({ triggers: [...fourTriggers, { ...fourTriggers[0], trigger: 'unknown' }] }),
+      read({ triggers: [...allTriggers, { ...allTriggers[0], trigger: 'unknown' }] }),
     ).rejects.toMatchObject(refused('max_items@/presentation/triggers'))
     await expect(
-      read({ triggers: [{ ...fourTriggers[0], trigger: 'unknown' }] }),
+      read({ triggers: [{ ...allTriggers[0], trigger: 'unknown' }] }),
     ).rejects.toMatchObject(refused('enum@/presentation/triggers/0/trigger'))
     // One entry per trigger family is a named check (ADR-0091), not the schema's.
-    await expect(read({ triggers: [fourTriggers[3], fourTriggers[3]] })).rejects.toThrow(
+    await expect(read({ triggers: [allTriggers[3], allTriggers[3]] })).rejects.toThrow(
       new ApiError(502, 'invalid_preparation_trigger'),
     )
 

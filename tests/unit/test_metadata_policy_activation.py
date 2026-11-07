@@ -443,6 +443,11 @@ def test_confirming_automatic_requeues_every_complete_current_case_work(
     assert _work_and_scan(repository) == ("projection", "queued", "processing")
     running = repository.preparation_presentation(34)
     assert running is not None and running.state.value == "running"
+    # The run says Automatic was turned on; the title-recovery cause is
+    # reserved for an owner's title recovery.
+    assert [
+        (trigger.trigger.value, trigger.accepted_count) for trigger in running.triggers
+    ] == [("automatic_confirmed", 1)]
     action = repository.claim_review_pipeline_action(35)
     assert action is not None and action.stage == "projection"
     assert action.review_case_id == admitted["review_case_id"]

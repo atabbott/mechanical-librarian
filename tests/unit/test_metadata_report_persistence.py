@@ -52,6 +52,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL,
     PRIOR_REPORT_BROWSE_FACTS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+    PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
     PRIOR_REVIEW_WORK_SQL,
     create_legacy_schema,
     create_prior_schema,
@@ -827,6 +828,11 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         )
         old.setattr(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL)
         old.setattr(schema, "_AUTOMATIC_DECISIONS_SQL", PRIOR_AUTOMATIC_DECISIONS_SQL)
+        old.setattr(
+            schema,
+            "_REVIEW_PREPARATION_PRESENTATION_SQL",
+            PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
+        )
         old.setattr(schema, "_ATTENTION_FACT_OBJECTS", PRIOR_ATTENTION_FACT_OBJECTS)
         old.setattr(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
@@ -2540,6 +2546,11 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_AUTOMATIC_DECISIONS_SQL",
             PRIOR_AUTOMATIC_DECISIONS_SQL,
+        )
+        old.setattr(
+            persistence_schema,
+            "_REVIEW_PREPARATION_PRESENTATION_SQL",
+            PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
         )
         old.setattr(
             persistence_schema,

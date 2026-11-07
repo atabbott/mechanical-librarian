@@ -324,7 +324,8 @@ brackets are GitHub issues.
   and a field decided before you left Automatic, and writes them under your
   write permission. An earlier automatic decision no longer keeps a field out
   of Attention, so pausing automation after leaving Automatic lists every field
-  the work page asks for (#1573, #1601).
+  the work page asks for. Library's preparation card says the pass was
+  "Started when Automatic was turned on" (#1573, #1601).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

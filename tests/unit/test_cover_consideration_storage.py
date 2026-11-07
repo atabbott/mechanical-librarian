@@ -27,6 +27,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_AUTOMATIC_DECISIONS_SQL,
     PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+    PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
     PRIOR_REVIEW_WORK_SQL,
 )
 
@@ -196,6 +197,11 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         ),
         patch.object(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL),
         patch.object(schema, "_AUTOMATIC_DECISIONS_SQL", PRIOR_AUTOMATIC_DECISIONS_SQL),
+        patch.object(
+            schema,
+            "_REVIEW_PREPARATION_PRESENTATION_SQL",
+            PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
+        ),
         patch.object(schema, "_ATTENTION_FACT_OBJECTS", PRIOR_ATTENTION_FACT_OBJECTS),
         patch.object(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL

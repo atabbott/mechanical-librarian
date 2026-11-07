@@ -1005,6 +1005,44 @@ describe('Library route', () => {
     })
     expect(await screen.findByText('Started by initial setup')).toBeVisible()
     expect(screen.queryByText(/Initial setup requested/u)).toBeNull()
+
+    // Turning on Automatic prepares the current works again (#1573); that is
+    // its own cause, never title recovery.
+    for (const [count, line] of [
+      [1, 'Started when Automatic was turned on'],
+      [2, 'Automatic turned on 2 times'],
+    ] as const) {
+      act(() => {
+        queryClient.setQueryData(['review-preparation'], {
+          ...running,
+          presentation: {
+            ...runningPresentation,
+            run_id: `preparation_run_${'d'.repeat(64)}`,
+            state: 'running',
+            triggers: [
+              {
+                trigger: 'automatic_confirmed' as const,
+                accepted_count: count,
+                first_accepted_at: 200,
+                last_accepted_at: 200 + count,
+              },
+            ],
+            passage: {
+              read: 1,
+              searches_finished: 0,
+              compared: 0,
+              checked: 0,
+              ready: 0,
+              failed: 0,
+            },
+            recent_completions: [],
+            updated_at: 223,
+          },
+        })
+      })
+      expect(await screen.findByText(line)).toBeVisible()
+      expect(screen.queryByText(/Title recovery/u)).toBeNull()
+    }
     expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Find in Works' })).toBeNull()
   })

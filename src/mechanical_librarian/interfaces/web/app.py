@@ -1554,7 +1554,13 @@ class _PreparationConnection(_ClosedModel):
 
 
 class _PreparationTriggerRecord(_ClosedModel):
-    trigger: Literal["initial_setup", "manual_scan", "library_added", "title_recovery"]
+    trigger: Literal[
+        "initial_setup",
+        "manual_scan",
+        "library_added",
+        "title_recovery",
+        "automatic_confirmed",
+    ]
     accepted_count: int = Field(ge=1)
     first_accepted_at: int = Field(ge=0)
     last_accepted_at: int = Field(ge=0)
@@ -1601,7 +1607,7 @@ class _PreparationPresentation(_ClosedModel):
         "completed_with_failures",
         "dismissed",
     ]
-    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=4)
+    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=5)
     passage: _PreparationPassage
     active_books: list[_PreparationActiveBook] = Field(max_length=5)
     active_overflow: int = Field(ge=0)
