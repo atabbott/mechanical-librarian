@@ -1244,6 +1244,7 @@ describe('ReviewApiClient', () => {
       ],
       source_ledger: [
         {
+          companion_isbn: false,
           provider_requests: 1,
           lane_kind: 'work',
           provider: 'Hardcover',
@@ -1271,6 +1272,7 @@ describe('ReviewApiClient', () => {
       nextCursor: 'next',
       sourceLedger: [
         {
+          companionIsbn: false,
           providerRequests: 1,
           laneKind: 'work',
           provider: 'Hardcover',
@@ -1728,6 +1730,7 @@ describe('ReviewApiClient', () => {
               preparation: null,
               preparation_outcomes: [
                 {
+                  companion_isbn: false,
                   provider_requests: 2,
                   lane_kind: 'isbn',
                   provider: 'google-books',
@@ -1787,6 +1790,7 @@ describe('ReviewApiClient', () => {
       preparation: null,
       preparationOutcomes: [
         {
+          companionIsbn: false,
           providerRequests: 2,
           laneKind: 'isbn',
           provider: 'google-books',
@@ -3362,6 +3366,7 @@ describe('mapReportDetail', () => {
       readReport(
         detail({
           audiobook_review_scope: 'work',
+          recording_admission_basis: null,
           recording_identity_basis: {
             basis: 'chapter_runtime_and_structure',
             provider: 'Audnexus',
