@@ -79,8 +79,14 @@ def _events(
     return events
 
 
-def _admit(environment: _EffectEnvironment, title: str, content: str) -> ReviewCase:
-    report = metadata_report(title, content, content, item_id="book-1")
+def _admit(
+    environment: _EffectEnvironment,
+    title: str,
+    content: str,
+    *,
+    item_id: str = "book-1",
+) -> ReviewCase:
+    report = metadata_report(title, content, content, item_id=item_id)
     environment.repository.publish(report, lambda: True)
     proposal_set = evaluate_report(report)
     environment.repository.publish_proposal(proposal_set)
@@ -155,6 +161,10 @@ def test_a_choice_under_a_new_episode_reads_as_asked_again(
     returned = _admit(effects, "Old title", "1")
     assert returned.review_case_id == first.review_case_id
     assert _owner_notes(effects) == {current[0]: "asked_again"}
+
+    # Search never reads the note, even while a row carries it.
+    assert _events(effects, search="asked again") == []
+    assert _events(effects, search="asked_again") == []
 
     # A choice made in the new episode counts again, and has no note.
     _decide(effects, returned, "notes-owner-0002")
@@ -268,3 +278,18 @@ def test_search_never_reads_a_note(
         "Automatic is off",
     ):
         assert _events(effects, search=words) == []
+
+
+def test_only_the_returned_case_s_choice_is_asked_again(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    other = _admit(effects, "Other book", "9", item_id="book-2")
+    _decide(effects, other, "notes-other-0001")
+    first = _admit(effects, "Old title", "1")
+    _decide(effects, first, "notes-owner-0001")
+    _admit(effects, "Other title", "2")
+    returned = _admit(effects, "Old title", "1")
+    assert returned.review_case_id == first.review_case_id
+    notes = sorted(_owner_notes(effects).values(), key=lambda value: value or "")
+    # The other work's choice still counts; only the returned case asks again.
+    assert notes == [None, "asked_again"]

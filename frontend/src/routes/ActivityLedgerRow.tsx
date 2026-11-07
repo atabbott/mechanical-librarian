@@ -254,7 +254,13 @@ export function ActivityEventRow({
       <b>
         {result ?? stateLabel(event.state, advice, event.failure)}
         {/* What current state adds to the recorded result (#1711). */}
-        {event.note ? <small className="cm-activity-note">{noteLabel[event.note]}</small> : null}
+        {event.note ? (
+          <>
+            {/* Read apart from the result, not run into it. */}
+            <span className="sr-only">, </span>
+            <small className="cm-activity-note">{noteLabel[event.note]}</small>
+          </>
+        ) : null}
       </b>
       {/* Every disclosure names its row, so a screen reader hears which one (#1368). */}
       <button

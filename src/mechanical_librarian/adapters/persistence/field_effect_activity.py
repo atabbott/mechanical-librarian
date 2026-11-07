@@ -3094,24 +3094,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     ) -> dict[str, object]:
         """Return a current bounded page, retrying only this reader's busy lock."""
 
-        def read() -> dict[str, object]:
-            projection = self._retry_activity_busy(
-                lambda: self._field_effect_activity_page_once(
-                    search=search,
-                    event_type=event_type,
-                    occurred_after=occurred_after,
-                    page=page,
-                    page_size=page_size,
-                )
+        def noted() -> dict[str, object]:
+            projection = self._field_effect_activity_page_once(
+                search=search,
+                event_type=event_type,
+                occurred_after=occurred_after,
+                page=page,
+                page_size=page_size,
             )
             # Notes read current state the cached projection never holds, so
             # they are added to each returned page and never cached (#1711).
+            # Inside the enclosing read snapshot they read what the page read;
+            # a busy lock on either retries both together.
             return {
                 **projection,
                 "notes": self._activity_page_notes(
                     cast("list[object]", projection["events"])
                 ),
             }
+
+        def read() -> dict[str, object]:
+            return self._retry_activity_busy(noted)
 
         with self._activity_page_cache_lock:
             # Inside an enclosing read snapshot this read cannot release its
@@ -3144,6 +3147,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 and event.get("state") == "planned"
             ):
                 planned.append(event_id)
+        try:
+            return self._activity_page_notes_once(decisions, planned)
+        except sqlite3.OperationalError as error:
+            raise FieldEffectError("persistence") from error
+
+    def _activity_page_notes_once(
+        self, decisions: list[str], planned: list[str]
+    ) -> dict[str, str]:
         notes: dict[str, str] = {}
         if decisions:
             rows = self._connection.execute(
