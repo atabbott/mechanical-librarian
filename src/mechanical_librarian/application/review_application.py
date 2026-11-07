@@ -152,6 +152,8 @@ class CaseDetailView:
     writes_consented: bool
     recording_identity_basis: dict[str, str] | None
     audiobook_review_scope: str | None
+    # How the matched recording was found when its title differs (#1723).
+    recording_admission_basis: dict[str, object] | None = None
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -175,6 +177,9 @@ class CaseDetailView:
             if value["recording_identity_basis"] is None
             else dict(cast("dict[str, str]", value["recording_identity_basis"])),
             cast("str | None", value["audiobook_review_scope"]),
+            None
+            if value["recording_admission_basis"] is None
+            else dict(cast("dict[str, object]", value["recording_admission_basis"])),
         )
 
     def to_data(self) -> dict[str, object]:
@@ -189,6 +194,7 @@ class CaseDetailView:
             "writes_consented": self.writes_consented,
             "recording_identity_basis": self.recording_identity_basis,
             "audiobook_review_scope": self.audiobook_review_scope,
+            "recording_admission_basis": self.recording_admission_basis,
         }
 
 

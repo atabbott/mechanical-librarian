@@ -140,7 +140,7 @@ def test_named_case_operation_returns_bounded_view(
 
     assert view.review_case_id == repository.case.review_case_id
     assert view.current
-    assert view.to_data()["schema_version"] == "review-case-detail-v6"
+    assert view.to_data()["schema_version"] == "review-case-detail-v7"
 
 
 def test_named_browse_operations_return_bounded_views(
