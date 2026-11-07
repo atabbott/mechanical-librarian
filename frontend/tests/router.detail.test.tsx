@@ -1177,11 +1177,26 @@ describe('Library review ownership', () => {
     expect(returnToAutomatic).not.toHaveBeenCalled()
   })
 
-  // Requested checks that finished with failures keep the hold, and nothing
+  // Requested checks that ended with failures keep the hold, and nothing
   // retries them, so the case offers the request again with one short line.
-  const F0 =
-    "The fresh checks didn't finish, so manual handling remains. Choose Resume automatic handling to request them again."
-  it('offers fresh checks again when the requested ones finished with failures', async () => {
+  const F0 = 'The fresh checks ended with failures.'
+  const F1 = `${F0} Choose Resume automatic handling to request them again.`
+  const F2 = `${F0} Choose Resume after fresh checks to request them again.`
+  const ownDecision = (field: CaseDetailView['fields'][number]) =>
+    ({
+      actor: 'owner',
+      application: 'apply' as const,
+      application_reason: null,
+      decision_id: 'decision-1',
+      destination: field.destination,
+      occurred_at: 1,
+      outcome: 'accept',
+      proposal_id: field.proposalId,
+      review_case_id: 'case-1',
+      selected_value: field.proposedValues[0] ?? null,
+      target_fingerprint: field.targetFingerprint,
+    }) as const
+  it('offers fresh checks again when the requested ones ended with failures', async () => {
     const user = userEvent.setup()
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
@@ -1190,13 +1205,20 @@ describe('Library review ownership', () => {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        fields: [{ ...field, manualHold: true, manualReturnFailed: true }],
+        fields: [
+          {
+            ...field,
+            manualHold: true,
+            manualReturnFailed: true,
+            humanDecision: ownDecision(field),
+          },
+        ],
       })),
       returnToAutomatic,
     })
     const trigger = await screen.findByRole('button', { name: 'Resume automatic handling' })
     expect(trigger).not.toHaveAttribute('aria-disabled', 'true')
-    const line = screen.getByText(F0)
+    const line = screen.getByText(F1)
     expect(line).toHaveClass('automatic-handling-result', 'is-error')
     expect(screen.queryByRole('alert')).toBeNull()
     await user.click(trigger)
@@ -1206,7 +1228,28 @@ describe('Library review ownership', () => {
     expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
   })
 
-  it('lets a reread after a requested return show that its checks failed', async () => {
+  // On a hold from an earlier case, the earlier-decision line already names
+  // the button, so the failure line does not repeat the step.
+  it('says the next step once on a hold from an earlier case', async () => {
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...field, manualHold: true, manualReturnFailed: true, humanDecision: null }],
+      })),
+      returnToAutomatic: vi.fn(async () => undefined),
+    })
+    // Exact text: the line is the first sentence alone.
+    await screen.findByText(F0)
+    const panel = screen.getByRole('region', { name: 'Automatic handling' })
+    expect(panel.textContent.match(/to request them again/gu) ?? []).toHaveLength(0)
+    expect(panel.textContent.match(/choose Resume automatic handling/giu) ?? []).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toBeEnabled()
+  })
+
+  it('shows checks that ended with failures in the open panel when a reread finds them', async () => {
     const user = userEvent.setup()
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
@@ -1231,15 +1274,19 @@ describe('Library review ownership', () => {
     await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
     expect(await screen.findByText(S0)).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
-    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-    expect(screen.queryByText(F0)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
     phase = 'failed'
     await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
-    expect(await screen.findByText(F0)).toBeVisible()
+    // The panel stays open and says why its button is offered again.
+    const line = await screen.findByText(F2)
+    expect(line).toHaveAttribute('role', 'status')
+    expect(line).toHaveClass('automatic-handling-result', 'is-error')
+    expect(screen.queryByText(S0)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
+    // Closed, the hold here is from an earlier case: the step is said once.
+    expect(screen.getByText(F0)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Resume automatic handling' })).not.toHaveAttribute(
       'aria-disabled',
       'true',

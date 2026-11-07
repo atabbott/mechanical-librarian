@@ -2337,11 +2337,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-4&field=title"
         )
-        page.get_by_text(
-            "The fresh checks didn't finish, so manual handling remains. "
-            "Choose Resume automatic handling to request them again.",
-            exact=True,
-        ).wait_for()
+        # The held field's decision is from an earlier case, so its line
+        # already names the button and the failure line says the state once.
+        page.get_by_text("The fresh checks ended with failures.", exact=True).wait_for()
+        assert page.get_by_text("to request them again").count() == 0
         expect(
             page.get_by_role("button", name="Resume automatic handling")
         ).not_to_have_attribute("aria-disabled", "true")

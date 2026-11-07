@@ -45,7 +45,7 @@ brackets are GitHub issues.
 - Resume automatic handling now shows that fresh checks were requested, also
   after a reload. An unconfirmed request is a warning that says whether the
   reloaded work shows it, and offers the request again. If the requested
-  checks finish with failures, the work says so and offers the request again
+  checks end with failures, the work says so and offers the request again
   (#1755).
 - A page that cannot load now says what went wrong and what to do, instead of
   an API status and code, which are under Technical detail (#1756).

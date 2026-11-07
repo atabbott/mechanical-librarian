@@ -2859,6 +2859,13 @@ export default function LibraryPage({
                             <p className="automatic-handling-result is-refreshed" role="alert">
                               {sessionRefreshedCopy}
                             </p>
+                          ) : automaticReturnFailed ? (
+                            // A reread can show the failure while the panel is
+                            // open, so it names the button shown here.
+                            <p className="automatic-handling-result is-error" role="status">
+                              The fresh checks ended with failures. Choose Resume after fresh checks
+                              to request them again.
+                            </p>
                           ) : null}
                           <div className="automatic-handling-actions">
                             <button
@@ -2895,9 +2902,12 @@ export default function LibraryPage({
                             </p>
                           ) : null}
                           {automaticReturnFailed ? (
+                            // The earlier-decision line already names the
+                            // button, so the step is said once.
                             <p className="automatic-handling-result is-error">
-                              The fresh checks didn't finish, so manual handling remains. Choose
-                              Resume automatic handling to request them again.
+                              {selected.humanDecision === null
+                                ? 'The fresh checks ended with failures.'
+                                : 'The fresh checks ended with failures. Choose Resume automatic handling to request them again.'}
                             </p>
                           ) : null}
                           <button
