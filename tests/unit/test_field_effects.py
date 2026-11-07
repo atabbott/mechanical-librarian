@@ -1123,8 +1123,9 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
                 page=1,
                 page_size=100,
             )
-            assert reader.field_effect_activity_page(**query) == result
-            assert reader.field_effect_activity_page(**query) == result
+            # Notes are added to every returned page and never cached (#1711).
+            assert reader.field_effect_activity_page(**query) == result | {"notes": {}}
+            assert reader.field_effect_activity_page(**query) == result | {"notes": {}}
         finally:
             reader.close()
 
@@ -1180,7 +1181,7 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
                         page=1,
                         page_size=page_size,
                     )
-                    == page_results[page_size]
+                    == page_results[page_size] | {"notes": {}}
                 )
         finally:
             reader.close()

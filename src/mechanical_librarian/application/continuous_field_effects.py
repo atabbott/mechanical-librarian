@@ -1490,6 +1490,14 @@ class ContinuousGuardedApplication:
                 project_readable_activity_event(event, report)
             except ActivityProjectionError as error:
                 raise GuardedApplicationError("activity") from error
+        notes = page_projection.get("notes", {})
+        if type(notes) is not dict or any(
+            type(key) is not str or value not in {"asked_again", "held_back"}
+            for key, value in notes.items()
+        ):
+            raise GuardedApplicationError("activity")
+        for event in events:
+            event["note"] = notes.get(event.get("event_id"))
         # Read with the same default as ``counts``: no field effects, none stopped.
         owner_action = data.setdefault("owner_action_required", 0)
         if type(owner_action) is not int or owner_action < 0:

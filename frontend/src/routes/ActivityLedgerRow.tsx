@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useRef, useState, type ReactNode } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
-import { categoryLabel, stateLabel } from '../activityLabels'
+import { categoryLabel, noteLabel, noteSentence, stateLabel } from '../activityLabels'
 import { RecordedTime } from '../components/RecordedTime'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
@@ -251,14 +251,24 @@ export function ActivityEventRow({
           </>
         )}
       </div>
-      <b>{result ?? stateLabel(event.state, advice, event.failure)}</b>
+      <b>
+        {result ?? stateLabel(event.state, advice, event.failure)}
+        {/* What current state adds to the recorded result (#1711). */}
+        {event.note ? (
+          <>
+            {/* Read apart from the result, not run into it. */}
+            <span className="sr-only">, </span>
+            <small className="cm-activity-note">{noteLabel[event.note]}</small>
+          </>
+        ) : null}
+      </b>
       {/* Every disclosure names its row, so a screen reader hears which one (#1368). */}
       <button
         data-activity-focus={`details-${changeId}`}
         aria-expanded={expanded}
         aria-controls={`activity-evidence-${event.event_id}`}
         // The row's time names it apart from another change to the same field.
-        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}${event.occurred_at === null ? '' : `, ${formatWhen(event.occurred_at, new Date(), { dayShown: true })}`}`}
+        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}${event.note ? `, ${noteLabel[event.note].toLowerCase()}` : ''}${event.occurred_at === null ? '' : `, ${formatWhen(event.occurred_at, new Date(), { dayShown: true })}`}`}
         onClick={onToggle}
       >
         {expanded ? 'Hide details' : 'Details'}
@@ -270,6 +280,9 @@ export function ActivityEventRow({
           }`}
           id={`activity-evidence-${event.event_id}`}
         >
+          {event.note ? (
+            <p className="cm-activity-note-detail">{noteSentence[event.note]}</p>
+          ) : null}
           {event.policy_changes.length ? (
             <section
               className="cm-activity-policy-changes"

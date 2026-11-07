@@ -190,6 +190,11 @@ brackets are GitHub issues.
 
 ## 0.29.3 — Review fixes and hygiene (in progress)
 
+- Activity notes when a row's result no longer tells the whole story. An
+  owner choice the field is asking about again reads "Asked again", and a
+  planned automatic write reads "Held back" while Automatic is off, so it
+  is clear it will not be written unless Automatic is turned back on.
+  Details explain each (#1711).
 - The masthead names only the Library link as the current page on Library,
   a review and Attention; the Mechanical Librarian brand link no longer
   claims it too (#1488).
