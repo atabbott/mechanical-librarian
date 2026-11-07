@@ -6635,6 +6635,66 @@ def test_a_root_outside_the_track_grammar_is_dropped_without_restating_the_code(
 
 
 @pytest.mark.parametrize(
+    "code",
+    (
+        "provider",
+        "projection",
+        "failed",
+        "persistence",
+        "malformed_retained_data",
+        "internal_failure",
+        "unknown",
+    ),
+)
+def test_scanning_the_library_again_prepares_a_book_that_could_not_finish(
+    application_path: Path, code: str
+) -> None:
+    """The next step Library names for these codes has to be a real one.
+
+    A book that could not finish for one of these reasons is told "Scan this
+    library again to retry it." (#1765). That is true only if the next scan
+    of the same, unchanged item queues it again with its failure cleared,
+    rather than carrying the terminal row forward.
+    """
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    entry = _entry("item-1", "1" * 64)
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None
+    repository.fail_review_pipeline_action(extraction, code, False, 14)
+    assert repository._connection.execute(  # noqa: SLF001 - authoritative row
+        "SELECT state,failure_code FROM review_preparation_work"
+    ).fetchone() == ("failed", code)
+    assert repository.claim_review_pipeline_action(15) is None
+    finished = repository.review_pipeline_progress("primary", "fiction")
+    assert finished is not None and finished.state == "completed_with_failures"
+
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        16,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    rescan = repository.claim_review_pipeline_action(17)
+    assert rescan is not None and rescan.stage == "discovery"
+    repository.complete_review_discovery(rescan, 2, "a" * 64, (entry,), 18)
+    queued = repository._connection.execute(  # noqa: SLF001 - authoritative row
+        "SELECT state,failure_code FROM review_preparation_work"
+    ).fetchone()
+    retried = repository.claim_review_pipeline_action(19)
+    repository.close()
+
+    assert queued == ("queued", None)
+    assert retried is not None
+    assert (retried.item_id, retried.stage) == ("item-1", "extraction")
+
+
+@pytest.mark.parametrize(
     ("code", "failure_root", "admitted"),
     (
         pytest.param("parser_refused", "track_512", True, id="widest-track"),

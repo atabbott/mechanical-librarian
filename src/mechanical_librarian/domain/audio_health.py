@@ -123,14 +123,14 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
         "running time."
     ),
     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH: (
-        "The embedded chapter durations align with the matched edition's, "
-        "allowing one skipped chapter at each end."
+        "The embedded chapter lengths match the edition's, allowing one "
+        "skipped chapter at each end."
     ),
     AudioHealthKind.TRACK_SEQUENCE_GAP: (
-        "The declared track sequence runs without a hole."
+        "The track numbers run without a gap."
     ),
     AudioHealthKind.TRACK_SEQUENCE_DISORDER: (
-        "The declared track sequence rises with the file order."
+        "The track numbers rise in file order."
     ),
     AudioHealthKind.TRACK_DURATION_UNAVAILABLE: (
         "Every track states its own running time."
@@ -139,13 +139,13 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
         "Either every track carries embedded chapters or none does."
     ),
     AudioHealthKind.TAG_DISAGREES_ACROSS_TRACKS: (
-        "One item states one value per tagged field."
+        "All files of a book give the same value for each tag."
     ),
     AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS: (
-        "One item states one ASIN across its files."
+        "All files of a book give the same ASIN."
     ),
     AudioHealthKind.CONTAINER_UNEXPECTED: (
-        "Each file holds the container its admitted file type names."
+        "Each file’s container matches its file extension."
     ),
     AudioHealthKind.CODEC_UNEXPECTED: (
         "Each file's audio stream is "
@@ -156,10 +156,10 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
         "Each file's container states the running time of what it holds."
     ),
     AudioHealthKind.STREAM_ENCRYPTED: (
-        "No file's samples are protected by a rights-management scheme."
+        "No file is protected by DRM."
     ),
     AudioHealthKind.MEDIA_UNREADABLE: (
-        "Every file of the item opens and reads within the supported bounds."
+        "Every file opens and reads within Mechanical Librarian’s limits."
     ),
 }
 # One citation per track is the widest an item-wide set observation gets, plus

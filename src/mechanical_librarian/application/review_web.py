@@ -3386,32 +3386,36 @@ _NON_LIMITING_PROVIDER_STATUSES = frozenset(
     {"candidates", "disabled", "insufficient_input", "not_needed"}
 )
 _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
-    "candidates": "Returned metadata candidates for comparison.",
+    "candidates": "Returned possible matches to compare.",
     "no_match": "Returned no matching metadata.",
     "disabled": "Not enabled, so this source was never asked.",
     "insufficient_input": "This work lacks the identifiers this source needs.",
-    "authentication": "Refused the credentials it was given; nothing was retained.",
-    "authorization": "Refused this request; nothing was retained.",
-    "rate_limited": "Limited the request rate.",
-    "unavailable": "Could not be reached.",
-    "incomplete": "Answered only partially, so nothing was retained.",
-    "malformed": "Returned an unreadable answer, so nothing was retained.",
-    "oversized": "Returned more than the accepted bound, so nothing was retained.",
-    "candidate_limit_exceeded": "Returned too many candidates to compare safely.",
-    "query_limit_exceeded": "Reached the bounded query allowance for this work.",
+    "authentication": (
+        "Nothing was recorded from it. "
+        "Check its credentials in Settings → Metadata sources."
+    ),
+    "authorization": (
+        "Nothing was recorded from it. "
+        "Check its credentials in Settings → Metadata sources."
+    ),
+    "rate_limited": "Mechanical Librarian retries it automatically.",
+    "unavailable": "Did not answer.",
+    "incomplete": "Answered only in part, so nothing was recorded.",
+    "malformed": "Nothing was recorded from it.",
+    "oversized": "Returned more than Mechanical Librarian reads, so nothing was recorded.",
+    "candidate_limit_exceeded": "Returned too many possible matches to compare.",
+    "query_limit_exceeded": "Used up the lookups allowed for this work.",
     "not_needed": (
-        "Not needed, so this source was never asked: another source had already "
-        "matched this recording by its running time."
+        "Never asked: another source had already matched this recording by its "
+        "running time."
     ),
 }
 # A lane whose candidates work-identity admission refused persists as no match,
 # so its dispatch says what happened, in the row's own words (#1407).
-_REFUSED_PROVIDER_REASON = "Found candidates, but none was this work."
+_REFUSED_PROVIDER_REASON = "Found possible matches, but none was this work."
 # A lane the adapter itself failed is not the provider's fault and is never
 # retried, so it does not say the source could not be reached (#1498).
-_ADAPTER_FAULT_REASON = (
-    "Failed inside Mechanical Librarian, so nothing was retained and it is not retried."
-)
+_ADAPTER_FAULT_REASON = "Nothing was recorded, and it is not retried automatically."
 
 
 # The two companion ISBN endings that read differently from a generic ISBN
@@ -3442,7 +3446,7 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             else _COMPANION_ISBN_REASONS[lane.status]
             if lane.companion_isbn and lane.status in _COMPANION_ISBN_REASONS
             else _PROVIDER_OUTCOME_REASONS.get(
-                lane.status, "Ended in a bounded state this build cannot name."
+                lane.status, "Ended in a way this version cannot name."
             ),
             # Its own status, so Sources never labels it unavailable (#1498).
             "status": "adapter_fault" if lane.adapter_fault else lane.status,
@@ -3466,75 +3470,68 @@ def _provider_comparison_notices(report: MetadataReport) -> list[str]:
     return []
 
 
+# Every code a rescan re-prepares and Library has no more specific step for
+# says to scan again: the next scan queues a failed item afresh (#1765).
+_SCAN_AGAIN = "Scan this library again to retry it."
 _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
-    "provider": (
-        "A provider ended without a usable result.",
-        "No owner action is currently available.",
-    ),
+    "provider": ("A source stopped without a usable answer.", _SCAN_AGAIN),
     "configuration": (
-        "Provider configuration needs owner attention.",
-        "Update the configured provider, then scan this library again.",
+        "A source’s settings need changing.",
+        "Correct them in Settings → Metadata sources, then scan this library again.",
     ),
     "authentication": (
-        "Provider credentials need owner attention.",
-        "Update the configured provider credentials, then scan this library again.",
+        "A source refused its credentials.",
+        "Replace them in Settings → Metadata sources, then scan this library again.",
     ),
     "stale": (
-        "The item changed while preparation was in progress.",
-        "Automatic recovery is pending for the current item.",
+        "The book changed while it was being prepared.",
+        "Mechanical Librarian will prepare its current version automatically.",
     ),
     "transient": (
-        "Bounded automatic recovery attempts were exhausted.",
-        "When this library finishes with failures, open Background activity and choose Retry.",
+        "The automatic retries are used up.",
+        "When this library finishes, open Background activity and choose Retry.",
     ),
-    "projection": (
-        "Review projection could not be completed.",
-        "No owner action is currently available.",
-    ),
+    "projection": ("The review could not be put together.", _SCAN_AGAIN),
     "failed": (
-        "Preparation failed; no safe detail is available.",
-        "No owner action is currently available.",
+        "Preparation stopped, and no more detail can be shown.",
+        _SCAN_AGAIN,
     ),
     "currentness": (
-        "The source changed before preparation could be completed.",
-        "Automatic recovery is pending for the current source.",
+        "The source changed before preparation finished.",
+        "Mechanical Librarian will prepare its current version automatically.",
     ),
     "persistence": (
-        "Preparation state could not be durably recorded.",
-        "No owner action is currently available.",
+        "Mechanical Librarian could not save its progress on this book.",
+        _SCAN_AGAIN,
     ),
     "unsupported_media": (
-        "This media type is not supported for review preparation.",
-        "Use a supported media file, then scan this library again.",
+        "Mechanical Librarian cannot read this type of file.",
+        "Replace it with a supported file, then scan this library again.",
     ),
     "unreadable_media": (
-        "The local media file could not be read.",
-        "Restore a readable media file in the library, then scan this library again.",
+        "A file of this book could not be read.",
+        "Replace it with a readable copy, then scan this library again.",
     ),
     "parser_refused": (
-        "The media file could not be safely read within supported parsing limits.",
-        "Use a media file that meets the supported parsing limits, then scan this library again.",
+        "The file is too complex for Mechanical Librarian to read.",
+        "Replace the file, then scan this library again.",
     ),
     "multi_file_budget_exceeded": (
-        "This audiobook's file set is larger than preparation can read as one item.",
-        "Reduce the item to the supported number, size, or reading time of audio "
-        "files, then scan this library again.",
+        "This audiobook has more audio than Mechanical Librarian reads as one book.",
+        "Use fewer or smaller audio files, then scan this library again.",
     ),
     "missing_required_input": (
-        "Required preparation input is unavailable.",
-        "Provide the required supported item input, then scan this library again.",
+        "Something this book needs for preparation is missing.",
+        "Check the book’s files in Audiobookshelf, then scan this library again.",
     ),
     "malformed_retained_data": (
-        "Retained preparation data could not be safely reopened.",
-        "No owner action is currently available.",
+        "Saved preparation data for this book could not be read.",
+        _SCAN_AGAIN,
     ),
-    "internal_failure": (
-        "Preparation stopped before a usable review package was produced.",
-        "No owner action is currently available.",
-    ),
+    "internal_failure": ("Preparation stopped before the review was ready.", _SCAN_AGAIN),
     "unknown": (
-        "Preparation failed; no safe detail is available.",
-        "No owner action is currently available.",
+        "Preparation stopped, and no more detail can be shown.",
+        _SCAN_AGAIN,
     ),
 }
 # The terminal statuses one file of a composed audiobook can end a whole item
@@ -3571,7 +3568,7 @@ def _refusing_track_sentence(status: str, root: str | None) -> str:
     matched = _TRACK_ROOT.fullmatch(root)
     if matched is None:
         return ""
-    return f" The refusing file is track {matched.group(1)} of this item's audio files."
+    return f" It is track {matched.group(1)} of its audio files."
 
 
 def _terminal_media_health(status: str, root: str | None) -> list[dict[str, object]]:
@@ -3899,8 +3896,8 @@ def _library_item(
         else {
             "fields": [_presented_field(field) for field in report.target.fields],
             "reason": (
-                "No review decision is recorded for this work. Its current values "
-                "are shown exactly as Mechanical Librarian last read them."
+                "Nothing to decide for this work. These are its values as "
+                "Mechanical Librarian last read them."
             ),
             # A work no provider matched names why, in a closed state the row
             # words; any other work has nothing more to say (#1407).

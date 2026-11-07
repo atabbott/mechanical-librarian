@@ -130,7 +130,8 @@ export const AttentionRail = ({
         <p role={attention.isError ? 'alert' : 'status'}>
           {attention.isError ? (
             <>
-              Attention could not be loaded.{' '}
+              Attention could not be loaded. If trying again does not help, restart the Mechanical
+              Librarian service.{' '}
               <button
                 ref={attentionRetry}
                 type="button"
@@ -186,7 +187,7 @@ export const AttentionRail = ({
                 </div>
                 <ul className="attention-field-rows">
                   {group.map((item) => {
-                    const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs your decision'}`
+                    const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs you'}`
                     return (
                       <li key={item.destination}>
                         <button
@@ -238,7 +239,8 @@ export const AttentionRail = ({
             <StaleBuildRead lead="More attention was not loaded." />
           ) : attention.isFetchNextPageError ? (
             <p role="alert">
-              More attention could not be loaded.{' '}
+              More attention could not be loaded. If trying again does not help, restart the
+              Mechanical Librarian service.{' '}
               <button type="button" onClick={() => void attention.fetchNextPage()}>
                 Try again
               </button>

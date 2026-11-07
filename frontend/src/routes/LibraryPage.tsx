@@ -177,7 +177,7 @@ const contextKind = (field: ReviewField) =>
       : ('unavailable' as const)
     : ('unchanged' as const)
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
-  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting for a recovery' : 'unavailable'}`
+  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
   outcome === 'owner_entered' || outcome === 'withdraw'
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
@@ -195,10 +195,10 @@ const limitingProviderStatuses = new Set([
 // Why no provider matched a work, in the row's status slot (#1407).
 const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
   not_matched_refused: 'Found, but not this work',
-  not_matched_unavailable_scheduled: 'Providers unavailable; will be checked again',
-  not_matched_unavailable: 'Providers unavailable',
+  not_matched_unavailable_scheduled: 'Sources unavailable, retry scheduled',
+  not_matched_unavailable: 'Sources unavailable',
   not_matched_adapter_fault: 'Failed in Mechanical Librarian',
-  not_matched_no_match: 'No provider matched',
+  not_matched_no_match: 'No source matched',
 }
 // A failed preparation's group shares its lens's name, so a "needs attention"
 // heading never sits outside the Needs attention lens (#1413).
@@ -210,8 +210,8 @@ const providerGroup = (work: LibraryWorkView) =>
       : work.attentionCount === 0
         ? 'No attention needed'
         : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
-          ? 'Provider evidence limited'
-          : 'Provider evidence complete'
+          ? 'Some lookups gave no usable answer'
+          : 'Every lookup finished'
 const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
   const counts = new Map<string, number>()
   for (const outcome of outcomes) {
@@ -1133,7 +1133,7 @@ export default function LibraryPage({
         {!displayedIdentity || detail.isError ? <h2>{staleCoverReview.title}</h2> : null}
         <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
         {staleCoverReview.failed ? (
-          <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>
+          <p>The current comparison could not be loaded. Try again.</p>
         ) : null}
         <button
           type="button"
@@ -1834,7 +1834,7 @@ export default function LibraryPage({
             current: false,
             disabled: true,
             expanded: false,
-            label: 'Advised · Authored content · Recorded choice',
+            label: 'Description adviser · Earlier choice',
             longDescription: isLongDescription(
               'description',
               selectedAdvice.selected_advice.candidate.output.description,
@@ -1866,7 +1866,7 @@ export default function LibraryPage({
               selectedAdvice.state === 'requested' ||
               selectedAdvice.state === 'running',
             expanded: false,
-            label: 'Advised · Authored content',
+            label: 'Description adviser',
             longDescription: isLongDescription('description', adviceCandidate.output.description),
             onChoose: () => {
               if (!selectedAdvice.current || !selected.editable) return
@@ -2062,7 +2062,10 @@ export default function LibraryPage({
                   <StaleBuildRead lead="Works were not loaded." />
                 ) : failed ? (
                   <>
-                    <p role="alert">Works are unavailable.</p>
+                    <p role="alert">
+                      Works could not be loaded. If trying again does not help, restart the
+                      Mechanical Librarian service.
+                    </p>
                     <button type="button" onClick={retry}>
                       Try again
                     </button>
@@ -2073,7 +2076,13 @@ export default function LibraryPage({
               </div>
             ) : works.length === 0 ? (
               <div className="empty-copy">
-                <p>No exact-current works match this search and lens.</p>
+                <p>
+                  {search.q
+                    ? 'No works match this search.'
+                    : data.lens === 'all'
+                      ? 'No works yet.'
+                      : 'No works here.'}
+                </p>
                 {search.q ? (
                   <button
                     type="button"
@@ -2114,7 +2123,7 @@ export default function LibraryPage({
                   (recorded
                     ? 'Recorded evidence available'
                     : work.preparation
-                      ? 'Preparation failed safely'
+                      ? 'Could not finish'
                       : needsAttention
                         ? work.attentionCount === 1
                           ? '1 field needs attention'
@@ -2158,8 +2167,8 @@ export default function LibraryPage({
                         </StatusPill>
                         {preparation ? (
                           <span id={preparationId} className="terminal-preparation-copy">
-                            {preparation.stage}: {preparation.reason} {preparation.recovery}{' '}
-                            Reference: <code>{preparation.diagnosticReference}</code>
+                            {preparation.reason} {preparation.recovery} Reference:{' '}
+                            <code>{preparation.diagnosticReference}</code>
                           </span>
                         ) : null}
                       </span>
@@ -2171,21 +2180,13 @@ export default function LibraryPage({
                     {showGroup ? (
                       <div className="library-provider-group">
                         <h3>{group}</h3>
-                        {group === 'Provider evidence complete' ||
-                        group === 'Provider evidence limited' ? (
-                          <p>
-                            {group === 'Provider evidence complete'
-                              ? 'Lookups completed or did not apply; a match is not guaranteed.'
-                              : 'Some lookups did not supply usable evidence. Recoverable lookups can change this group when new evidence arrives.'}
-                          </p>
-                        ) : null}
                       </div>
                     ) : null}
                     {terminalFailure ? (
                       <article
                         key={work.id}
                         className="library-work-row is-terminal"
-                        aria-label="Terminal preparation failure"
+                        aria-label="Could not finish"
                       >
                         {row}
                         {preparation?.mediaHealth.length ? (
@@ -2287,9 +2288,6 @@ export default function LibraryPage({
           ) : !search.preview ? (
             <div className="library-selection">
               <h2>Choose a work</h2>
-              <p>
-                Its current values and field position stay here while you move through attention.
-              </p>
             </div>
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
@@ -2303,7 +2301,8 @@ export default function LibraryPage({
               />
             ) : identityError ? (
               <p role="alert">
-                Selected work could not be loaded.{' '}
+                Selected work could not be loaded. If trying again does not help, restart the
+                Mechanical Librarian service.{' '}
                 <button
                   ref={selectedDetailRetryButton}
                   onClick={() => {
@@ -2330,8 +2329,7 @@ export default function LibraryPage({
                 >
                   Selected work
                 </h2>
-                <p>Readable work identity is not available on this Library page.</p>
-                <p role="status">This work is not available in the current Library result.</p>
+                <p role="status">This work is not in the current list of works.</p>
               </div>
             )
           ) : detail.isPending || (detail.isError && leaving) ? (
@@ -2343,7 +2341,7 @@ export default function LibraryPage({
           ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
-                'Selected work could not be loaded.'}{' '}
+                'Selected work could not be loaded. If trying again does not help, restart the Mechanical Librarian service.'}{' '}
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
@@ -2356,12 +2354,11 @@ export default function LibraryPage({
             </p>
           ) : !detail.data.current ? (
             <div className="library-selection">
-              <p>Case superseded</p>
               <h2>{displayedIdentity.title}</h2>
               {staleCoverNotice ?? (
                 <p role="alert">
-                  This review case is no longer current. Reopen its current replacement from
-                  Library.
+                  This review case is out of date. Choose the work again in Works to open the
+                  current one.
                 </p>
               )}
             </div>
@@ -2392,11 +2389,11 @@ export default function LibraryPage({
                 </div>
                 <dl className="selected-work-status">
                   <div>
-                    <dt>Needs review</dt>
+                    <dt>Needs you</dt>
                     <dd>{String(attentionFields.length)}</dd>
                   </div>
                   <div>
-                    <dt>Resolved automatically</dt>
+                    <dt>Automatic</dt>
                     <dd>
                       {String(
                         detail.data.fields.filter(
@@ -2409,7 +2406,7 @@ export default function LibraryPage({
                     </dd>
                   </div>
                 </dl>
-                <nav className="selected-work-diagnostics" aria-label="Read-only work diagnostics">
+                <nav className="selected-work-diagnostics" aria-label="Evidence and history">
                   <Link
                     params={{ reviewCaseId: detail.data.id }}
                     search={normalizeDetailSearch({
@@ -2506,9 +2503,7 @@ export default function LibraryPage({
                   <div>
                     <h3>Review complete</h3>
                     <span>
-                      {String(complete.fields.length)} recorded field outcome
-                      {complete.fields.length === 1 ? '' : 's'}
-                      {writesActive ? ' — each began applying the moment you decided it.' : '.'}
+                      {`${String(complete.fields.length)} ${complete.fields.length === 1 ? 'field' : 'fields'} recorded.${writesActive ? ' Each started applying when you chose it.' : ''}`}
                     </span>
                   </div>
                   <ol>
@@ -2553,26 +2548,29 @@ export default function LibraryPage({
                     ) : attention.isPending ||
                       attention.isPlaceholderData ||
                       attention.isFetchingNextPage ? (
-                      <span>Looking for the next visible work…</span>
+                      <span>Finding the next work…</span>
                     ) : nextWorkError && attention.error instanceof BuildMismatchError ? (
-                      <StaleBuildRead lead="The next attention work was not loaded." />
+                      <StaleBuildRead lead="The next work was not loaded." />
                     ) : nextWorkError ? (
                       <>
-                        <span>The next attention work could not be loaded.</span>
+                        <span>
+                          The next work could not be loaded. If trying again does not help, restart
+                          the Mechanical Librarian service.
+                        </span>
                         <Button variant="primary" type="button" onClick={retryNextWork}>
-                          Try finding next work again
+                          Try again
                         </Button>
                       </>
                     ) : !search.q ? (
-                      <span>All visible review work is complete.</span>
+                      <span>No other work needs a decision.</span>
                     ) : (
                       <span>
-                        All review work matching this search is complete.
-                        {summaryAttention === undefined || !data
+                        {summaryAttention !== undefined && data && outsideSearch === 0
+                          ? 'No other work needs a decision.'
+                          : 'No other work matching this search needs a decision.'}
+                        {summaryAttention === undefined || !data || outsideSearch === 0
                           ? null
-                          : outsideSearch > 0
-                            ? ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} a decision outside this search.`
-                            : ' No other work needs a decision.'}
+                          : ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} one outside this search.`}
                       </span>
                     )}
                   </footer>
@@ -2614,7 +2612,7 @@ export default function LibraryPage({
                           {selected.humanDecision === null && selected.manualHold
                             ? 'Your earlier decision still holds this field.'
                             : 'The recorded outcome is marked below.'}{' '}
-                          You can select another eligible value.
+                          You can choose another value.
                         </p>
                       ) : selectedOptional ? (
                         <p>{fieldReason(selected)}</p>
@@ -2921,8 +2919,8 @@ export default function LibraryPage({
               {detail.data.recordingIdentityBasis ||
               detail.data.recordingAdmissionBasis ||
               detail.data.audiobookReviewScope === 'work' ? (
-                <section aria-label="Whole-work context">
-                  <h3>Whole-work context</h3>
+                <section aria-label="Recording match">
+                  <h3>Recording match</h3>
                   <RecordingIdentityBasis
                     value={detail.data.recordingIdentityBasis}
                     admission={detail.data.recordingAdmissionBasis}

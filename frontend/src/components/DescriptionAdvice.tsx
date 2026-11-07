@@ -46,16 +46,14 @@ export const DescriptionAdvicePreparation = ({
           {retry.isPending ? 'Requesting retry…' : 'Retry description advice'}
         </button>
       ) : null}
-      {retry.isSuccess ? (
-        <p role="status">Description preparation requested. Paused preparation stays paused.</p>
-      ) : null}
+      {retry.isSuccess ? <p role="status">New advice requested.</p> : null}
       {retry.isError ? (
         <p role="alert">
           {uncertainWriteOutcome(retry.error)
-            ? 'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.'
+            ? 'No answer came back. Check whether new advice was requested before retrying.'
             : refusalCopy(
                 retry.error,
-                'Description preparation could not be requested. Reload the current case and retry.',
+                'New advice could not be requested. Reload the page, then retry.',
               )}
         </p>
       ) : null}

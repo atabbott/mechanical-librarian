@@ -243,7 +243,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 [data-route-focus]:focus, [data-route-focus]:focus-visible, .workspace-detail:focus, .selected-work-header:focus, .library-header:focus { outline:none; }
 .work-sources { margin-top:1rem; border:1px solid var(--line); border-radius:.65rem; background:var(--surface); }
 .work-sources > summary { display:flex; flex-wrap:wrap; min-height:48px; align-items:center; justify-content:space-between; gap:1rem; padding:.6rem .85rem; cursor:pointer; }
-.work-sources > summary > span { flex-shrink:0; font-weight:700; }
+.work-sources > summary > span { min-width:0; overflow-wrap:anywhere; font-weight:700; }
 .work-sources > summary > small { color:var(--soft); font-size:.75rem; }
 .work-sources ul { display:grid; margin:0; padding:0; border-top:1px solid var(--line); list-style:none; }
 .work-sources li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.15rem .75rem; padding:.65rem .85rem; border-bottom:1px solid var(--line); }
