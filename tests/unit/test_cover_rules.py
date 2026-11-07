@@ -422,6 +422,79 @@ def test_a_square_cover_at_the_band_edge_does_not_take_its_own_copy() -> None:
     assert (election.outcome, election.choice) == (CoverOutcome.REPLACE, "other")
 
 
+def _art_fault_cases() -> list[tuple[str, CurrentCover, tuple[int, int], CoverIssue]]:
+    edge = (1000, SQUARE_EDGE_HIGH)
+    return [
+        (
+            "edition_language",
+            _current((800, 1200), measures=_measures(), non_english_edition=True),
+            (1200, 1800),
+            CoverIssue.EDITION_LANGUAGE,
+        ),
+        (
+            "wrong_shape",
+            _current(edge, measures=_measures()),
+            (1500, 3 * SQUARE_EDGE_HIGH // 2 + 1),
+            CoverIssue.WRONG_SHAPE,
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("current", "copy_size", "fault"),
+    [case[1:] for case in _art_fault_cases()],
+    ids=[case[0] for case in _art_fault_cases()],
+)
+def test_an_art_fault_takes_other_art_before_a_sharper_copy(
+    current: CurrentCover, copy_size: tuple[int, int], fault: CoverIssue
+) -> None:
+    assert current.size is not None
+    copy = _candidate("copy", copy_size, identity=EDITION, measures=_measures())
+    assert copy.width * copy.height >= SHARPER_COPY_MIN_AREA_RATIO * (
+        current.size[0] * current.size[1]
+    )
+    other = _candidate("other", PORTRAIT, measures=_measures(art=1))
+
+    election = _elect((copy, other), current=current)
+
+    assert election.ranked == ("copy", "other")
+    assert (election.outcome, election.choice) == (CoverOutcome.REPLACE, "other")
+    assert election.issues == (fault,)
+    assert election.reason is fault
+
+
+@pytest.mark.parametrize(
+    ("current", "copy_size", "fault"),
+    [case[1:] for case in _art_fault_cases()],
+    ids=[case[0] for case in _art_fault_cases()],
+)
+def test_an_art_fault_with_no_other_art_takes_the_sharper_copy_as_such(
+    current: CurrentCover, copy_size: tuple[int, int], fault: CoverIssue
+) -> None:
+    copy = _candidate("copy", copy_size, measures=_measures())
+
+    for protection, outcome in (
+        (CoverProtection.PROTECTED, CoverOutcome.REPLACE),
+        (CoverProtection.PROPOSALS_ONLY, CoverOutcome.SUGGEST),
+    ):
+        election = _elect((copy,), current=current, protection=protection)
+        assert (election.outcome, election.choice) == (outcome, "copy")
+        assert election.issues == (fault, CoverIssue.SHARPER_COPY)
+        assert election.reason is CoverIssue.SHARPER_COPY
+
+
+def test_a_reason_outside_the_issues_is_refused() -> None:
+    election = _elect((_candidate("art"),), current=_current(SQUARE))
+    assert election.reason is CoverIssue.WRONG_SHAPE
+
+    with pytest.raises(ValueError):
+        replace(election, reason=CoverIssue.SHARPER_COPY)
+    with pytest.raises(ValueError):
+        replace(election, reason=None)
+    with pytest.raises(ValueError):
+        replace(election, issues=())
+
+
 def test_an_undersized_cover_is_cured_by_a_copy_that_clears_the_floor() -> None:
     edge = COVER_FLOOR_SHORT_EDGE
     small = (edge - 1, round((edge - 1) * 1.5))

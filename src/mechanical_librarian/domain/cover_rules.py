@@ -24,10 +24,12 @@ What remains keeps ADR-0059's order with its portrait-sane step replaced by the
 shape rule: verified manifestation before verified work, then pixel area, width,
 height, source precedence and the opaque reference.
 
-A readable current cover with no detectable issue is kept. A current cover with
-an issue takes a sharper copy of its art when one exists, and otherwise the first
-candidate in that order outside its art; only an undersized cover may take a
-copy of its own art, which clears the floor. ``current_cover_protection`` then decides
+A readable current cover with no detectable issue is kept. When the fault is
+the art's own (wrong shape, edition language), the first candidate in that order
+outside its art is taken; only when there is none may a sharper copy of the art
+be taken, recorded as ``sharper_copy``. Otherwise a sharper copy is taken when
+one exists, an undersized cover may take any copy that clears the floor, and
+anything else takes the first candidate outside its art. ``current_cover_protection`` then decides
 whether a replacement is automatic or a suggestion. A library title that names
 another work holds selection in every mode.
 
@@ -273,11 +275,16 @@ class MeasuredCoverElection:
     ranked: tuple[str, ...]
     groups: tuple[SameArtGroup, ...]
     excluded: tuple[tuple[str, CoverExclusion], ...]
+    # The issue recorded as the decision's reason: the first in priority order,
+    # except that a sharper copy taken for a cover whose art has a fault is
+    # recorded as ``sharper_copy``.
+    reason: CoverIssue | None
 
-    @property
-    def reason(self) -> CoverIssue | None:
-        """The issue recorded on the decision: the first in priority order."""
-        return self.issues[0] if self.issues else None
+    def __post_init__(self) -> None:
+        if (self.reason is None) != (not self.issues) or (
+            self.reason is not None and self.reason not in self.issues
+        ):
+            raise ValueError("cover rule reason is inconsistent")
 
 
 def _hamming(left: str, right: str) -> int:
@@ -493,15 +500,18 @@ def elect_measured_covers(
         choice: str | None,
         issues: tuple[CoverIssue, ...] = (),
         edition_preferred: bool = False,
+        reason: CoverIssue | None = None,
     ) -> MeasuredCoverElection:
+        ordered = tuple(sorted(issues, key=list(CoverIssue).index))
         return MeasuredCoverElection(
             outcome,
             choice,
-            tuple(sorted(issues, key=list(CoverIssue).index)),
+            ordered,
             edition_preferred,
             ranked,
             tuple(groups),
             exclusions,
+            reason if reason is not None else ordered[0] if ordered else None,
         )
 
     if title_conflict and eligible:
@@ -528,18 +538,26 @@ def elect_measured_covers(
             issues.append(CoverIssue.SHARPER_COPY)
 
     if issues:
-        # Without a sharper copy, a fault of the art itself is not cured by
-        # another copy of it; only an undersized cover is, by a copy that
-        # clears the floor.
-        copies_cure = set(issues) == {CoverIssue.BELOW_FLOOR}
-        choice = (
-            sharper.reference
-            if sharper is not None
-            else next(
-                (ref for ref in ranked if copies_cure or ref not in current_art),
-                None,
-            )
-        )
+        reason: CoverIssue | None = None
+        choice: str | None = None
+        other_art = next((ref for ref in ranked if ref not in current_art), None)
+        if {CoverIssue.WRONG_SHAPE, CoverIssue.EDITION_LANGUAGE} & set(issues):
+            # A fault of the art itself: another copy of it does not cure it, so
+            # eligible other art comes first. Only without any may a sharper
+            # copy be taken, recorded as such; the art fault stays recorded.
+            if other_art is not None:
+                choice = other_art
+                if sharper is not None:
+                    issues.remove(CoverIssue.SHARPER_COPY)
+            elif sharper is not None:
+                choice, reason = sharper.reference, CoverIssue.SHARPER_COPY
+        elif sharper is not None:
+            choice = sharper.reference
+        elif issues == [CoverIssue.BELOW_FLOOR]:
+            # An undersized cover is cured by any copy that clears the floor.
+            choice = ranked[0] if ranked else None
+        else:
+            choice = other_art
         if choice is None:
             return result(CoverOutcome.KEEP, None, tuple(issues))
         # An unreadable cover cannot be retained for Put back, so it is never
@@ -552,6 +570,7 @@ def elect_measured_covers(
             CoverOutcome.REPLACE if automatic else CoverOutcome.SUGGEST,
             choice,
             tuple(issues),
+            reason=reason,
         )
 
     if prefer_edition and current.identity == "verified_work_match":
