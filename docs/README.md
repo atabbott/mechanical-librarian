@@ -39,6 +39,8 @@ How the pipeline prepares each work, stage by stage:
   admission and exclusion gate, its origin, cost and precision if loosened
 - [Automatic-decision abstention](product/automatic-decision-abstention.md):
   the ledger's A6 row measured on its own populations, and why it is kept
+- [Bibliographic combination gate](product/bibliographic-combination-gate.md):
+  the ledger's A3 row split by what held each field first, and why it is kept
 - [Opening-ebook evidence](product/opening-ebook-evidence.md) and
   [opening-audio evidence](product/opening-audio-evidence.md)
 - [Future reviewer backends](product/future-reviewer-backends.md)
