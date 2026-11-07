@@ -542,6 +542,11 @@ def test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic(
     library.root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
 
     library.leave_automatic()
+    # The owner's answer, not the earlier automatic choice, decides the
+    # field in Preview, so the case shows no earlier choice (#1575).
+    preview = _read_fields(library)["authors"]
+    assert preview["human_decision"]["decision_id"] == owner.decision_id
+    assert preview["earlier_automatic_value"] is None
     library.root.activate_qualified_automatic(40)
     library.now[0] = 41
     library.drain()
@@ -768,6 +773,7 @@ def test_the_case_and_activity_read_after_leaving_automatic(
     authors = before["fields"]["authors"]
     assert authors["automatic_decision"]["decision_id"] == automatic.decision_id
     assert authors["classification"] == "automatic_recorded"
+    assert authors["earlier_automatic_value"] is None
 
     library.leave_automatic()
 
@@ -784,6 +790,16 @@ def test_the_case_and_activity_read_after_leaving_automatic(
         assert fields["authors"]["automatic_decision"] is None
         assert fields["authors"]["classification"] != "automatic_recorded"
         assert fields["authors"]["needs_attention"] is False
+        # Only Preview shows what Automatic chose before (#1575): after Turn
+        # on Automatic the field is about to be decided again.
+        assert fields["authors"]["earlier_automatic_value"] == (
+            {"kind": "list", "value": ["Ada Example"]} if posture == "preview" else None
+        )
+        assert {
+            destination
+            for destination, field in fields.items()
+            if field["earlier_automatic_value"] is not None
+        } == ({"authors"} if posture == "preview" else set())
         assert {
             destination
             for destination, field in fields.items()
@@ -807,6 +823,7 @@ def test_the_case_and_activity_read_after_leaving_automatic(
     fields = read["fields"]
     assert fields["authors"]["automatic_decision"]["decision_id"] == fresh.decision_id
     assert fields["authors"]["classification"] == "automatic_recorded"
+    assert fields["authors"]["earlier_automatic_value"] is None
     assert fields["authors"]["needs_attention"] is False
     assert {
         destination for destination, field in fields.items() if field["needs_attention"]
@@ -849,6 +866,8 @@ def test_pausing_after_leaving_automatic_lists_every_field_the_case_asks_for(
     assert case_needs == attention == {"authors", "language", "title"}
     (row,) = library.library("all")
     assert row["attention_count"] == 3
+    # A field that needs attention shows no earlier automatic choice (#1575).
+    assert _read_fields(library)["authors"]["earlier_automatic_value"] is None
 
     # Resuming in Preview: an Automatic field without abstention is never
     # asked for, so authors leaves both again.
@@ -857,6 +876,10 @@ def test_pausing_after_leaving_automatic_lists_every_field_the_case_asks_for(
     assert case_needs == attention == {"language", "title"}
     (row,) = library.library("all")
     assert row["attention_count"] == 2
+    assert _read_fields(library)["authors"]["earlier_automatic_value"] == {
+        "kind": "list",
+        "value": ["Ada Example"],
+    }
 
 
 def test_pausing_in_automatic_keeps_a_decided_field_out_of_attention(

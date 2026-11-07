@@ -266,7 +266,9 @@ The server classifies every field, and the tab status follows from it:
   shown beside it.
 - **No change:** context only. Keeping the current value is a choice only when
   an eligible alternative exists. Unsupported fields show their value and a
-  reason, never a selectable `Not set`.
+  reason, never a selectable `Not set`. In Preview, a field that Automatic
+  chose before you entered Preview mode reads No change, shows that choice
+  beside the current value, and says turning on Automatic decides it again.
 
 Fields with nothing to decide sit in one collapsed panel headed `No change:`
 and their names, with any field waiting for a recovery or unavailable counted
