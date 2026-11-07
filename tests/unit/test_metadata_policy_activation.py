@@ -2213,7 +2213,7 @@ def test_verified_human_choice_can_be_corrected_on_the_same_current_case(
 def test_no_incumbent_title_has_no_corrective_keep_current_authority(
     state_path: Path, state: TargetFieldState
 ) -> None:
-    source = _report()
+    source = _report(competing=False)
     report = MetadataReport.create(
         target=TargetFacts(
             source.target.connection,

@@ -101,6 +101,17 @@ the floor, an `add` or `replace` option, or an explicit Ask still queues the
 field. Tags under option `off` are never queued. Proposal policy
 `fixed-conservative-v44` requires a clean rebuild.
 
+**Single-source choices (#1310).** Residual uncertainty alone does not justify
+asking. A choice whose reasons are exactly
+`insufficient_independent_corroboration`, with one alternative that does not
+preserve the target, from fewer than two correlation groups, sets no
+`unresolved_choice` fact. It stays choosable on the work's page on every medium
+and reads as suggested by one source that nothing else confirms. An explicit Ask,
+a manual requirement and an unsafe bibliographic combination still queue it. The
+proposal is unchanged, so its reason still drives provider recovery and the
+automatic series rule; only the review-case field facts change, which requires a
+clean rebuild.
+
 **Explicitly absent provider runtime (#1042).** Existing stated-runtime admission
 runs first and yields no new attribution. Otherwise one canonical non-target local
 ASIN, its retained matched-ASIN evidence, usable local runtime and complete strong

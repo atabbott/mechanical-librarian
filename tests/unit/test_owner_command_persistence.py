@@ -220,15 +220,15 @@ def test_withdraw_returns_the_field_to_attention(store: OwnerStore) -> None:
     def asking() -> set[object]:
         return {row[4] for row in facts()}
 
+    # The ISBN asks for its edition to be verified; the authors are one
+    # source's suggestion, which is choosable but does not ask (#1310).
     before = store.repository.count_current_attention_fields(None)
-    assert "authors" in asking()
-    store.decide(
-        "accept", {"kind": "list", "value": ["Example, Ada"]}, destination="authors"
-    )
-    assert "authors" not in asking()
+    assert asking() == {"isbn"}
+    store.decide("keep_current", destination="isbn")
+    assert "isbn" not in asking()
     assert store.repository.count_current_attention_fields(None) == before - 1
-    store.decide("withdraw", destination="authors")
-    assert "authors" in asking()
+    store.decide("withdraw", destination="isbn")
+    assert "isbn" in asking()
     assert store.repository.count_current_attention_fields(None) == before
 
 

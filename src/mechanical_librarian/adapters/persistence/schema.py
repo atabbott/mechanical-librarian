@@ -432,6 +432,22 @@ def _policy_settles_choice_sql(proposal_set: str) -> str:
     )
 
 
+# One alternative only one source states, with nothing to corroborate it: the
+# choice stays the owner's but is not queued, because residual uncertainty
+# alone does not justify asking (#1310). The case page reads the same shape.
+_SINGLE_SOURCE_CHOICE_SQL = (
+    "(json_extract(result.value,'$.outcome')='unresolved_choice' "
+    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
+    "AND json_extract(result.value,'$.reasons[0]')="
+    "'insufficient_independent_corroboration' "
+    "AND (SELECT count(*) FROM json_each(result.value,'$.alternatives') single_source "
+    "WHERE json_extract(single_source.value,'$.assessment')<>'preserves_target')=1 "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.alternatives') single_source "
+    "WHERE json_extract(single_source.value,'$.assessment')<>'preserves_target' "
+    "AND json_array_length(json_extract(single_source.value,'$.correlations'))>=2))"
+)
+
+
 def _review_case_field_fact_values_sql(case_document: str) -> str:
     return (
         "json_extract(result.value,'$.destination'),"
@@ -440,6 +456,8 @@ def _review_case_field_fact_values_sql(case_document: str) -> str:
         "WHERE reason.value='work_alternative_immaterial' OR ("
         "json_extract(result.value,'$.destination')='cover' "
         "AND reason.value='current_cover_verified')) AND NOT "
+        + _SINGLE_SOURCE_CHOICE_SQL
+        + " AND NOT "
         + _policy_settles_choice_sql(
             case_document.removesuffix(".document") + ".proposal_set_id"
         )

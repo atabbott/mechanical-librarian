@@ -101,6 +101,12 @@ AI.
   least two materially independent correlation groups; otherwise bounded
   choices are `unresolved_choice`. Connections to one upstream adapter are one
   group. Hardcover, Inventaire and Open Library are distinct groups.
+- **Single-source choices** are a choice, to fill or to replace, whose reasons
+  are exactly `insufficient_independent_corroboration` and whose only
+  alternative that does not preserve the target comes from one correlation
+  group. They stay the owner's to choose but are not queued, on every medium.
+  An explicit Ask, a manual requirement and an unsafe bibliographic combination
+  still queue them (#1310).
 - **Linked fields** stay whole: ordered author and narrator lists, series name
   and sequence, and date and year are never edited piecemeal. Untyped
   contributor evidence never becomes a partial narrator list.
