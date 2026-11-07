@@ -32,6 +32,7 @@ import {
   BuildMismatchError,
   SessionExpiredError,
   refusalCopy,
+  signInLocation,
   uncertainWriteOutcome,
 } from './api/http'
 import type {
@@ -62,6 +63,7 @@ import { formatWhen } from './dates'
 import { preparationOutcomes, scanStateLabels } from './labels'
 import { useLibraryName } from './libraryNames'
 import { handoffNeedsLibraryNames } from './writeConsent'
+import { routeFailureCopy } from './routeFailure'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const DetailPage = recoverableLazy(() => import('./routes/DetailPage'))
@@ -1287,6 +1289,7 @@ const RouteFailure = ({
   title?: string
 }) => {
   const router = useRouter()
+  const copy = routeFailureCopy(error)
   // A different build cannot be fixed by loading the route again: only a
   // reload brings this tab onto the build the server is running.
   return error instanceof BuildMismatchError ? (
@@ -1306,10 +1309,20 @@ const RouteFailure = ({
     </section>
   ) : (
     <section className="route-state">
-      <p className="eyebrow">Review unavailable</p>
-      <h1>{title} could not be loaded.</h1>
-      <p role="alert">{error instanceof Error ? error.message : String(error)}</p>
-      <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
+      <h1>{title} couldn't be loaded.</h1>
+      {/* Plain words only; the status and code stay under Technical detail (#1756). */}
+      <p role="alert">{copy.message}</p>
+      {copy.detail ? (
+        <details>
+          <summary>Technical detail</summary>
+          <code>{copy.detail}</code>
+        </details>
+      ) : null}
+      {copy.action === 'sign-in' ? (
+        <a href={signInLocation()}>Sign in again</a>
+      ) : copy.action === 'retry' ? (
+        <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
+      ) : null}
     </section>
   )
 }
@@ -1440,6 +1453,7 @@ const PolicyRouteComponent = () => {
           void posture.refetch()
           void safety.refetch()
         }}
+        title="Policy"
       />
     )
   if (!state.data || !posture.data || !safety.data) return <RoutePending title="Policy" />
