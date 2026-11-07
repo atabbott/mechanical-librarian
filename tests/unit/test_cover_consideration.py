@@ -1949,6 +1949,7 @@ def test_a_verified_work_route_cover_never_gains_automatic_authority(
         # Manual choice stays open; selection, which automatic reads, does not.
         assert offered["manual_eligible"] is True
         assert offered["selectable"] is False
+        assert offered["match_reason"] == "matched_book"
         assert repository.get_review_case_decisions(case_id) == ()
 
         # Even a consideration claiming the cover selectable mints nothing.
