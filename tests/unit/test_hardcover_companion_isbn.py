@@ -45,7 +45,7 @@ from tests.support.audiobook_providers import (
     local_runtime_claim,
     target_title_claim,
 )
-from tests.support.hardcover_evidence import hardcover_envelope
+from tests.support.hardcover_evidence import hardcover_answer
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 _TITLE = "Ember Tide Protocol"
@@ -166,7 +166,8 @@ def _observe(
                 return httpx.Response(500, json={})
             return httpx.Response(
                 200,
-                json=hardcover_envelope(
+                json=hardcover_answer(
+                    request,
                     [
                         {
                             "id": 900,
@@ -182,8 +183,8 @@ def _observe(
             )
         return httpx.Response(
             200,
-            json=hardcover_envelope(
-                [], [_book(book_id, _TITLE) for book_id in search_books]
+            json=hardcover_answer(
+                request, [], [_book(book_id, _TITLE) for book_id in search_books]
             ),
         )
 

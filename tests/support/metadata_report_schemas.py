@@ -266,13 +266,15 @@ def retained_report_as_current(document: str) -> MetadataReport:
     v69 added the audiobook companion EPUB's ISBN lane and discovery titles,
     which a v49 report, holding no companion, never planned. v70 added each
     lane candidate's `admission_basis`: null here, since an earlier producer
-    said nothing of how a lane kept a recording.
+    said nothing of how a lane kept a recording. v72 made a Hardcover WORK
+    lane's candidates books and planned an ebook lane over its EPUB creators,
+    neither of which a v49 report holds.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v70"
+    data["schema_version"] = "metadata-report-v72"
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -487,7 +489,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v70'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v72'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -506,10 +508,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v70'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v72'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v70'", f"= '{version}'"
+            "= 'metadata-report-v72'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

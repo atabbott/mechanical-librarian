@@ -397,7 +397,7 @@ def test_wrong_work_adapter_evidence_stays_inspectable_but_cannot_reopen_authori
     )
     assert requests == [
         ("catalogue", "MetadataEvidenceByIsbn"),
-        ("catalogue", "MetadataEvidenceByWork"),
+        ("catalogue", "BooksByTitleAuthor"),
         ("secondary_catalogue", "isbn:9780306406157"),
         (
             "secondary_catalogue",

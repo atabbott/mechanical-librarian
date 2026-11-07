@@ -91,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_ISBN_AUTHORITIES,
     COMPANION_ISBN_WORK_BASIS,
     CORROBORATED_RULE_AUTHORITY,
+    EPUB_CREATORS_AUTHOR_BASIS,
     LANE_TITLE_BASES,
     MAX_ASIN_DISCOVERY_LANES,
     MAX_AUDIO_EDITIONS,
@@ -435,6 +436,9 @@ class MetadataDiscoveryLane:
     authors: tuple[str, ...] = ()
     canonical_asin: str | None = None
     title_basis: str | None = None
+    # Set only on an ebook's asserted WORK lane asked with the EPUB's own
+    # creators because the target names no author (#1380).
+    author_basis: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -457,6 +461,12 @@ class MetadataDiscoveryLane:
             and (
                 self.title_basis not in LANE_TITLE_BASES
                 or self.kind is not ProviderQueryKind.WORK
+            )
+            or self.author_basis is not None
+            and (
+                self.author_basis != EPUB_CREATORS_AUTHOR_BASIS
+                or self.kind is not ProviderQueryKind.WORK
+                or self.title_basis is not None
             )
         ):
             raise MetadataReportError("provider discovery lane is invalid")
@@ -608,6 +618,10 @@ class MetadataDiscoveryPlan:
             > 1
             or sum(lane.title_basis is not None for lane in self.lanes)
             > (0 if self.audio is None else 1)
+            or (
+                self.audio is not None
+                and any(lane.author_basis is not None for lane in self.lanes)
+            )
             or len(asin_lanes) > MAX_ASIN_DISCOVERY_LANES
             or len({lane.canonical_asin for lane in asin_lanes}) != len(asin_lanes)
         ):
@@ -832,6 +846,7 @@ def _work_discovery_lanes(
             title=payload.title,
             authors=payload.authors,
             title_basis=payload.title_basis,
+            author_basis=payload.author_basis,
         )
         for payload in work_discovery_lane_payloads(
             target_fields,
@@ -843,8 +858,16 @@ def _work_discovery_lanes(
 
 
 def metadata_discovery_plan(
-    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+    target: TargetSnapshot,
+    local_claims: tuple[LocalClaim, ...],
+    *,
+    library_languages: tuple[str, ...] = (),
 ) -> MetadataDiscoveryPlan:
+    """Plan one ebook's discovery.
+
+    `library_languages` ride on the plan for the providers that read them;
+    neither a lane's identity nor a report's replay reads them (#1380).
+    """
     families: dict[str, list[LocalClaim]] = {}
     for claim in local_claims:
         if (
@@ -854,7 +877,9 @@ def metadata_discovery_plan(
         ):
             families.setdefault(family, []).append(claim)
     if len(families) > MAX_ISBN_DISCOVERY_LANES:
-        return MetadataDiscoveryPlan(local_claims, (), True)
+        return MetadataDiscoveryPlan(
+            local_claims, (), True, library_languages=library_languages
+        )
 
     lanes: list[MetadataDiscoveryLane] = []
     for family, claims in sorted(families.items()):
@@ -883,8 +908,12 @@ def metadata_discovery_plan(
     lanes.extend(_work_discovery_lanes(target.fields, local_claims))
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
-        return MetadataDiscoveryPlan(local_claims, (), True)
-    return MetadataDiscoveryPlan(local_claims, ordered_lanes)
+        return MetadataDiscoveryPlan(
+            local_claims, (), True, library_languages=library_languages
+        )
+    return MetadataDiscoveryPlan(
+        local_claims, ordered_lanes, library_languages=library_languages
+    )
 
 
 def provider_discovery_lane_order(
@@ -3791,7 +3820,9 @@ class GenerateMetadataReport:
         # ``local`` is the extraction result on every remaining path: the
         # audiobook branch returned above and the gate admitted no third kind.
         local = cast("InspectionResult", local)
-        plan = metadata_discovery_plan(initial, combined_claims)
+        plan = metadata_discovery_plan(
+            initial, combined_claims, library_languages=self._library.languages
+        )
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
             with self._timing.measure("cover", "target"):
