@@ -121,11 +121,12 @@ the worker.
 
 ## Audiobooks and ebooks
 
-Audiobook lookups use only Audible, Audnexus, AudioSilo, Hardcover and Open
-Library; ebook lookups use only Google Books, Hardcover, Inventaire, iTunes
-Search and Open Library. Recovery and failure evidence cover only the providers
-of the work's media kind. A queued job for any other provider closes as `stale`
-without a request.
+Audiobook lookups use only Audible, Audnexus, AudioSilo, Hardcover, iTunes
+Search and Open Library; ebook lookups use only Google Books, Hardcover,
+Inventaire, iTunes Search and Open Library. Recovery and failure evidence cover
+only the providers of the work's media kind, except iTunes Search on an
+audiobook: it is asked once for a cover and never retried. A queued job for any
+other provider closes as `stale` without a request.
 
 ## What is not retried
 
@@ -136,8 +137,9 @@ without a request.
 - A lookup the adapter itself failed is recorded as `adapter_fault` and is not
   retried: it fails the same way each time. A provider that could not be
   reached is still retried.
-- An iTunes Search lookup (ebook libraries only) that returns more than five
-  candidates is final; the adapter does not truncate or repeat the query.
+- An iTunes Search lookup that returns more than five candidates is final;
+  the adapter does not truncate or repeat the query. An audiobook's iTunes
+  lookup is never retried, whatever it returned.
 - A construction or dispatch error during a retry publishes nothing; only the
   provider's final `http_429` response can set the retry delay.
 

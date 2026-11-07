@@ -97,7 +97,8 @@ The product sends no telemetry. It contacts only:
   writes;
 - **metadata providers** the owner enabled, with ISBNs, ASINs, titles and
   authors as query text, plus the configured API key or Open Library contact
-  email;
+  email. iTunes Search receives an audiobook's title and author once, to find
+  its cover;
 - **an AI reviewer**, only if the owner selected one
   ([AI trust boundary](ai-boundary.md)). Cover review sends opaque candidate
   references, re-encoded previews, incumbent state and bounded public provider

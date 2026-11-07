@@ -122,6 +122,8 @@ brackets are GitHub issues.
   "Safely paused", waiting source lookups are "waiting" rather than
   "deferred", and a page that failed to load no longer shows the raw request
   error (#1765).
+- iTunes is asked for an audiobook's cover again, one search per audiobook,
+  and supplies nothing else about it (#1779).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

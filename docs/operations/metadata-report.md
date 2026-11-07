@@ -218,9 +218,11 @@ contradiction but never admits.
 
 ### Audiobook lanes
 
-Audiobooks go to the Audible catalog, Audnexus, AudioSilo, Hardcover and Open
-Library, never to Google Books, Inventaire or iTunes Search
+Audiobooks go to the Audible catalog, Audnexus, AudioSilo, Hardcover, iTunes
+Search and Open Library, never to Google Books or Inventaire
 ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)).
+iTunes Search is asked for a cover only: nothing else it states is read for an
+audiobook.
 Discovery has two phases:
 
 1. **The item's own plan.** One lane per ASIN in the tags, sidecars or path, or
@@ -273,7 +275,8 @@ A work lane asks at most three rungs — normalized, subtitle-stripped,
 punctuation-folded — and stops on `candidates`. `candidate_limit_exceeded`
 triggers one narrowing retry and ends the ladder. On an audiobook plan a fully
 refused rung moves on, and an exhausted lane records each rung as
-`exhausted_dispatch`. An ebook plan stops at the first rung with products; when
+`exhausted_dispatch`; Open Library and iTunes ask an audiobook only the first
+rung, with no narrowing retry. An ebook plan stops at the first rung with products; when
 nothing is admitted, Open Library, Google Books, Inventaire and iTunes record
 the rungs sent as `exhausted_dispatch`, the refused rung last. Query text is
 never stored.
@@ -383,7 +386,7 @@ and rate-limit holds are in
 | Hardcover | 27 attempts; three relationship levels; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
 | Inventaire | 3-row search, 2 candidates; 3 attempts per request, 27 per observation; at most 2 MiB |
 | Open Library | 1 transport retry per request, 4 per observation; 49 attempts |
-| iTunes Search | ebook work lanes only; 5 rows; 6 distinct candidates overflow |
+| iTunes Search | work lanes; on an audiobook, the asserted lane's first rung only; 5 rows; 6 distinct candidates overflow |
 
 - **Hardcover.** An HTTP 200 with a GraphQL `errors` envelope is `unavailable`
   (`provider_declared_error`). `Genre` maps to genre; `Mood` and
