@@ -6,6 +6,7 @@ import { BuildMismatchError } from '../api/http'
 import type { AttentionItemView, AttentionView, LibrarySearch } from '../api/http'
 import { drawerQuery } from '../attentionRail'
 import { StaleBuildRead } from '../components/StaleBuildRead'
+import { focusAfterRetry } from '../focusAfterRetry'
 import type { ReviewField } from '../fieldDecision'
 import { destinationLabel, mediaKindLabels } from '../labels'
 
@@ -47,11 +48,16 @@ export const AttentionRail = ({
   ) => void
 }) => {
   const attentionRetry = useRef<HTMLButtonElement>(null)
+  const loadMoreButton = useRef<HTMLButtonElement>(null)
+  // A load-more failure's Try again, or Reload once the tab is on an earlier build.
+  const moreRetry = useRef<HTMLButtonElement>(null)
   // Load more keeps its place: once the page lands, focus moves to the first row
   // it added, even when that row joins a work already in the rail (#1284). The
   // press ends at the query's next data or error update, whether or not a render
   // saw it fetching, so a refetch that cancels the page ends it too; a new search
   // drops it, and focus moves only for an added page the owner has not left.
+  // A press from Try again (`retry`) that fails again hands focus to the control
+  // that replaces it; a plain Load more failure leaves focus on Load more.
   const attentionKey = `${search.q ?? ''} ${search.attentionCursor ?? ''}`
   const loadMore = useRef<{
     key: string
@@ -59,12 +65,18 @@ export const AttentionRail = ({
     updated: number
     errors: number
     from: number
+    retry: boolean
   } | null>(null)
   useEffect(() => {
     const pending = loadMore.current
     if (!pending) return
     if (pending.key !== attentionKey || attention.errorUpdateCount > pending.errors) {
       loadMore.current = null
+      if (pending.key === attentionKey && pending.retry)
+        focusAfterRetry(
+          () => moreRetry.current,
+          () => attentionRail.current,
+        )
       return
     }
     const pages = attention.data?.pages.length ?? 0
@@ -88,6 +100,18 @@ export const AttentionRail = ({
     attention.dataUpdatedAt,
     attention.errorUpdateCount,
   ])
+  const fetchMore = (retry: boolean) => {
+    if (loadMore.current || attention.isFetchingNextPage) return
+    loadMore.current = {
+      key: attentionKey,
+      pages: attention.data?.pages.length ?? 0,
+      updated: attention.dataUpdatedAt,
+      errors: attention.errorUpdateCount,
+      from: attentionItems.length,
+      retry,
+    }
+    void attention.fetchNextPage()
+  }
   if (search.attention !== 'open') return null
   return (
     <aside
@@ -135,24 +159,16 @@ export const AttentionRail = ({
                 ref={attentionRetry}
                 type="button"
                 onClick={() =>
-                  void attention.refetch().then((result) => {
-                    // The retry removes this button while it reads, so
-                    // the rail's heading takes focus back on success
-                    // (#1399) and the control that replaces it does when
-                    // it fails again: Try again, or Reload on a newer build.
-                    const active = document.activeElement
-                    if (
-                      active &&
-                      active !== document.body &&
-                      !attentionRail.current?.contains(active)
-                    )
-                      return
-                    if (result.isSuccess) attentionHeading.current?.focus({ preventScroll: true })
-                    else
-                      requestAnimationFrame(() =>
-                        attentionRetry.current?.focus({ preventScroll: true }),
-                      )
-                  })
+                  // The retry removes this button while it reads, so the
+                  // rail's heading takes focus on success (#1399) and the
+                  // control that replaces it does when it fails again: Try
+                  // again, or Reload on a newer build.
+                  void attention.refetch().then((result) =>
+                    focusAfterRetry(
+                      () => (result.isSuccess ? attentionHeading.current : attentionRetry.current),
+                      () => attentionRail.current,
+                    ),
+                  )
                 }
               >
                 Try again
@@ -216,30 +232,30 @@ export const AttentionRail = ({
           })}
           {attention.hasNextPage ? (
             <button
+              ref={loadMoreButton}
               className="attention-load-more"
               type="button"
               aria-disabled={attention.isFetchingNextPage || undefined}
-              onClick={() => {
-                if (loadMore.current || attention.isFetchingNextPage) return
-                loadMore.current = {
-                  key: attentionKey,
-                  pages: attention.data.pages.length,
-                  updated: attention.dataUpdatedAt,
-                  errors: attention.errorUpdateCount,
-                  from: attentionItems.length,
-                }
-                void attention.fetchNextPage()
-              }}
+              onClick={() => fetchMore(false)}
             >
               {attention.isFetchingNextPage ? 'Loading more…' : 'Load more attention'}
             </button>
           ) : null}
           {attention.isFetchNextPageError && attention.error instanceof BuildMismatchError ? (
-            <StaleBuildRead lead="More attention was not loaded." />
+            <StaleBuildRead lead="More attention was not loaded." ref={moreRetry} />
           ) : attention.isFetchNextPageError ? (
             <p role="alert">
               More attention could not be loaded.{' '}
-              <button type="button" onClick={() => void attention.fetchNextPage()}>
+              <button
+                ref={moreRetry}
+                type="button"
+                onClick={() => {
+                  // Try again leaves as the read starts; Load more, busy and
+                  // still mounted, holds focus until the outcome takes it.
+                  loadMoreButton.current?.focus({ preventScroll: true })
+                  fetchMore(true)
+                }}
+              >
                 Try again
               </button>
             </p>

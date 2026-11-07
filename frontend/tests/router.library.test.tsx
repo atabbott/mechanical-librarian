@@ -8933,6 +8933,57 @@ describe('Library route', () => {
     expect(within(rail).queryByText(/This tab is running an earlier build/u)).toBeNull()
   })
 
+  it.each(['success', 'mismatch'] as const)(
+    'moves focus to what replaces a load-more Try again after a %s (#1742)',
+    async (outcome) => {
+      const user = userEvent.setup()
+      const row = (id: string, title: string) => ({
+        id,
+        destination: 'title' as const,
+        title,
+        authors: [],
+        library: 'Books',
+        mediaKind: 'epub' as const,
+        classificationReason: 'Canonical library attention reason',
+        notices: [],
+        provenance: [],
+        workAttentionCount: 1,
+      })
+      let more = 0
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getAttention: vi.fn(async (search: AttentionSearch) => {
+          if (!search.cursor)
+            return { total: 2, nextCursor: 'next', items: [row('case-1', 'A Book')] }
+          more += 1
+          if (more === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { total: 2, items: [row('case-2', 'Second queued work')] }
+        }),
+      }
+      renderRoute('/library?lens=all&attention=open', http)
+      const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
+      const alert = await within(rail).findByRole('alert')
+      await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+      if (outcome === 'success') {
+        // The retry runs as a Load more press, so the first row it adds takes focus (#1284).
+        await waitFor(() =>
+          expect(within(rail).getByRole('button', { name: /Second queued work$/u })).toHaveFocus(),
+        )
+      } else {
+        const reload = await within(rail).findByRole('button', {
+          name: 'Reload the current application',
+        })
+        await waitFor(() => expect(reload).toHaveFocus())
+        const lead = within(rail).getByText('More attention was not loaded.', { exact: false })
+        expect(lead).not.toHaveAttribute('role')
+        expect(lead.closest('[role="alert"]')).toBeNull()
+      }
+      expect(document.body).not.toHaveFocus()
+    },
+  )
+
   it.each(['Close', 'toggle', 'Escape'] as const)(
     'cancels the opening reveal when %s closes the rail before it runs (#1563)',
     async (closer) => {
