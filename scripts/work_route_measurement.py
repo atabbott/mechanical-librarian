@@ -183,6 +183,9 @@ class Tally:
     not_comparable: Counter[str] = field(default_factory=Counter)
     references: Counter[str] = field(default_factory=Counter)
     position_absent: int = 0
+    # Items with no comparison. A provider tally counts one reason per item,
+    # but a pooled item can carry a different reason from each provider.
+    not_comparable_items: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +216,7 @@ def _record(
         tally = provider_tallies[authority]
         if outcome.result == "not_comparable":
             tally.not_comparable[outcome.detail] += 1
+            tally.not_comparable_items += 1
             continue
         tally.references[outcome.detail] += 1
         if outcome.result == "agree":
@@ -225,6 +229,7 @@ def _record(
     ]
     if not compared:
         pooled.not_comparable.update({value.detail for value in outcomes.values()})
+        pooled.not_comparable_items += 1
         return
     pooled.references.update({value.detail for value in compared})
     if all(value.result == "agree" for value in compared):
@@ -800,7 +805,7 @@ def _statistics(
         "compared": compared,
         "agree": tally.agree,
         "disagree": tally.disagree,
-        "not_comparable": sum(tally.not_comparable.values()),
+        "not_comparable": tally.not_comparable_items,
         "not_comparable_reasons": dict(sorted(tally.not_comparable.items())),
         "contradictions": contradictions,
         "agreement": None if not compared else round(tally.agree / compared, 4),

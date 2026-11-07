@@ -73,7 +73,9 @@ For each provider and pooled across both, a field reports `compared`, `agree`,
 `disagree`, `not_comparable` with its reasons, `contradictions`, `agreement`
 and a 95% Wilson interval, which is for information only. Pooled figures
 count audiobooks, not provider rows: a book is compared when either provider
-was, and agrees only when every provider compared on it agrees. Pooled
+was, and agrees only when every provider compared on it agrees; a pooled
+book with no comparison counts once in `not_comparable`, though its reasons
+list each provider's reason. Pooled
 contradictions are the two providers' sum. `publishedDate` also
 reports `cross_provider`: how often Hardcover's and Open Library's years agree
 on the same audiobook.

@@ -1078,3 +1078,26 @@ def test_a_possibly_landed_librarian_write_is_no_reference(tmp_path: Path) -> No
     assert _counts(_provider(report, "publishedDate", "hardcover"))[3] == {
         "reference_written_by_librarian": 1
     }
+
+
+def test_a_pooled_book_with_two_reasons_is_one_not_comparable_book() -> None:
+    """Each provider can give its own reason, but the book counts once pooled."""
+    providers = {"hardcover": measurement.Tally(), "open_library": measurement.Tally()}
+    pooled = measurement.Tally()
+
+    measurement._record(
+        providers,
+        pooled,
+        {
+            "hardcover": measurement._not_comparable("reference_position_absent"),
+            "open_library": measurement._not_comparable("no_source_value"),
+        },
+    )
+
+    data = measurement._statistics(pooled, 0, measurement.DEFAULT_MARKS, "recording")
+    assert data["not_comparable"] == 1
+    assert data["not_comparable_reasons"] == {
+        "no_source_value": 1,
+        "reference_position_absent": 1,
+    }
+    assert providers["hardcover"].not_comparable_items == 1
