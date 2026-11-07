@@ -24,7 +24,6 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
-    ClaimScope,
     ProviderCandidate,
     ProviderStatus,
 )
@@ -35,6 +34,8 @@ from tests.support.audiobook_providers import local_runtime_claim, work_plan
 from tests.support.hardcover_evidence import (
     books_envelope,
     hardcover_answer,
+    isbn_claim,
+    isbn_lookup,
     work_lookup,
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
@@ -124,7 +125,7 @@ def test_the_books_document_is_pinned_and_every_document_is_closed() -> None:
 def test_each_rung_sends_its_spellings_with_the_one_document() -> None:
     provider, sent = _provider(_answer([]))
     observation = provider.observe(
-        work_lookup("the name of the WIND: A Tale", ("Kuang, R. F.",))
+        work_lookup("the tide of the EMBER: A Tale", ("Example, A. B.",))
     ).observation
 
     assert ProviderStatus.NO_MATCH is observation.status
@@ -133,52 +134,137 @@ def test_each_rung_sends_its_spellings_with_the_one_document() -> None:
     assert [
         {
             "titles": [
-                "the name of the WIND: A Tale",
-                "The Name Of The WIND: A Tale",
-                "The Name Of The Wind: A Tale",
-                "the name of the wind: a tale",
+                "the tide of the EMBER: A Tale",
+                "The Tide Of The EMBER: A Tale",
+                "The Tide Of The Ember: A Tale",
+                "the tide of the ember: a tale",
             ],
-            "authors": ["Kuang, R. F.", "R. F. Kuang", "R.F. Kuang"],
+            "authors": ["Example, A. B.", "A. B. Example", "A.B. Example"],
         },
         {
             "titles": [
-                "the name of the WIND",
-                "The Name Of The WIND",
-                "The Name Of The Wind",
-                "the name of the wind",
+                "the tide of the EMBER",
+                "The Tide Of The EMBER",
+                "The Tide Of The Ember",
+                "the tide of the ember",
             ],
-            "authors": ["Kuang, R. F.", "R. F. Kuang", "R.F. Kuang"],
+            "authors": ["Example, A. B.", "A. B. Example", "A.B. Example"],
         },
         {
             "titles": [
-                "the name of the WIND",
-                "The Name Of The WIND",
-                "The Name Of The Wind",
-                "the name of the wind",
+                "the tide of the EMBER",
+                "The Tide Of The EMBER",
+                "The Tide Of The Ember",
+                "the tide of the ember",
             ],
-            "authors": ["Kuang R F", "Kuang R. F.", "Kuang R.F."],
+            "authors": ["Example A B", "Example A. B.", "Example A.B."],
         },
     ] == [body["variables"] for body in sent]
 
 
-def test_an_ebook_book_keeps_todays_work_claims_and_states_no_first_publication() -> (
-    None
-):
-    provider, _ = _provider(_answer([_book(10)]))
+_RICH_BOOK: dict[str, object] = {
+    **_book(10),
+    "description": "A synthetic description of the work.",
+    "book_series": [{"id": 3, "position": 2, "series": {"id": 4, "name": "Tide"}}],
+    "taggings": [
+        {
+            "id": 5,
+            "tag": {
+                "id": 6,
+                "tag": "Synthetic Genre",
+                "tag_category": {"id": 1, "category": "Genre"},
+            },
+        },
+        {
+            "id": 7,
+            "tag": {
+                "id": 8,
+                "tag": "Synthetic Mood",
+                "tag_category": {"id": 2, "category": "Mood"},
+            },
+        },
+    ],
+}
+
+
+def _claim_set(candidate: ProviderCandidate) -> list[tuple[str, str, str | None]]:
+    return [
+        (claim.kind.value, claim.scope.value, claim.value) for claim in candidate.claims
+    ]
+
+
+def test_an_ebook_book_carries_exactly_todays_work_claims() -> None:
+    rows = [{"id": 20, "book_id": 10, "isbn_13": "9780306406157"}]
+    provider, _ = _provider(
+        lambda request: httpx.Response(
+            200, json=hardcover_answer(request, rows, [_RICH_BOOK])
+        )
+    )
     lookup = work_lookup()
     observation = provider.observe(lookup).observation
     qualified = qualify_provider_observation(observation, lookup)
+    # Today's work claims are what an edition of the same book carries at
+    # work scope; the ISBN lane still answers with editions.
+    edition, _ = _provider(
+        lambda request: httpx.Response(
+            200, json=hardcover_answer(request, rows, [_RICH_BOOK])
+        )
+    )
+    (edition_candidate,) = edition.observe(
+        isbn_lookup((isbn_claim(),))
+    ).observation.candidates
 
     assert ProviderStatus.CANDIDATES is qualified.status
     (book,) = observation.candidates
     assert ("hardcover-work-0000000010",) * 2 == (book.identity, book.work_identity)
-    assert {ClaimScope.WORK} == {claim.scope for claim in book.claims}
-    assert {ClaimKind.TITLE, ClaimKind.CREATOR} <= {claim.kind for claim in book.claims}
+    assert [
+        ("title", "work", "Current title"),
+        ("description", "work", "A synthetic description of the work."),
+        ("creator", "work", "Ada Example"),
+        ("series", "work", "Tide"),
+        ("series_sequence", "work", "2"),
+        ("genre", "work", "Synthetic Genre"),
+        ("tag", "work", "Synthetic Mood"),
+    ] == _claim_set(book)
+    assert _claim_set(book) == [
+        value for value in _claim_set(edition_candidate) if value[1] == "work"
+    ]
     assert not any(
         claim.date_event is DateEvent.WORK_FIRST_PUBLICATION for claim in book.claims
     )
     assert ("hardcover-work-0000000010",) == tuple(
         candidate.identity for candidate in qualified.candidates
+    )
+
+
+@pytest.mark.parametrize(
+    ("stored", "found"),
+    (("Example, Ada", "Ada Example"), ("Ada L Example", "Ada L. Example")),
+    ids=("inverted", "initials"),
+)
+def test_a_spelling_form_finds_a_book_but_never_admits_it_on_an_ebook(
+    stored: str, found: str
+) -> None:
+    provider, sent = _provider(_answer([_book(10, author=found)]))
+    lookup = work_lookup(authors=(stored,))
+    observation = provider.observe(lookup).observation
+
+    # The form is what reached the book: it is in the request, and the book
+    # names it rather than the stored spelling.
+    assert found in cast("dict[str, list[str]]", sent[0]["variables"])["authors"]
+    assert stored not in {
+        claim.value
+        for candidate in observation.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CREATOR
+    }
+    assert (ProviderStatus.CANDIDATES, 1) == (
+        observation.status,
+        len(observation.candidates),
+    )
+    assert (
+        ProviderStatus.NO_MATCH
+        is qualify_provider_observation(observation, lookup).status
     )
 
 

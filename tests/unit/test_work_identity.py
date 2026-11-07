@@ -2121,21 +2121,21 @@ def _spellings(title: str, *authors: str) -> tuple[tuple[str, ...], tuple[str, .
     ("title", "titles"),
     (
         (
-            "the name of the WIND",
+            "the tide of the EMBER",
             (
-                "the name of the WIND",
-                "The Name Of The WIND",
-                "The Name Of The Wind",
-                "the name of the wind",
+                "the tide of the EMBER",
+                "The Tide Of The EMBER",
+                "The Tide Of The Ember",
+                "the tide of the ember",
             ),
         ),
         ("Current Title", ("Current Title", "current title")),
         ("current title", ("current title", "Current Title")),
         (
-            "1984: o'brien's  \u00e9t\u00e9",
+            "2091: o'example's  \u00e9t\u00e9",
             (
-                "1984: o'brien's  \u00e9t\u00e9",
-                "1984: O'brien's  \u00c9t\u00e9",
+                "2091: o'example's  \u00e9t\u00e9",
+                "2091: O'example's  \u00c9t\u00e9",
             ),
         ),
         ("2001", ("2001",)),
@@ -2166,9 +2166,9 @@ def test_a_title_case_form_over_512_characters_is_dropped_not_cut() -> None:
         ("Example, Ada, Jr.", ("Example, Ada, Jr.",)),
         ("A B C D E, Ada", ("A B C D E, Ada", "A. B. C. D. E, Ada", "A.B.C.D. E, Ada")),
         ("Example,", ("Example,",)),
-        ("Kuang, R. F.", ("Kuang, R. F.", "R. F. Kuang", "R.F. Kuang")),
-        ("R.F. Kuang", ("R.F. Kuang", "R. F. Kuang", "R F Kuang")),
-        ("J R R Tolkien", ("J R R Tolkien", "J. R. R. Tolkien", "J.R.R. Tolkien")),
+        ("Example, A. B.", ("Example, A. B.", "A. B. Example", "A.B. Example")),
+        ("A.B. Example", ("A.B. Example", "A. B. Example", "A B Example")),
+        ("J R R Example", ("J R R Example", "J. R. R. Example", "J.R.R. Example")),
         ("Ada L. Example", ("Ada L. Example", "Ada L Example")),
     ),
 )
