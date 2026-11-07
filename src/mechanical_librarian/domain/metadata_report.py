@@ -96,7 +96,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v68"
+REPORT_SCHEMA = "metadata-report-v69"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -3948,7 +3948,7 @@ def companion_work_payload(
         for claim in companion.claims
         if claim.kind is ClaimKind.CREATOR
         and claim.state is FieldState.VALID
-        and (claim.role is None or claim.role.casefold() == "aut")
+        and (claim.role is None or claim.role.casefold() in {"aut", "author"})
     )
     if len(titles) != 1 or titles[0].canonical is None or not creators:
         return None
