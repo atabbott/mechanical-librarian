@@ -55,14 +55,12 @@ it('keeps navigation available during initial Activity failure and retries the r
   expect(await screen.findByRole('heading', { name: 'Loading activity…' })).toBeVisible()
   expect(screen.getByRole('navigation', { name: 'Primary workspace' })).toBeVisible()
   await act(async () => rejectRead(new ApiError(503, 'unavailable')))
-  expect(
-    await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
-  ).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Activity could not be loaded' })).toBeVisible()
   expect(screen.getByRole('link', { name: 'Library' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   await waitFor(() => {
     expect(http.getActivity).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('heading', { name: 'Activity could not be loaded.' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Activity could not be loaded' })).toBeVisible()
   })
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
@@ -1537,11 +1535,11 @@ describe('Activity route', () => {
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     expect(
       await screen.findByText(
-        'Recorded transitions were not loaded. This tab is running an earlier build.',
+        'Recorded transitions were not loaded. Mechanical Librarian was updated.',
         { exact: false },
       ),
     ).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(
       screen.queryByText('Recorded transitions could not be loaded.', { exact: false }),
     ).toBeNull()
@@ -1574,12 +1572,12 @@ describe('Activity route', () => {
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     await user.click(await screen.findByRole('button', { name: 'Load more transitions' }))
     const lead = await screen.findByText(
-      'More recorded transitions were not loaded. This tab is running an earlier build.',
+      'More recorded transitions were not loaded. Mechanical Librarian was updated.',
       { exact: false },
     )
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
-    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(
       screen.queryByText('More recorded transitions could not be loaded.', { exact: false }),
     ).toBeNull()

@@ -337,10 +337,10 @@ export default function SettingsPage() {
   if (query.data === undefined && query.error instanceof BuildMismatchError)
     return (
       <section className="settings-state" data-route-focus tabIndex={-1}>
-        <h1>Settings were not loaded.</h1>
-        <p>This tab is running an earlier build. Reload to open it in the current application.</p>
+        <h1>Settings were not loaded</h1>
+        <p>Mechanical Librarian was updated. Reload to open the new version.</p>
         <button type="button" onClick={() => reloadCurrentApplication()}>
-          Reload the current application
+          Reload
         </button>
       </section>
     )
