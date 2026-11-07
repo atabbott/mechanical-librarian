@@ -20,6 +20,7 @@ from PIL import Image, ImageCms
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -1051,6 +1052,11 @@ def test_duplicate_group_aggregates_best_original_dimensions_canonically() -> No
                 CoverDesignation.WORK,
                 "work-" + token,
             ),
+            final_host=(
+                CoverFinalHost.US_ARCHIVE
+                if kind is CoverSourceKind.OPEN_LIBRARY
+                else None
+            ),
         )
 
     low = embedded(
@@ -1127,6 +1133,11 @@ def test_incumbent_duplicate_keeps_abs_artifact_in_either_source_order() -> None
                     CoverDesignation.WORK,
                     "work-" + token,
                 )
+            ),
+            final_host=(
+                CoverFinalHost.US_ARCHIVE
+                if kind is CoverSourceKind.OPEN_LIBRARY
+                else None
             ),
         )
 
@@ -1225,6 +1236,11 @@ def test_digest_group_counts_every_source_kind_for_diversity() -> None:
                     CoverSourceState.RETRIEVED,
                     artifact,
                     provenance=provenance,
+                    final_host=(
+                        CoverFinalHost.US_ARCHIVE
+                        if kind is CoverSourceKind.OPEN_LIBRARY
+                        else None
+                    ),
                 )
             )
             references.append("cover_ref_" + f"{index * 10 + member:064x}")

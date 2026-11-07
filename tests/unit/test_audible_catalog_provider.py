@@ -19,7 +19,10 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
 )
 from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
 from mechanical_librarian.application import metadata_report as m
-from mechanical_librarian.application.metadata_report import ProviderObservationFailure
+from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
+    ProviderObservationFailure,
+)
 from mechanical_librarian.domain import metadata_report as d
 from mechanical_librarian.domain import proposal_set as p
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -721,7 +724,7 @@ def test_an_asin_lookup_states_one_exact_edition_cover_source() -> None:
     assert descriptor.url is not None
     assert "m.media-amazon.com" == httpx.URL(descriptor.url).host
     assert descriptor.terminal_state is None
-    assert descriptor.allow_redirects is False
+    assert descriptor.redirects is CoverRedirects.NONE
     assert descriptor.provenance is not None
     assert CoverDesignation.EXACT_EDITION is descriptor.provenance.designation
     assert "audible-product-" + _ASIN == descriptor.provenance.edition_identity
@@ -2899,7 +2902,7 @@ def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> Non
     previous.pop("report_id")
     previous["report_id"] = d.report_content_address(previous)
 
-    assert "metadata-report-v70" == report.schema_version
+    assert "metadata-report-v71" == report.schema_version
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(d.canonical_json(previous))
 
