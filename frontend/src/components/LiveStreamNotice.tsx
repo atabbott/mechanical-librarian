@@ -27,7 +27,7 @@ export const LiveStreamNotice = ({ state }: { state: LiveStreamState }) => {
   return (
     <StatusPill tone="notice" className="live-state" role="status">
       <i aria-hidden="true" />
-      Reconnecting · checking for updates
+      Reconnecting…
     </StatusPill>
   )
 }
