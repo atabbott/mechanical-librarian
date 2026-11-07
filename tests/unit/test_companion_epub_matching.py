@@ -1032,6 +1032,26 @@ def test_an_exhausted_budget_plans_and_requires_no_companion_lane(
         _lane_report(title, authors, claims, (_observed((*search, isbn)),), companion)
 
 
+def test_a_budget_with_exactly_one_query_of_room_plans_and_requires_the_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    title, authors, claims = _ASSERTED
+    companion = _companion(title=None)
+    roomy = _audiobook_plan(title, authors, claims, companion)
+    (isbn,) = _lanes_of(roomy, ProviderQueryKind.ISBN)
+    works = tuple(lane for lane in roomy.lanes if lane.kind is ProviderQueryKind.WORK)
+    base = app._metadata_discovery_query_count(works, audiobook=True)
+    monkeypatch.setattr(dom, "MAX_PROVIDER_DISCOVERY_QUERIES", base + 1)
+
+    plan = _audiobook_plan(title, authors, claims, companion)
+    assert not plan.overflow
+    assert _lanes_of(plan, ProviderQueryKind.ISBN) == (isbn,)
+    search = _lanes_of(plan, ProviderQueryKind.WORK)
+    _lane_report(title, authors, claims, (_observed((*search, isbn)),), companion)
+    with pytest.raises(ReportValueError, match="companion lane is missing"):
+        _lane_report(title, authors, claims, (_observed(search),), companion)
+
+
 def test_no_companion_lane_is_required_where_none_is_planned() -> None:
     from mechanical_librarian.application.failure_diagnostics import (
         provider_attempt_diagnostics,
