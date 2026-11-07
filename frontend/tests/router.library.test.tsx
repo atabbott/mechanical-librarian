@@ -8040,6 +8040,140 @@ describe('Library route', () => {
     expect(recordDecision).toHaveBeenCalledOnce()
   })
 
+  describe('a stale cover choice on an earlier build (#1742)', () => {
+    const staleCover = (getCaseSuccessor: ReviewHttp['getCaseSuccessor']) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('cover stale fixture requires a field')
+      const candidate = (suffix: string, incumbent: boolean) => ({
+        artifactId: `cover_${suffix.repeat(64)}`,
+        deterministicCitations: [`citation-${suffix}`],
+        deterministicRank: incumbent ? null : 0,
+        deterministicRankKey: [1, 0, -960000, -800, -1200, incumbent ? 0 : 1, suffix],
+        height: 1200,
+        identity: { outcome: 'verified_work_match' as const },
+        incumbent,
+        matchState: 'same_book' as const,
+        observation: null,
+        originalSha256: suffix.repeat(64),
+        ordinal: incumbent ? 0 : 1,
+        previewSha256: suffix.repeat(64),
+        reference: `cover_transport_ref_${suffix.repeat(64)}`,
+        selectable: !incumbent,
+        manualEligible: !incumbent,
+        sourceKinds: [incumbent ? ('epub' as const) : ('open_library' as const)],
+        state: incumbent ? ('excluded' as const) : ('acceptable' as const),
+        width: 800,
+      })
+      const cover: CaseDetailView = {
+        ...detail,
+        id: 'case-1',
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            currentValue: `cover_${'1'.repeat(64)}`,
+            currentRaw: `cover_${'1'.repeat(64)}`,
+            proposedValues: [{ kind: 'cover', value: `cover_${'2'.repeat(64)}` }],
+            proposalId: 'proposal-case-1',
+            targetFingerprint: 'fingerprint-case-1',
+            coverConsideration: {
+              id: `cover_consideration_${'2'.repeat(64)}`,
+              choiceContexts: [],
+              current: true,
+              candidates: [candidate('1', true), candidate('2', false)],
+              incumbent: { reference: `cover_transport_ref_${'1'.repeat(64)}`, state: 'available' },
+              omissions: [],
+              policy: {
+                recommended_candidate_reference: `cover_transport_ref_${'2'.repeat(64)}`,
+                acceptable_candidate_references: [`cover_transport_ref_${'2'.repeat(64)}`],
+                status: 'recommended',
+                reasons: [],
+              },
+              policyPreferences: {
+                avoidPromotionalText: false,
+                avoidTieInBranding: false,
+                preferMinimalComposition: false,
+              },
+              policyReference: `cover_policy_${'3'.repeat(64)}`,
+              providerFetching: false,
+              ready: true,
+              reviewerAccessRevision: null,
+              reviewerEngine: null,
+              reviewerModel: null,
+              reviewerStatus: 'unavailable',
+              reviewerUnavailableReason: null,
+              targetFingerprint: 'fingerprint-case-1',
+            },
+          },
+        ],
+      }
+      const http: ReviewHttp = {
+        ...createHttp(),
+        recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
+          throw new ApiError(409, 'stale')
+        }),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => cover),
+        getCaseSuccessor,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      return http
+    }
+    const openNotice = async () => {
+      const user = userEvent.setup()
+      const proposed = await screen.findByRole('radio', { name: /Open Library cover/u })
+      await routeSettled()
+      await user.click(proposed)
+      const review = await screen.findByRole('button', { name: 'Review current comparison' })
+      return { user, review }
+    }
+
+    it('offers the reload when the current comparison meets a newer build', async () => {
+      staleCover(
+        vi.fn<ReviewHttp['getCaseSuccessor']>(async () => {
+          throw new BuildMismatchError()
+        }),
+      )
+      const { user, review } = await openNotice()
+      await user.click(review)
+      const reload = await screen.findByRole('button', { name: 'Reload the current application' })
+      const lead = screen.getByText(
+        'The current comparison was not loaded. This tab is running an earlier build.',
+        { exact: false },
+      )
+      expect(lead).not.toHaveAttribute('role')
+      expect(lead.closest('[role="alert"]')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Review current comparison' })).toBeNull()
+      expect(screen.queryByText(/The current comparison could not be loaded\./u)).toBeNull()
+      expect(
+        screen.getByText(
+          'This cover comparison changed before your choice was recorded. No cover was changed.',
+        ),
+      ).toBeVisible()
+      await waitFor(() => expect(reload).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    })
+
+    it('keeps Review current comparison focusable while it reads', async () => {
+      let release: (successor: string | null) => void = () => undefined
+      staleCover(
+        vi.fn<ReviewHttp['getCaseSuccessor']>(
+          () =>
+            new Promise((resolve) => {
+              release = resolve
+            }),
+        ),
+      )
+      const { user, review } = await openNotice()
+      await user.click(review)
+      const loading = await screen.findByRole('button', { name: 'Loading current comparison…' })
+      expect(loading).toBe(review)
+      expect(loading).not.toBeDisabled()
+      expect(loading).toHaveAttribute('aria-disabled', 'true')
+      expect(loading).toHaveFocus()
+      await act(async () => release(null))
+    })
+  })
+
   it.each(['pointer', 'keyboard'])(
     'does not carry failed same-field advancement into a manual field change via %s',
     async (input) => {
