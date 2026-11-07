@@ -914,15 +914,16 @@ export interface Unrouted {
   readonly unrouted: never
 }
 // An operation with a decoder answers what the decoder returns. One with none
-// documents only 204; until the decode gate goes (#1731) a body from it would
-// reach the caller undecoded, so its answer is `unknown`.
+// documents only 204, and `request()` accepts nothing else from it (#1731), so
+// its answer is `undefined`. `map` sees only the decoded part; `request()`
+// returns the 204 before any `map` runs.
+type DecodedAnswer<M extends string, P extends string> =
+  OperationOf<M, P> extends infer K ? (K extends OperationKey ? Decoded<K> : never) : never
+type NoContent<M extends string, P extends string> =
+  OperationOf<M, P> extends infer K ? (K extends OperationKey ? never : undefined) : never
 export type RequestAnswer<M extends string, P extends string> = [OperationOf<M, P>] extends [never]
   ? Unrouted
-  : OperationOf<M, P> extends infer K
-    ? K extends OperationKey
-      ? Decoded<K>
-      : unknown
-    : never
+  : DecodedAnswer<M, P> | NoContent<M, P>
 // Every path some documented route accepts, a parameter as `${string}`, with or
 // without a query: `read` and `mutate` refuse any other path, and contextually
 // type a template path so that `OperationOf` can resolve it.
@@ -965,10 +966,12 @@ export type PolicyCommandBody<P extends PolicyCommandPath> = P extends PolicyCom
     ? JsonContent<Body>
     : undefined
   : never
-export type PolicyCommandAnswer<P extends PolicyCommandPath> = RequestAnswer<
-  'POST',
-  `/api/v1/metadata-policy/${P}`
->
+// `mutate` adds its path's 204 answer to what it returns, and spelling that out
+// lets a generic `P` compile. Every policy command has a decoder, so for any
+// actual path that part is `never`.
+export type PolicyCommandAnswer<P extends PolicyCommandPath> =
+  | RequestAnswer<'POST', `/api/v1/metadata-policy/${P}`>
+  | NoContent<'POST', `/api/v1/metadata-policy/${P}`>
 export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
 // The activity family is decoded centrally (#1691): its views are the
 // response-truth types, and only the example adds a label of its own.
@@ -1337,68 +1340,6 @@ export class UncertainMutationError extends AmbiguousMutationError implements Re
     this.reason = reason
   }
 }
-// The operations whose 2xx JSON body `request()` decodes with its generated
-// decoder. Each stage-3 family adds its keys; stage 4 removes the gate and
-// decodes every operation (#1684).
-export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
-  'GET /api/v1/review-preparation',
-  'POST /api/v1/review-preparation/dismiss',
-  'POST /api/v1/review-preparation/first-boot/acknowledge',
-  'POST /api/v1/review-preparation/pause',
-  'POST /api/v1/review-preparation/resume',
-  'POST /api/v1/review-preparation/{connection}/check-connection',
-  'POST /api/v1/review-preparation/{connection}/{library_name}/retry',
-  'POST /api/v1/review-preparation/{connection}/{library_name}/scan',
-  'GET /api/v1/library',
-  'GET /api/v1/library/report',
-  'GET /api/v1/attention',
-  'GET /api/v1/review-cases/{review_case_id}',
-  'GET /api/v1/review-cases/{review_case_id}/evidence',
-  'GET /api/v1/review-cases/{review_case_id}/history',
-  'GET /api/v1/review-cases/{review_case_id}/successor',
-  'POST /api/v1/review-cases/{review_case_id}/cover-considerations/retry',
-  'POST /api/v1/review-cases/{review_case_id}/decisions',
-  'POST /api/v1/review-cases/{review_case_id}/description-advice/retry',
-  'POST /api/v1/review-cases/{review_case_id}/description-advice/selection',
-  'GET /api/v1/settings',
-  'PATCH /api/v1/settings',
-  'POST /api/v1/provider-recovery/retry',
-  'GET /api/v1/appearance',
-  'GET /api/v1/reviewer-access',
-  'PUT /api/v1/reviewer-access/openrouter',
-  'DELETE /api/v1/reviewer-access/openrouter',
-  'POST /api/v1/reviewer-access/openrouter/refresh',
-  'PUT /api/v1/reviewer-access/selection',
-  'DELETE /api/v1/reviewer-access/codex',
-  'GET /api/v1/reviewer-access/codex/device',
-  'POST /api/v1/reviewer-access/codex/device',
-  'POST /api/v1/reviewer-access/codex/device/cancel',
-  'POST /api/v1/reviewer-access/codex/recheck',
-  'POST /api/v1/reviewer-access/description-model/test',
-  'POST /api/v1/reviewer-access/description-model/contained',
-  'GET /api/v1/activity',
-  'GET /api/v1/activity/consent-state',
-  'GET /api/v1/activity/permission-readiness',
-  'GET /api/v1/activity/{event_id}/transitions',
-  'POST /api/v1/activity/consent',
-  'POST /api/v1/activity/{connection}/{library}/revoke',
-  'GET /api/v1/metadata-policy/state',
-  'GET /api/v1/metadata-policy/shadow',
-  'GET /api/v1/metadata-policy/shadow/outcomes',
-  'GET /api/v1/metadata-policy/transition',
-  'GET /api/v1/metadata-policy/automatic-safety',
-  'POST /api/v1/metadata-policy/validate',
-  'POST /api/v1/metadata-policy/preview',
-  'POST /api/v1/metadata-policy/drafts',
-  'POST /api/v1/metadata-policy/activate',
-  'POST /api/v1/metadata-policy/automatic-safety/pause',
-  'POST /api/v1/metadata-policy/automatic-safety/recover',
-  'POST /api/v1/metadata-policy/automatic-safety/suspend',
-  'POST /api/v1/metadata-policy/shadow/enter',
-  'POST /api/v1/metadata-policy/shadow/confirm-automatic',
-  'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
-  'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
-])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
 >
@@ -1980,22 +1921,15 @@ export class ReviewApiClient implements ReviewHttp {
   }
   // Consent and revoke answer the decoded Activity view, mapped inside `mutate`
   // so a failed named check is uncertain. Field-effects pause and resume
-  // document only 204, which is not decoded; a body from either is not one
-  // this client can read, so that write is uncertain too, as before (#1691).
+  // document only 204; `request()` refuses a body from either as an uncertain
+  // write (`no_decoder`) before `map` could see it (#1731).
   async activityCommand(
     path: ActivityCommandPath,
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined> {
     const url: `/api/v1/${ActivityCommandPath}` = `/api/v1/${path}`
-    const operation = matchOperation('POST', url)
-    const decoded = operation !== undefined && DECODED.has(operation)
-    return this.mutate(url, body, signal, undefined, 'POST', false, false, (value) => {
-      if (!decoded) throw new ApiError(502, 'invalid_activity_response')
-      // Past the guard the answer is consent's or revoke's decoded view; the
-      // field-effects answers have no decoder, so `value` is typed `unknown`.
-      return mapActivity(value as ActivityDto)
-    })
+    return this.mutate(url, body, signal, undefined, 'POST', false, false, mapActivity)
   }
   async logout(signal?: AbortSignal) {
     this.signingOut = true
@@ -2022,7 +1956,7 @@ export class ReviewApiClient implements ReviewHttp {
       { unsafe: false },
     )
   }
-  // `map` runs on the decoded answer of a migrated operation. A named check it
+  // `map` runs on the decoded answer of the operation. A named check it
   // fails on a request that may have written is uncertain, never a refusal.
   private async mutate<
     P extends RoutablePath<M>,
@@ -2036,10 +1970,10 @@ export class ReviewApiClient implements ReviewHttp {
     method: M | 'POST' = 'POST',
     sideEffectFree = false,
     writesNothing = false,
-    map?: (value: RequestAnswer<M, P>) => T,
+    map?: (value: DecodedAnswer<M, P>) => T,
     // `NoInfer`: without `map`, `T` stays the path's answer; a caller's
     // expected type cannot widen it (#1730).
-  ): Promise<NoInfer<T>> {
+  ): Promise<NoInfer<T> | NoContent<M, P>> {
     if (!this.buildIdentity) {
       this.onBuildMismatch()
       throw new BuildMismatchError()
@@ -2050,7 +1984,7 @@ export class ReviewApiClient implements ReviewHttp {
     // `sideEffectFree` only lets a CSRF-renewed request be sent again;
     // `writesNothing` says the command changes nothing, so an answer that fails
     // decoding or a named check is a 502 rather than an uncertain write (#1685).
-    return await this.request<RequestAnswer<M, P>, T>(
+    return await this.request<DecodedAnswer<M, P>, T | NoContent<M, P>>(
       path,
       {
         method,
@@ -2140,7 +2074,6 @@ export class ReviewApiClient implements ReviewHttp {
     }
     const method = init.method ?? 'GET'
     const operation = matchOperation(method, path)
-    const gated = operation !== undefined && DECODED.has(operation)
     const failed = (at: string, reason: string) => {
       const failure = {
         operation: operation ?? `${method} ${path}`,
@@ -2150,35 +2083,39 @@ export class ReviewApiClient implements ReviewHttp {
       }
       return uncertain ? new UncertainMutationError(failure) : new ResponseDecodeError(failure)
     }
-    // A 204 carries no body, so only an operation outside the gate may answer
-    // one; a gated operation documents no 204 and fails closed below. Every
-    // operation outside the gate that this client sends has no decoder, so its
-    // answer type (`RequestAnswer`) is `unknown` and holds `undefined`.
-    if (response.status === 204 && !gated) return undefined as R
-    const decoder = gated ? decoders[operation][String(response.status)] : undefined
-    if (gated && decoder === undefined) throw failed('', 'no_decoder')
+    // Every 2xx answer is decoded by its operation's decoder for that status
+    // (#1731). Only an operation with no decoder documents a 204 and nothing
+    // else, so a 204 is accepted from it alone, and its answer type
+    // (`RequestAnswer`) is `undefined`. Any other 2xx no decoder covers -- an
+    // undocumented status, a body from a 204-only operation -- fails closed:
+    // uncertain for a write that may have landed, otherwise a 502.
+    if (response.status === 204 && operation === undefined) return undefined as R
+    const decoder =
+      operation === undefined ? undefined : decoders[operation][String(response.status)]
+    if (decoder === undefined) throw failed('', 'no_decoder')
     let value: unknown
     try {
       value = await response.json()
     } catch {
-      if (unsafe) throw new AmbiguousMutationError()
+      // Only a write that may have landed is uncertain. A command that writes
+      // nothing cannot have, so an unreadable answer to it is a 502, as for a
+      // read (#1731).
+      if (uncertain) throw new AmbiguousMutationError()
       throw new ApiError(502, 'invalid_json_response')
     }
-    if (decoder !== undefined) {
-      try {
-        value = decoder(value, '')
-      } catch (error) {
-        if (error instanceof DecodeFailure) throw failed(error.at, error.reason)
-        throw error
-      }
+    try {
+      value = decoder(value, '')
+    } catch (error) {
+      if (error instanceof DecodeFailure) throw failed(error.at, error.reason)
+      throw error
     }
     // The one place the answer takes its type (#1730). `read` and `mutate` name
-    // `V` as `RequestAnswer` of their path: the answer of the operation
+    // `V` as the decoded answer of their path: the answer of the operation
     // `OperationOf` resolves the path to, which is the operation `matchOperation`
     // picked above (a test holds the two together for every operation). So the
-    // decoder that just ran returned `V`; an operation with no decoder has the
-    // answer `unknown`. Without `map`, `R` is `V`: `read` names no `R`, and
-    // `mutate`'s `T` defaults to `V` and cannot be inferred from its caller.
+    // decoder that just ran returned `V`. Without `map`, `R` is `V`: `read`
+    // names no `R`, and `mutate`'s `T` defaults to its path's answer and cannot
+    // be inferred from its caller (a 204 answer is returned above).
     if (!map) return value as R
     try {
       return map(value as V)

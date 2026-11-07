@@ -35,6 +35,12 @@ brackets are GitHub issues.
 - When the browser loses or cannot read the answer to saving a policy
   snapshot, it now says the snapshot could not be confirmed and that validating
   again is safe, instead of a general uncertain message (#1692).
+- When the browser cannot read the answer to validating a policy draft or
+  previewing its impact, neither of which changes anything, it now says the
+  validation failed or the preview is unavailable, instead of a general
+  uncertain message. Signing out and resuming automatic handling now say the
+  outcome could not be confirmed when the answer carries content the server
+  does not document, instead of treating it as done (#1731).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

@@ -8,7 +8,7 @@ import { resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import openapi from '../../docs/reference/review-openapi-v1.json'
-import { ApiError, DECODED, ReviewApiClient, UncertainMutationError } from '../src/api/http'
+import { ApiError, ReviewApiClient, UncertainMutationError } from '../src/api/http'
 import type { DecisionCommand, PolicyCommandPath, PreparationActionPath } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
 import { DecodeFailure, matchOperation, responseDecoders } from '../src/generated/review-decoders'
@@ -1301,26 +1301,16 @@ describe('expected-divergence table', () => {
   })
 })
 
-// A family is decoded once `request()` decodes the operation of every case it
-// owns; its mapper then has no presence check of its own.
-const decodedFamilies = new Set(
-  cases
-    .map(({ family }) => family)
-    .filter((family) =>
-      cases
-        .filter((c) => c.family === family)
-        .every((c) => {
-          const key = matchOperation(c.method, c.path)
-          return key !== undefined && DECODED.has(key)
-        }),
-    ),
-)
-
+// `request()` decodes every operation with its generated decoder (#1731), so
+// every family is decoded and no mapper keeps a presence check of its own.
 describe('presence parity', () => {
-  it('has a row for every exactKeys call site of a family not yet decoded', () => {
+  it('names an operation with a decoder in every case', () => {
+    const undecoded = cases.filter((c) => matchOperation(c.method, c.path) === undefined)
+    expect(undecoded.map(({ id }) => id)).toEqual([])
+  })
+  it('has no exactKeys call site left', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/api/http.ts'), 'utf8')
-    const undecoded = PRESENCE_SITES.filter(([, family]) => !decodedFamilies.has(family))
-    expect(source.match(/\bexactKeys\(/g)?.length ?? 0).toBe(undecoded.length)
+    expect(source.match(/\bexactKeys\(/g)?.length ?? 0).toBe(0)
   })
   it.each(presence)('%s rejects at the deleted key on both sides', (id, results) => {
     expect(results).toContain(seen(id).decoder)
@@ -1346,9 +1336,8 @@ describe('pinned cross-field results', () => {
   const pinned = Object.entries(EXPECTED).flatMap(([id, row]) =>
     row.result === undefined ? [] : [[id, row.result] as const],
   )
-  it('pins every row of a decoded family, and only those', () => {
-    const decodedRows = CROSS_FIELD.filter(([, from]) => decodedFamilies.has(from.family))
-    expect(pinned.map(([id]) => id).sort()).toEqual(decodedRows.map(([id]) => id).sort())
+  it('pins every cross-field row', () => {
+    expect(pinned.map(([id]) => id).sort()).toEqual(CROSS_FIELD.map(([id]) => id).sort())
   })
   it.each(pinned)('%s fails its own check', (id, result) => {
     expect(seen(id).mapper).toBe(result)

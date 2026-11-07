@@ -4519,13 +4519,14 @@ describe('central response decoding (#1685)', () => {
     })
   })
 
-  it('does not decode a 204 answer to an operation outside the gate', async () => {
+  it('accepts a 204 answer from an operation that documents no JSON answer', async () => {
     await expect(
       answering(undefined, 204).returnToAutomatic('case-1', 'title'),
     ).resolves.toBeUndefined()
+    await expect(answering(undefined, 204).logout()).resolves.toBeUndefined()
   })
 
-  it('fails closed on a 204 answer to a gated operation', async () => {
+  it('fails closed on a 204 answer to an operation that documents a JSON answer', async () => {
     await expect(answering(undefined, 204).getPreparation()).rejects.toMatchObject({
       name: 'ResponseDecodeError',
       status: 502,
@@ -4546,7 +4547,7 @@ describe('central response decoding (#1685)', () => {
     }
   })
 
-  // The private command seam, so the proofs need no ungated operation's mapper.
+  // The private command seam, so the proofs need no operation's own mapper.
   type Mutate = (
     path: string,
     body?: unknown,
@@ -4651,14 +4652,59 @@ describe('central response decoding (#1685)', () => {
     expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([[true, false]])
   })
 
-  // Every operation the client calls with a JSON answer is now gated (#1692);
-  // return to automatic documents only 204, so it stays outside the gate.
-  it('passes an operation outside the decode gate through unchanged', async () => {
-    await expect(
-      mutateOf(answering({ unexpected: true }))(
-        '/api/v1/review-cases/case-1/fields/title/return-to-automatic',
-      ),
-    ).resolves.toEqual({ unexpected: true })
+  // No gate is left (#1731): an operation with no decoder documents only 204,
+  // so any other answer from it is one this client cannot read.
+  it.each([
+    ['a body', { unexpected: true }, 200],
+    ['an empty 200', undefined, 200],
+    ['a body with another 2xx status', { unexpected: true }, 202],
+  ])(
+    'refuses %s in answer to return to automatic, which documents only 204, as uncertain',
+    async (_label, body, status) => {
+      const failure = await answering(body, status)
+        .returnToAutomatic('case-1', 'title')
+        .catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(UncertainMutationError)
+      expect(failure).toMatchObject({
+        ...uncertain('no_decoder@'),
+        operation: 'POST /api/v1/review-cases/case-1/fields/title/return-to-automatic',
+        responseStatus: status,
+      })
+      expect(uncertainWriteOutcome(failure)).toBe(true)
+    },
+  )
+
+  it('refuses a body in answer to sign out, which documents only 204, as uncertain', async () => {
+    const failure = await answering({ signed_out: true })
+      .logout()
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(UncertainMutationError)
+    expect(failure).toMatchObject({
+      ...uncertain('no_decoder@'),
+      operation: 'POST /api/v1/session/logout',
+      responseStatus: 200,
+    })
+  })
+
+  // The private read seam. No client method reads the operational status, so
+  // this proves decoding needs no per-operation list naming it.
+  type Read = (path: string, signal?: AbortSignal) => Promise<unknown>
+  const readOf = (client: ReviewApiClient) =>
+    (client as unknown as { read: Read }).read.bind(client)
+
+  it('decodes an operation no family read', async () => {
+    const failure = await readOf(answering({}))('/api/v1/operations/status').catch(
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(ResponseDecodeError)
+    expect(failure).toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+      operation: 'GET /api/v1/operations/status',
+      responseStatus: 200,
+      reason: 'required',
+    })
+    expect((failure as ResponseDecodeError).at).toMatch(/^\/[a-z_]+$/u)
   })
 })
 
@@ -5332,8 +5378,9 @@ describe('activity write decoding (#1691)', () => {
         .client.activityCommand(path)
         .catch((error: unknown) => error)
       expect(refusal).toBeInstanceOf(UncertainMutationError)
+      // `request()` refuses it before the Activity mapper runs (#1731).
       expect(refusal).toMatchObject({
-        ...uncertain('invariant@invalid_activity_response'),
+        ...uncertain('no_decoder@'),
         operation: `POST /api/v1/${path}`,
         responseStatus: 200,
       })
@@ -5517,8 +5564,12 @@ describe('answer types of read and mutate (#1730)', () => {
     expectTypeOf<RequestAnswer<'POST', `/api/v1/review-cases/${string}/decisions`>>().toEqualTypeOf<
       Answer<'_DecisionAcknowledgement'>
     >()
-    // An operation with no decoder documents only 204; a body would not be decoded.
-    expectTypeOf<RequestAnswer<'POST', '/api/v1/session/logout'>>().toEqualTypeOf<unknown>()
+    // An operation with no decoder documents only 204, the only answer
+    // `request()` accepts from it (#1731).
+    expectTypeOf<RequestAnswer<'POST', '/api/v1/session/logout'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<RequestAnswer<'POST', `/api/v1/${ActivityCommandPath}`>>().toEqualTypeOf<
+      Answer<'_ActivityResponse'> | undefined
+    >()
   })
 
   it('names no operation for a path that matches none, or matches through a hole', () => {
@@ -5635,6 +5686,39 @@ describe('policy decoding (#1692)', () => {
       expect((refusal as Error).message).not.toContain('/')
     },
   )
+
+  // Nor can an answer that is not JSON at all: it is the read's 502, not an
+  // uncertain write (#1731). A command that may have written stays uncertain.
+  it.each([
+    ['validate', (client: ReviewApiClient) => client.policyCommand('validate', draft)],
+    ['preview', (client: ReviewApiClient) => client.previewPolicy(draft)],
+  ] as const)('reports a non-JSON answer to %s as a 502', async (_name, send) => {
+    for (const response of [
+      () => new Response('Saved', { status: 200, headers: { 'content-type': 'text/plain' } }),
+      () => {
+        const interrupted = new Response('{', { status: 200 })
+        vi.spyOn(interrupted, 'json').mockRejectedValue(new TypeError('body interrupted'))
+        return interrupted
+      },
+    ]) {
+      const fetchMock = vi.fn<typeof fetch>(async () => response())
+      const client = new ReviewApiClient({ csrf, buildIdentity: 'c'.repeat(64), fetch: fetchMock })
+      const refusal = await send(client).catch((error: unknown) => error)
+      expect(refusal).toEqual(new ApiError(502, 'invalid_json_response'))
+      expect(refusal).not.toBeInstanceOf(AmbiguousMutationError)
+      expect(fetchMock).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('keeps a non-JSON answer to a snapshot save uncertain', async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => new Response('Saved', { status: 201, headers: { 'content-type': 'text/plain' } }),
+    )
+    const client = new ReviewApiClient({ csrf, buildIdentity: 'c'.repeat(64), fetch: fetchMock })
+    await expect(client.policyCommand('drafts', draft)).rejects.toBeInstanceOf(
+      AmbiguousMutationError,
+    )
+  })
 
   it.each([
     ['P-X1: a comparison per sampled work', sampled({}, 2), 'invalid_policy_preview_comparisons'],

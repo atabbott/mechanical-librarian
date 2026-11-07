@@ -48,9 +48,12 @@ told:
    decoder's reason and pointer, or `invariant` and the check's code. Only a
    command marked as writing nothing is a `ResponseDecodeError` instead; a
    command that is merely safe to resend after a CSRF renewal still writes,
-   so it stays uncertain. A 204, or another undocumented 2xx status, to a
-   decoded operation fails the same way. Only a lost network call is a plain
-   lost acknowledgement; a defect in a decoder or mapper is not converted.
+   so it stays uncertain. Every operation is decoded: a 204 is accepted only
+   from an operation that documents no JSON answer, and any other 2xx answer
+   its operation does not document fails the same way. An answer that is not
+   JSON is a lost acknowledgement, or a 502 for a command that writes nothing.
+   Only a lost network call is a plain lost acknowledgement; a defect in a
+   decoder or mapper is not converted.
    The server half is that no failure after a committed write is answered
    with a 4xx. `tests/unit/test_unsafe_outcome_inventory.py` pins, for every
    unsafe `/api/v1` route, each error status and code and the latest point it
@@ -273,5 +276,7 @@ exercise.
 
 - Since #1684 every response family the browser reads is decoded, the
   hand-written checks the schema states are removed, and ADR-0043's
-  HTTP-module text and drift check are amended. A later stage removes the
-  per-operation decode gate.
+  HTTP-module text and drift check are amended. Since #1728 every JSON answer
+  is decoded with no per-operation gate, every policy command is typed by its
+  operation, and each read or command takes its answer's type from the
+  operation its path names.

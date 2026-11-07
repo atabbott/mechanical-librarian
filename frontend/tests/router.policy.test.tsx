@@ -33,6 +33,15 @@ const answeringClient = (body: unknown, status = 200) =>
     csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
     fetch: vi.fn<typeof fetch>(async () => Response.json(body, { status })),
   })
+// The same, answering every request with text that is not JSON (#1731).
+const textClient = (status = 200) =>
+  new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn<typeof fetch>(
+      async () => new Response('Saved', { status, headers: { 'content-type': 'text/plain' } }),
+    ),
+  })
 
 // A scripted `policyCommand` mock receives the page's path and body untyped;
 // this hands both to the real client unchanged.
@@ -294,9 +303,10 @@ describe('Policy route', () => {
   // Validate and preview write nothing, so an answer the client cannot read is
   // that phase's failure; only the snapshot save may have written (#1692).
   describe('an undecodable answer', () => {
-    const run = async (failing: 'validate' | 'drafts' | 'preview') => {
+    const run = async (failing: 'validate' | 'drafts' | 'preview', text = false) => {
       const user = userEvent.setup()
-      const transport = answeringClient({ invented: true }, failing === 'drafts' ? 201 : 200)
+      const status = failing === 'drafts' ? 201 : 200
+      const transport = text ? textClient(status) : answeringClient({ invented: true }, status)
       const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
         // The page previews only through the typed method below.
         if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
@@ -354,6 +364,32 @@ describe('Policy route', () => {
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
       expect(previewPolicy).toHaveBeenCalledOnce()
+    })
+
+    // An answer that is not JSON at all is that phase's failure too, not an
+    // uncertain write (#1731).
+    it.each([
+      [
+        'validate',
+        'The complete draft could not be validated. Nothing was saved or activated; try again.',
+      ],
+      [
+        'preview',
+        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+      ],
+    ] as const)("that is not JSON, to %s, shows that phase's copy", async (failing, copy) => {
+      await run(failing, true)
+      expect(await screen.findByText(copy)).toBeVisible()
+      expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
+    })
+
+    it('that is not JSON, to the snapshot save, could not be confirmed', async () => {
+      await run('drafts', true)
+      expect(
+        await screen.findByText(
+          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+        ),
+      ).toBeVisible()
     })
   })
 
