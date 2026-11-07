@@ -43,11 +43,19 @@ def test_levels_are_closed_with_their_configuration_values() -> None:
     (
         ("Lantern Harbour", "Lantern Harbour"),
         ("Lantern Harbour", "lantern  HARBOUR"),
-        ("Lantern Harbour", "Lantern Harbour"),
-        ("The Keeper’s Lantern", "The Keeper's Lantern"),
-        ("Lantern — Harbour", "Lantern - Harbour"),
-        ("Café Lantern", "Café Lantern"),
+        ("Lantern\u00a0Harbour", "Lantern Harbour"),
+        ("The Keeper\u2019s Lantern", "The Keeper's Lantern"),
+        ("Lantern \u2014 Harbour", "Lantern - Harbour"),
+        ("Cafe\u0301 Lantern", "Caf\u00e9 Lantern"),
     ),
+    ids=[
+        "identical",
+        "case_and_spacing",
+        "no_break_space",
+        "curly_apostrophe",
+        "em_dash",
+        "nfc",
+    ],
 )
 def test_closed_title_comparison_meets_both_levels(
     target_title: str, record_title: str
@@ -70,6 +78,15 @@ def test_closed_title_comparison_meets_both_levels(
         "Lantern Harbour: A Tale of Tides",
         "Lantern Harbour [ISBN 9780306406157]",
     ),
+    ids=[
+        "series_name_position",
+        "series_name_book_marker",
+        "year",
+        "bare_number",
+        "retail_tag",
+        "subtitle_segment",
+        "bracketed_isbn",
+    ],
 )
 def test_one_decoration_step_meets_only_the_wide_level(decorated: str) -> None:
     plain = ref("lantern harbour", ALDER)
@@ -90,7 +107,7 @@ def test_one_decoration_step_meets_only_the_wide_level(decorated: str) -> None:
         ("Lantern Harbour (2001)", "Lantern Harbour [retail]"),
         # No fuzzy distance, no diacritic stripping, no partial titles.
         ("Lantern Harbour", "Lantern Harbor"),
-        ("Café Lantern", "Cafe Lantern"),
+        ("Caf\u00e9 Lantern", "Cafe Lantern"),
         ("Lantern Harbour", "Lantern Harbour Returns"),
         ("Lantern Harbour", "Harbour"),
         # An unbracketed series word is not a decoration in the grammar.
@@ -99,6 +116,18 @@ def test_one_decoration_step_meets_only_the_wide_level(decorated: str) -> None:
         ("Lantern Harbour", "Lantern Harbour (Abridged)"),
         ("Lantern Harbour: Abridged", "lantern harbour: abridged"),
     ),
+    ids=[
+        "stacked_series_year",
+        "stacked_subtitle_year",
+        "differently_decorated",
+        "fuzzy_spelling",
+        "diacritic_stripped",
+        "longer_title",
+        "partial_title",
+        "unbracketed_series_word",
+        "variant_parenthesis",
+        "variant_case_folded",
+    ],
 )
 def test_titles_outside_the_grammar_meet_neither_level(
     target_title: str, record_title: str
@@ -129,6 +158,16 @@ def test_a_variant_marked_title_still_agrees_byte_for_byte() -> None:
         (ref("Lantern Harbour"), ref("Lantern Harbour")),
         (ref("Lantern Harbour", " "), ref("Lantern Harbour", " ")),
     ),
+    ids=[
+        "target_no_title",
+        "record_no_title",
+        "blank_titles",
+        "empty_titles",
+        "target_no_creator",
+        "record_no_creator",
+        "neither_creator",
+        "blank_creators",
+    ],
 )
 def test_no_title_or_no_creator_meets_neither_level(
     target: IdentityReference, record: IdentityReference
@@ -155,16 +194,35 @@ def test_the_full_creator_set_in_any_order_meets_the_exact_level() -> None:
 
     assert title_and_creator_exact(target, ref("Lantern Harbour", BIRCH, ALDER))
     assert title_and_creator_exact(
-        target, ref("Lantern Harbour", "ada  ALDER", "Bo Birch")
+        target, ref("Lantern Harbour", "ada  ALDER", "Bo\u00a0Birch")
     )
 
 
-def test_a_different_creator_meets_neither_level() -> None:
+def test_adr_control_title_agreement_with_a_different_creator_is_refused() -> None:
     target = ref("Lantern Harbour", ALDER)
     record = ref("Lantern Harbour", CEDAR)
 
     assert not title_and_creator_exact(target, record)
     assert not title_and_creator(target, record)
+
+
+def test_adr_control_same_author_same_title_different_book_is_the_callers() -> None:
+    # Two different books by one author under one title agree on everything
+    # the predicates read. Only the caller's contradiction refuses the pair.
+    target = ref("Lantern Harbour", ALDER)
+    record = ref("Lantern Harbour", ALDER)
+
+    assert title_and_creator_exact(target, record)
+    assert title_and_creator(target, record)
+    for level in (EXACT, WIDE):
+        arguments = (level, "Lantern Harbour", (ALDER,), "Lantern Harbour", (ALDER,))
+        assert level_admission(
+            *arguments, omnibus_against_volume=False, contradicted=False
+        ) == LevelAdmission(EXACT, "work_identity:title_and_creator_exact")
+        assert (
+            level_admission(*arguments, omnibus_against_volume=False, contradicted=True)
+            is None
+        )
 
 
 @pytest.mark.parametrize(
@@ -175,6 +233,12 @@ def test_a_different_creator_meets_neither_level() -> None:
         ("J. R. Example", "Jane Ruth Example"),
         ("Example, Ada", "Ada Example"),
     ),
+    ids=[
+        "dotted_vs_spaced_initials",
+        "joined_vs_spaced_initials",
+        "initials_vs_full_names",
+        "comma_inverted",
+    ],
 )
 def test_creators_are_not_folded_or_inverted(
     target_creator: str, record_creator: str
@@ -306,6 +370,7 @@ def test_level_admission_names_its_rule() -> None:
         (EXACT, "work_identity:title_and_creator"),
         ("title_and_creator", "work_identity:title_and_creator"),
     ),
+    ids=["identifier_level", "rule_for_other_level", "level_as_plain_string"],
 )
 def test_level_admission_value_rejects_an_inconsistent_rule(
     level: object, rule: str
@@ -317,6 +382,7 @@ def test_level_admission_value_rejects_an_inconsistent_rule(
 @pytest.mark.parametrize(
     ("title", "creators"),
     ((1, ()), ("Lantern Harbour", [ALDER]), ("Lantern Harbour", (ALDER, None))),
+    ids=["title_not_text", "creators_not_tuple", "creator_not_text"],
 )
 def test_identity_reference_rejects_malformed_input(
     title: object, creators: object

@@ -22,6 +22,10 @@ translation, adaptation, abridgement and variant-marker vetoes, an audiobook
 recording variant conflict), and an inverted creator form only the query used
 (#1380). `level_admission` takes the first two as caller-decided flags; the
 creator form is the caller's to exclude before building the reference.
+
+Callers pass length-bounded text: the stored claim or association projections
+the product already bounds. The decoration grammar's patterns are proven only
+on such text, and nothing here bounds it again.
 """
 
 from __future__ import annotations
