@@ -10,14 +10,13 @@ import { routeFailureCopy } from '../routeFailure'
 
 export const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
   <section aria-busy="true" className="route-state">
-    <p className="eyebrow">Private workspace</p>
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )
 export const RouteFailure = ({
   error,
   reset,
-  title = 'This workspace',
+  title = 'This page',
 }: {
   error: unknown
   reset: () => void
@@ -29,22 +28,19 @@ export const RouteFailure = ({
   // reload brings this tab onto the build the server is running.
   return error instanceof BuildMismatchError ? (
     <section className="route-state">
-      <p className="eyebrow">Application updated</p>
-      <h1>{title} was not loaded.</h1>
-      {/* The shell's build notice is the alert; this only names the route. */}
-      <p>This tab is running an earlier build. Reload to open it in the current application.</p>
-      <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
+      {/* The shell's build notice is the alert and says why; this only names the route. */}
+      <h1>{title} was not loaded</h1>
+      <button onClick={() => reloadCurrentApplication()}>Reload</button>
     </section>
   ) : error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
-      <p className="eyebrow">Application update unavailable</p>
-      <h1>The current workspace assets could not be loaded.</h1>
+      <h1>The new version could not be loaded</h1>
       <p role="alert">{error.message}</p>
-      <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
+      <button onClick={() => reloadCurrentApplication()}>Reload</button>
     </section>
   ) : (
     <section className="route-state">
-      <h1>{title} couldn't be loaded.</h1>
+      <h1>{title} couldn't be loaded</h1>
       {/* Plain words only; the status and code stay under Technical detail (#1756). */}
       <p role="alert">{copy.message}</p>
       {copy.detail ? (
@@ -63,10 +59,9 @@ export const RouteFailure = ({
 }
 export const DirectEntryFallback = () => (
   <section className="route-state">
-    <p className="eyebrow">Page unavailable</p>
-    <h1>This review route does not exist.</h1>
+    <h1>This page does not exist</h1>
     <Link to="/library" search={{ lens: 'all' }}>
-      Open review library
+      Open Library
     </Link>
   </section>
 )

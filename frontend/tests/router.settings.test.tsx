@@ -584,9 +584,8 @@ describe('owner settings route', () => {
   })
 
   describe('an uncertain save on an earlier build (#1742)', () => {
-    const reloadName = 'Reload the current application'
-    const lead =
-      'It is not known whether Settings were saved. This tab is running an earlier build.'
+    const reloadName = 'Reload'
+    const lead = 'It is not known whether Settings were saved.'
     const saveUncertain = async (http: ReturnType<typeof createHttp>) => {
       const user = userEvent.setup()
       http.writeSettings = vi.fn(async () => {
@@ -660,9 +659,9 @@ describe('owner settings route', () => {
     await user.type(endpoint, 'https://submitted.invalid')
     const reads = vi.mocked(http.getSettings).mock.calls.length
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
-    const reload = await screen.findByRole('button', { name: 'Reload the current application' })
+    const reload = await screen.findByRole('button', { name: 'Reload' })
     const element = screen.getByText(
-      'Settings were not saved. Reloading discards your unsaved changes. This tab is running an earlier build.',
+      'Settings were not saved. Reloading discards your unsaved changes.',
       { exact: false },
     )
     expect(element).not.toHaveAttribute('role')
@@ -675,7 +674,7 @@ describe('owner settings route', () => {
     // An edit after the mismatch does not offer a save that cannot succeed.
     await user.type(endpoint, '/edited')
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
@@ -2531,13 +2530,10 @@ it('offers a reload, not another try, when settings meet a newer build', async (
   })
   renderRoute('/settings', http)
 
-  expect(await screen.findByRole('heading', { name: 'Settings were not loaded.' })).toBeVisible()
-  expect(
-    screen.getByText(
-      'This tab is running an earlier build. Reload to open it in the current application.',
-    ),
-  ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Settings were not loaded' })).toBeVisible()
+  // The shell notice states the build mismatch; the page does not repeat it.
+  expect(screen.queryByText(/Mechanical Librarian was updated/u)).toBeNull()
+  expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
   expect(screen.queryByText('Settings are unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
@@ -2550,13 +2546,8 @@ it('offers a reload, not another try, when reviewer access meets a newer build',
   })
   renderRoute('/settings?group=reviewer', http)
 
-  expect(
-    await screen.findByText(
-      'Reviewer access was not loaded. This tab is running an earlier build. Reload to open it in the current application.',
-      { exact: false },
-    ),
-  ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+  expect(await screen.findByText('Reviewer access was not loaded.', { exact: false })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
   expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
@@ -2582,7 +2573,7 @@ it.each(['mismatch', 'success'] as const)(
     await user.click(within(alert).getByRole('button', { name: 'Try again' }))
     const target =
       outcome === 'mismatch'
-        ? await screen.findByRole('button', { name: 'Reload the current application' })
+        ? await screen.findByRole('button', { name: 'Reload' })
         : await screen.findByRole('heading', { name: 'Shared Codex sign-in' })
     await waitFor(() => expect(target).toHaveFocus())
     expect(globalThis.document.body).not.toHaveFocus()
@@ -3782,7 +3773,7 @@ describe('settings provider throttling (#1282)', () => {
     renderRoute('/settings', http)
     expect(
       await screen.findByText(
-        'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+        'To retry, raise provider_recovery_generation by one in /data/config.json and restart the service.',
       ),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull()

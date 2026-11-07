@@ -121,6 +121,12 @@ brackets are GitHub issues.
   comparison, write permission readiness or saved settings fail to load or
   save, and focus moves to Reload, Try again or what loaded after every retry
   instead of falling to the page (#1742).
+- The masthead's status notices, the newer-build notice and the page-failure
+  states say what happened in plain words. The library connection notice names
+  Audiobookshelf and what it refused, paused work is "Paused" rather than
+  "Safely paused", waiting source lookups are "waiting" rather than
+  "deferred", and a page that failed to load no longer shows the raw request
+  error (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -91,12 +91,10 @@ def test_an_old_tab_reloads_on_its_next_read_and_an_expired_one_signs_in() -> No
                 notice = page.locator(".build-mismatch")
                 notice.wait_for()
                 assert notice.get_by_text(
-                    "This page is from a different application build."
+                    "Mechanical Librarian was updated."
                 ).is_visible()
-                page.get_by_role("heading", name="Activity was not loaded.").wait_for()
-                page.get_by_role(
-                    "button", name="Reload the current application"
-                ).wait_for()
+                page.get_by_role("heading", name="Activity was not loaded").wait_for()
+                page.get_by_role("button", name="Reload", exact=True).wait_for()
                 assert page.get_by_role("button", name="Try again").count() == 0
 
                 # An expired session names no build, so the tab signs in again
@@ -185,7 +183,7 @@ def test_a_selected_work_retry_that_meets_a_newer_build_focuses_reload(
         retry = failure.get_by_role("button", name="Try again")
         retry.focus()
         page.keyboard.press("Enter")
-        reload = workspace.get_by_role("button", name="Reload the current application")
+        reload = workspace.get_by_role("button", name="Reload", exact=True)
         expect(reload).to_be_focused()
         assert page.evaluate("() => document.activeElement !== document.body")
 
@@ -236,9 +234,7 @@ def test_load_more_transitions_keeps_focus_while_it_reads_and_its_retry_focuses_
                 _answer_as_next_build(pending)
             expect(more).to_be_focused()
         if plain_mismatch:
-            expect(
-                row.get_by_role("button", name="Reload the current application")
-            ).to_be_visible()
+            expect(row.get_by_role("button", name="Reload", exact=True)).to_be_visible()
             return
         # Try again moves focus to the busy Load more, then to the reload
         # that replaces it on a newer build.
@@ -247,9 +243,7 @@ def test_load_more_transitions_keeps_focus_while_it_reads_and_its_retry_focuses_
         page.wait_for_timeout(800)
         expect(row.get_by_role("button", name="Loading transitions…")).to_be_focused()
         _answer_as_next_build(pending)
-        expect(
-            row.get_by_role("button", name="Reload the current application")
-        ).to_be_focused()
+        expect(row.get_by_role("button", name="Reload", exact=True)).to_be_focused()
 
 
 _SENTENCE_CLEARANCE = """
@@ -316,7 +310,7 @@ def test_more_attention_try_again_focuses_the_added_row_and_reload_clears_its_se
         stale = rail.locator(".stale-build-read").filter(
             has_text="More attention was not loaded."
         )
-        reload = stale.get_by_role("button", name="Reload the current application")
+        reload = stale.get_by_role("button", name="Reload", exact=True)
         expect(reload).to_be_visible()
         reload.focus()
         expect(reload).to_be_focused()
@@ -354,7 +348,7 @@ def test_review_current_comparison_keeps_focus_while_it_reads_then_focuses_reloa
         expect(busy).to_have_attribute("aria-disabled", "true")
         _answer_as_next_build(pending)
         reload = page.locator(".comparison-notice").get_by_role(
-            "button", name="Reload the current application"
+            "button", name="Reload", exact=True
         )
         expect(reload).to_be_focused()
         expect(
@@ -419,7 +413,7 @@ def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
         confirm.scroll_into_view_if_needed()
         confirm.focus()
         page.keyboard.press("Enter")
-        reload = review.get_by_role("button", name="Reload the current application")
+        reload = review.get_by_role("button", name="Reload", exact=True)
         expect(reload).to_be_focused()
         _expect_in_view(page)
 
@@ -449,6 +443,6 @@ def test_the_reload_a_more_attention_retry_focuses_is_scrolled_into_view(
         page.route(later, _answer_as_next_build)
         retry.focus()
         page.keyboard.press("Enter")
-        reload = rail.get_by_role("button", name="Reload the current application")
+        reload = rail.get_by_role("button", name="Reload", exact=True)
         expect(reload).to_be_focused()
         _expect_in_view(page)

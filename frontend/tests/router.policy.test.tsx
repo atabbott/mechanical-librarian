@@ -82,7 +82,7 @@ describe('Policy route', () => {
     }
     renderRoute('/policy?section=curation', http)
 
-    expect(await screen.findByRole('heading', { name: "Policy couldn't be loaded." })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: "Policy couldn't be loaded" })).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(
       "The server sent an answer this page couldn't read. Try again.",
     )
@@ -3243,7 +3243,7 @@ describe('Policy keyboard focus (#1288)', () => {
 // offers the reload instead of a retry that cannot succeed, and a retry hands
 // focus to what replaced its control (#1742).
 describe('Description preferences on an earlier build (#1742)', () => {
-  const reloadName = 'Reload the current application'
+  const reloadName = 'Reload'
   const staleLead = (region: HTMLElement, lead: string) => {
     const element = within(region).getByText(lead, { exact: false })
     expect(element).not.toHaveAttribute('role')
@@ -3259,12 +3259,7 @@ describe('Description preferences on an earlier build (#1742)', () => {
     renderRoute('/policy?section=curation', http)
     const region = await screen.findByRole('region', { name: 'Description advice' })
     await within(region).findByRole('button', { name: reloadName })
-    expect(
-      staleLead(
-        region,
-        'Description preferences were not loaded. This tab is running an earlier build.',
-      ),
-    ).toBeVisible()
+    expect(staleLead(region, 'Description preferences were not loaded.')).toBeVisible()
     expect(within(region).queryByRole('button', { name: 'Retry preferences' })).toBeNull()
     expect(within(region).queryByText('Description preferences are unavailable.')).toBeNull()
   })
@@ -3348,10 +3343,7 @@ describe('Description preferences on an earlier build (#1742)', () => {
     const save = within(region).getByRole('button', { name: 'Save description preferences' })
     await user.click(save)
     await within(region).findByRole('button', { name: reloadName })
-    staleLead(
-      region,
-      'Description preferences were not saved. This tab is running an earlier build.',
-    )
+    staleLead(region, 'Description preferences were not saved.')
     expect(
       within(region).queryByRole('button', { name: 'Reload description preferences' }),
     ).toBeNull()
@@ -3387,10 +3379,7 @@ describe('Description preferences on an earlier build (#1742)', () => {
     await editMarketing(region)
     await user.click(within(region).getByRole('button', { name: 'Save description preferences' }))
     await within(region).findByRole('button', { name: reloadName })
-    staleLead(
-      region,
-      'It is not known whether description preferences were saved. This tab is running an earlier build.',
-    )
+    staleLead(region, 'It is not known whether description preferences were saved.')
     expect(within(region).queryByText(/were reloaded/u)).toBeNull()
     expect(
       within(region).queryByText('Saved preferences could not be loaded.', { exact: false }),
@@ -3418,7 +3407,7 @@ describe('Description preferences on an earlier build (#1742)', () => {
       await within(region).findByRole('button', { name: 'Reload description preferences' }),
     )
     const reload = await within(region).findByRole('button', { name: reloadName })
-    staleLead(region, 'Saved preferences were not loaded. This tab is running an earlier build.')
+    staleLead(region, 'Saved preferences were not loaded.')
     await waitFor(() => expect(reload).toHaveFocus())
     expect(document.body).not.toHaveFocus()
   })
