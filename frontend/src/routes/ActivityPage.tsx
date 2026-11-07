@@ -44,6 +44,7 @@ import {
 import { categoryLabel, dayHeading, stateLabel } from '../activityLabels'
 import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
 import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
+import { focusAfterRetry } from '../focusAfterRetry'
 import { ActivityPermissionCheck, readinessUnavailableCopy } from './ActivityPermissionCheck'
 import type { PermissionCheck } from './ActivityPermissionCheck'
 // The activity response is validated into `ActivityDisplayView` at the
@@ -63,6 +64,7 @@ const capabilityLabel = (state: CapabilityState, consented: boolean) =>
 // Raised by the verification read made on Confirm, before any grant is sent.
 class ConsentBasisChanged extends Error {}
 class ConsentBasisUnavailable extends Error {}
+class ConsentBasisStale extends Error {}
 const typeOptions = [
   { id: 'all', label: 'All' },
   { id: 'review', label: 'Owner choices' },
@@ -318,7 +320,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     setPermissionRequest(null)
     setDraft(null)
   }
+  // The check button, or Reload once the tab is on an earlier build.
   const checkButton = useRef<HTMLButtonElement>(null)
+  const [basisStale, setBasisStale] = useState(false)
+  // A check the owner pressed hands focus, once it settles, to the control
+  // that replaced the button if it went (Reload on an earlier build).
+  const checkPressed = useRef(false)
+  useEffect(() => {
+    if (!checkPressed.current || permissions.isFetching) return
+    checkPressed.current = false
+    focusAfterRetry(() => checkButton.current)
+  }, [permissions.isFetching])
   const discardChangedDraft = () => {
     discardPermissions()
     setDiscarded({})
@@ -376,6 +388,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     openingPermissionCheck.current = false
     setConsentOpen(false)
     setDiscarded(null)
+    setBasisStale(false)
     discardPermissions()
     // A hash handoff has no trigger of its own; the page's entry stands in.
     const trigger =
@@ -439,8 +452,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             http.getPolicyState(),
           ])
           current = consentBasis(state, policy.policy_id)
-        } catch {
-          throw new ConsentBasisUnavailable()
+        } catch (error) {
+          throw error instanceof BuildMismatchError
+            ? new ConsentBasisStale()
+            : new ConsentBasisUnavailable()
         }
         if (current !== basis) throw new ConsentBasisChanged()
       }
@@ -463,6 +478,16 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       }
       if (error instanceof ConsentBasisUnavailable) {
         setStatus(readinessUnavailableCopy)
+        return
+      }
+      if (error instanceof ConsentBasisStale) {
+        // Confirm can no longer act, so focus moves to the reload that replaces the check.
+        setBasisStale(true)
+        setStatus('')
+        focusAfterRetry(
+          () => checkButton.current,
+          () => document.getElementById('activity-consent'),
+        )
         return
       }
       if (error instanceof ConsentBasisChanged) {
@@ -1208,8 +1233,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             permissions={permissions}
             permission={permission}
             checking={checking}
+            basisStale={basisStale}
             checkButton={checkButton}
-            check={checkPermissions}
+            check={() => {
+              checkPressed.current = true
+              checkPermissions()
+            }}
             libraryName={names.name}
           />
           {configured.map((library) => {
@@ -1290,12 +1319,14 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               aria-describedby="activity-consent-requirement"
               // Busy, not disabled, so focus stays here; the ref refuses a
               // second press that lands before the pending state renders.
-              aria-disabled={confirmBusy || undefined}
+              aria-disabled={confirmBusy || basisStale || undefined}
               disabled={
-                !confirmBusy && (permission?.backup_ready !== true || selectedGrants.length === 0)
+                !confirmBusy &&
+                !basisStale &&
+                (permission?.backup_ready !== true || selectedGrants.length === 0)
               }
               onClick={() => {
-                if (confirmBusy || confirming.current || !draft) return
+                if (confirmBusy || basisStale || confirming.current || !draft) return
                 confirming.current = true
                 mutation.mutate(
                   {

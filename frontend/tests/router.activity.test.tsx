@@ -3310,6 +3310,75 @@ it.each([false, null, 'error'] as const)(
   },
 )
 
+describe('write-permission readiness on an earlier build (#1742)', () => {
+  const reloadName = 'Reload the current application'
+  const staleLead = (lead: string) => {
+    const element = screen.getByText(lead, { exact: false })
+    expect(element).not.toHaveAttribute('role')
+    expect(element.closest('[role="alert"]')).toBeNull()
+    return element
+  }
+
+  it('offers the reload when the readiness check meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness).mockRejectedValue(new BuildMismatchError())
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await screen.findByRole('button', { name: reloadName })
+    expect(
+      staleLead('Permission readiness was not loaded. This tab is running an earlier build.'),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry permission check' })).toBeNull()
+    expect(screen.queryByText(/Permission readiness is unavailable\./u)).toBeNull()
+  })
+
+  it('moves focus to the reload when Retry permission check meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness)
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+      .mockRejectedValue(new BuildMismatchError())
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await user.click(await screen.findByRole('button', { name: 'Retry permission check' }))
+    const reload = await screen.findByRole('button', { name: reloadName })
+    await waitFor(() => expect(reload).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  })
+
+  it('offers the reload, and sends no grant, when Confirm re-reads the basis on a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(
+      permissionReadiness(permissionHistory),
+    )
+    vi.mocked(http.getActivityConsent).mockRejectedValue(new BuildMismatchError())
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await waitFor(() => expect(screen.getByRole('checkbox')).toBeEnabled())
+    await user.click(screen.getByRole('checkbox'))
+    const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
+    await user.click(confirm)
+    const reload = await screen.findByRole('button', { name: reloadName })
+    staleLead(
+      'Permission readiness was not loaded, so no permission was granted. This tab is running an earlier build.',
+    )
+    await waitFor(() => expect(reload).toHaveFocus())
+    expect(confirm).toHaveAttribute('aria-disabled', 'true')
+    await user.click(confirm)
+    expect(http.getActivityConsent).toHaveBeenCalledOnce()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    expect(
+      screen.queryByText('The activity outcome could not be confirmed.', { exact: false }),
+    ).toBeNull()
+    expect(screen.queryByText(/Permission readiness is unavailable\./u)).toBeNull()
+  })
+})
+
 it('keeps history usable during checking and discards a late result after close and reopen', async () => {
   const user = userEvent.setup()
   const http = createHttp()
