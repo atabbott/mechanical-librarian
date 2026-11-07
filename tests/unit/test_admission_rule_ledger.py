@@ -210,7 +210,12 @@ class Fixture:
         )
 
     def decide(
-        self, destination: str, outcome: str, candidate: str | None = None
+        self,
+        destination: str,
+        outcome: str,
+        candidate: str | None = None,
+        *,
+        generation: int = 1,
     ) -> None:
         """Store an automatic decision whose free-text slots are sentinels."""
         self.automatic.append(
@@ -224,6 +229,7 @@ class Fixture:
                     "rule_id": self.text(),
                     "policy_option": self.text(),
                     "target_fingerprint": self.text(),
+                    "policy_generation": generation,
                 },
             )
         )
@@ -292,8 +298,10 @@ def _database(
     fixtures: Sequence[Fixture],
     *,
     automatic: bool = True,
+    generation: int | None = 1,
 ) -> Path:
-    """A synthetic snapshot; ``automatic`` False omits the automatic-decision table."""
+    """A synthetic snapshot; ``automatic`` False omits the automatic-decision table,
+    and ``generation`` None the policy state naming the active generation."""
     connection = sqlite3.connect(path)
     currentness = ",currentness_document TEXT" if profile == "v57-like" else ""
     connection.executescript(
@@ -318,6 +326,13 @@ def _database(
         connection.execute(
             "CREATE TABLE automatic_decisions (decision_id TEXT,review_case_id TEXT,"
             "destination TEXT,document TEXT)"
+        )
+    if generation is not None:
+        connection.execute(
+            "CREATE TABLE metadata_policy_state (singleton INTEGER,generation INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO metadata_policy_state VALUES (1,?)", (generation,)
         )
     for ordinal, fixture in enumerate(fixtures):
         text = fixture.text
@@ -1997,6 +2012,13 @@ def _settled_snapshots(tmp_path: Path) -> list[tuple[str, Path, str]]:
         first, "description", [("alternative_a", text()), ("alternative_b", text())]
     )
     first.decide("description", "candidate", "alternative_b")
+    # A2 on asin: an ignore leaves the field as it is, so it counts as keep.
+    _competing(first, "asin", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
+    first.decide("asin", "ignore")
+    # A1 on language: blocked with no alternative, so not actionable, but a
+    # stored decision still settled it.
+    first.result("language", "unresolved_choice", ["no_positive_preservation_evidence"])
+    first.decide("language", "keep_current")
     # A2 on authors, blocked with no decision.
     _competing(first, "authors", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
     # A proposed field is not blocked, whatever was decided for it.
@@ -2018,6 +2040,9 @@ def _settled_snapshots(tmp_path: Path) -> list[tuple[str, Path, str]]:
     audio = Fixture(text, "v57-like")
     _competing(audio, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
     audio.decide("title", "candidate", "alternative_a")
+    # An outcome that is neither a keep nor the pick counts as other.
+    _competing(audio, "series", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
+    audio.decide("series", "unrecognised_outcome")
     return [
         (
             "ebook",
@@ -2038,24 +2063,29 @@ def test_automatic_decisions_count_by_effect_on_blocked_fields(tmp_path: Path) -
     assert code == 0, stderr
     rows = _rows(stdout)
     a2, t1 = rows["A2"], rows["T1"]
-    assert a2["ceiling"] == 5
-    assert _automatic(_snapshot(a2, "ebook")) == (1, 1, 0)
-    assert _automatic(_snapshot(a2, "audio")) == (1, 0, 0)
+    assert a2["ceiling"] == 7
+    assert _automatic(_snapshot(a2, "ebook")) == (1, 2, 0)
+    assert _automatic(_snapshot(a2, "audio")) == (1, 0, 1)
     assert _automatic(_snapshot(t1, "ebook")) == (0, 0, 1)
     assert _automatic(_snapshot(t1, "audio")) == (0, 0, 0)
     split = cast("dict[str, dict[str, object]]", a2["split"])
-    assert _automatic(split["total"]) == (2, 1, 0)
+    assert _automatic(split["total"]) == (2, 2, 1)
     destinations = _split(a2, "destination")
     assert {key: _automatic(entry) for key, entry in destinations.items()} == {
+        "asin": (0, 1, 0),
         "authors": (0, 0, 0),
-        "series": (0, 1, 0),
+        "series": (0, 1, 1),
         "subtitle": (0, 0, 0),
         "title": (2, 0, 0),
     }
     assert {key: _automatic(entry) for key, entry in _split(a2, "medium").items()} == {
-        "audiobook": (1, 0, 0),
-        "ebook": (1, 1, 0),
+        "audiobook": (1, 0, 1),
+        "ebook": (1, 2, 0),
     }
+    # A blocked field with no alternative is counted too.
+    a1 = rows["A1"]
+    assert _snapshot(a1, "ebook")["actionable_fields"] == 0
+    assert _automatic(_snapshot(a1, "ebook")) == (0, 1, 0)
     # Rows that are not decision-level count nothing.
     assert _snapshot(rows["C1"], "ebook")["automatic"] is None
     assert rows["C1"]["split"] is None
@@ -2072,15 +2102,16 @@ def test_markdown_notes_automatic_decisions_only_when_non_zero(tmp_path: Path) -
     def ranked(gate_id: str) -> str:
         return next(line for line in lines if line.split(" | ")[1:2] == [gate_id])
 
-    assert "| 4 / 2 (4 actionable; 2 decided automatically) |" in ranked("A2")
-    assert "| 1 / 1 (1 actionable; 1 decided automatically) |" in ranked("A2")
+    assert "| 5 / 2 (5 actionable; 3 decided automatically) |" in ranked("A2")
+    assert "| 2 / 1 (2 actionable; 2 decided automatically) |" in ranked("A2")
+    assert "| 1 / 1 (0 actionable; 1 decided automatically) |" in ranked("A1")
     assert "| 1 / 1 (1 actionable; 1 decided automatically) |" in ranked("T1")
     # Recorded, but nothing settled on the audiobook side: no note.
     assert "| 0 / 0 (0 actionable) |" in ranked("T1")
     assert "decided automatically" not in ranked("A3")
     breakdown = lines[lines.index("### Breakdown: A2") + 2 :]
     assert breakdown[0].endswith("| Pick preserves | Automatic pick/keep/other |")
-    assert breakdown[-1].endswith("| 5 | 0 | 2/1/0 |")
+    assert breakdown[-1].endswith("| 7 | 0 | 2/2/1 |")
 
 
 def test_a_snapshot_without_automatic_decisions_reports_not_recorded(
@@ -2123,3 +2154,28 @@ def test_a_snapshot_without_automatic_decisions_reports_not_recorded(
     assert _automatic(_snapshot(a2, "stored")) == (0, 1, 0)
     assert _snapshot(a2, "bare")["automatic"] is None
     assert _split(a2, "destination")["title"]["automatic"] is None
+
+
+def test_only_the_active_policy_generation_settles_a_field(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    _competing(fixture, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
+    # The active generation's decision takes the pick; the earlier
+    # generation's keep, stored after it, is history and settles nothing.
+    fixture.decide("title", "candidate", "alternative_a", generation=2)
+    fixture.decide("title", "keep_current", generation=1)
+    database = _database(tmp_path / "g.sqlite3", "v26-like", [fixture], generation=2)
+    code, stdout, stderr = _run(
+        _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
+    )
+    assert code == 0, stderr
+    assert _automatic(_snapshot(_rows(stdout)["A2"], "snap-a")) == (1, 0, 0)
+    # Without a policy state no active generation can be read: the one stored
+    # decision counts.
+    single = Fixture(text, "v26-like")
+    _competing(single, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
+    single.decide("title", "keep_current", generation=3)
+    database = _database(tmp_path / "n.sqlite3", "v26-like", [single], generation=None)
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    assert _automatic(_snapshot(_rows(stdout)["A2"], "snap-a")) == (0, 1, 0)

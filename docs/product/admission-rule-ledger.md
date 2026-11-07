@@ -104,8 +104,8 @@ leave them.
   (nothing competes). "Pick preserves" counts fields whose pick keeps the
   current value. Automatic pick/keep/other counts blocked fields that one of
   the snapshot's automatic decisions already took or kept, under that
-  snapshot's source and policy. The same total appears in the row as "decided
-  automatically". It does not change the score.
+  snapshot's source and policy. Each snapshot's total appears in its row as
+  "decided automatically". It does not change the score.
 - **Identity precision only.** The measure says whether the loosened rule
   admits evidence for the right work, not whether a value is well formed. A row
   whose risk is not identity (text bounds, checksums, cover source admission)
@@ -286,8 +286,8 @@ The origin ADRs are
   decide, the lowest-identifier pick agrees with the one right-work
   alternative in about half the fields: T1 247 of 480 (0.515, lower limit
   0.470), A6 108 of 184 (0.587, 0.515; unranked), A3 12 of 20 (0.600, 0.387). A2 has no
-  decidable field: each of its results keeps one alternative, and most of its
-  fields (96 of 135) were already decided automatically. `--breakdown T1` splits T1's by destination; no
+  decidable field: each of its fields has one alternative. Of its 135 fields,
+  96 were already decided automatically. `--breakdown T1` splits T1's by destination; no
   destination's lower limit reaches 0.46. Most of T1's ebook fields (759 of 1,141) and some of A6's
   (187) compete on destinations a later election decides on main, so those
   ceilings are stale.

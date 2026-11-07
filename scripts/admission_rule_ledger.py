@@ -1355,8 +1355,8 @@ class Split:
     # actionable fields whose pick preserves the current value
     pick_preserves: int = 0
     # Decision-level rows only: blocked fields one of the snapshot's automatic
-    # decisions already settled (#1747), by taking the pick, keeping the
-    # current value, or taking anything else
+    # decisions already settled (#1747), by taking the pick, leaving the
+    # current value (keep_current or ignore), or anything else
     automatic_pick: int = 0
     automatic_keep: int = 0
     automatic_other: int = 0
@@ -1496,7 +1496,8 @@ def _count_automatic(
         return
     outcome, candidate = decision
     picked = _text(_pick(result).get("alternative_id"))
-    if outcome == "keep_current":
+    # Both leave the field as it is; the product's activity record says so.
+    if outcome in {"keep_current", "ignore"}:
         counts.automatic_keep += 1
     elif outcome == "candidate" and picked is not None and candidate == picked:
         counts.automatic_pick += 1
@@ -1617,15 +1618,28 @@ def _automatic_decisions(
     The table is optional: a source that predates it, or a copy without it,
     reports "not recorded" rather than refusing.
     """
-    present = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='automatic_decisions'"
-    ).fetchone()
-    if present is None:
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if "automatic_decisions" not in tables:
         return None
+    query = "SELECT review_case_id,destination,document FROM automatic_decisions"
+    if "metadata_policy_state" in tables:
+        # A decision settles its field only in the active policy generation;
+        # earlier generations' rows are history (ADR-0036, #1573), as in the
+        # product's own review queries. The generation is read from the
+        # document, which every source stores it in.
+        query += (
+            " WHERE json_extract(document,'$.policy_generation')="
+            "(SELECT generation FROM metadata_policy_state)"
+        )
+    # Without the policy state no active generation can be read, so every
+    # stored decision counts, as before.
     decisions: dict[str, dict[str, tuple[str | None, str | None]]] = {}
-    rows = connection.execute(
-        "SELECT review_case_id,destination,document FROM automatic_decisions"
-    )
+    rows = connection.execute(query)
     for case_id, destination, document in rows:
         stored = _document(document)
         decisions.setdefault(case_id, {})[destination] = (
