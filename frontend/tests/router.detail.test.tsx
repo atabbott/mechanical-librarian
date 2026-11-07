@@ -676,7 +676,7 @@ describe('Library review ownership', () => {
 
       expect(
         await screen.findByRole('heading', {
-          name: 'This diagnostic case is no longer current.',
+          name: 'This review case is out of date',
         }),
       ).toBeVisible()
       expect(screen.queryByRole('heading', { name: 'Evidence' })).toBeNull()
@@ -704,12 +704,12 @@ describe('Library review ownership', () => {
     expect(document.querySelector('#main-content .diagnostic-route > :first-child')).toBe(
       loadingBack,
     )
-    expect(screen.getByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Loading the review case…' })).toBeVisible()
     renderRoute('/review/case-failed?lens=no_attention_needed&field=authors&subview=history', {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => Promise.reject(new ApiError(503, 'unavailable'))),
     })
-    expect(await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }))
+    expect(await screen.findByRole('heading', { name: 'The review case could not be opened' }))
     expect(screen.getAllByRole('link', { name: 'Back to work' }).at(-1)).toHaveAttribute(
       'href',
       '/library?lens=no_attention_needed&preview=case-failed&field=authors',
@@ -770,14 +770,14 @@ describe('Library review ownership', () => {
 
     await open('case-3')
     expect(
-      await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }),
+      await screen.findByRole('heading', { name: 'The review case could not be opened' }),
     ).toBeVisible()
     expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
     expect(document.querySelector('.diagnostic-route')).not.toHaveAttribute('aria-busy')
 
     // The failure cleared the case, so the next pending read cannot revive it.
     await open('case-4')
-    expect(await screen.findByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Loading the review case…' })).toBeVisible()
     expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
   })
 
@@ -1005,8 +1005,13 @@ describe('Library review ownership', () => {
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeEnabled()
   })
 
-  it('reloads the case and says fresh checks may have been requested when the outcome is unknown', async () => {
-    const user = userEvent.setup()
+  // #1755: an unconfirmed request is a warning that resolves from the case
+  // reread after it, and focus stays on the safe button throughout.
+  const U1 = 'No answer came back. Reloading this work to check…'
+  const U2 =
+    "No answer came back. This work doesn't show fresh checks as requested. Request them again."
+  const S0 = 'Fresh checks requested. Manual handling remains until they complete.'
+  const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
     const returnToAutomatic = vi.fn(async () =>
@@ -1016,38 +1021,294 @@ describe('Library review ownership', () => {
     let holdReload = false
     let finishReload: (() => void) | undefined
     const getCaseDetail = vi.fn(async () => {
-      if (holdReload)
-        await new Promise<void>((resolve) => {
-          finishReload = resolve
-        })
-      return held
+      if (!holdReload) return held
+      await new Promise<void>((resolve) => {
+        finishReload = resolve
+      })
+      return reload(held)
     })
-    renderRoute('/library?lens=all&preview=case-1&field=title', {
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
       getCaseDetail,
       returnToAutomatic,
     })
+    return {
+      queryClient,
+      getCaseDetail,
+      returnToAutomatic,
+      startReload: () => {
+        holdReload = true
+      },
+      finishReload: () => finishReload?.(),
+    }
+  }
 
+  it('reloads the case and says it does not show fresh checks as requested when the outcome is unknown', async () => {
+    const user = userEvent.setup()
+    const run = unconfirmed(async (held) => held)
     await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
-    const readsBefore = getCaseDetail.mock.calls.length
-    holdReload = true
+    const readsBefore = run.getCaseDetail.mock.calls.length
+    run.startReload()
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Fresh checks could not be confirmed. They may have been requested; the current case was reloaded. Check it before trying again.',
-    )
+    const warning = await screen.findByText(U1)
+    expect(warning).toHaveAttribute('role', 'status')
+    expect(warning).toHaveClass('automatic-handling-result', 'is-uncertain')
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(
       screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
     ).toBeNull()
-    await waitFor(() => expect(getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
+    await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
     // Focus returns to the panel while the case is still reloading, so
     // Escape keeps closing it.
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus(),
     )
-    finishReload?.()
+    expect(screen.getByText(U1)).toBeVisible()
+    run.finishReload()
+    const resolved = await screen.findByText(U2)
+    expect(resolved).toHaveAttribute('role', 'status')
+    expect(resolved).toHaveClass('is-uncertain')
+    expect(screen.queryByText(U1)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
+    // Requesting again does no harm, so it stays offered.
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeEnabled()
     await user.keyboard('{Escape}')
     expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toHaveFocus()
+    expect(run.returnToAutomatic).toHaveBeenCalledOnce()
+  })
+
+  it('resolves an unknown outcome as requested when the reloaded case shows it', async () => {
+    const user = userEvent.setup()
+    const run = unconfirmed(async (held) => ({
+      ...held,
+      fields: held.fields.map((field) => ({ ...field, manualReturnRequested: true })),
+    }))
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    run.startReload()
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(await screen.findByText(U1)).toBeVisible()
+    run.finishReload()
+    const done = await screen.findByText(S0)
+    expect(done).toHaveAttribute('role', 'status')
+    expect(done).toHaveClass('is-success')
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
+    expect(run.returnToAutomatic).toHaveBeenCalledOnce()
+  })
+
+  // A background reread after the outcome resolved (window focus, a live
+  // update) keeps the resolved message rather than reverting to reloading.
+  it.each([
+    ['requested', true, S0],
+    ['not requested', false, U2],
+  ] as const)(
+    'keeps a resolved %s outcome while the case rereads in the background',
+    async (_name, requested, copy) => {
+      const user = userEvent.setup()
+      const run = unconfirmed(async (held) => ({
+        ...held,
+        fields: held.fields.map((field) => ({ ...field, manualReturnRequested: requested })),
+      }))
+      await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+      run.startReload()
+      await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+      expect(await screen.findByText(U1)).toBeVisible()
+      run.finishReload()
+      expect(await screen.findByText(copy)).toBeVisible()
+      const readsBefore = run.getCaseDetail.mock.calls.length
+      void run.queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
+      await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
+      expect(screen.getByText(copy)).toBeVisible()
+      expect(screen.queryByText(U1)).toBeNull()
+      run.finishReload()
+      await waitFor(() => expect(screen.getByText(copy)).toBeVisible())
+      expect(screen.queryByText(U1)).toBeNull()
+    },
+  )
+
+  // A reread that fails replaces the work with its own failure and Try again
+  // (#1288), so the panel never claims a reload that did not happen; the
+  // next reread settles the uncertainty.
+  it('settles an unknown outcome from the next reread when the first one fails', async () => {
+    const user = userEvent.setup()
+    let rereads = 0
+    const run = unconfirmed(async (held) => {
+      rereads += 1
+      if (rereads === 1) throw new ApiError(503, 'unavailable')
+      return held
+    })
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    run.startReload()
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(await screen.findByText(U1)).toBeVisible()
+    run.finishReload()
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    expect(screen.getByRole('alert')).toHaveTextContent('Selected work could not be loaded.')
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
+    const readsBefore = run.getCaseDetail.mock.calls.length
+    await user.click(retry)
+    await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
+    run.finishReload()
+    const settled = await screen.findByText(U2)
+    expect(settled).toHaveClass('is-uncertain')
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeEnabled()
+    expect(run.returnToAutomatic).toHaveBeenCalledOnce()
+  })
+
+  it('shows a return requested before a reload as requested, without sending one', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    const returnToAutomatic = vi.fn(async () => undefined)
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...field, manualHold: true, manualReturnRequested: true }],
+      })),
+      returnToAutomatic,
+    })
+    const trigger = await screen.findByRole('button', { name: 'Fresh checks requested' })
+    expect(trigger).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.queryByRole('button', { name: 'Resume automatic handling' })).toBeNull()
+    await user.click(trigger)
+    expect(screen.queryByRole('button', { name: 'Resume after fresh checks' })).toBeNull()
+    expect(returnToAutomatic).not.toHaveBeenCalled()
+  })
+
+  // Requested checks that ended with failures keep the hold, and nothing
+  // retries them, so the case offers the request again with one short line.
+  const F0 = 'The fresh checks ended with failures.'
+  const F1 = `${F0} Choose Resume automatic handling to request them again.`
+  const F2 = `${F0} Choose Resume after fresh checks to request them again.`
+  const ownDecision = (field: CaseDetailView['fields'][number]) =>
+    ({
+      actor: 'owner',
+      application: 'apply' as const,
+      application_reason: null,
+      decision_id: 'decision-1',
+      destination: field.destination,
+      occurred_at: 1,
+      outcome: 'accept',
+      proposal_id: field.proposalId,
+      review_case_id: 'case-1',
+      selected_value: field.proposedValues[0] ?? null,
+      target_fingerprint: field.targetFingerprint,
+    }) as const
+  it('offers fresh checks again when the requested ones ended with failures', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    const returnToAutomatic = vi.fn(async () => undefined)
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...field,
+            manualHold: true,
+            manualReturnFailed: true,
+            humanDecision: ownDecision(field),
+          },
+        ],
+      })),
+      returnToAutomatic,
+    })
+    const trigger = await screen.findByRole('button', { name: 'Resume automatic handling' })
+    expect(trigger).not.toHaveAttribute('aria-disabled', 'true')
+    const line = screen.getByText(F1)
+    expect(line).toHaveClass('automatic-handling-result', 'is-error')
+    expect(screen.queryByRole('alert')).toBeNull()
+    await user.click(trigger)
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(await screen.findByText(S0)).toBeVisible()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
+  })
+
+  // On a hold from an earlier case, the earlier-decision line already names
+  // the button, so the failure line does not repeat the step.
+  it('says the next step once on a hold from an earlier case', async () => {
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...field, manualHold: true, manualReturnFailed: true, humanDecision: null }],
+      })),
+      returnToAutomatic: vi.fn(async () => undefined),
+    })
+    // Exact text: the line is the first sentence alone.
+    await screen.findByText(F0)
+    const panel = screen.getByRole('region', { name: 'Automatic handling' })
+    expect(panel.textContent.match(/to request them again/gu) ?? []).toHaveLength(0)
+    expect(panel.textContent.match(/choose Resume automatic handling/giu) ?? []).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toBeEnabled()
+  })
+
+  it('shows checks that ended with failures in the open panel when a reread finds them', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    let phase: 'held' | 'requested' | 'failed' = 'held'
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...field,
+            manualHold: true,
+            manualReturnRequested: phase === 'requested',
+            manualReturnFailed: phase === 'failed',
+          },
+        ],
+      })),
+      returnToAutomatic: vi.fn(async () => {
+        phase = 'requested'
+      }),
+    })
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(await screen.findByText(S0)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
+    phase = 'failed'
+    await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
+    // The panel stays open and says why its button is offered again.
+    const line = await screen.findByText(F2)
+    expect(line).toHaveAttribute('role', 'status')
+    expect(line).toHaveClass('automatic-handling-result', 'is-error')
+    expect(screen.queryByText(S0)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
+    // Closed, the hold here is from an earlier case: the step is said once.
+    expect(screen.getByText(F0)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Resume automatic handling' })).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+  })
+
+  it('shows a failed fresh-check request as an alert in the danger tone', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...field, manualHold: true }] })),
+      returnToAutomatic: vi.fn(async () => Promise.reject(new ApiError(409, 'stale'))),
+    })
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    const error = await screen.findByRole('alert')
+    expect(error).toHaveTextContent(
+      'Fresh checks could not be requested. Manual handling is unchanged.',
+    )
+    expect(error).toHaveClass('automatic-handling-result', 'is-error')
   })
 
   it('keeps a fresh-check success with the field that requested it after navigation', async () => {
@@ -1261,7 +1522,7 @@ describe('bounded diagnostic return context', () => {
       )
       await screen.findByRole('heading', {
         name:
-          state === 'loading' ? 'Loading work diagnostics…' : 'Work diagnostics are unavailable.',
+          state === 'loading' ? 'Loading the review case…' : 'The review case could not be opened',
       })
       expect(
         Object.fromEntries(

@@ -632,7 +632,7 @@ describe('Application shell', () => {
     expect(screen.getByText(wholeText('1 of 2 checked · 0 ready to browse'))).toBeVisible()
     expect(
       screen.getByText(
-        'Scan now \u2014 and Retry after a run with failures \u2014 start a new preparation cycle for this library; books that could not finish are prepared again; provider lookups that hit limits recover automatically on the documented schedule; a failure before a report has no automatic retry.',
+        'Scan now prepares a library again, including the books that could not finish.',
       ),
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Close' }))
@@ -712,7 +712,7 @@ describe('Application shell', () => {
   })
 
   it.each([
-    ['paused', 'Library connection needs attention', 'Check connection again', false],
+    ['paused', 'Library connection failed', 'Check connection again', false],
     ['checking', 'Checking library connection', 'Checking connection…', true],
   ] as const)(
     'renders %s connection recovery through Library, full Detail, and Activity without replacing route state',
@@ -888,7 +888,7 @@ describe('Application shell', () => {
     const { router } = renderRoute('/library?lens=all', http)
 
     await screen.findByRole('heading', { name: 'Works' })
-    expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
+    expect(screen.queryByLabelText('Library connection')).toBeNull()
     await router.navigate({
       to: '/activity',
       search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
@@ -928,10 +928,10 @@ describe('Application shell', () => {
   })
 
   it.each([
-    ['tls', 'secure connection settings'],
-    ['authentication', 'sign-in settings'],
-    ['authorization', 'access permission'],
-    ['unavailable', 'connection is unavailable'],
+    ['tls', 'Audiobookshelf’s secure connection failed.'],
+    ['authentication', 'Audiobookshelf refused the access key.'],
+    ['authorization', 'Audiobookshelf refused access to this library.'],
+    ['unavailable', 'Audiobookshelf did not answer.'],
   ] as const)(
     'uses safe owner-readable %s connection copy without raw connection values',
     async (code, expected) => {
@@ -956,7 +956,7 @@ describe('Application shell', () => {
       const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
       renderRoute('/library?lens=all', http)
 
-      const notice = await screen.findByLabelText('Shared library connection status')
+      const notice = await screen.findByLabelText('Library connection')
       expect(notice).toHaveTextContent(expected)
       expect(notice).not.toHaveTextContent('private.example')
       expect(notice).not.toHaveTextContent('token')
@@ -1071,7 +1071,7 @@ describe('Application shell', () => {
       const dismiss = screen.getByRole('button', { name: 'Dismiss' })
       expect(dismiss).toHaveFocus()
       fireEvent.click(dismiss)
-      expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
+      expect(screen.queryByLabelText('Library connection')).toBeNull()
       await act(async () => {
         await vi.advanceTimersByTimeAsync(16)
       })
@@ -1081,10 +1081,9 @@ describe('Application shell', () => {
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
       })
-      await vi.waitFor(
-        () => expect(screen.getByText('Library connection needs attention')).toBeVisible(),
-        { interval: 0 },
-      )
+      await vi.waitFor(() => expect(screen.getByText('Library connection failed')).toBeVisible(), {
+        interval: 0,
+      })
       const repeatCheck = screen.getByRole('button', { name: 'Check connection again' })
       repeatCheck.focus()
       expect(repeatCheck).toHaveFocus()
@@ -1097,11 +1096,11 @@ describe('Application shell', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(7_999)
       })
-      expect(screen.getByLabelText('Shared library connection status')).toBeVisible()
+      expect(screen.getByLabelText('Library connection')).toBeVisible()
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1)
       })
-      expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
+      expect(screen.queryByLabelText('Library connection')).toBeNull()
       await act(async () => {
         await vi.advanceTimersByTimeAsync(16)
       })
@@ -1186,16 +1185,14 @@ describe('Application shell', () => {
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
     })
-    expect(await screen.findByText('Library connection needs attention')).toBeVisible()
+    expect(await screen.findByText('Library connection failed')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus()
 
     current = view('recovered', 2)
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
     })
-    await waitFor(() =>
-      expect(screen.queryByLabelText('Shared library connection status')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByLabelText('Library connection')).toBeNull())
     expect(screen.getByLabelText('Library controls')).toHaveFocus()
   })
 
@@ -1256,11 +1253,11 @@ describe('Application shell', () => {
   )
 
   it.each([
-    [new Error('mutation failed'), 'Connection checking could not be completed'],
+    [new Error('mutation failed'), 'The connection check did not finish'],
     [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
     [
       new ApiError(503, 'persistence'),
-      'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.',
+      'No answer came back. Check whether the connection check started before checking again.',
     ],
     [
       // A 2xx the decoder refused (#1685).
@@ -1270,7 +1267,7 @@ describe('Application shell', () => {
         at: '/connections/0/state',
         reason: 'enum',
       }),
-      'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.',
+      'No answer came back. Check whether the connection check started before checking again.',
     ],
   ])(
     'restores the actionable paused connection notice when %s and refetch fail',
@@ -1312,9 +1309,9 @@ describe('Application shell', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus(),
       )
-      expect(screen.getByText('Safely paused').parentElement).toHaveTextContent('2')
+      expect(screen.getByText('Paused').parentElement).toHaveTextContent('2')
       // The notice's polite live region is the one announcer; no nested alert.
-      const notice = screen.getByRole('region', { name: 'Shared library connection status' })
+      const notice = screen.getByRole('region', { name: 'Library connection' })
       expect(notice).toHaveAttribute('aria-live', 'polite')
       expect(within(notice).getByText(copy, { exact: false })).toBeVisible()
       expect(within(notice).queryByRole('alert')).toBeNull()
@@ -1423,7 +1420,7 @@ describe('Application shell', () => {
       const popover = screen.getByRole('region', { name: 'Background activity' })
       expect(
         within(popover).getByText(
-          'Pause stops new library scans. Provider lookups that are already deferred still retry on their schedule.',
+          'Pause stops new scans. Lookups already waiting still retry on schedule.',
         ),
       ).toBeVisible()
 
@@ -1480,7 +1477,7 @@ describe('Application shell', () => {
 
         const alert = await within(popover).findByRole('alert')
         expect(alert).toHaveTextContent(
-          'The preparation change could not be confirmed. It may have been saved; the current state is shown. Check it before pressing again.',
+          'No answer came back. Check whether the change took effect before pressing again.',
         )
         expect(alert).not.toHaveTextContent('Try again')
         const resume = await within(popover).findByRole('button', { name: 'Resume' })
@@ -1508,7 +1505,7 @@ describe('Application shell', () => {
       await user.click(within(popover).getByRole('button', { name: 'Pause' }))
 
       expect(await within(popover).findByRole('alert')).toHaveTextContent(
-        'Preparation control failed safely. Try again.',
+        'Preparation did not change. Try again.',
       )
     })
 
@@ -1536,23 +1533,14 @@ describe('Application shell', () => {
     })
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Activity was not loaded.' })).toBeVisible()
-    expect(
-      screen.getByText(
-        'This tab is running an earlier build. Reload to open it in the current application.',
-      ),
-    ).not.toHaveAttribute('role')
+    expect(await screen.findByRole('heading', { name: 'Activity was not loaded' })).toBeVisible()
     // The shell notice states the build mismatch; the route does not repeat it.
-    expect(
-      screen.queryByRole('heading', { name: 'This page is from a different application build.' }),
-    ).toBeNull()
+    expect(screen.queryByText(/Mechanical Librarian was updated/u)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     const reload = vi.fn()
     const { href, origin, pathname, search } = window.location
     vi.stubGlobal('location', { assign: vi.fn(), href, origin, pathname, search, reload })
-    await userEvent
-      .setup()
-      .click(screen.getByRole('button', { name: 'Reload the current application' }))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }))
     await waitFor(() => expect(reload).toHaveBeenCalled())
   })
 
@@ -1572,7 +1560,7 @@ describe('Application shell', () => {
 
     const notice = await screen.findByRole('alert')
     expect(notice).toHaveTextContent(
-      'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.',
+      'No answer came back. Reload the page, and sign out again if you are still signed in.',
     )
     expect(notice).toHaveClass('is-uncertain')
     expect(screen.queryByText('Sign out failed. Try again.')).toBeNull()
@@ -1598,10 +1586,8 @@ describe('Application shell', () => {
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {
     renderRoute('/not-a-review-route')
 
-    expect(
-      await screen.findByRole('heading', { name: 'This review route does not exist.' }),
-    ).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Open review library' })).toHaveAttribute(
+    expect(await screen.findByRole('heading', { name: 'This page does not exist' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Open Library' })).toHaveAttribute(
       'href',
       '/library?lens=all',
     )
@@ -2194,18 +2180,18 @@ describe('Application shell', () => {
       })
 
       // A momentary reconnect is not news, so the first second is silent.
-      expect(screen.queryByText('Reconnecting · checking for updates')).toBeNull()
+      expect(screen.queryByText('Reconnecting…')).toBeNull()
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1_200)
       })
-      expect(screen.getByText('Reconnecting · checking for updates')).toBeVisible()
+      expect(screen.getByText('Reconnecting…')).toBeVisible()
 
       await act(async () => {
         stream.state = 'live'
         for (const listener of [...stateListeners]) listener(stream.state)
         await vi.advanceTimersByTimeAsync(200)
       })
-      expect(screen.queryByText('Reconnecting · checking for updates')).toBeNull()
+      expect(screen.queryByText('Reconnecting…')).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -2316,12 +2302,14 @@ describe('Theme rule', () => {
   })
 })
 
-it('names a loading route as the owner’s private workspace (#1286)', () => {
-  // The pending state the shell shows while a route's code loads says what the
-  // page is in plain words rather than a design term.
+it('says only that a route is loading, with no eyebrow above it (#1286, #1765)', () => {
+  // The pending state the shell shows while a route's code loads names the
+  // page, in plain words and without a label stacked over the heading.
   render(<RoutePending title="Policy" />)
-  expect(screen.getByText('Private workspace')).toBeVisible()
-  expect(screen.getByRole('heading', { level: 1, name: 'Loading policy…' })).toBeVisible()
-  expect(screen.getByText('Private workspace').closest('[aria-busy="true"]')).not.toBeNull()
+  const heading = screen.getByRole('heading', { level: 1, name: 'Loading policy…' })
+  expect(heading).toBeVisible()
+  expect(heading.closest('[aria-busy="true"]')).not.toBeNull()
+  expect(heading.closest('[aria-busy="true"]')?.querySelector('.eyebrow')).toBeNull()
+  expect(screen.queryByText('Private workspace')).toBeNull()
   expect(screen.queryByText('Authenticated review')).toBeNull()
 })
