@@ -1,10 +1,7 @@
 export type ReadWorkClass = 'foreground' | 'background'
 
 import type { components, paths } from '../generated/review-api'
-import type {
-  components as responseComponents,
-  paths as responsePaths,
-} from '../generated/review-api-response'
+import type { components as responseComponents } from '../generated/review-api-response'
 import type { D, OperationKey } from '../generated/review-decoders'
 import { DecodeFailure, matchOperation, responseDecoders } from '../generated/review-decoders'
 import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
@@ -840,6 +837,15 @@ export interface HistoryView {
   nextCursor?: string
 }
 export type PreparationView = ResponseSchema<'_PreparationResponse'>
+// The preparation controls `preparationAction` sends, under
+// `/api/v1/review-preparation/`; each segment hole is one encoded name.
+export type PreparationActionPath =
+  | 'first-boot/acknowledge'
+  | 'pause'
+  | 'resume'
+  | `${string}/check-connection`
+  | `${string}/${string}/scan`
+  | `${string}/${string}/retry`
 export type PreparationProgress = ResponseSchema<'_PreparationProgress'>
 export type ProviderThrottlingView = ResponseSchema<'_PreparationThrottling'>
 export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
@@ -850,6 +856,84 @@ export type ShadowPostureView = ResponseSchema<'_ShadowPostureResponse'>
 export type AutomaticSafetyView = ResponseSchema<'_AutomaticSafetyResponse'>
 export type ShadowSampleView = ResponseSchema<'_ShadowSampleResponse'>
 export type PolicyTransitionView = ResponseSchema<'_PolicyTransitionResponse'>
+// The answer `read` and `mutate` return is the one the operation their path
+// names decodes to (#1730). `OperationOf` resolves a path in types the way
+// `matchOperation` resolves it at run time: the query is dropped, and the path
+// matches a documented route segment by segment, a `{parameter}` taking exactly
+// one non-empty segment. A hole in a template path (`${string}`) is one
+// segment, so it can only fill a parameter; `encodeURIComponent` keeps a `/`
+// out of it. A path that matches no route, or more than one, names no
+// operation, and its answer is `Unrouted`, which no mapper accepts.
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+type DocumentedOperation = {
+  [Route in keyof paths]: {
+    [M in HttpMethod]: [paths[Route][Lowercase<M>]] extends [never]
+      ? never
+      : paths[Route][Lowercase<M>] extends { readonly responses: unknown }
+        ? `${M} ${Route}`
+        : never
+  }[HttpMethod]
+}[keyof paths]
+type Segments<S extends string> = S extends `${infer Head}/${infer Tail}`
+  ? [Head, ...Segments<Tail>]
+  : [S]
+type WithoutQuery<P extends string> = P extends `${infer Path}?${string}` ? Path : P
+type SegmentsMatch<
+  Path extends readonly string[],
+  Route extends readonly string[],
+> = Path extends readonly [infer S extends string, ...infer PathRest extends string[]]
+  ? Route extends readonly [infer R extends string, ...infer RouteRest extends string[]]
+    ? (
+        R extends `{${string}}` ? (S extends '' ? false : true) : [S] extends [R] ? true : false
+      ) extends true
+      ? SegmentsMatch<PathRest, RouteRest>
+      : false
+    : false
+  : Route extends readonly []
+    ? true
+    : false
+type Matches<M extends string, P extends string> = {
+  [K in DocumentedOperation]: K extends `${M} ${infer Route}`
+    ? SegmentsMatch<Segments<WithoutQuery<P>>, Segments<Route>> extends true
+      ? K
+      : never
+    : never
+}[DocumentedOperation]
+type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never
+// Distributes over a union of paths; each single path names at most one operation.
+export type OperationOf<M extends string, P extends string> = P extends string
+  ? true extends IsUnion<Matches<M, P>>
+    ? never
+    : Matches<M, P>
+  : never
+type Decoders = typeof responseDecoders
+type Decoded<K extends OperationKey> = {
+  [Status in keyof Decoders[K]]: Decoders[K][Status] extends D<infer Value> ? Value : never
+}[keyof Decoders[K]]
+export interface Unrouted {
+  readonly unrouted: never
+}
+// An operation with a decoder answers what the decoder returns. One with none
+// documents only 204; until the decode gate goes (#1731) a body from it would
+// reach the caller undecoded, so its answer is `unknown`.
+export type RequestAnswer<M extends string, P extends string> = [OperationOf<M, P>] extends [never]
+  ? Unrouted
+  : OperationOf<M, P> extends infer K
+    ? K extends OperationKey
+      ? Decoded<K>
+      : unknown
+    : never
+// Every path some documented route accepts, a parameter as `${string}`, with or
+// without a query: `read` and `mutate` refuse any other path, and contextually
+// type a template path so that `OperationOf` can resolve it.
+type RoutePattern<Route extends string> = Route extends `${infer Head}{${string}}${infer Tail}`
+  ? `${Head}${string}${RoutePattern<Tail>}`
+  : Route
+export type RoutablePath<M extends string> = DocumentedOperation extends infer K
+  ? K extends `${M} ${infer Route}`
+    ? RoutePattern<Route> | `${RoutePattern<Route>}?${string}`
+    : never
+  : never
 export type PolicyDraft = Schema<'_PolicyDraftRequest'>
 export type PolicyActivationRequest = Schema<'_PolicyActivationRequest'>
 export type PolicyPreviewView = ResponseSchema<'_PolicyPreviewResponse'>
@@ -866,10 +950,10 @@ export type PolicyCommandPath =
   | 'shadow/confirm-automatic'
   | `transitions/${string}/acknowledge`
   | `transitions/${string}/retry`
-// Each command's body and answer come from its operation in the generated
-// `paths`, so a path whose request or answer changes fails `tsc` here. Both
-// distribute over a union of paths, so a caller holding any command gets the
-// union of their bodies and answers.
+// Each command's body comes from its operation in the generated `paths`, and
+// its answer is what that operation's decoder returns, so a path whose request
+// or answer changes fails `tsc` here. Both distribute over a union of paths, so
+// a caller holding any command gets the union of their bodies and answers.
 type PolicyCommandRoute<P extends PolicyCommandPath> = P extends `transitions/${string}/acknowledge`
   ? '/api/v1/metadata-policy/transitions/{transition_id}/acknowledge'
   : P extends `transitions/${string}/retry`
@@ -881,15 +965,20 @@ export type PolicyCommandBody<P extends PolicyCommandPath> = P extends PolicyCom
     ? JsonContent<Body>
     : undefined
   : never
-export type PolicyCommandAnswer<P extends PolicyCommandPath> = P extends PolicyCommandPath
-  ? responsePaths[PolicyCommandRoute<P>]['post']['responses'] extends infer Responses
-    ? JsonContent<Responses[Extract<keyof Responses, 200 | 201>]>
-    : never
-  : never
+export type PolicyCommandAnswer<P extends PolicyCommandPath> = RequestAnswer<
+  'POST',
+  `/api/v1/metadata-policy/${P}`
+>
 export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
 // The activity family is decoded centrally (#1691): its views are the
 // response-truth types, and only the example adds a label of its own.
 type ActivityDto = ResponseSchema<'_ActivityResponse'>
+// The Activity commands `activityCommand` sends, under `/api/v1/`.
+export type ActivityCommandPath =
+  | 'activity/consent'
+  | `activity/${string}/${string}/revoke`
+  | 'field-effects/pause'
+  | 'field-effects/resume'
 export type ActivityPreparedView = ResponseSchema<'_ActivityPrepared'>
 export type ActivityLibraryView = ResponseSchema<'_ActivityLibrary'>
 /** `prepared`: prepared changes this destination's permission would carry, and no other. */
@@ -1106,7 +1195,7 @@ export interface ReviewHttp {
   ): Promise<CoverConsiderationView>
   getPreparation(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<PreparationView>
   preparationAction(
-    path: string,
+    path: PreparationActionPath,
     signal?: AbortSignal,
   ): Promise<PreparationView | PreparationProgress>
   dismissPreparation(runId: string, signal?: AbortSignal): Promise<PreparationView>
@@ -1153,7 +1242,7 @@ export interface ReviewHttp {
     workClass?: ReadWorkClass,
   ): Promise<ActivityTransitionsView>
   activityCommand(
-    path: string,
+    path: ActivityCommandPath,
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined>
@@ -1391,7 +1480,7 @@ export class ReviewApiClient implements ReviewHttp {
     const p = new URLSearchParams({ lens: search.lens })
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
-    return mapLibrary((await this.read(`/api/v1/library?${p}`, signal, workClass)) as LibraryDto)
+    return mapLibrary(await this.read(`/api/v1/library?${p}`, signal, workClass))
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
@@ -1413,15 +1502,18 @@ export class ReviewApiClient implements ReviewHttp {
         at: '',
         reason: 'unexpected_operation',
       })
-    return mapReportDetail((await this.read(detailUrl, signal, workClass)) as ReportDetailDto)
+    // The guard above proved that the address names the report operation.
+    return mapReportDetail(
+      await this.read(detailUrl as `/api/v1/library/report?${string}`, signal, workClass),
+    )
   }
   // The settings and appearance answers are decoded whole; the settings view
   // is the document itself, with no mapping and no named check (#1689).
   async getSettings(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return (await this.read('/api/v1/settings', signal, workClass)) as SettingsView
+    return await this.read('/api/v1/settings', signal, workClass)
   }
   async getAppearance(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return (await this.read('/api/v1/appearance', signal, workClass)) as AppearanceView
+    return await this.read('/api/v1/appearance', signal, workClass)
   }
   async writeSettings(value: SettingsWrite, signal?: AbortSignal) {
     return this.mutate(
@@ -1441,9 +1533,7 @@ export class ReviewApiClient implements ReviewHttp {
   // refusal. The test and the disclosure write nothing, so that is the
   // conservative direction (ADR-0091).
   async getReviewerAccess(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return mapReviewerAccess(
-      (await this.read('/api/v1/reviewer-access', signal, workClass)) as ReviewerAccessView,
-    )
+    return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal, workClass))
   }
   async refreshOpenRouter(signal?: AbortSignal, task?: ReviewerTask) {
     return this.mutate(
@@ -1481,7 +1571,7 @@ export class ReviewApiClient implements ReviewHttp {
       'POST',
       false,
       false,
-      (value) => value as ContainedDescriptionDisclosure,
+      (value) => value,
     )
   }
   async testDescriptionModel(
@@ -1496,7 +1586,7 @@ export class ReviewApiClient implements ReviewHttp {
       'POST',
       false,
       false,
-      (answer) => mapDescriptionMetadata(answer as DescriptionModelMetadata),
+      (answer) => mapDescriptionMetadata(answer),
     )
   }
   async clearOpenRouter(expectedRevision: number, signal?: AbortSignal) {
@@ -1538,18 +1628,14 @@ export class ReviewApiClient implements ReviewHttp {
       false,
       false,
       (value): CodexDeviceStartResult => {
-        const { access, device } = value as CodexDeviceStartResult
+        const { access, device } = value
         return { access: mapReviewerAccess(access), device: mapCodexDevice(device) }
       },
     )
   }
   async getCodexDevice(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapCodexDevice(
-      (await this.read(
-        '/api/v1/reviewer-access/codex/device',
-        signal,
-        workClass,
-      )) as CodexDeviceAuthState,
+      await this.read('/api/v1/reviewer-access/codex/device', signal, workClass),
     )
   }
   async recheckCodex(signal?: AbortSignal) {
@@ -1597,20 +1683,16 @@ export class ReviewApiClient implements ReviewHttp {
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
     return mapAttention(
-      (await this.read(
-        `/api/v1/attention${p.size ? `?${p}` : ''}`,
+      await this.read(
+        `/api/v1/attention${p.size ? (`?${p}` satisfies `?${string}`) : ''}`,
         signal,
         workClass,
-      )) as AttentionDto,
+      ),
     )
   }
   async getCaseDetail(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapCaseDetail(
-      (await this.read(
-        `/api/v1/review-cases/${encodeURIComponent(id)}`,
-        signal,
-        workClass,
-      )) as CaseDetailDto,
+      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal, workClass),
     )
   }
 
@@ -1619,11 +1701,11 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ) {
-    const value = (await this.read(
+    const value = await this.read(
       `/api/v1/review-cases/${encodeURIComponent(id)}/successor`,
       signal,
       workClass,
-    )) as ResponseSchema<'_CaseSuccessorResponse'>
+    )
     return value.review_case_id
   }
   async getEvidence(
@@ -1635,20 +1717,16 @@ export class ReviewApiClient implements ReviewHttp {
     const p = new URLSearchParams({ limit: '50' })
     if (cursor) p.set('cursor', cursor)
     return mapEvidence(
-      (await this.read(
+      await this.read(
         `/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`,
         signal,
         workClass,
-      )) as EvidenceDto,
+      ),
     )
   }
   async getHistory(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapHistory(
-      (await this.read(
-        `/api/v1/review-cases/${encodeURIComponent(id)}/history`,
-        signal,
-        workClass,
-      )) as HistoryDto,
+      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal, workClass),
     )
   }
   // The answer is decoded as a consideration, never null, before it is mapped.
@@ -1661,18 +1739,16 @@ export class ReviewApiClient implements ReviewHttp {
       'POST',
       false,
       false,
-      (value) => mapCoverConsideration(value as CoverConsiderationDto),
+      (value) => mapCoverConsideration(value),
     )
   }
   async getPreparation(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return mapPreparation(
-      (await this.read('/api/v1/review-preparation', signal, workClass)) as PreparationDto,
-    )
+    return mapPreparation(await this.read('/api/v1/review-preparation', signal, workClass))
   }
   // Scan and retry answer the library's progress; every other control answers
   // the whole preparation view.
   async preparationAction(
-    path: string,
+    path: PreparationActionPath,
     signal?: AbortSignal,
   ): Promise<PreparationProgress | PreparationView> {
     const progress = /(?:^|\/)(?:scan|retry)$/.test(path)
@@ -1684,6 +1760,8 @@ export class ReviewApiClient implements ReviewHttp {
       'POST',
       false,
       false,
+      // `value` is either command's decoded answer; the path, not the type,
+      // says which, so each branch narrows to its own.
       (value) =>
         progress ? (value as PreparationProgress) : mapPreparation(value as PreparationDto),
     )
@@ -1711,15 +1789,14 @@ export class ReviewApiClient implements ReviewHttp {
       'POST',
       false,
       false,
-      (value) => mapPreparation(value as PreparationDto),
+      (value) => mapPreparation(value),
     )
   }
   // The confirmation is mapped inside `mutate`, so one the browser cannot read,
   // or one naming another case, is an uncertain outcome rather than a refusal
   // a same-key Retry would only repeat (#1688).
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
-    const map = (value: unknown) =>
-      mapDecisionAcknowledgement(value as DecisionAcknowledgementDto, id)
+    const map = (value: DecisionAcknowledgementDto) => mapDecisionAcknowledgement(value, id)
     if (command.authoredDescription) {
       return this.mutate(
         `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/selection`,
@@ -1780,36 +1857,20 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async getPolicyState(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return (await this.read('/api/v1/metadata-policy/state', signal, workClass)) as PolicyStateView
+    return await this.read('/api/v1/metadata-policy/state', signal, workClass)
   }
   async getShadowPosture(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return (await this.read(
-      '/api/v1/metadata-policy/shadow',
-      signal,
-      workClass,
-    )) as ShadowPostureView
+    return await this.read('/api/v1/metadata-policy/shadow', signal, workClass)
   }
   async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return (await this.read(
-      '/api/v1/metadata-policy/automatic-safety',
-      signal,
-      workClass,
-    )) as AutomaticSafetyView
+    return await this.read('/api/v1/metadata-policy/automatic-safety', signal, workClass)
   }
   async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return (await this.read(
-      '/api/v1/metadata-policy/shadow/outcomes?limit=10',
-      signal,
-      workClass,
-    )) as ShadowSampleView
+    return await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal, workClass)
   }
   async getPolicyTransition(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     // The decoder accepts `null`: no transition has run.
-    return (await this.read(
-      '/api/v1/metadata-policy/transition',
-      signal,
-      workClass,
-    )) as PolicyTransitionView | null
+    return await this.read('/api/v1/metadata-policy/transition', signal, workClass)
   }
   // A preview writes nothing, so an answer that fails decoding or a named check
   // is a 502, never an uncertain write (#1692).
@@ -1822,7 +1883,7 @@ export class ReviewApiClient implements ReviewHttp {
       'POST',
       true,
       true,
-      (value) => mapPolicyPreview(value as PolicyPreviewView),
+      (value) => mapPolicyPreview(value),
     )
   }
   // The activation may have committed, so an answer for another policy is an
@@ -1837,16 +1898,15 @@ export class ReviewApiClient implements ReviewHttp {
       false,
       false,
       (value) => {
-        const activation = value as PolicyActivationView
+        const activation = value
         if (activation.policy_id !== request.policy_id)
           throw new ApiError(502, 'invalid_policy_activation_response')
         return activation
       },
     )
   }
-  // Every path is decoded by its operation's decoder before `mutate` returns,
-  // so the answer is that operation's documented answer; `mutate` takes its
-  // type from the declared return.
+  // Every path is decoded by its operation's decoder before `mutate` returns;
+  // `mutate`'s answer for the path is `PolicyCommandAnswer<P>` by definition.
   async policyCommand<P extends PolicyCommandPath>(
     path: P,
     body?: PolicyCommandBody<P>,
@@ -1877,11 +1937,11 @@ export class ReviewApiClient implements ReviewHttp {
       p.set('page_size', String(search.pageSize))
     }
     return mapActivity(
-      (await this.read(
-        `/api/v1/activity${p.size ? `?${p}` : ''}`,
+      await this.read(
+        `/api/v1/activity${p.size ? (`?${p}` satisfies `?${string}`) : ''}`,
         signal,
         workClass,
-      )) as ActivityDto,
+      ),
     )
   }
 
@@ -1889,11 +1949,7 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityPermissionReadinessView> {
-    const value = (await this.read(
-      '/api/v1/activity/permission-readiness',
-      signal,
-      workClass,
-    )) as ResponseSchema<'_ActivityPermissionReadiness'>
+    const value = await this.read('/api/v1/activity/permission-readiness', signal, workClass)
     const { example } = value
     return {
       ...value,
@@ -1905,11 +1961,7 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityConsentView> {
-    return (await this.read(
-      '/api/v1/activity/consent-state',
-      signal,
-      workClass,
-    )) as ActivityConsentView
+    return await this.read('/api/v1/activity/consent-state', signal, workClass)
   }
 
   async getActivityTransitions(
@@ -1918,27 +1970,30 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityTransitionsView> {
-    const query = afterSequence === undefined ? '' : `?after_sequence=${String(afterSequence)}`
-    return (await this.read(
+    const query: '' | `?${string}` =
+      afterSequence === undefined ? '' : `?after_sequence=${String(afterSequence)}`
+    return await this.read(
       `/api/v1/activity/${encodeURIComponent(eventId)}/transitions${query}`,
       signal,
       workClass,
-    )) as ActivityTransitionsView
+    )
   }
   // Consent and revoke answer the decoded Activity view, mapped inside `mutate`
   // so a failed named check is uncertain. Field-effects pause and resume
   // document only 204, which is not decoded; a body from either is not one
   // this client can read, so that write is uncertain too, as before (#1691).
   async activityCommand(
-    path: string,
+    path: ActivityCommandPath,
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined> {
-    const url = `/api/v1/${path}`
+    const url: `/api/v1/${ActivityCommandPath}` = `/api/v1/${path}`
     const operation = matchOperation('POST', url)
     const decoded = operation !== undefined && DECODED.has(operation)
     return this.mutate(url, body, signal, undefined, 'POST', false, false, (value) => {
       if (!decoded) throw new ApiError(502, 'invalid_activity_response')
+      // Past the guard the answer is consent's or revoke's decoded view; the
+      // field-effects answers have no decoder, so `value` is typed `unknown`.
       return mapActivity(value as ActivityDto)
     })
   }
@@ -1956,8 +2011,12 @@ export class ReviewApiClient implements ReviewHttp {
     }
   }
 
-  private async read(path: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return this.request(
+  private async read<P extends RoutablePath<'GET'>>(
+    path: P,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
+    return this.request<RequestAnswer<'GET', P>>(
       path,
       { headers: { 'X-ML-Work-Class': workClass }, ...(signal ? { signal } : {}) },
       { unsafe: false },
@@ -1965,16 +2024,22 @@ export class ReviewApiClient implements ReviewHttp {
   }
   // `map` runs on the decoded answer of a migrated operation. A named check it
   // fails on a request that may have written is uncertain, never a refusal.
-  private async mutate<T = unknown>(
-    path: string,
+  private async mutate<
+    P extends RoutablePath<M>,
+    M extends HttpMethod = 'POST',
+    T = RequestAnswer<M, P>,
+  >(
+    path: P,
     body?: unknown,
     signal?: AbortSignal,
     extraHeaders?: HeadersInit,
-    method = 'POST',
+    method: M | 'POST' = 'POST',
     sideEffectFree = false,
     writesNothing = false,
-    map?: (value: unknown) => T,
-  ): Promise<T> {
+    map?: (value: RequestAnswer<M, P>) => T,
+    // `NoInfer`: without `map`, `T` stays the path's answer; a caller's
+    // expected type cannot widen it (#1730).
+  ): Promise<NoInfer<T>> {
     if (!this.buildIdentity) {
       this.onBuildMismatch()
       throw new BuildMismatchError()
@@ -1985,7 +2050,7 @@ export class ReviewApiClient implements ReviewHttp {
     // `sideEffectFree` only lets a CSRF-renewed request be sent again;
     // `writesNothing` says the command changes nothing, so an answer that fails
     // decoding or a named check is a 502 rather than an uncertain write (#1685).
-    return (await this.request(
+    return await this.request<RequestAnswer<M, P>, T>(
       path,
       {
         method,
@@ -1999,13 +2064,13 @@ export class ReviewApiClient implements ReviewHttp {
         uncertain: !writesNothing,
         ...(map ? { map } : {}),
       },
-    )) as T
+    )
   }
   // A 403 `csrf` challenge renews the page token once. Only a request that is
   // safe to repeat -- idempotency-keyed or side-effect free -- is then sent
   // once more; every other one, and a resend refused again, asks the owner to
   // press again (#1018).
-  private async request(
+  private async request<V, R = V>(
     path: string,
     init: RequestInit,
     {
@@ -2017,9 +2082,9 @@ export class ReviewApiClient implements ReviewHttp {
       unsafe: boolean
       resend?: boolean
       uncertain?: boolean
-      map?: (value: unknown) => unknown
+      map?: (value: V) => R
     },
-  ): Promise<unknown> {
+  ): Promise<R> {
     // A write the network lost may have landed. Only the network calls make
     // that ambiguous: a TypeError from decoding or `map` is a defect and
     // propagates unchanged (#1685).
@@ -2086,13 +2151,15 @@ export class ReviewApiClient implements ReviewHttp {
       return uncertain ? new UncertainMutationError(failure) : new ResponseDecodeError(failure)
     }
     // A 204 carries no body, so only an operation outside the gate may answer
-    // one; a gated operation documents no 204 and fails closed below.
-    if (response.status === 204 && !gated) return undefined
+    // one; a gated operation documents no 204 and fails closed below. Every
+    // operation outside the gate that this client sends has no decoder, so its
+    // answer type (`RequestAnswer`) is `unknown` and holds `undefined`.
+    if (response.status === 204 && !gated) return undefined as R
     const decoder = gated ? decoders[operation][String(response.status)] : undefined
     if (gated && decoder === undefined) throw failed('', 'no_decoder')
     let value: unknown
     try {
-      value = (await response.json()) as unknown
+      value = await response.json()
     } catch {
       if (unsafe) throw new AmbiguousMutationError()
       throw new ApiError(502, 'invalid_json_response')
@@ -2105,9 +2172,16 @@ export class ReviewApiClient implements ReviewHttp {
         throw error
       }
     }
-    if (!map) return value
+    // The one place the answer takes its type (#1730). `read` and `mutate` name
+    // `V` as `RequestAnswer` of their path: the answer of the operation
+    // `OperationOf` resolves the path to, which is the operation `matchOperation`
+    // picked above (a test holds the two together for every operation). So the
+    // decoder that just ran returned `V`; an operation with no decoder has the
+    // answer `unknown`. Without `map`, `R` is `V`: `read` names no `R`, and
+    // `mutate`'s `T` defaults to `V` and cannot be inferred from its caller.
+    if (!map) return value as R
     try {
-      return map(value)
+      return map(value as V)
     } catch (error) {
       if (uncertain && error instanceof ApiError) throw failed(error.code, 'invariant')
       throw error
@@ -2272,7 +2346,7 @@ const mapReviewerAccess = (value: ReviewerAccessView): ReviewerAccessView => {
   if (value.description_metadata !== null) mapDescriptionMetadata(value.description_metadata)
   return value
 }
-const reviewerAccess = (value: unknown) => mapReviewerAccess(value as ReviewerAccessView)
+const reviewerAccess = (value: ReviewerAccessView) => mapReviewerAccess(value)
 
 // Issued and waiting carry the sign-in prompt, and no other state does (X47).
 const mapCodexDevice = (value: CodexDeviceAuthState): CodexDeviceAuthState => {
@@ -2285,10 +2359,10 @@ const mapCodexDevice = (value: CodexDeviceAuthState): CodexDeviceAuthState => {
     throw new ApiError(502, 'invalid_codex_device_response')
   return value
 }
-const codexDevice = (value: unknown) => mapCodexDevice(value as CodexDeviceAuthState)
+const codexDevice = (value: CodexDeviceAuthState) => mapCodexDevice(value)
 // A settings answer is decoded before `mutate` hands it here; the decoder
 // fills a library's omitted language list with its default, the empty list.
-const settingsView = (value: unknown) => value as SettingsView
+const settingsView = (value: SettingsView) => value
 // The media-health and provider-outcome lists are decoded with the document
 // that carries them (report, works list, case detail, evidence); these only
 // rename (#1688).
@@ -2310,7 +2384,7 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
   status: value.status,
 })
 // Formats any target or proposed value. It throws nothing: the Activity
-// example's before and after values are decoded as unknown.
+// example's before and after values are decoded to `unknown`.
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'

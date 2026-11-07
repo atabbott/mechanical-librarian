@@ -12,6 +12,7 @@ import {
   sessionRefreshedCopy,
 } from '../api/http'
 import type {
+  ActivityCommandPath,
   ActivityEventView,
   ActivityLibraryView,
   ActivityPermissionReadinessView,
@@ -428,7 +429,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // refetch; only a new search or page closes them.
   const [expandedChecks, setExpandedChecks] = useState<string | null>(null)
   const mutation = useMutation({
-    mutationFn: async ({ path, body, basis }: { path: string; body?: unknown; basis?: string }) => {
+    mutationFn: async ({
+      path,
+      body,
+      basis,
+    }: {
+      path: ActivityCommandPath
+      body?: unknown
+      basis?: string
+    }) => {
       // Re-read the basis the draft was reviewed against, freshly and before
       // any grant is sent; the server still checks the grant itself.
       if (basis !== undefined) {

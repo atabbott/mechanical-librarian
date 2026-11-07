@@ -42,6 +42,7 @@ import type {
   LibrarySearch,
   PolicySearch,
   PolicyStateView,
+  PreparationActionPath,
   PreparationView,
   ProviderThrottleEntry,
   ReviewHttp,
@@ -510,7 +511,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
     return () => window.clearTimeout(timer)
   }, [acknowledgedRecovery, recovered])
   const action = useMutation({
-    mutationFn: (path: string) => http.preparationAction(path),
+    mutationFn: (path: PreparationActionPath) => http.preparationAction(path),
     retry: false,
     onMutate: (path) => {
       setRecovered(undefined)
@@ -801,7 +802,7 @@ export const PreparationActivity = () => {
   const popover = useRef<HTMLElement>(null)
   const pending = useRef(false)
   const action = useMutation({
-    mutationFn: (path: string) => http.preparationAction(path),
+    mutationFn: (path: PreparationActionPath) => http.preparationAction(path),
     retry: false,
     onSettled: async () => {
       pending.current = false
@@ -820,7 +821,7 @@ export const PreparationActivity = () => {
       : undefined
   // Each command is aria-disabled rather than disabled, so focus stays on it;
   // the guard drops a press while one is pending or the command is refused.
-  const command = (path: string, refused: boolean) => () => {
+  const command = (path: PreparationActionPath, refused: boolean) => () => {
     if (refused || pending.current) return
     pending.current = true
     action.mutate(path)
