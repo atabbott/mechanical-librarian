@@ -48,8 +48,10 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_asin_feed_plan,
     audiobook_carried_plan,
     audiobook_discovery_plan,
+    companion_binding_plan,
     metadata_discovery_plan,
     provider_observation,
+    refit_companion_books,
     require_report_current,
     with_lane_dispatch,
 )
@@ -352,6 +354,9 @@ class GenerateProviderRetrySuccessor:
                 audio=source.audio,
                 library_languages=source.library_languages,
                 cover_recovery=source.cover_recovery,
+                # The companion EPUB is evidence the source read, and its
+                # lanes replay against it (#1319, #1468).
+                companion=source.companion,
             )
 
             def currentness() -> bool:
@@ -485,16 +490,21 @@ class GenerateProviderRetrySuccessor:
             or snapshot.fields != source.target.fields
         ):
             raise CurrentnessError("target or media changed")
-        plan = (
+        # The feed is rebuilt from the whole plan, as preparation built it: a
+        # plan whose only lane is the companion ISBN lane feeds its leads on
+        # that lane's references, which the binding's own plan drops (#1468).
+        full = (
             audiobook_discovery_plan(
                 snapshot,
                 source.local_claims,
                 audio=source.audio,
                 library_languages=source.library_languages,
+                companion=source.companion,
             )
             if audio
             else metadata_discovery_plan(snapshot, source.local_claims)
         )
+        plan = companion_binding_plan(full, original.authority) if audio else full
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
         if audio and original.authority == "audible_catalog":
@@ -507,7 +517,7 @@ class GenerateProviderRetrySuccessor:
             and all(lane.kind is ProviderQueryKind.ASIN for lane in original.lanes)
             and not any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes)
         ):
-            feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
+            feed = audiobook_asin_feed_plan(snapshot, full, source.providers)
             if feed is None:
                 raise ProviderRetrySuccessorError("provider retry source is invalid")
             return feed
@@ -803,7 +813,7 @@ class GenerateProviderRetrySuccessor:
                 audio_editions=tuple(
                     edition
                     for edition in evidence.audio_editions
-                    if lane.kind is ProviderQueryKind.WORK
+                    if lane.kind in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
                     and observation.status is ProviderStatus.CANDIDATES
                     and any(
                         item.edition_identity == edition.work_identity
@@ -815,9 +825,20 @@ class GenerateProviderRetrySuccessor:
         # Merge over the observed lanes only: retrying an asserted lane that
         # now finds nothing never dispatches the alternative it would have
         # permitted, a limitation the successor states rather than widens.
+        results = tuple(
+            result(lane) for lane in plan.lanes if lane.identity in old_lanes
+        )
+        # The retried lanes' editions can join or leave the aggregate, so the
+        # companion books are refit against what the merge keeps (#1468).
+        refit = refit_companion_books(results, plan)
+        narrowed = {
+            after.lane.identity
+            for before, after in zip(results, refit, strict=True)
+            if after is not before
+        }
         merged = provider_observation(
             original.provider,
-            tuple(result(lane) for lane in plan.lanes if lane.identity in old_lanes),
+            refit,
             authority=original.authority,
             diagnostics=merge_provider_diagnostics(
                 original.diagnostics, replacement.diagnostics
@@ -844,7 +865,9 @@ class GenerateProviderRetrySuccessor:
                 "provider retry overflow cannot be retained"
             )
         # A retry must never rewrite an unselected lane's persisted evidence,
-        # except a recording-lookup hint (#1257) whose product it now retains.
+        # except a recording-lookup hint (#1257) whose product it now retains,
+        # or a companion book whose only linking edition the merge no longer
+        # keeps (#1468): the companion rule narrows that lane, never widens it.
         merged_lanes = {lane.identity: lane.to_data() for lane in merged.lanes}
         held = candidate_asins(
             (*merged.candidates, *merged.recording_lookup_candidates)
@@ -860,7 +883,7 @@ class GenerateProviderRetrySuccessor:
                 ),
             ).to_data()
             for identity, lane in old_lanes.items()
-            if identity not in selected_ids
+            if identity not in selected_ids and identity not in narrowed
         ):
             raise ProviderRetrySuccessorError("provider retry merged sibling changed")
         return merged

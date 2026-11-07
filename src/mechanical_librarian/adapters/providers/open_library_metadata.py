@@ -353,6 +353,8 @@ class OpenLibraryMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                     audio=plan.audio,
+                    companion=plan.companion,
+                    companion_linked_asins=plan.companion_linked_asins,
                 )
                 lane_result, _ = ledger.resolve(
                     kind=lookup.kind.value,

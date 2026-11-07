@@ -3517,3 +3517,159 @@ def test_only_a_google_books_retry_draws_on_the_google_burst_budget() -> None:
         assert other.google_burst_remaining is None
     unpaced, _ = _resolve("google", "google_books", None)
     assert unpaced.google_burst_remaining is None
+
+
+def test_a_companion_isbn_feed_retry_rebuilds_its_leads_on_the_isbn() -> None:
+    """A lead fed from the companion ISBN lane alone is recovered (#1468).
+
+    With no search, the lead stands on the companion ISBN lane's references.
+    The per-ASIN binding's own plan drops that lane, so recovery rebuilds the
+    feed from the whole plan, exactly as preparation built it.
+    """
+    from tests.unit import test_companion_epub_matching as companion_tests
+
+    companion = companion_tests._companion(title=None)
+    fields = companion_tests._fields(None, ())
+    snapshot = TargetSnapshot(
+        "audiobook",
+        None,
+        (TargetFile("b" * 64, "book.m4b", "m4b"),),
+        fields=fields,
+        companion=TargetFile(companion.identity, "book.epub", "epub"),
+    )
+    claims = (companion_tests._duration_claim(),)
+    plan = audiobook_discovery_plan(
+        snapshot, claims, audio=_RETAINED_AUDIO, companion=companion
+    )
+    hardcover = companion_tests._hardcover(
+        companion,
+        (companion_tests._edition(1, companion_tests._LOCAL_SECONDS, "Nia Narrator"),),
+    )
+    feed = audiobook_asin_feed_plan(snapshot, plan, (hardcover,))
+    assert feed is not None
+    (lane,) = feed.lanes
+    original = recorded_dispatch(
+        provider_observation(
+            "enrichment",
+            (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+            authority="audnexus",
+        )
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=tuple(
+            sorted((hardcover, original), key=lambda value: value.provider)
+        ),
+        audio=_RETAINED_AUDIO,
+        companion=companion,
+    )
+    provider = _Provider(
+        provider_observation(
+            "enrichment",
+            (ProviderLaneResult(lane, ProviderStatus.NO_MATCH),),
+            authority="audnexus",
+        )
+    )
+    successor = MetadataReport.from_json(
+        _fed_successor(snapshot, report, provider).run(
+            report.report_id,
+            (lane.identity,),
+            provider_name="enrichment",
+            adapter="audnexus",
+            generation=2,
+        )
+    )
+    assert [value.lanes for value in provider.plans] == [feed.lanes]
+    enrichment = next(
+        value for value in successor.providers if value.provider == "enrichment"
+    )
+    assert [value.status for value in enrichment.lanes] == [ProviderStatus.NO_MATCH]
+
+
+def test_a_failed_companion_isbn_lane_at_hardcover_is_retried() -> None:
+    """Hardcover's companion lane recovers beside a local product lane (#1468).
+
+    The plan holds the product lane and the companion ISBN lane; Hardcover
+    serves only the ISBN lane, and its rebuilt plan names only that lane, so a
+    transient failure of the lookup reconciles and is asked again.
+    """
+    from tests.support.audiobook_providers import audio_claim
+    from tests.unit import test_companion_epub_matching as companion_tests
+
+    companion = companion_tests._companion()
+    fields = companion_tests._fields("Asserted Title", ("Ada Author",))
+    snapshot = TargetSnapshot(
+        "audiobook",
+        "Asserted Title",
+        (TargetFile("b" * 64, "book.m4b", "m4b"),),
+        fields=fields,
+        companion=TargetFile(companion.identity, "book.epub", "epub"),
+    )
+    claims = (
+        companion_tests._target_title_claim("Asserted Title"),
+        companion_tests._duration_claim(),
+        audio_claim(ClaimKind.ASIN, "B0LOCAL001", 4),
+    )
+    plan = audiobook_discovery_plan(
+        snapshot, claims, audio=_RETAINED_AUDIO, companion=companion
+    )
+    (isbn,) = (lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+    original = recorded_dispatch(
+        provider_observation(
+            "catalogue",
+            (ProviderLaneResult(isbn, ProviderStatus.UNAVAILABLE),),
+            authority="hardcover",
+        )
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(original,),
+        audio=_RETAINED_AUDIO,
+        companion=companion,
+    )
+    provider = _Provider(
+        provider_observation(
+            "catalogue",
+            (ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),),
+            authority="hardcover",
+        )
+    )
+    service = GenerateProviderRetrySuccessor(
+        target=_Target(snapshot),
+        inspector=_Inspector(),
+        repository_factory=lambda: cast(ReportRepository, _Repository(report)),
+        audio_inspector=cast("Any", _Inspector()),
+        provider_resolver=cast(
+            "ProviderRetryResolver",
+            lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("catalogue", True, lambda: provider, "hardcover"),
+                "hardcover",
+                2,
+            ),
+        ),
+        mount=MediaMountConfiguration("audiobooks", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=lambda *_args: None,
+    )
+    successor = MetadataReport.from_json(
+        service.run(
+            report.report_id,
+            (isbn.identity,),
+            provider_name="catalogue",
+            adapter="hardcover",
+            generation=2,
+        )
+    )
+    assert [[lane.kind for lane in value.lanes] for value in provider.plans] == [
+        [ProviderQueryKind.ISBN]
+    ]
+    assert successor.companion == companion
+    assert [lane.status for lane in successor.providers[0].lanes] == [
+        ProviderStatus.NO_MATCH
+    ]
