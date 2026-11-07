@@ -48,6 +48,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_narrator_disjoint,
     candidate_recording_runtime_veto,
     carried_asin_claim,
+    companion_linked_asins,
     corroborated_recording_candidate,
     hardcover_edition_leads,
     local_claim_runtime_seconds,
@@ -1397,6 +1398,10 @@ def audiobook_asin_feed_plan(
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
+        companion=plan.companion,
+        companion_linked_asins=companion_linked_asins(
+            plan.local_claims, plan.audio, observations, plan.companion
+        ),
     )
 
 
@@ -2418,6 +2423,20 @@ def _identifier_lane_candidates(
         else set()
     )
     alternative_admitted |= corroborated_admitted
+    # A product whose ASIN the companion ISBN's own book lists as an audio
+    # edition counted against this file is that book's work (#1468). Like an
+    # alternative title's, it is kept only as the recording the tight band
+    # corroborates, so the ISBN confirms the work and never the recording.
+    alternative_admitted |= {
+        c.identity
+        for c in observation.candidates
+        if c.identity not in work_admitted
+        and lookup.requested_asin is not None
+        and lookup.requested_asin in lookup.companion_linked_asins
+        and lookup.requested_asin in _candidate_valid_asins(c)
+        # Narrators the file never credits name another recording of the work.
+        and not candidate_narrator_disjoint(c, lookup.local_claims)
+    }
     runtime_candidates = tuple(
         c
         for c in observation.candidates
@@ -2487,6 +2506,16 @@ def _identifier_lane_candidates(
             )
         )
     return tuple(shaped), tuple(sorted(refused, key=lambda value: value.identity))
+
+
+def _candidate_valid_asins(candidate: ProviderCandidate) -> frozenset[str]:
+    return frozenset(
+        value
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ASIN
+        and claim.state is FieldState.VALID
+        and (value := canonical_asin(claim.value)) is not None
+    )
 
 
 def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:

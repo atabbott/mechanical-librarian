@@ -355,6 +355,7 @@ class HardcoverMetadataProvider:
                     work_title=plan.work_title,
                     work_authors=plan.work_authors,
                     companion=plan.companion,
+                    companion_linked_asins=plan.companion_linked_asins,
                 )
                 attempts_before = len(self._session.attempt_records)
                 incomplete_causes_before = len(self._session.incomplete_causes)
