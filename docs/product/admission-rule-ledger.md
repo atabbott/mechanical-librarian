@@ -61,8 +61,8 @@ leave them.
   replays the product's series path under each snapshot's own source. A child
   process decodes each case with that revision's code and runs it with the
   field's stored setting, as if the field were sent to Automatic. The reason
-  it returns names the row. The row also shows how many fields reach the
-  identity match. A refused field is blocked unless its outcome keeps the
+  it returns names the row. `--breakdown W9` also shows how many fields
+  reach the identity match. A refused field is blocked unless its outcome keeps the
   current value. A W9 field is actionable when the same run, with the identity
   match accepting, produces the value.
 - **The pick.** The product ranks no alternatives: they are ordered by
