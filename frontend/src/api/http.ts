@@ -1294,6 +1294,15 @@ export class BuildMismatchError extends ApiError {
     this.name = 'BuildMismatchError'
   }
 }
+// The network lost a read, or a command that writes nothing, before any answer
+// arrived. Deliberately not an ApiError: nothing is uncertain, and no caller's
+// ApiError branch changes meaning (#1754).
+export class NetworkUnavailableError extends Error {
+  constructor() {
+    super('The server could not be reached.')
+    this.name = 'NetworkUnavailableError'
+  }
+}
 export class AmbiguousMutationError extends ApiError {
   constructor() {
     super(0, 'mutation_outcome_unknown')
@@ -2025,12 +2034,14 @@ export class ReviewApiClient implements ReviewHttp {
   ): Promise<R> {
     // A write the network lost may have landed. Only the network calls make
     // that ambiguous: a TypeError from decoding or `map` is a defect and
-    // propagates unchanged (#1685).
+    // propagates unchanged (#1685). A lost read, or a lost command that writes
+    // nothing, is a plain network failure (#1754).
     const network = async <R>(call: () => Promise<R>) => {
       try {
         return await call()
       } catch (error) {
-        if (unsafe && error instanceof TypeError) throw new AmbiguousMutationError()
+        if (error instanceof TypeError)
+          throw unsafe && uncertain ? new AmbiguousMutationError() : new NetworkUnavailableError()
         throw error
       }
     }

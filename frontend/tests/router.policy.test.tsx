@@ -42,6 +42,15 @@ const textClient = (status = 200) =>
       async () => new Response('Saved', { status, headers: { 'content-type': 'text/plain' } }),
     ),
   })
+// The same, losing every request on the network (#1754).
+const lostClient = () =>
+  new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn<typeof fetch>(async () => {
+      throw new TypeError('Failed to fetch')
+    }),
+  })
 
 // A scripted `policyCommand` mock receives the page's path and body untyped;
 // this hands both to the real client unchanged.
@@ -303,10 +312,18 @@ describe('Policy route', () => {
   // Validate and preview write nothing, so an answer the client cannot read is
   // that phase's failure; only the snapshot save may have written (#1692).
   describe('an undecodable answer', () => {
-    const run = async (failing: 'validate' | 'drafts' | 'preview', text = false) => {
+    const run = async (
+      failing: 'validate' | 'drafts' | 'preview',
+      answer: 'json' | 'text' | 'lost' = 'json',
+    ) => {
       const user = userEvent.setup()
       const status = failing === 'drafts' ? 201 : 200
-      const transport = text ? textClient(status) : answeringClient({ invented: true }, status)
+      const transport =
+        answer === 'lost'
+          ? lostClient()
+          : answer === 'text'
+            ? textClient(status)
+            : answeringClient({ invented: true }, status)
       const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
         // The page previews only through the typed method below.
         if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
@@ -358,7 +375,7 @@ describe('Policy route', () => {
       const { policyCommand, previewPolicy } = await run('preview')
       expect(
         await screen.findByText(
-          'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+          "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
         ),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
@@ -375,16 +392,53 @@ describe('Policy route', () => {
       ],
       [
         'preview',
-        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+        "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
       ],
     ] as const)("that is not JSON, to %s, shows that phase's copy", async (failing, copy) => {
-      await run(failing, true)
+      await run(failing, 'text')
       expect(await screen.findByText(copy)).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
     })
 
+    // A lost answer to a command that writes nothing is that phase's failure
+    // too; only the snapshot save may have written (#1754).
+    it.each([
+      [
+        'validate',
+        'The complete draft could not be validated. Nothing was saved or activated; try again.',
+        ['validate'],
+        0,
+      ],
+      [
+        'preview',
+        "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
+        ['validate', 'drafts'],
+        1,
+      ],
+    ] as const)(
+      "that the network lost, to %s, shows that phase's copy",
+      async (failing, copy, commands, previews) => {
+        const { policyCommand, previewPolicy } = await run(failing, 'lost')
+        expect(await screen.findByText(copy)).toBeVisible()
+        expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
+        expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(commands)
+        expect(previewPolicy).toHaveBeenCalledTimes(previews)
+        expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeEnabled()
+      },
+    )
+
+    it('that the network lost, to the snapshot save, could not be confirmed', async () => {
+      const { policyCommand } = await run('drafts', 'lost')
+      expect(
+        await screen.findByText(
+          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+        ),
+      ).toBeVisible()
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
+    })
+
     it('that is not JSON, to the snapshot save, could not be confirmed', async () => {
-      await run('drafts', true)
+      await run('drafts', 'text')
       expect(
         await screen.findByText(
           'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
@@ -424,7 +478,7 @@ describe('Policy route', () => {
 
     expect(
       await screen.findByText(
-        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+        "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
       ),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()

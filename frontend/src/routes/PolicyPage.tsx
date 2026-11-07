@@ -240,12 +240,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           message:
             'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
         })
-      else if (error instanceof AmbiguousMutationError)
-        setStatus({
-          tone: 'warning',
-          message:
-            'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
-        })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })
       else if (error instanceof ApiError && error.status === 422)
@@ -257,7 +251,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'error',
           message:
-            'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+            "The impact preview could not be shown. The draft's snapshot was saved, and nothing else changed; the active policy is the same. Choose Validate and preview to try again.",
         })
       else if (phase === 'drafts')
         setStatus({
