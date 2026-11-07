@@ -1375,9 +1375,7 @@ it.each(['evidence', 'history'])(
         await screen.findByText('Applied and verified in the library.', { exact: false }),
       ).toBeVisible()
       // The store's "stale" reads in the owner's words (#1542).
-      expect(
-        screen.getByText('Guarded application: closed.', { exact: false }),
-      ).toBeVisible()
+      expect(screen.getByText('Guarded application: closed.', { exact: false })).toBeVisible()
       expect(document.body.textContent).not.toMatch(/\bstale\b/iu)
       expect(
         screen.getByText('This authored selection was superseded by a later decision.', {
