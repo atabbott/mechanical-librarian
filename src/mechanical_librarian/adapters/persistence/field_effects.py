@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _ATTENTION_FACTS_JOIN_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -926,9 +927,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
                 (changed_at, document, review_case_id, destination, active_document),
             ).rowcount
+            # Only the active generation's decision is held (#1573).
             automatic = self._connection.execute(
                 "SELECT decision_id FROM automatic_decisions "
-                "WHERE review_case_id=? AND destination=?",
+                "WHERE review_case_id=? AND destination=? AND "
+                + _active_generation_automatic_sql("automatic_decisions"),
                 (review_case_id, destination),
             ).fetchone()
             if updated == 1 and automatic is not None:

@@ -21,8 +21,17 @@ shadow outcome remains its source identity, including its policy generation,
 candidate, evidence, and combination identity. The existing transaction owns
 the automatic/human uniqueness check, so a human/automatic race has one winner.
 
+An automatic decision decides its field only in the policy generation it was
+recorded under, the active generation of `metadata_policy_state` (#1573). A
+case holds at most one automatic decision per field and generation; one from
+an earlier generation stays as history and settles, holds, authorizes and
+blocks nothing. An owner decision still wins in any generation.
+
 Preview is still non-authoritative. It may be explicitly confirmed back to
-automatic only after persistence rechecks the sealed option set. Owner pause
+automatic only after persistence rechecks the sealed option set. Confirming
+requeues every complete current work to projection in the same transaction, so
+each is decided again in Automatic from the outcome Preview showed, including a
+work first prepared in Preview (#1573). Owner pause
 and durable category/global suspension make would-be automatic fields ordinary
 human attention; recovery is explicit.
 

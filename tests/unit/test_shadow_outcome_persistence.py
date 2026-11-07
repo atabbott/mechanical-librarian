@@ -6757,6 +6757,116 @@ def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic()
         reopened.close()
 
 
+def _decision_generations(repository) -> list[tuple[str, int]]:
+    return repository._connection.execute(
+        "SELECT destination,policy_generation FROM automatic_decisions "
+        "ORDER BY policy_generation,destination"
+    ).fetchall()
+
+
+def test_an_automatic_decision_is_one_per_case_field_and_generation() -> None:
+    """An earlier generation's decision blocks no fresh one (#1573)."""
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        title = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+        dates = _synthetic_automatic_tuple(repository, case_id, "date_precision")
+        generation = title.policy_generation
+        repository._record_automatic_outcomes(title, 7)
+        repository._record_automatic_outcomes(dates, 8)
+        assert _decision_generations(repository) == [
+            ("publishedDate", generation),
+            ("title", generation),
+        ]
+
+        # A later generation decides each field again, bundles included.
+        later_title = SimpleNamespace(
+            **{**vars(title), "policy_generation": generation + 1}
+        )
+        later_dates = SimpleNamespace(
+            **{**vars(dates), "policy_generation": generation + 1}
+        )
+        repository._record_automatic_outcomes(later_title, 9)
+        repository._record_automatic_outcomes(later_dates, 10)
+        expected = [
+            ("publishedDate", generation),
+            ("title", generation),
+            ("publishedDate", generation + 1),
+            ("title", generation + 1),
+        ]
+        assert _decision_generations(repository) == expected
+        # A replay is a no-op.
+        repository._record_automatic_outcomes(later_title, 11)
+        assert _decision_generations(repository) == expected
+
+        connection = repository._connection
+        row = connection.execute(
+            "SELECT review_case_id,destination,occurred_at,document "
+            "FROM automatic_decisions WHERE destination='title' "
+            "AND policy_generation=?",
+            (generation + 1,),
+        ).fetchone()
+        insert = (
+            "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+            "idempotency_digest,occurred_at,document,policy_generation) "
+            "VALUES(?,?,?,?,?,?,?)"
+        )
+        # A second decision for the same case, field and generation is refused.
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+            connection.execute(
+                insert,
+                (
+                    "automatic_decision_" + "e" * 64,
+                    row[0],
+                    row[1],
+                    "e" * 64,
+                    row[2],
+                    row[3],
+                    generation + 1,
+                ),
+            )
+        # A row whose generation disagrees with its document is refused.
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            connection.execute(
+                insert,
+                (
+                    "automatic_decision_" + "f" * 64,
+                    row[0],
+                    row[1],
+                    "f" * 64,
+                    row[2],
+                    row[3],
+                    generation + 2,
+                ),
+            )
+        connection.rollback()
+        assert _decision_generations(repository) == expected
+        repository.close()
+
+
+def test_an_owner_decision_of_an_earlier_episode_still_blocks_automation() -> None:
+    """Any owner decision on the field blocks an automatic one (ADR-0085)."""
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        repository.record_human_decision(_human_title_decision(repository, case_id, 1))
+        repository._connection.execute(
+            "INSERT INTO review_case_episodes VALUES(?,(SELECT MAX(ordinal) "
+            "FROM human_decisions WHERE review_case_id=?),0)",
+            (case_id, case_id),
+        )
+        repository._connection.commit()
+        title = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+        repository._record_automatic_outcomes(
+            SimpleNamespace(
+                **{**vars(title), "policy_generation": title.policy_generation + 1}
+            ),
+            2,
+        )
+        assert _decision_generations(repository) == []
+        repository.close()
+
+
 def test_incoherent_automatic_tuple_suspends_only_its_category_and_safety_recovery_restores_admission() -> (
     None
 ):
@@ -8836,6 +8946,45 @@ def test_title_recovery_requeues_real_completed_projection_atomically(tmp_path):
     reopened = open_repository(path, create=False)
     assert reopened.preparation_presentation(35) == settled
     reopened.close()
+
+
+def test_title_recovery_requeues_a_title_decided_only_in_an_earlier_generation(
+    tmp_path,
+):
+    """An earlier generation's title decision leaves the title undecided (#1573)."""
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    repository = open_repository(tmp_path / "title.sqlite")
+    safety = AutomaticSafetyState(
+        False, None, (("title_layout", "automatic_admission_failed"),)
+    )
+    case_id, _ = complete_title_work(
+        repository, isbn_title_report(current="Example Title"), safety=safety
+    )
+    connection = repository._connection
+    (generation,) = connection.execute(
+        "SELECT generation FROM metadata_policy_state"
+    ).fetchone()
+    assert generation >= 2
+    connection.execute(
+        "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+        "idempotency_digest,occurred_at,document,policy_generation) "
+        "VALUES(?,?,'title',?,1,json_object('policy_generation',?),?)",
+        (
+            "automatic_decision_" + "e" * 64,
+            case_id,
+            "e" * 64,
+            generation - 1,
+            generation - 1,
+        ),
+    )
+    connection.commit()
+    AutomaticSafetyControls(repository).recover(30, "title_layout")
+    assert connection.execute(
+        "SELECT stage,state FROM review_preparation_work"
+    ).fetchone() == ("projection", "queued")
+    repository.close()
 
 
 @pytest.mark.parametrize("mode", ["automatic", "ask", "ignore"])

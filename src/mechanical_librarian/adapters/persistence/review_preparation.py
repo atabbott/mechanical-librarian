@@ -59,6 +59,9 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_work,
     reopen_preparation_projection,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _active_generation_automatic_sql,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     LocalOperationLease,
@@ -80,6 +83,29 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
     ReviewTransition,
+)
+
+# Each work whose current report and current case it prepared, in a package
+# at the case's current checkpoint. Both requeues of a complete work to
+# projection read through it; each adds its own filter.
+_COMPLETE_CURRENT_CASE_WORK_SQL = (
+    "SELECT DISTINCT w.work_id,w.scan_id FROM review_preparation_work w "
+    "JOIN current_metadata_report_lineages m ON m.connection_name=w.connection_name "
+    "AND m.library_name=w.library_name AND m.item_id=w.item_id AND m.report_id=w.report_id "
+    "JOIN current_metadata_reports f ON f.connection_name=w.connection_name "
+    "AND f.library_name=w.library_name AND f.item_id=w.item_id "
+    "AND f.file_identity=w.file_identity AND f.report_id=w.report_id "
+    "JOIN current_review_case_lineages c ON c.connection_name=w.connection_name "
+    "AND c.library_name=w.library_name AND c.item_id=w.item_id "
+    "AND c.report_id=w.report_id AND c.proposal_set_id=w.proposal_set_id "
+    "AND c.review_case_id=w.review_case_id AND c.outcome IN ('admitted','superseded') "
+    "JOIN current_review_packages p ON p.connection_name=c.connection_name "
+    "AND p.library_name=c.library_name AND p.item_id=c.item_id "
+    "AND p.report_id=c.report_id AND p.proposal_set_id=c.proposal_set_id "
+    "AND p.review_case_id=c.review_case_id AND p.checkpoint=c.checkpoint "
+)
+_COMPLETE_CASE_WORK_WHERE_SQL = (
+    "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
 )
 
 # The exact vocabulary `review_preparation_work.failure_code` accepts. It
@@ -1811,21 +1837,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
     def _requeue_title_projections(self, updated_at: int) -> None:
         """Reconsider completed current titles inside the safety recovery transaction."""
         rows = self._connection.execute(
-            "SELECT DISTINCT w.work_id,w.scan_id FROM review_preparation_work w "
-            "JOIN current_metadata_report_lineages m ON m.connection_name=w.connection_name "
-            "AND m.library_name=w.library_name AND m.item_id=w.item_id AND m.report_id=w.report_id "
-            "JOIN current_metadata_reports f ON f.connection_name=w.connection_name "
-            "AND f.library_name=w.library_name AND f.item_id=w.item_id "
-            "AND f.file_identity=w.file_identity AND f.report_id=w.report_id "
-            "JOIN current_review_case_lineages c ON c.connection_name=w.connection_name "
-            "AND c.library_name=w.library_name AND c.item_id=w.item_id "
-            "AND c.report_id=w.report_id AND c.proposal_set_id=w.proposal_set_id "
-            "AND c.review_case_id=w.review_case_id AND c.outcome IN ('admitted','superseded') "
-            "JOIN current_review_packages p ON p.connection_name=c.connection_name "
-            "AND p.library_name=c.library_name AND p.item_id=c.item_id "
-            "AND p.report_id=c.report_id AND p.proposal_set_id=c.proposal_set_id "
-            "AND p.review_case_id=c.review_case_id AND p.checkpoint=c.checkpoint "
-            "JOIN shadow_decision_outcomes o ON o.review_case_id=w.review_case_id "
+            _COMPLETE_CURRENT_CASE_WORK_SQL
+            + "JOIN shadow_decision_outcomes o ON o.review_case_id=w.review_case_id "
             "AND o.report_id=w.report_id AND o.proposal_set_id=w.proposal_set_id "
             "JOIN shadow_outcome_field_facts title ON title.outcome_set_id=o.outcome_set_id "
             "AND title.destination='title' AND title.automatic_destination=1 "
@@ -1835,13 +1848,32 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "AND policy.generation=json_extract(o.document,'$.policy_generation') "
             "JOIN metadata_policy_resolutions resolution ON resolution.generation=policy.generation "
             "AND resolution.library_name=w.library_name AND resolution.resolved_policy_id=o.resolved_policy_id "
-            "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
-            "AND NOT EXISTS (SELECT 1 FROM human_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title') "
-            "AND NOT EXISTS (SELECT 1 FROM automatic_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title')"
+            + _COMPLETE_CASE_WORK_WHERE_SQL
+            + "AND NOT EXISTS (SELECT 1 FROM human_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title') "
+            "AND NOT EXISTS (SELECT 1 FROM automatic_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title' AND "
+            + _active_generation_automatic_sql("d")
+            + ")"
             # An owner's hold is not a reason to leave the title unprojected: a
             # successor carries it with nothing yet to hold, and it acts when a
             # write would be planned, never when the decision is made (ADR-0085).
         ).fetchall()
+        self._requeue_projection_work(rows, updated_at)
+
+    def _requeue_current_case_projections(self, updated_at: int) -> None:
+        """Project every complete current case work again, in the caller's transaction.
+
+        Confirming Automatic decides each current work from its outcome under
+        the active generation, which is the outcome Preview showed: projection
+        is content-addressed, so it reproduces the same outcome set (#1573).
+        """
+        rows = self._connection.execute(
+            _COMPLETE_CURRENT_CASE_WORK_SQL + _COMPLETE_CASE_WORK_WHERE_SQL
+        ).fetchall()
+        self._requeue_projection_work(rows, updated_at)
+
+    def _requeue_projection_work(
+        self, rows: list[tuple[str, str]], updated_at: int
+    ) -> None:
         for work_id, scan_id in rows:
             self._connection.execute(
                 "UPDATE review_preparation_work SET stage='projection',state='queued',"

@@ -375,6 +375,80 @@ def test_confirm_automatic_keeps_the_read_back_refusal_distinct() -> None:
     assert str(raised.value) == "automatic posture is unavailable"
 
 
+def _work_and_scan(repository) -> tuple[object, ...]:
+    return tuple(
+        repository._connection.execute(
+            "SELECT w.stage,w.state,s.state FROM review_preparation_work w "
+            "JOIN review_preparation_scans s ON s.scan_id=w.scan_id"
+        ).fetchone()
+    )
+
+
+def test_confirming_automatic_requeues_every_complete_current_case_work(
+    state_path: Path,
+) -> None:
+    """Confirm decides the prepared works again, in its own transaction (#1573)."""
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    repository.enter_shadow_preview(24, ())
+    destinations = {
+        category: "unsupported" if category == "explicit" else "ask"
+        for category in OPTION_CATALOGUE
+    }
+    destinations["title_layout"] = "automatic"
+    draft = MetadataPolicyProfile.create(
+        "Qualified automatic policy", dict(DEFAULT_OPTIONS), destinations
+    )
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (report.target.library,), {})
+    notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        25,
+        expected_active_generation=1,
+    )
+    current_policy = repository.current_resolved_metadata_policy(report.target.library)
+    assert current_policy is not None
+    successor = evaluate_report(
+        report, current_policy.resolved_id, dict(current_policy.destinations)
+    )
+    action = repository.claim_review_pipeline_action(26)
+    assert action is not None and action.stage == "proposal"
+    repository.publish_proposal(successor)
+    repository.advance_review_pipeline_action(action, successor.proposal_set_id, 27)
+    action = repository.claim_review_pipeline_action(28)
+    assert action is not None
+    admitted = json.loads(repository.admit_review_case(successor))
+    repository.advance_review_pipeline_action(action, admitted["review_case_id"], 29)
+    action = repository.claim_review_pipeline_action(30)
+    assert action is not None
+    repository.advance_review_pipeline_action(action, None, 31)
+    assert repository.claim_review_pipeline_action(32) is None
+    assert _work_and_scan(repository) == ("complete", "complete", "completed")
+    assert repository.shadow_posture() == "preview"
+
+    # A failed requeue rolls the confirmation back with it.
+    with (
+        patch.object(
+            repository._review_preparation,
+            "_requeue_current_case_projections",
+            side_effect=sqlite3.OperationalError("injected"),
+        ),
+        pytest.raises(MetadataReportError),
+    ):
+        repository.activate_qualified_automatic(33)
+    assert repository.shadow_posture() == "preview"
+    assert _work_and_scan(repository) == ("complete", "complete", "completed")
+
+    assert repository.activate_qualified_automatic(34) == "automatic"
+    assert _work_and_scan(repository) == ("projection", "queued", "processing")
+    running = repository.preparation_presentation(34)
+    assert running is not None and running.state.value == "running"
+    action = repository.claim_review_pipeline_action(35)
+    assert action is not None and action.stage == "projection"
+    assert action.review_case_id == admitted["review_case_id"]
+    repository.close()
+
+
 def test_policy_contention_is_read_from_the_condition_not_the_message(
     state_path: Path,
 ) -> None:

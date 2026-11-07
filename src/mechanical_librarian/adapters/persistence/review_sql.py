@@ -173,9 +173,25 @@ def _episode_decision_sql(decision: str) -> str:
     )
 
 
+def _active_generation_automatic_sql(decision: str) -> str:
+    """Whether the automatic decision row `decision` is of the active generation.
+
+    An automatic decision decides its field only in the policy generation it
+    was recorded under (ADR-0036). One from an earlier generation is history:
+    it settles, holds and authorizes nothing, and blocks no fresh decision
+    (#1573, #1601). The case page applies the same filter to the decisions it
+    reads.
+    """
+    return (
+        f"{decision}.policy_generation=(SELECT active_state.generation "
+        "FROM metadata_policy_state active_state)"
+    )
+
+
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
-# owner took back, nor one the work has since left and returned to.
+# owner took back, nor one the work has since left and returned to. An
+# automatic decision settles its field only in the active generation.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
@@ -185,8 +201,9 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description') "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=result.destination "
-    ") "
+    "AND decision.destination=result.destination AND "
+    + _active_generation_automatic_sql("decision")
+    + ") "
     "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current_selection "
     "JOIN cover_selection_authorities selection "
     "ON selection.selection_id=current_selection.selection_id "
@@ -410,6 +427,7 @@ __all__ = [
     "_REVIEW_SEARCH_SQL",
     "_SHADOW_ABSTENTION_SQL",
     "_SHADOW_OUTCOME_HISTORY_SQL",
+    "_active_generation_automatic_sql",
     "_episode_decision_sql",
 ]
 

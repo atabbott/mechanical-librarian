@@ -792,6 +792,9 @@ _COVER_CONSIDERATION_NO_UPDATE_SQL = "CREATE TRIGGER cover_considerations_no_upd
 _COVER_CONSIDERATION_NO_DELETE_SQL = "CREATE TRIGGER cover_considerations_no_delete BEFORE DELETE ON cover_considerations BEGIN SELECT RAISE(ABORT, 'cover considerations are append-only'); END"
 _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER cover_consideration_events_no_update BEFORE UPDATE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
 _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL = "CREATE TRIGGER cover_consideration_events_no_delete BEFORE DELETE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
+# An automatic decision decides its field only in the policy generation it was
+# recorded under (ADR-0036). A case keeps its earlier generations' decisions as
+# history, so a case, field and generation has at most one (#1573).
 _AUTOMATIC_DECISIONS_SQL = (
     "CREATE TABLE automatic_decisions ("
     "decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), "
@@ -800,7 +803,9 @@ _AUTOMATIC_DECISIONS_SQL = (
     "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
-    "UNIQUE(review_case_id,destination))"
+    "policy_generation INTEGER NOT NULL CHECK(typeof(policy_generation)='integer' AND policy_generation>=1), "
+    "CHECK((CASE WHEN json_valid(document) THEN json_extract(document,'$.policy_generation') IS policy_generation ELSE 0 END) IS 1), "
+    "UNIQUE(review_case_id,destination,policy_generation))"
 )
 _AUTOMATIC_SAFETY_SQL = (
     "CREATE TABLE automatic_safety_state ("
@@ -1258,6 +1263,14 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         ("insert",),
         _packages_of_case("{row}.destination"),
     ),
+    # Only the active generation's automatic decisions settle a field, so a
+    # change of generation reaches every current package holding one (#1601).
+    "metadata_policy_state": (
+        ("insert", "update", "delete"),
+        "SELECT DISTINCT c.connection_name,c.library_name,c.item_id,decision.destination "
+        "FROM automatic_decisions decision JOIN current_review_packages c "
+        "ON c.review_case_id=decision.review_case_id",
+    ),
     "current_description_decisions": (
         ("insert", "update", "delete"),
         _packages_of_case("'description'"),
@@ -1315,6 +1328,7 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "category_suspensions_document",
     ),
     "review_case_episodes": ("review_case_id", "decision_floor"),
+    "metadata_policy_state": ("generation",),
     "current_description_decisions": ("review_case_id",),
     "current_cover_considerations": ("review_case_id", "consideration_id"),
     "current_cover_selection_authorities": (

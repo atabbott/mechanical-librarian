@@ -311,7 +311,9 @@ def _automatic_decision(
     key = _hex(f"automatic:{case_id}:{destination}")
     repository._connection.execute(
         "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-        "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,1,'{}')",
+        "idempotency_digest,occurred_at,document,policy_generation) "
+        "SELECT ?,?,?,?,1,json_object('policy_generation',generation),generation "
+        "FROM metadata_policy_state",
         (f"automatic_decision_{key}", case_id, destination, key),
     )
 

@@ -310,7 +310,8 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         )
         connection.execute(
             "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-            "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            "idempotency_digest,occurred_at,document,policy_generation) "
+            "VALUES(?,?,?,?,?,?,?)",
             (
                 decision.decision_id,
                 decision.review_case_id,
@@ -318,6 +319,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
                 decision.idempotency_digest,
                 decision.occurred_at,
                 decision.to_json(),
+                decision.policy_generation,
             ),
         )
     connection.commit()

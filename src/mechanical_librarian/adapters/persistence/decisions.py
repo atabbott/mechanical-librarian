@@ -34,6 +34,7 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
+    _active_generation_automatic_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -311,12 +312,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
         for decision in decisions:
             conflict = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+                "AND policy_generation=?",
                 (
                     decision.review_case_id,
                     decision.destination,
                     decision.review_case_id,
                     decision.destination,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if conflict is not None and decision.bundle_id is not None:
@@ -340,12 +343,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 continue
             conflict = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+                "AND policy_generation=?",
                 (
                     decision.review_case_id,
                     decision.destination,
                     decision.review_case_id,
                     decision.destination,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if conflict is not None:
@@ -353,7 +358,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 # a global safety event.  Bundles were removed as a unit above.
                 continue
             self._connection.execute(
-                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
                 (
                     decision.decision_id,
                     decision.review_case_id,
@@ -361,6 +366,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.idempotency_digest,
                     decision.occurred_at,
                     decision.to_json(),
+                    decision.policy_generation,
                 ),
             )
 
@@ -562,12 +568,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
             if previous is None:
                 previous = self._connection.execute(
                     "SELECT decision_id,'automatic' FROM automatic_decisions "
-                    "WHERE review_case_id=? AND destination=?",
+                    "WHERE review_case_id=? AND destination=? AND "
+                    + _active_generation_automatic_sql("automatic_decisions"),
                     (decision.review_case_id, decision.destination),
                 ).fetchone()
             automatic = self._connection.execute(
                 "SELECT decision_id FROM automatic_decisions "
-                "WHERE review_case_id=? AND destination=?",
+                "WHERE review_case_id=? AND destination=? AND "
+                + _active_generation_automatic_sql("automatic_decisions"),
                 (decision.review_case_id, decision.destination),
             ).fetchone()
             if cover_automatic is not None and cover_automatic[1] == "automatic":
@@ -780,12 +788,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise AutomaticDecisionError("stale")
             existing = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+                "AND policy_generation=?",
                 (
                     decision.review_case_id,
                     decision.destination,
                     decision.review_case_id,
                     decision.destination,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if existing is not None:
@@ -866,7 +876,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 raise AutomaticDecisionError("stale")
             self._connection.execute(
-                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
                 (
                     decision.decision_id,
                     decision.review_case_id,
@@ -874,6 +884,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.idempotency_digest,
                     decision.occurred_at,
                     decision.to_json(),
+                    decision.policy_generation,
                 ),
             )
             if self._binding is not None:
