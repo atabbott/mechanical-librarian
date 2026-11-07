@@ -931,7 +931,7 @@ CATALOGUE: tuple[Gate, ...] = (
     Gate(
         "W7",
         "Work and edition binding",
-        "Corroborated band-agreeing rule and its permission",
+        "Band-agreeing rule confirmed by narrator or series number, and its permission",
         "domain/audiobook_corroboration.py; application/metadata_report.py",
         "#1463 (cca9067c), #1465 (120e60a4)",
         "14 of 42 probe items rescued; 0 different-work admissions in 57,570 cross-item pairs",
@@ -1005,13 +1005,13 @@ CATALOGUE: tuple[Gate, ...] = (
     Gate(
         "C3",
         "Cover identity classifier",
-        "Audiobook cross-authority perceptual-hash corroboration",
+        "Audiobook cover perceptual-hash match across sources",
         "application/cover_identity.py _cover_corroboration_reasons",
         "#948 (6423552f); ADR-0064",
         _NOT_RECORDED,
         "6423552fa6315ebae8fb632c437f56b8eaaa43ad",
         "cover",
-        "admit an audiobook cover candidate one authority pictures",
+        "admit an audiobook cover candidate only one source pictures",
         # The rule only adds reasons to a classified candidate; the outcome
         # comes from _classify_sources, which never reads them (ADR-0064).
         "informational",
@@ -1190,7 +1190,7 @@ CATALOGUE: tuple[Gate, ...] = (
     Gate(
         "A2",
         "Applicability and abstention",
-        "Independent corroboration required",
+        "Second source required",
         "domain/proposal_set.py",
         "#351 (d35215e8); narrators #966 (0ce358e9), #1642 (5558b7b3)",
         "as A1",
@@ -1221,13 +1221,13 @@ CATALOGUE: tuple[Gate, ...] = (
     Gate(
         "A4",
         "Applicability and abstention",
-        "Date refinement and year conflict need corroboration",
+        "Date refinement and year conflict need a second source",
         "domain/proposal_set.py",
         "#351 (d35215e8), #415 (0d0021d1); ADR-0019",
         _NOT_RECORDED,
         "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
         "publishedDate, publishedYear",
-        "admit the lowest-identifier uncorroborated date",
+        "admit the lowest-identifier date one source states",
         "alternative",
         _reason({"date_refinement_requires_corroboration", "date_year_conflict"}),
     ),
@@ -1305,7 +1305,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "#296 (ef49d6c2), 102548c0",
         _NOT_RECORDED,
         "ef49d6c2956a6975595bef971807d85aefd76f0b",
-        "the destinations the bounded local claim feeds",
+        "the destinations the length-limited local claim feeds",
         "admit oversized or unsafe local text",
         "not_identity",
         _bounded_text,
@@ -1383,15 +1383,14 @@ CATALOGUE: tuple[Gate, ...] = (
 
 _CONTROL_TEXT: dict[str, str] = {
     "not_identity": "not estimable from natural controls",
-    "not_retained": "not estimable: the refused records were not retained",
+    "not_retained": "not estimable: the refused records were not recorded",
     "informational": "not estimable: the rule adds reasons and refuses nothing",
 }
 _STATUS_TEXT: dict[str, str] = {
-    "gate_postdates_source": "not measurable on that snapshot: gate postdates source",
-    "block_not_retained": "not measurable on that snapshot: block not retained",
-    "cause_not_separable": "not measurable on that snapshot: cause not separable",
-    "rich_refusals_collapsed": "not separable on that snapshot: rich-preview "
-    "refusals collapsed",
+    "gate_postdates_source": "not measurable: gate postdates source",
+    "block_not_retained": "not measurable: block not recorded",
+    "cause_not_separable": "not measurable: cause not separable",
+    "rich_refusals_collapsed": "not separable: rich-preview refusals collapsed",
 }
 
 
@@ -2564,7 +2563,7 @@ def _pick_cell(row: Mapping[str, object]) -> str:
 
 def _breakdown_section(row: Mapping[str, object]) -> list[str]:
     """One decision-level row's controls and field classes per destination and medium."""
-    lines = ["", f"### Breakdown: {row['gate_id']}", ""]
+    lines = ["", f"## Breakdown: {row['gate_id']}", ""]
     split = row.get("split")
     if not isinstance(split, dict):
         return [*lines, "Not measurable on either snapshot."]
@@ -2623,7 +2622,7 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
         "Pick agrees where controls decide (Wilson 95% lower) | Score | Disposition |"
     )
     lines = [
-        "### Ranked gates",
+        "## Ranked gates",
         "",
         header,
         "|" + "---|" * (12 + len(labels)),
@@ -2665,7 +2664,7 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
         )
     lines += [
         "",
-        "### Attention per case",
+        "## Attention per case",
         "",
         "| Snapshot | Medium | Fields with covers | Cases with covers | "
         "Fields without covers | Cases without covers |",

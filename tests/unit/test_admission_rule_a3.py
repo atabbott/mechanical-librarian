@@ -1059,7 +1059,7 @@ def test_the_markdown_is_the_analysis_only_and_reads_not_estimable(
     code, markdown, _ = _a3_run(tmp_path, "--format", "markdown")
     assert code == 0
     assert markdown.startswith("### Replay\n")
-    assert "### Ranked gates" not in markdown
+    assert "## Ranked gates" not in markdown
     assert "| snap-a | title | 2 | 0 | 0 (0 / 0) | 1 | 1 (1) | 1 |" in markdown
     assert "| snap-a | series name in title | 2 | 3 | 2 |" in markdown
     assert (
