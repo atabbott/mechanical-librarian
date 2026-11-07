@@ -511,6 +511,9 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
 ) -> None:
     """Leaving Automatic leaves the selection unwritten until Automatic (#1568).
 
+    A store whose only automatic record is the cover still reactivates the
+    unchanged policy on leaving, and Automatic waits for it (#1574).
+
     A selection waiting for its connection is not closed by a reactivation of
     the unchanged policy: its case is due back, and only a field automatic
     decision belongs to the earlier generation for good (#1599).
@@ -597,14 +600,63 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
                 ]
 
             assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
-            # A store whose only automatic records are covers keeps its case
-            # current in Preview; posture alone keeps the selection unwritten.
-            assert repository.enter_shadow_preview(later + 4, ("ebooks",)) == "preview"
+            # The reconcile touches the scans the pipeline requested on its own
+            # fixed clock, so Preview is entered at that clock (#1574).
+            now = later
+
+            def policy_state() -> tuple[str, int]:
+                return repository._connection.execute(
+                    "SELECT active_policy_id,generation FROM metadata_policy_state"
+                ).fetchone()
+
+            def current_cases() -> int:
+                return repository._connection.execute(
+                    "SELECT count(*) FROM current_review_case_lineages "
+                    "WHERE review_case_id IS NOT NULL"
+                ).fetchone()[0]
+
+            def leave_automatic() -> None:
+                before = policy_state()
+                assert repository.enter_shadow_preview(now, ("ebooks",)) == "preview"
+                # A store whose only automatic records are covers reactivates
+                # the unchanged policy like any other automatic store (#1574).
+                assert policy_state() == (before[0], before[1] + 1)
+                assert current_cases() == 0
+                transition = repository.metadata_policy_transition()
+                assert transition is not None
+                assert (
+                    transition.from_policy_id,
+                    transition.to_policy_id,
+                    transition.generation,
+                ) == (before[0], before[0], before[1] + 1)
+                assert transition.state != "completed"
+                with pytest.raises(MetadataReportError):
+                    repository.activate_qualified_automatic(now)
+                with patch.object(composition, "run_cover_packet_reviewer"):
+                    for _ in range(64):
+                        if not pipeline.run_next(1):
+                            break
+                    else:
+                        pytest.fail("re-preparation did not reach a terminal state")
+                # The same case returns: the episode continues (#1568).
+                assert repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_case_lineages"
+                ).fetchall() == [(automatic.review_case_id,)]
+                transition = repository.metadata_policy_transition()
+                assert transition is not None
+                assert (transition.state, transition.completed, transition.total) == (
+                    "completed",
+                    1,
+                    1,
+                )
+
+            leave_automatic()
             assert repository.current_cover_consideration_document(
                 automatic.review_case_id
             )
+            # Posture alone keeps the selection, keyed by work, unwritten.
             assert (pending(), counted()) == ((), [])
-            repository.activate_qualified_automatic(later + 5)
+            repository.activate_qualified_automatic(now)
             assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
 
             authority = PersistedFieldEffectAuthority(repository)
@@ -687,7 +739,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
                     "SELECT count(*) FROM field_effect_cleanups"
                 ).fetchone() == (0,)
                 return
-            assert repository.enter_shadow_preview(later + 7, ("ebooks",)) == "preview"
+            leave_automatic()
             assert not authority.current(operation.plan.authority)
             # Outside Automatic the planned cover waits: it is not selected,
             # and applying it directly defers without consuming it.
@@ -707,7 +759,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
             assert (
                 repository.get_field_effect(operation.plan.plan_id).state == "planned"
             )
-            repository.activate_qualified_automatic(later + 8)
+            repository.activate_qualified_automatic(now)
             assert authority.current(operation.plan.authority)
             assert ready() == 1
             assert repository.next_field_effect_plan_id(None) == (
