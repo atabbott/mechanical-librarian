@@ -108,10 +108,13 @@ Run the static architecture-boundary test whenever imports or packages move.
 
 - Express field validation through the shared validation vocabulary rather
   than expanding the same checks longhand for every field. The backend
-  vocabulary is `mechanical_librarian.domain.validation`; the browser's field
-  validators live beside their mapping functions in `frontend/src/api/http.ts`.
-  Extend a vocabulary when a check is genuinely new; do not reintroduce a
-  hand-written copy of one it already names.
+  vocabulary is `mechanical_librarian.domain.validation`. In the browser, field
+  validation of responses is generated from
+  `docs/reference/review-openapi-v1.json`; `frontend/src/api/http.ts` keeps
+  transport, view mapping and the cross-field invariants named in ADR-0091, and
+  request-side editor validators stay beside their mapping functions. Extend a
+  vocabulary when a check is genuinely new; do not reintroduce a hand-written
+  copy of one it already names.
 - No helper without a consumer. A new abstraction, helper or option has a
   current caller in the same change; one with none is deleted.
 - A consolidation must remove duplication. Replacing copies of the same logic

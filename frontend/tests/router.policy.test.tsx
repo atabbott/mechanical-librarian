@@ -33,6 +33,15 @@ const answeringClient = (body: unknown, status = 200) =>
     csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
     fetch: vi.fn<typeof fetch>(async () => Response.json(body, { status })),
   })
+// The same, answering every request with text that is not JSON (#1731).
+const textClient = (status = 200) =>
+  new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn<typeof fetch>(
+      async () => new Response('Saved', { status, headers: { 'content-type': 'text/plain' } }),
+    ),
+  })
 
 // A scripted `policyCommand` mock receives the page's path and body untyped;
 // this hands both to the real client unchanged.
@@ -294,9 +303,10 @@ describe('Policy route', () => {
   // Validate and preview write nothing, so an answer the client cannot read is
   // that phase's failure; only the snapshot save may have written (#1692).
   describe('an undecodable answer', () => {
-    const run = async (failing: 'validate' | 'drafts' | 'preview') => {
+    const run = async (failing: 'validate' | 'drafts' | 'preview', text = false) => {
       const user = userEvent.setup()
-      const transport = answeringClient({ invented: true }, failing === 'drafts' ? 201 : 200)
+      const status = failing === 'drafts' ? 201 : 200
+      const transport = text ? textClient(status) : answeringClient({ invented: true }, status)
       const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
         // The page previews only through the typed method below.
         if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
@@ -354,6 +364,32 @@ describe('Policy route', () => {
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
       expect(previewPolicy).toHaveBeenCalledOnce()
+    })
+
+    // An answer that is not JSON at all is that phase's failure too, not an
+    // uncertain write (#1731).
+    it.each([
+      [
+        'validate',
+        'The complete draft could not be validated. Nothing was saved or activated; try again.',
+      ],
+      [
+        'preview',
+        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+      ],
+    ] as const)("that is not JSON, to %s, shows that phase's copy", async (failing, copy) => {
+      await run(failing, true)
+      expect(await screen.findByText(copy)).toBeVisible()
+      expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
+    })
+
+    it('that is not JSON, to the snapshot save, could not be confirmed', async () => {
+      await run('drafts', true)
+      expect(
+        await screen.findByText(
+          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+        ),
+      ).toBeVisible()
     })
   })
 
@@ -2849,6 +2885,54 @@ describe('Policy keyboard focus (#1288)', () => {
     await user.keyboard('{Enter}')
     await waitFor(() => expect(document.querySelector('.policy-status')).toHaveFocus())
     expect(validate).toHaveTextContent('Validate and preview')
+  })
+
+  // The API gives a transition id no pattern, so the page encodes it as every
+  // other path hole is encoded; a raw `/` or `?` would name another route.
+  it('encodes the transition id in its retry and dismiss paths', async () => {
+    const user = userEvent.setup()
+    const transition = {
+      schema_version: 'metadata-policy-transition-v1' as const,
+      transition_id: 'policy/transition?2',
+      from_policy_id: 'policy-a',
+      to_policy_id: 'policy-b',
+      generation: 2,
+      state: 'completed_with_failures',
+      completed: 9,
+      total: 11,
+      failed: 2,
+      acknowledged: false,
+      origin: 'activation',
+    }
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(transition))
+    const transport = new ReviewApiClient({
+      buildIdentity: 'a'.repeat(64),
+      csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+      fetch: fetchMock,
+    })
+    const policyCommand = vi.fn(async (path: string) => sendThrough(transport, path))
+    renderRoute('/policy', {
+      ...createHttp(),
+      getPolicyTransition: vi.fn(async () => transition as never),
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+    })
+    await user.click(await screen.findByRole('button', { name: 'Retry failed reconciliation' }))
+    await waitFor(() => expect(policyCommand).toHaveBeenCalledOnce())
+    await user.click(await screen.findByRole('button', { name: 'Dismiss update' }))
+    await waitFor(() => expect(policyCommand).toHaveBeenCalledTimes(2))
+    expect(policyCommand.mock.calls.map(([path]) => path)).toEqual([
+      'transitions/policy%2Ftransition%3F2/retry',
+      'transitions/policy%2Ftransition%3F2/acknowledge',
+    ])
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/metadata-policy/transitions/policy%2Ftransition%3F2/retry',
+      '/api/v1/metadata-policy/transitions/policy%2Ftransition%3F2/acknowledge',
+    ])
+    // Both answers decode as the transition, so neither write is uncertain.
+    expect(
+      await screen.findByText('Policy state updated from the authoritative server.'),
+    ).toBeVisible()
+    expect(screen.queryByText(/could not be confirmed/u)).toBeNull()
   })
 
   it('keeps focus through a reconciliation retry, then moves it to the transition notice', async () => {
