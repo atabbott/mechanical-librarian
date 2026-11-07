@@ -266,6 +266,24 @@ paragraph => {
 """
 
 
+_FULL_STOP_CLEARANCE = """
+paragraph => {
+  const button = paragraph.querySelector('button')
+  // React renders the lead and the sentences after it as separate text nodes.
+  const text = [...paragraph.childNodes].filter(
+    node => node.nodeType === Node.TEXT_NODE && node.textContent.includes('.'),
+  ).pop()
+  const stop = text.textContent.lastIndexOf('.')
+  const range = document.createRange()
+  range.setStart(text, stop)
+  range.setEnd(text, stop + 1)
+  const dot = range.getBoundingClientRect()
+  const box = button.getBoundingClientRect()
+  return { sameLine: box.top < dot.bottom && box.bottom > dot.top, gap: box.left - dot.right }
+}
+"""
+
+
 def test_more_attention_try_again_focuses_the_added_row_and_reload_clears_its_sentence() -> (
     None
 ):
@@ -342,3 +360,95 @@ def test_review_current_comparison_keeps_focus_while_it_reads_then_focuses_reloa
         expect(
             page.get_by_role("button", name="Review current comparison")
         ).to_have_count(0)
+        # At this width the reload shares the line with the sentence's full
+        # stop; its focus ring (3px at 3px offset) clears it.
+        clearance = page.locator(".comparison-notice .stale-build-read").evaluate(
+            _FULL_STOP_CLEARANCE
+        )
+        assert clearance["sameLine"], clearance
+        assert clearance["gap"] >= 6, clearance
+
+
+# The focused element is inside the viewport and nothing covers its centre:
+# not above it, not under the sticky masthead, not below the fold.
+_IN_VIEW = """
+element => {
+  const box = element.getBoundingClientRect()
+  const x = box.left + box.width / 2
+  const y = box.top + box.height / 2
+  const top = document.elementFromPoint(x, y)
+  return {
+    top: box.top,
+    bottom: box.bottom,
+    height: window.innerHeight,
+    inside: box.top >= 0 && box.bottom <= window.innerHeight,
+    uncovered: top !== null && (top === element || element.contains(top)),
+  }
+}
+"""
+
+
+def _expect_in_view(page: Page) -> None:
+    placement = page.evaluate_handle("() => document.activeElement").evaluate(_IN_VIEW)
+    assert placement["inside"], placement
+    assert placement["uncovered"], placement
+
+
+@pytest.mark.parametrize(
+    "viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}]
+)
+def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
+    viewport: ViewportSize,
+) -> None:
+    with _signed_in(viewport) as (page, origin, _case_id):
+        # Confirm re-reads the consent basis, which meets the next build: the
+        # Reload at the top of the permission panel is brought into view.
+        page.goto(f"{origin}/activity")
+        page.get_by_role("heading", name="Activity and recovery").wait_for()
+        review = page.locator("#activity-consent")
+        page.get_by_role("button", name="Review write permissions").click()
+        page.get_by_text(
+            "Backup readiness checked. Review the included and excluded destinations.",
+            exact=True,
+        ).wait_for()
+        review.get_by_role("checkbox", name="fiction").check()
+        page.route(
+            re.compile(r".*/api/v1/activity/consent-state.*"), _answer_as_next_build
+        )
+        confirm = page.get_by_role("button", name="Confirm write permissions")
+        confirm.scroll_into_view_if_needed()
+        confirm.focus()
+        page.keyboard.press("Enter")
+        reload = review.get_by_role("button", name="Reload the current application")
+        expect(reload).to_be_focused()
+        _expect_in_view(page)
+
+
+@pytest.mark.parametrize(
+    "viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}]
+)
+def test_the_reload_a_more_attention_retry_focuses_is_scrolled_into_view(
+    viewport: ViewportSize,
+) -> None:
+    with _signed_in(viewport, provider_recovery=True, cohort=30) as (
+        page,
+        origin,
+        _case_id,
+    ):
+        # The rail's Load more attention fails, then its Try again meets the
+        # next build: the Reload at the foot of the rail is brought into view.
+        page.goto(f"{origin}/library?lens=all&attention=open")
+        rail = page.get_by_label("Attention queue", exact=True)
+        expect(rail.locator(".attention-queue-item").first).to_be_visible()
+        later = re.compile(r".*/api/v1/attention\?(.*&)?cursor=.*")
+        page.route(later, lambda route: route.abort("failed"))
+        rail.get_by_role("button", name="Load more attention", exact=True).click()
+        retry = rail.get_by_role("alert").get_by_role("button", name="Try again")
+        expect(retry).to_be_visible()
+        page.unroute(later)
+        page.route(later, _answer_as_next_build)
+        retry.focus()
+        page.keyboard.press("Enter")
+        reload = rail.get_by_role("button", name="Reload the current application")
+        expect(reload).to_be_focused()
+        _expect_in_view(page)

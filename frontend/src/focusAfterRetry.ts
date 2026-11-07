@@ -7,7 +7,8 @@
  * more-transitions Try again found Reload not yet rendered). It applies only
  * while focus is lost (on the page or a disabled control) or still inside
  * `scope`, the control or region the retry held focus on. Focus the owner put
- * anywhere else stays there.
+ * anywhere else stays there. The target is scrolled into view only as far as
+ * it takes; the page's scroll padding keeps it clear of the masthead.
  */
 export const focusAfterRetry = (
   target: () => HTMLElement | null | undefined,
@@ -18,7 +19,13 @@ export const focusAfterRetry = (
       const active = document.activeElement
       const lost = active === null || active === document.body || active.matches(':disabled')
       if (!lost && !scope?.()?.contains(active)) return
-      target()?.focus({ preventScroll: true })
+      const element = target()
+      if (!element) return
+      element.focus({ preventScroll: true })
+      // The target can sit above the masthead or below the fold (a Reload at
+      // the top of a long panel, or the foot of the rail's drawer): scroll
+      // only as far as it takes to show it and its focus ring.
+      element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     }),
   )
 }

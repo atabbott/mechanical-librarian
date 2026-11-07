@@ -109,8 +109,10 @@ h2 { margin-bottom:.35rem; }
 .shell-error.is-uncertain { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }
 .build-mismatch { display:flex; gap:1rem; align-items:center; justify-content:center; padding:.75rem; color:#211500; background:#ffd27a; }
 .build-mismatch button { color:#211500; background:#fff; }
-/* Clears the 3px focus ring at 3px offset from the sentence above when the reload wraps under it. */
-.stale-build-read button { margin-block-start:.375rem; }
+/* Clears the 3px focus ring at 3px offset from the sentence: above it when the
+   reload wraps under it, beside its full stop when it shares the line. A
+   retry that scrolls it into view leaves its ring clear of the edge. */
+.stale-build-read button { margin-block-start:.375rem; margin-inline-start:.375rem; scroll-margin-block:.75rem; }
 /* The masthead anchors the popover, so it opens inside the viewport however the status slot wraps. */
 .preparation-popover { position:absolute; z-index:35; right:clamp(.8rem,3vw,2.6rem); top:100%; width:min(26rem,calc(100% - 1rem)); max-height:max(8rem,min(70vh,calc(100dvh - var(--masthead-clearance,70px) - .5rem))); overflow:auto; padding:1rem; color:var(--ink); background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow); }
 .preparation-popover article { display:grid; gap:.25rem; padding:.6rem 0; border-bottom:1px solid var(--line); }

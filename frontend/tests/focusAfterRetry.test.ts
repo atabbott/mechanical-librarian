@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { focusAfterRetry, retryInPlace } from '../src/focusAfterRetry'
 
@@ -53,6 +53,15 @@ describe('focusAfterRetry (#1742)', () => {
     )
     await settle()
     expect(document.activeElement).toBe(element('search'))
+  })
+
+  it('brings the target into view only as far as it takes', async () => {
+    const element = mount('<button id="reload">Reload</button>')
+    const scroll = vi.spyOn(element('reload'), 'scrollIntoView')
+    focusAfterRetry(() => element('reload'))
+    await settle()
+    expect(document.activeElement).toBe(element('reload'))
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
   })
 
   it('does nothing when there is no target', async () => {
