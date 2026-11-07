@@ -165,8 +165,8 @@ defaults, never as a gate.
   confirmation rate unlocks or locks it; the live confirmation rate is shown
   beside it as information.
 - **Qualification.** Like every automatic cover option, it can decide
-  automatically only once an owner-run qualification in the milestone's
-  closing unit admits it: the builder and judge on the selected live models, a
+  automatically only once the owner-run qualification held by #1418 admits
+  it: the builder and judge on the selected live models, a
   smoke with instruction-like text printed on a synthetic cover, the measured
   cost per build and per judged field, and zero false admissions. Until then
   the setting can be chosen, but the judge only proposes.
@@ -318,7 +318,6 @@ They cost more at this size and scored 3.6 points lower than a full rebuild.
   preview's stop conditions; and put-back through the retained cover.
 - A redaction test feeds profile text, rule text, decisions, references,
   verdicts, prompts and model output in and asserts none comes out.
-- The owner-run qualification in the milestone's closing unit before
-  Automatic can decide.
+- The owner-run qualification held by #1418 before Automatic can decide.
 - Live switch precision per medium, from confirmations and reviewed automatic
   decisions, is shown to the owner.
