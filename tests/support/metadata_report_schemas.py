@@ -22,6 +22,11 @@ import mechanical_librarian.adapters.persistence.schema as persistence_schema
 from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverFinalHost,
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.metadata_report import (
     COMPARISON_VERSION,
     ClaimKind,
@@ -266,9 +271,12 @@ def retained_report_as_current(document: str) -> MetadataReport:
     v69 added the audiobook companion EPUB's ISBN lane and discovery titles,
     which a v49 report, holding no companion, never planned. v70 added each
     lane candidate's `admission_basis`: null here, since an earlier producer
-    said nothing of how a lane kept a recording. v72 made a Hardcover WORK
-    lane's candidates books and planned an ebook lane over its EPUB creators,
-    neither of which a v49 report holds.
+    said nothing of how a lane kept a recording. v71 added each cover source's
+    closed `final_host`: an earlier producer followed no Open Library redirect,
+    so a retrieved Open Library cover there was served by
+    `covers.openlibrary.org` itself, and every other source states none. v72
+    made a Hardcover WORK lane's candidates books and planned an ebook lane
+    over its EPUB creators, neither of which a v49 report holds.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -279,6 +287,13 @@ def retained_report_as_current(document: str) -> MetadataReport:
     data["library_languages"] = []
     data["companion"] = None
     data["local"]["cover_recovery"] = None
+    for cover in data["covers"]:
+        cover["final_host"] = (
+            CoverFinalHost.COVERS_OPEN_LIBRARY.value
+            if cover["kind"] == CoverSourceKind.OPEN_LIBRARY.value
+            and cover["state"] == CoverSourceState.RETRIEVED.value
+            else None
+        )
     for provider in data["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []

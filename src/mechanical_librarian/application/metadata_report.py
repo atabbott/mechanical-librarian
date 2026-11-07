@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
+from enum import StrEnum
 from typing import Never, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -1973,6 +1974,22 @@ class AudioInspectionResult:
     audio: AudioFacts
 
 
+class CoverRedirects(StrEnum):
+    """How a provider cover request treats a redirect: a closed code constant.
+
+    `docs/architecture/security.md` › Provider cover admission is the
+    authority. ``NONE`` refuses every redirect. ``PUBLIC_HTTPS`` follows
+    bounded, revalidated HTTPS redirects (Hardcover). ``OPEN_LIBRARY_ARCHIVE``
+    follows only Open Library's fixed two-redirect route through
+    ``archive.org`` to an ``ia<N>.us.archive.org`` datanode, each hop bound to
+    the requested cover id. It is never configuration.
+    """
+
+    NONE = "none"
+    PUBLIC_HTTPS = "public_https"
+    OPEN_LIBRARY_ARCHIVE = "open_library_archive"
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderCoverDescriptor:
     provider: str
@@ -1981,7 +1998,7 @@ class ProviderCoverDescriptor:
     url: str | None
     provenance: CoverProvenance | None = None
     wait: Callable[[float | None], bool] | None = None
-    allow_redirects: bool = True
+    redirects: CoverRedirects = CoverRedirects.PUBLIC_HTTPS
     user_agent: str | None = None
     terminal_state: CoverSourceState | None = None
 
@@ -4555,6 +4572,7 @@ __all__ = [
     "AudioItemInspectionError",
     "CoverObserver",
     "CoverReadError",
+    "CoverRedirects",
     "CoverSourceChangedError",
     "CoverTimeoutError",
     "CredentialError",

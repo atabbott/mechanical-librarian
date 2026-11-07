@@ -37,6 +37,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
+    CoverRedirects,
     MetadataLookup,
     MetadataProvider,
     ProviderCoverDescriptor,
@@ -261,7 +262,7 @@ class _FakeAudiobookProvider:
                         "audnexus-book-" + _ASIN,
                     ),
                     None,
-                    False,
+                    CoverRedirects.NONE,
                     None,
                     None if cover_url is not None else CoverSourceState.UNSAFE_REMOTE,
                 ),

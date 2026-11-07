@@ -50,7 +50,9 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioTrackDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
     CoverDesignation,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -3210,3 +3212,59 @@ def test_report_replay_reasserts_a_tampered_lane_outcome() -> None:
     )
     with pytest.raises(ReportValueError, match="provider lane dispatch is invalid"):
         replace(report)
+
+
+def _archive_cover_report() -> MetadataReport:
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.OPEN_LIBRARY, "open_library:edition:OL1M"),
+        CoverSourceKind.OPEN_LIBRARY,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"original", b"preview", "image/jpeg", 2, 3),
+        provenance=CoverProvenance(
+            "open_library",
+            CoverDesignation.EXACT_EDITION,
+            "open-library-work-OL5W",
+            "open-library-edition-OL1M",
+        ),
+        final_host=CoverFinalHost.US_ARCHIVE,
+    )
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+        cover_sources=(source,),
+    )
+
+
+def test_a_retrieved_open_library_final_host_round_trips_in_the_report() -> None:
+    report = _archive_cover_report()
+    serialized = report.to_json()
+    assert '"final_host":"us.archive.org"' in serialized
+    assert MetadataReport.from_json(serialized) == report
+    assert report.schema_version == "metadata-report-v72"
+
+
+@pytest.mark.parametrize(
+    "change",
+    ("missing", "extra", "raw_datanode", "unknown_family", "null"),
+    ids=("missing_key", "extra_key", "raw_datanode", "unknown_family", "null"),
+)
+def test_the_report_reader_refuses_an_open_final_host(change: str) -> None:
+    document = json.loads(_archive_cover_report().to_json())
+    cover = document["covers"][0]
+    if change == "missing":
+        del cover["final_host"]
+    elif change == "extra":
+        cover["final_datanode"] = None
+    else:
+        cover["final_host"] = {
+            "raw_datanode": "ia800100.us.archive.org",
+            "unknown_family": "eu.archive.org",
+            "null": None,
+        }[change]
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(document))

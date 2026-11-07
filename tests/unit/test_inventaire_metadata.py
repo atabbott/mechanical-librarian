@@ -12,6 +12,7 @@ from mechanical_librarian.adapters.providers.inventaire_metadata import (
     InventairePacer,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -186,6 +187,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
     assert descriptor.provenance.designation is CoverDesignation.EXACT_EDITION
     assert descriptor.url is not None
     assert descriptor.url.startswith("https://inventaire.io/img/entities/")
+    assert descriptor.redirects is CoverRedirects.NONE
     seed = synthetic_report()
     report = MetadataReport.create(
         target=seed.target,
@@ -325,6 +327,7 @@ def test_work_search_hydrates_discovery_identity_before_mapping(
         assert descriptor.provenance.designation is CoverDesignation.WORK
         assert descriptor.provenance.edition_identity is None
         assert descriptor.provenance.work_identity == "inventaire-work-wd-Q100"
+        assert descriptor.redirects is CoverRedirects.NONE
     from dataclasses import replace
 
     from mechanical_librarian.domain.metadata_report import (

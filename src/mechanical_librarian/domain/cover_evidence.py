@@ -69,6 +69,19 @@ class CoverSourceState(StrEnum):
     TRUNCATED = "truncated"
 
 
+class CoverFinalHost(StrEnum):
+    """The closed host family an Open Library cover was finally served from.
+
+    ``us.archive.org`` stands for any ``ia<N>.us.archive.org`` datanode: the
+    datanode number varies per request, so the raw host would make identical
+    evidence differ between runs, and a report never keeps a remote URL.
+    """
+
+    COVERS_OPEN_LIBRARY = "covers.openlibrary.org"
+    ARCHIVE = "archive.org"
+    US_ARCHIVE = "us.archive.org"
+
+
 class CoverDesignation(StrEnum):
     EXACT_EDITION = "exact_edition"
     RELATED_EDITION = "related_edition"
@@ -257,6 +270,7 @@ class CoverSource:
     artifact: CoverArtifact | None = None
     timeout_scope: str | None = None
     provenance: CoverProvenance | None = None
+    final_host: CoverFinalHost | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -281,6 +295,13 @@ class CoverSource:
             and self.provenance.designation is CoverDesignation.TRUNCATION
         ):
             raise CoverEvidenceError("cover truncation is inconsistent")
+        if (
+            self.final_host is not None and type(self.final_host) is not CoverFinalHost
+        ) or (self.final_host is not None) != (
+            self.kind is CoverSourceKind.OPEN_LIBRARY
+            and self.state is CoverSourceState.RETRIEVED
+        ):
+            raise CoverEvidenceError("cover final host is inconsistent")
         if self.kind in LOCAL_COVER_SOURCE_KINDS:
             if self.provenance is not None:
                 raise CoverEvidenceError("local cover provenance is invalid")
@@ -297,6 +318,7 @@ class CoverSource:
             "provenance": (
                 None if self.provenance is None else self.provenance.to_data()
             ),
+            "final_host": None if self.final_host is None else self.final_host.value,
         }
 
 
@@ -462,6 +484,7 @@ __all__ = [
     "CoverContextField",
     "CoverDesignation",
     "CoverEvidenceError",
+    "CoverFinalHost",
     "CoverProvenance",
     "CoverSource",
     "CoverSourceKind",

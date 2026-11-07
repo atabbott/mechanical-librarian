@@ -39,6 +39,18 @@ brackets are GitHub issues.
   previewing its impact, neither of which changes anything, it now says the
   validation failed or the preview is unavailable, instead of a general
   uncertain message (#1731).
+- A lost answer to validating a policy draft or previewing its impact now
+  reads as that step failing, not as an uncertain change. The preview message
+  says nothing changed (#1754).
+- Resume automatic handling now shows that fresh checks were requested, also
+  after a reload. An unconfirmed request is a warning that says whether the
+  reloaded work shows it, and offers the request again. If the requested
+  checks end with failures, the work says so and offers the request again
+  (#1755).
+- A page that cannot load now says what went wrong and what to do, instead of
+  an API status and code, which are under Technical detail (#1756).
+- Policy's impact and preview lines read as plain sentences instead of phrases
+  joined by a dash, and the Policy heading has no intro line (#1760).
 - The policy preview-mode API now says preview instead of shadow:
   `/api/v1/metadata-policy/shadow`, `…/shadow/enter`,
   `…/shadow/confirm-automatic`, `…/shadow/leave-preview` and
@@ -98,6 +110,10 @@ brackets are GitHub issues.
   change now answers with its saved view (#1571).
 - Closing the Attention queue with its toolbar toggle keeps focus on the
   toggle, as Close and Escape do (#1566).
+- **Clean rebuild required.** Older Open Library covers, which Open Library
+  serves from the Internet Archive, are now fetched and judged like any other
+  cover instead of being reported unavailable (#1752). A "no cover" marker in
+  an Open Library cover list no longer hides the record's real covers (#1753).
 - The shared status and reason words read plainly and the same on every
   screen. Activity and History say Failed, Waiting to retry, Closed, Replaced
   and Stopped instead of "failed safely" and the like; comparison conditions
@@ -105,6 +121,12 @@ brackets are GitHub issues.
   own sentence; source statuses, preview outcomes, evidence roles and reviewer
   errors drop internal words; and the policy preview gives each automatic
   refusal the same sentence the review case gives it (#1765).
+- The masthead's status notices, the newer-build notice and the page-failure
+  states say what happened in plain words. The library connection notice names
+  Audiobookshelf and what it refused, paused work is "Paused" rather than
+  "Safely paused", waiting source lookups are "waiting" rather than
+  "deferred", and a page that failed to load no longer shows the raw request
+  error (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

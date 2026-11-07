@@ -152,7 +152,8 @@ naming the cause and the published address to use.
 
 Allow the container outbound access only to your Audiobookshelf server, the
 metadata providers you enable and, if used, OpenRouter or the Codex service.
-What each client contacts is in
+Open Library covers also need `archive.org` and `*.us.archive.org`, which
+serve its older covers. What each client contacts is in
 [security](../architecture/security.md#credentials-and-egress).
 
 ## First-run setup

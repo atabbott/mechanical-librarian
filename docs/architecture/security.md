@@ -293,14 +293,34 @@ Allowed cover origins:
 - Audiobookshelf's raw cover route, with no credential, cookie or referrer.
 - Hardcover, with bounded manual redirects; every hop must be public HTTPS on
   port 443.
-- Open Library and Inventaire, on constructed fixed-origin URLs.
+- Inventaire, on constructed fixed-origin URLs.
+- Open Library, on constructed fixed-origin URLs, with one closed redirect
+  route: `archive.org`, then an `ia<N>.us.archive.org` datanode, each hop
+  bound to the requested cover id.
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
-Only Hardcover follows redirects. Any other host is a typed `unsafe_remote`
-outcome and no socket opens. Remote covers use their own address-pinned
-transport with bounded bytes, attempts and deadline. Embedded audiobook art
-is never acquired. Reports never keep the remote URL.
+Hardcover follows bounded redirects; Open Library follows only that route; no
+other provider follows any. Any other host is a typed `unsafe_remote` outcome
+and no socket opens. Remote covers use their own address-pinned transport with
+bounded bytes, attempts and deadline. Embedded audiobook art is never
+acquired. Reports never keep the remote URL.
+
+Open Library's route is a code constant on its two cover descriptors, never
+configuration, and holds only for the constructed
+`covers.openlibrary.org/b/id/<id>-L.jpg?default=false` URL. Each `Location`
+is checked as the exact header text, before any join or decoding, with one
+anchored full match: printable ASCII, lowercase `https://`, port absent or
+443. Hop 1 must be `archive.org/download/<item>/<zip>/<file>` with no query,
+fragment or `%`. Hop 2 must be `ia<N>.us.archive.org/view_archive.php` whose
+`&`-split query holds exactly `archive` and `file`, bound byte for byte to hop
+1. The file must be `<id>-L.jpg` or its ten-digit zero-padded form. There are
+at most three requests, in fixed positions, inside one attempt window; any
+other redirect is `unsafe_remote` before a lookup. Every hop is pinned and
+bounded as above. The `archive.org` hops send no User-Agent, so the contact
+email stays on Open Library's origin. A retrieved Open Library cover records
+only the closed `final_host` family: `covers.openlibrary.org`, `archive.org`
+or `us.archive.org`.
 
 ### Provider recovery
 

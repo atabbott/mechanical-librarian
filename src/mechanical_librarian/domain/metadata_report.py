@@ -38,6 +38,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverContextField,
     CoverDesignation,
     CoverEvidenceError,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -7796,6 +7797,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
         value,
         {
             "artifact",
+            "final_host",
             "kind",
             "provenance",
             "source_id",
@@ -7860,6 +7862,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
         artifact,
         item["timeout_scope"],
         provenance,
+        None if item["final_host"] is None else CoverFinalHost(item["final_host"]),
     )
 
 

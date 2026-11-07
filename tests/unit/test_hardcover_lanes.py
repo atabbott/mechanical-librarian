@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     ProviderObservationFailure,
@@ -928,6 +929,10 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
     }
     assert 2 == len(provider_result.cover_descriptors)
     assert 2 == len({value.source_id for value in provider_result.cover_descriptors})
+    # Hardcover keeps its bounded generic redirects (#1752 leaves it unchanged).
+    assert {CoverRedirects.PUBLIC_HTTPS} == {
+        value.redirects for value in provider_result.cover_descriptors
+    }
     edition_cover = next(
         value
         for value in provider_result.cover_descriptors
