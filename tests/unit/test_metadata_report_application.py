@@ -67,6 +67,7 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
     provider_discovery_lane_order,
     provider_observation,
+    qualify_provider_lane,
     qualify_provider_observation,
     require_report_current,
 )
@@ -4456,7 +4457,7 @@ class _CarryingCatalogue:
             self._order.append(lane.kind)
             work = lane.kind is ProviderQueryKind.WORK
             asin = self._search_asin if work else cast("str", lane.canonical_asin)
-            qualified = qualify_provider_observation(
+            lane_answer = qualify_provider_lane(
                 ProviderObservation(
                     "catalogue",
                     ProviderStatus.CANDIDATES,
@@ -4494,6 +4495,7 @@ class _CarryingCatalogue:
                     requested_asin=lane.canonical_asin,
                 ),
             )
+            qualified = lane_answer.observation
             results.append(
                 ProviderLaneResult(
                     lane,
@@ -4501,6 +4503,7 @@ class _CarryingCatalogue:
                     qualified.candidates,
                     dispatch_lineage=qualified.dispatch_lineage,
                     transformation_lineage=qualified.transformation_lineage,
+                    admission_bases=lane_answer.admission_bases,
                 )
             )
         return ProviderResult(

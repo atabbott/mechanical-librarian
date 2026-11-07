@@ -285,3 +285,17 @@ A caseless or case-holding audiobook whose report admitted no recording is no
 longer final while its files are unchanged. ADR-0089 marks its work to be
 prepared again after seven days, and keeps an open case when that search still
 admits no recording. The terminal vocabulary is unchanged.
+
+## Amendment: how the matched recording was found (#1723)
+
+Case detail (`review-case-detail-v7`) and report detail
+(`review-report-detail-v6`) carry a required-nullable
+`recording_admission_basis` beside `recording_identity_basis`. It names the
+alternative route that found a recording admitted by its stated runtime, what
+that route searched with, and the provider and candidate, and it is `null`
+whenever any admitted product was also kept on the target's own title and
+authors. Like the chapter basis it requires the `recording` scope, and the two
+never appear together, since a running-time match leaves no chapter basis. It
+explains a match only: field applicability, owner choice and every automatic
+or effect authority are unchanged.
+
