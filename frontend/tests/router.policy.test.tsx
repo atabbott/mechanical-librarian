@@ -3147,6 +3147,33 @@ describe('Description preferences on an earlier build (#1742)', () => {
     },
   )
 
+  it('keeps focus off the page while Retry preferences reads', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let release: () => void = () => undefined
+    let reads = 0
+    http.getSettings = vi.fn(async () => {
+      reads += 1
+      if (reads === 1) throw new ApiError(503, 'settings_unavailable')
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return view()
+    })
+    renderRoute('/policy?section=curation', http)
+    const region = await screen.findByRole('region', { name: 'Description advice' })
+    const alert = await within(region).findByRole('alert')
+    await user.click(within(alert).getByRole('button', { name: 'Retry preferences' }))
+    // A first-read retry renders the loading line in place of the button.
+    await within(region).findByText('Loading description preferences…')
+    const heading = within(region).getByRole('heading', { name: 'Description advice' })
+    expect(heading).toHaveFocus()
+    expect(document.body).not.toHaveFocus()
+    release()
+    await within(region).findByRole('group', { name: 'Remove marketing material' })
+    await waitFor(() => expect(heading).toHaveFocus())
+  })
+
   const editMarketing = async (region: HTMLElement) => {
     const marketing = await within(region).findByRole('group', {
       name: 'Remove marketing material',
@@ -3176,6 +3203,12 @@ describe('Description preferences on an earlier build (#1742)', () => {
     ).toBeNull()
     expect(within(region).queryByRole('alert')).toBeNull()
     expect(save).toHaveAttribute('aria-disabled', 'true')
+    await user.click(save)
+    expect(http.writeSettings).toHaveBeenCalledOnce()
+  })
+    await user.click(within(praise).getByRole('button', { name: 'Off' }))
+    expect(save).toHaveAttribute('aria-disabled', 'true')
+    expect(within(region).getByRole('button', { name: reloadName })).toBeVisible()
     await user.click(save)
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })

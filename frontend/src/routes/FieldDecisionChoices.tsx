@@ -7,7 +7,7 @@ import { BuildMismatchError } from '../api/http'
 import type { ChoiceContextView, EvidenceView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
-import { focusAfterRetry } from '../focusAfterRetry'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labels'
 import { useReviewContext } from '../router'
 
@@ -112,9 +112,20 @@ export function RecordedFieldObservations({
   const observationsRetry = useRef<HTMLButtonElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const list = useRef<HTMLUListElement>(null)
+  // A first-page retry has no data, so the read goes back to pending: the
+  // section stays while it reads, and its heading holds focus.
+  const [retried, setRetried] = useState(false)
+  const retryReading = retried && evidence.isPending
   // The section is there only when this field has observations to show, more
-  // may be loaded, or they could not be read (#1519).
-  if (!observations.length && !evidence.isError && !evidence.hasNextPage && !missing) return null
+  // may be loaded, they could not be read (#1519), or a retry is reading them.
+  if (
+    !observations.length &&
+    !evidence.isError &&
+    !evidence.hasNextPage &&
+    !missing &&
+    !retryReading
+  )
+    return null
   return (
     <section className="recorded-field-observations" aria-label="Recorded observations">
       <h3 ref={heading} tabIndex={-1}>
@@ -133,6 +144,7 @@ export function RecordedFieldObservations({
         </ul>
       ) : null}
       {missing ? <p>Some referenced observations are unavailable.</p> : null}
+      {retryReading ? <p role="status">Loading observations…</p> : null}
       {evidence.error instanceof BuildMismatchError ? (
         <StaleBuildRead lead="The observations were not loaded." ref={observationsRetry} />
       ) : evidence.isError ? (
@@ -141,15 +153,16 @@ export function RecordedFieldObservations({
           <button
             ref={observationsRetry}
             type="button"
-            onClick={() =>
-              void (
-                evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch()
-              ).then((result) =>
-                focusAfterRetry(() =>
-                  result.isSuccess ? heading.current : observationsRetry.current,
-                ),
+            onClick={() => {
+              const nextPage = evidence.isFetchNextPageError
+              setRetried(true)
+              // Either read removes this button while it reads.
+              retryInPlace(
+                () => heading.current,
+                () => (nextPage ? evidence.fetchNextPage() : evidence.refetch()),
+                (result) => (result.isSuccess ? heading.current : observationsRetry.current),
               )
-            }
+            }}
           >
             Retry observations
           </button>

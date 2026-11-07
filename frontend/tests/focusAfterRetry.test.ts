@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { focusAfterRetry } from '../src/focusAfterRetry'
+import { focusAfterRetry, retryInPlace } from '../src/focusAfterRetry'
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50))
 
@@ -69,6 +69,29 @@ describe('focusAfterRetry (#1742)', () => {
     element('busy').focus()
     ;(element('busy') as HTMLButtonElement).disabled = true
     focusAfterRetry(() => element('heading'))
+    await settle()
+    expect(document.activeElement).toBe(element('heading'))
+  })
+
+  it('holds focus on the region while a retry reads, then moves it to the outcome', async () => {
+    const element = mount(
+      '<div id="region" tabindex="-1"><button id="retry">Try again</button></div>',
+    )
+    element('retry').focus()
+    let release: (loaded: boolean) => void = () => undefined
+    retryInPlace(
+      () => element('region'),
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve
+        }),
+      (loaded) => document.getElementById(loaded ? 'heading' : 'retry'),
+    )
+    // The read replaces the control: focus is on the region, not the page.
+    element('retry').remove()
+    expect(document.activeElement).toBe(element('region'))
+    element('region').insertAdjacentHTML('beforeend', '<h3 id="heading" tabindex="-1">Loaded</h3>')
+    release(true)
     await settle()
     expect(document.activeElement).toBe(element('heading'))
   })

@@ -9,7 +9,7 @@ import { MediaHealth } from '../components/MediaHealth'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatRunningTime } from '../dates'
-import { focusAfterRetry } from '../focusAfterRetry'
+import { retryInPlace } from '../focusAfterRetry'
 import { valueText } from '../fieldDecision'
 import {
   audioSurfaceLabels,
@@ -96,34 +96,37 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
   // Try again, or Reload once the tab is on an earlier build.
   const evidenceRetry = useRef<HTMLButtonElement>(null)
   const evidenceHeading = useRef<HTMLHeadingElement>(null)
-  if (report.isPending)
+  // Until the evidence is read, its loading line, failure and Reload share one
+  // region, which holds focus while a Try again reads.
+  const evidenceStatus = useRef<HTMLDivElement>(null)
+  if (!report.isSuccess)
     return (
-      <p role="status" className="library-work-summary-reason">
-        Loading recorded evidence…
-      </p>
-    )
-  if (report.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Recorded evidence was not loaded." ref={evidenceRetry} />
-  if (report.isError)
-    return (
-      <p role="alert" className="library-work-summary-reason">
-        Recorded evidence could not be loaded.{' '}
-        <button
-          ref={evidenceRetry}
-          type="button"
-          onClick={() =>
-            void report
-              .refetch()
-              .then((result) =>
-                focusAfterRetry(() =>
-                  result.isSuccess ? evidenceHeading.current : evidenceRetry.current,
-                ),
-              )
-          }
-        >
-          Try again
-        </button>
-      </p>
+      <div ref={evidenceStatus} tabIndex={-1}>
+        {report.isPending ? (
+          <p role="status" className="library-work-summary-reason">
+            Loading recorded evidence…
+          </p>
+        ) : report.error instanceof BuildMismatchError ? (
+          <StaleBuildRead lead="Recorded evidence was not loaded." ref={evidenceRetry} />
+        ) : (
+          <p role="alert" className="library-work-summary-reason">
+            Recorded evidence could not be loaded.{' '}
+            <button
+              ref={evidenceRetry}
+              type="button"
+              onClick={() =>
+                retryInPlace(
+                  () => evidenceStatus.current,
+                  () => report.refetch(),
+                  (result) => (result.isSuccess ? evidenceHeading.current : evidenceRetry.current),
+                )
+              }
+            >
+              Try again
+            </button>
+          </p>
+        )}
+      </div>
     )
   const data = report.data
   return (

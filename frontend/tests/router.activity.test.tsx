@@ -1610,18 +1610,30 @@ describe('Activity route', () => {
       return user
     }
 
-    it.each(['mismatch', 'success'] as const)(
+    it.each(['mismatch', 'success', 'held read'] as const)(
       'moves focus after the recorded transitions Try again meets a %s',
       async (outcome) => {
         let reads = 0
+        let release: () => void = () => undefined
         const user = await render(async () => {
           reads += 1
           if (reads === 1) throw new ApiError(503, 'unavailable')
           if (outcome === 'mismatch') throw new BuildMismatchError()
+          if (outcome === 'held read')
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
           return { events: page(0, 3), has_more: false }
         })
         const alert = await screen.findByRole('alert')
         await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+        if (outcome === 'held read') {
+          // A first-read retry renders the loading line in place of Try again.
+          const loading = await screen.findByText('Loading recorded transitions…')
+          expect(document.body).not.toHaveFocus()
+          expect(document.activeElement).toContainElement(loading)
+          release()
+        }
         const target =
           outcome === 'mismatch'
             ? await screen.findByRole('button', { name: 'Reload the current application' })

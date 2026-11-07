@@ -2,12 +2,12 @@
  * Hands focus to what replaced a retry's control once the retry has settled:
  * the content it loaded, a new Try again, or Reload when the tab is on an
  * earlier build. Call it when the read settles, with the target chosen from
- * the result. The move waits two timer turns: the first lets the query
- * publish its result (React Query notifies on a timer, after a mutation's own
- * callbacks have run), the second lets React render the branch that replaced
- * the control. It applies only while focus is lost (on the page or a disabled
- * control) or still inside `scope`, the control or region the retry held
- * focus on. Focus the owner put anywhere else stays there.
+ * the result. The move waits two timer turns, so that React has rendered the
+ * branch that replaced the control: in Chromium one turn can be too early (a
+ * more-transitions Try again found Reload not yet rendered). It applies only
+ * while focus is lost (on the page or a disabled control) or still inside
+ * `scope`, the control or region the retry held focus on. Focus the owner put
+ * anywhere else stays there.
  */
 export const focusAfterRetry = (
   target: () => HTMLElement | null | undefined,
@@ -21,4 +21,23 @@ export const focusAfterRetry = (
       target()?.focus({ preventScroll: true })
     }),
   )
+}
+
+/**
+ * Runs a retry whose read replaces the control that started it. A query that
+ * failed on its first read has no data, so its refetch goes back to pending
+ * and renders the loading branch in place of Try again. Focus moves first to
+ * `region`, which stays mounted through the read, so it never falls to the
+ * page; when the read settles it moves on to the target chosen from the
+ * result, with `region` as the scope.
+ */
+export const retryInPlace = <Result>(
+  region: () => HTMLElement | null | undefined,
+  read: () => Promise<Result>,
+  target: (result: Result) => HTMLElement | null | undefined,
+) => {
+  region()?.focus({ preventScroll: true })
+  void read().then((result) => {
+    focusAfterRetry(() => target(result), region)
+  })
 }

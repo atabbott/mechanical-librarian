@@ -5,7 +5,7 @@ import { useRef, useState } from 'react'
 import { BuildMismatchError, refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { ReviewHttp, SettingsView } from '../api/http'
 import { offOn } from '../fieldControls'
-import { focusAfterRetry } from '../focusAfterRetry'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { FieldRow } from './FieldRow'
 import { SegmentedControl } from './SegmentedControl'
 import { StaleBuildRead } from './StaleBuildRead'
@@ -51,17 +51,16 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
           <p>Description preferences are unavailable.</p>
           <button
             ref={preferencesRetry}
-            onClick={() =>
-              void query
-                .refetch()
-                .then((result) =>
-                  focusAfterRetry(() =>
-                    result.isSuccess
-                      ? document.getElementById('description-advice-heading')
-                      : preferencesRetry.current,
-                  ),
-                )
-            }
+            onClick={() => {
+              // The loading line replaces this button while it reads: the
+              // heading, which stays, holds focus until the outcome takes it.
+              const heading = () => document.getElementById('description-advice-heading')
+              retryInPlace(
+                heading,
+                () => query.refetch(),
+                (result) => (result.isSuccess ? heading() : preferencesRetry.current),
+              )
+            }}
           >
             Retry preferences
           </button>

@@ -2570,10 +2570,11 @@ describe('Library route', () => {
     vi.stubGlobal('matchMedia', previousMatchMedia)
   })
 
-  it.each(['mismatch', 'success'] as const)(
+  it.each(['mismatch', 'success', 'held read'] as const)(
     'moves focus to what replaces the recorded evidence Try again after a %s (#1742)',
     async (outcome) => {
       const user = userEvent.setup()
+      let release: () => void = () => undefined
       const firstWork = library.works[0]
       if (!firstWork) throw new Error('library fixture requires one work')
       const baseWork = { ...firstWork }
@@ -2600,6 +2601,10 @@ describe('Library route', () => {
           reads += 1
           if (reads === 1) throw new ApiError(503, 'unavailable')
           if (outcome === 'mismatch') throw new BuildMismatchError()
+          if (outcome === 'held read')
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
           return {
             chapters: [],
             chaptersTruncated: false,
@@ -2625,6 +2630,13 @@ describe('Library route', () => {
       })
       const failure = await screen.findByText(/Recorded evidence could not be loaded\./u)
       await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+      if (outcome === 'held read') {
+        // A first-read retry renders the loading line in place of Try again.
+        const loading = await screen.findByText('Loading recorded evidence…')
+        expect(document.body).not.toHaveFocus()
+        expect(document.activeElement).toContainElement(loading)
+        release()
+      }
       const target =
         outcome === 'mismatch'
           ? await screen.findByRole('button', { name: 'Reload the current application' })
@@ -15162,16 +15174,21 @@ describe('a focused field decision (#1519)', () => {
     expect(within(region).queryByRole('button', { name: 'Retry observations' })).toBeNull()
   })
 
-  it.each(['mismatch', 'success'] as const)(
+  it.each(['mismatch', 'success', 'held read'] as const)(
     'moves focus to what replaces Retry observations after a %s (#1742)',
     async (outcome) => {
       const user = userEvent.setup()
       let reads = 0
+      let release: () => void = () => undefined
       open(focused(), {
         getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
           reads += 1
           if (reads === 1) throw new ApiError(503, 'unavailable')
           if (outcome === 'mismatch') throw new BuildMismatchError()
+          if (outcome === 'held read')
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
           return {
             items: [
               {
@@ -15188,6 +15205,15 @@ describe('a focused field decision (#1519)', () => {
       })
       const region = await screen.findByRole('region', { name: 'Recorded observations' })
       await user.click(await within(region).findByRole('button', { name: 'Retry observations' }))
+      if (outcome === 'held read') {
+        // A first-page retry keeps the section, and its heading, while it reads.
+        await within(region).findByText('Loading observations…')
+        expect(region).toBeInTheDocument()
+        expect(within(region).getByRole('heading', { name: 'Recorded observations' })).toHaveFocus()
+        expect(document.body).not.toHaveFocus()
+        release()
+        await within(region).findByText('Title: Another title')
+      }
       const target =
         outcome === 'mismatch'
           ? await within(region).findByRole('button', { name: 'Reload the current application' })

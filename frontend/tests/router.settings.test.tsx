@@ -2581,6 +2581,35 @@ it.each(['mismatch', 'success'] as const)(
   },
 )
 
+it('keeps focus off the page while the reviewer access Try again reads (#1742)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  let release: () => void = () => undefined
+  let reads = 0
+  http.getReviewerAccess = vi.fn(async () => {
+    reads += 1
+    if (reads === 1) throw new ApiError(503, 'unavailable')
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return reviewerView
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const alert = (await screen.findByText('Reviewer access is unavailable.')).closest<HTMLElement>(
+    '[role="alert"]',
+  )
+  if (!alert) throw new Error('the reviewer access alert is required')
+  await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+  // A first-read retry renders the loading line in place of the alert.
+  const reading = await screen.findByText('Reading reviewer access…')
+  expect(globalThis.document.body).not.toHaveFocus()
+  expect(globalThis.document.activeElement).toContainElement(reading)
+  release()
+  const heading = await screen.findByRole('heading', { name: 'Shared Codex sign-in' })
+  await waitFor(() => expect(heading).toHaveFocus())
+})
+
 // The disclosure writes nothing: an answer it cannot read keeps the setup
 // copy, though the client reports it as uncertain (#1690).
 it.each([

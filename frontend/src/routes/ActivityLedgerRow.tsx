@@ -6,7 +6,7 @@ import { categoryLabel, noteLabel, noteSentence, stateLabel } from '../activityL
 import { RecordedTime } from '../components/RecordedTime'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
-import { focusAfterRetry } from '../focusAfterRetry'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { languageName } from '../labels'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useReviewContext } from '../router'
@@ -121,29 +121,36 @@ function ActivityTransitions({
   const moreRetry = useRef<HTMLButtonElement>(null)
   const list = useRef<HTMLOListElement>(null)
   const loadMoreButton = useRef<HTMLButtonElement>(null)
-  if (query.isLoading) return <p>Loading recorded transitions…</p>
-  if (query.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Recorded transitions were not loaded." ref={transitionsRetry} />
-  if (query.isError)
+  const transitionsStatus = useRef<HTMLDivElement>(null)
+  // Until the transitions are read, their loading line, failure and Reload
+  // share one region, which holds focus while a Try again reads.
+  if (query.isLoading || query.isError)
     return (
-      <p role="alert">
-        Recorded transitions could not be loaded.{' '}
-        <button
-          ref={transitionsRetry}
-          type="button"
-          onClick={() =>
-            void query
-              .refetch()
-              .then((result) =>
-                focusAfterRetry(() =>
-                  result.isSuccess ? (list.current ?? details()) : transitionsRetry.current,
-                ),
-              )
-          }
-        >
-          Try again
-        </button>
-      </p>
+      <div ref={transitionsStatus} tabIndex={-1}>
+        {query.isLoading ? (
+          <p>Loading recorded transitions…</p>
+        ) : query.error instanceof BuildMismatchError ? (
+          <StaleBuildRead lead="Recorded transitions were not loaded." ref={transitionsRetry} />
+        ) : (
+          <p role="alert">
+            Recorded transitions could not be loaded.{' '}
+            <button
+              ref={transitionsRetry}
+              type="button"
+              onClick={() =>
+                retryInPlace(
+                  () => transitionsStatus.current,
+                  () => query.refetch(),
+                  (result) =>
+                    result.isSuccess ? (list.current ?? details()) : transitionsRetry.current,
+                )
+              }
+            >
+              Try again
+            </button>
+          </p>
+        )}
+      </div>
     )
   const events = [...(query.data?.events ?? []), ...extraPages.flat()]
   const moreAvailable = extraPages.length ? hasMore : Boolean(query.data?.has_more)
