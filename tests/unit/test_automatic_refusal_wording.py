@@ -25,3 +25,17 @@ def _browser_reasons() -> dict[str, str]:
 
 def test_browser_and_review_case_word_each_refusal_alike() -> None:
     assert _browser_reasons() == _AUTOMATIC_REFUSAL_TEXT
+
+
+def test_a_withheld_title_conflict_restates_its_condition_word_for_word() -> None:
+    # `restatesReason` in `fieldReasons.ts` hides the comparison condition that
+    # repeats the withheld reason: the condition's label plus a full stop.
+    source = _LABELS.read_text(encoding="utf-8")
+    start = source.index(
+        "isbn_title_material_conflict:", source.index("materialReasonLabels")
+    )
+    label = re.search(r"['\"](.*?)['\"]", source[start:])
+    assert label is not None
+    assert (
+        f"{label.group(1)}." == _AUTOMATIC_REFUSAL_TEXT["isbn_title_material_conflict"]
+    )

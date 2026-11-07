@@ -79,13 +79,13 @@ const materialReasonLabels = {
     'No combination of these details is safe to apply automatically',
   populated_subjective_field: 'This field already has a value of yours, so a change needs you',
   provider_consensus_title_bracket_source_tag:
-    'Independent sources agree once the bracketed tag is removed',
+    'Independent sources agree once the tag in square brackets is removed',
   provider_consensus_title_explicit_identifier:
     'Independent sources agree once the labelled ISBN is removed',
   provider_consensus_title_parenthesized_bare_number:
     'Independent sources agree once the number in brackets is removed',
   provider_consensus_title_parenthesized_series_name:
-    'Independent sources agree once the series name in brackets is moved to the series',
+    'Independent sources agree once the series name in brackets is kept as the series',
   provider_consensus_title_parenthesized_year:
     'Independent sources agree once the year in brackets is removed',
   provider_consensus_title_subtitle_segment:
@@ -95,7 +95,7 @@ const materialReasonLabels = {
   provider_consensus_title_series_unpreserved:
     'No source gives the series name in brackets as the series',
   decoration_equivalent_bracket_source_tag:
-    'Sources agree once the bracketed tag is removed. The current title is kept',
+    'Sources agree once the tag in square brackets is removed. The current title is kept',
   decoration_equivalent_explicit_identifier:
     'Sources agree once the labelled ISBN is removed. The current title is kept',
   decoration_equivalent_parenthesized_bare_number:
@@ -107,13 +107,13 @@ const materialReasonLabels = {
   decoration_equivalent_subtitle_segment:
     'Sources agree once the part after the colon is removed. The current title is kept',
   decoration_tidy_bracket_source_tag:
-    'Sources agree once the bracketed tag is removed. The current title is tidied to match',
+    'Sources agree once the tag in square brackets is removed. The current title is tidied to match',
   decoration_tidy_explicit_identifier:
     'Sources agree once the labelled ISBN is removed. The current title is tidied to match',
   decoration_tidy_parenthesized_bare_number:
     'Sources agree once the number in brackets is removed. The current title is tidied to match',
   decoration_tidy_parenthesized_series_name:
-    'Sources agree once the series name in brackets is moved to the series. The current title is tidied to match',
+    'Sources agree once the series name in brackets is kept as the series. The current title is tidied to match',
   decoration_tidy_parenthesized_year:
     'Sources agree once the year in brackets is removed. The current title is tidied to match',
   decoration_tidy_subtitle_segment:
@@ -493,7 +493,7 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
   target_work_applicability_unproved:
     'The sources do not show that this value describes this work.',
   target_state_unusable: 'The current value cannot be changed for you.',
-  automatic_unqualified: 'Your settings leave this kind of change to you.',
+  automatic_unqualified: 'Automatic is not offered for this kind of change, so it is left to you.',
   manifestation_verification_required: 'The sources do not confirm this ISBN for this edition.',
   description_quality_floor_not_met:
     'No source description meets the rules for choosing one for you.',
@@ -536,7 +536,7 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
 
 export const evidenceRoleLabel = (role: EvidenceRole) =>
   ({
-    local_presence: 'In the book itself',
+    local_presence: 'Already in the library',
     external_corroboration: 'Confirms this value',
     external_observation: 'Reports this value',
   })[role]

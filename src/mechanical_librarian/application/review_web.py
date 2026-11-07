@@ -126,7 +126,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "target_work_contradicted": "The sources suggest this value belongs to a different work.",
     "target_work_applicability_unproved": "The sources do not show that this value describes this work.",
     "target_state_unusable": "The current value cannot be changed for you.",
-    "automatic_unqualified": "Your settings leave this kind of change to you.",
+    "automatic_unqualified": "Automatic is not offered for this kind of change, so it is left to you.",
     "manifestation_verification_required": "The sources do not confirm this ISBN for this edition.",
     "description_quality_floor_not_met": "No source description meets the rules for choosing one for you.",
     "candidate_language_differs": "The value comes from a source in a different language from this book.",

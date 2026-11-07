@@ -10042,7 +10042,7 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         (
             "unqualified",
             "automatic_unqualified",
-            "Your settings leave this kind of change to you.",
+            "Automatic is not offered for this kind of change, so it is left to you.",
         ),
         (
             "contradicted",

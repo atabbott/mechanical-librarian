@@ -1464,7 +1464,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(unavailable_evidence).to_have_count(1)
                 expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
                 expect(unavailable_evidence).to_have_text("Hide evidence")
-                comparison.get_by_text("In the book itself", exact=True).wait_for()
+                comparison.get_by_text("Already in the library", exact=True).wait_for()
                 comparison.get_by_text(
                     "Preview unavailable for this retained cover.", exact=True
                 ).wait_for()
@@ -1613,7 +1613,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator("#choice-evidence-current")).to_be_visible()
         workspace_evidence = page.locator("#choice-evidence-current").inner_text()
         assert "Local library record" in workspace_evidence
-        assert "In the book itself" in workspace_evidence
+        assert "Already in the library" in workspace_evidence
         assert (
             "No recommendation retained"
             not in page.locator(".metadata-choice.is-current").inner_text()

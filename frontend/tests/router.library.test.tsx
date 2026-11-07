@@ -3553,7 +3553,7 @@ describe('Library route', () => {
     ).toHaveTextContent('Hide evidence')
     expect(await screen.findByText('Local library record')).toBeVisible()
     expect(screen.getByText('Title: Old title')).toBeVisible()
-    expect(screen.getByText('In the book itself')).toBeVisible()
+    expect(screen.getByText('Already in the library')).toBeVisible()
     expect(screen.queryByText('No recommendation retained')).toBeNull()
     expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
     await user.click(proposedEvidence)
@@ -3562,7 +3562,7 @@ describe('Library route', () => {
     expect(screen.getByText('Confirms this value')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(
-      screen.getAllByText(/^The sources disagree. Choose the value yourself\.?$/u).length,
+      screen.getAllByText(/^The sources disagree\. Choose the value yourself\.?$/u).length,
     ).toBeGreaterThan(0)
     expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
@@ -3746,7 +3746,7 @@ describe('Library route', () => {
       expect(
         screen.queryByText(
           neutral
-            ? /^The sources disagree. Choose the value yourself\.?$/u
+            ? /^The sources disagree\. Choose the value yourself\.?$/u
             : /^Different source descriptions\.?$/u,
         ),
       ).toBeNull()
@@ -3908,7 +3908,9 @@ describe('Library route', () => {
     const notice = await screen.findByRole('complementary', {
       name: 'Comparison condition',
     })
-    expect(notice).toHaveTextContent('Independent sources agree once the bracketed tag is removed')
+    expect(notice).toHaveTextContent(
+      'Independent sources agree once the tag in square brackets is removed',
+    )
     const canvas = notice.closest<HTMLElement>('.decision-canvas')
     if (!canvas) throw new Error('provider-consensus notice is outside its selected field')
     expect(within(canvas).getByText('New title')).toBeVisible()
@@ -3951,7 +3953,7 @@ describe('Library route', () => {
       name: 'Comparison condition',
     })
     expect(notice).toHaveTextContent(
-      'Sources agree once the bracketed tag is removed. The current title is tidied to match',
+      'Sources agree once the tag in square brackets is removed. The current title is tidied to match',
     )
   })
 
@@ -4020,7 +4022,7 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     const notice = screen.getByRole('complementary', { name: 'Comparison condition' })
-    expect(notice).not.toHaveTextContent('Another provider states a different subtitle')
+    expect(notice).not.toHaveTextContent('Another source gives a different subtitle')
     expect(notice).toHaveTextContent(
       'The part after the colon reads as part of the title: no source has it, or at least as many sources include it as leave it out',
     )
@@ -4244,7 +4246,9 @@ describe('Library route', () => {
           )
         ).length,
       ).toBe(1)
-      expect(screen.queryByText(/^The sources disagree. Choose the value yourself\.?$/u)).toBeNull()
+      expect(
+        screen.queryByText(/^The sources disagree\. Choose the value yourself\.?$/u),
+      ).toBeNull()
     },
   )
 
@@ -5375,7 +5379,7 @@ describe('Library route', () => {
           expect(detail.previousElementSibling).toHaveTextContent(
             'Visual review is unavailable. Only the eligible choices shown below can be selected.',
           )
-        } else expect(screen.queryByText(/The configured reviewer/u)).toBeNull()
+        } else expect(screen.queryByText(/The reviewer|No provider for this model/u)).toBeNull()
       } else {
         expect(
           screen.getByText(
@@ -5397,7 +5401,7 @@ describe('Library route', () => {
       expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveTextContent(
         'Hide evidence',
       )
-      expect(screen.getByText('In the book itself')).toBeVisible()
+      expect(screen.getByText('Already in the library')).toBeVisible()
       expect(screen.getByText('Preview unavailable for this retained cover.')).toBeVisible()
       expect(screen.getByRole('radio', { name: 'Keep current cover' })).toHaveAttribute(
         'aria-checked',
@@ -7577,7 +7581,7 @@ describe('Library route', () => {
       expect(
         within(canvas).queryByRole('complementary', { name: 'Comparison condition' }),
       ).toBeNull()
-      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toMatch(/choose the value yourself/iu)
       expect(canvas.textContent).not.toContain('so a change needs you')
       expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
     })
@@ -7648,7 +7652,7 @@ describe('Library route', () => {
       expect(
         await within(canvas).findByText('Description: A voyage reveals a hidden city.'),
       ).toBeVisible()
-      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toMatch(/choose the value yourself/iu)
       expect(canvas.textContent).not.toContain('so a change needs you')
       expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
     })

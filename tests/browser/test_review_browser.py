@@ -4367,7 +4367,7 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         exact=True,
                     ).click()
                     expect(page.locator("#choice-evidence-current")).to_contain_text(
-                        "Local library recordIn the book itself"
+                        "Local library recordAlready in the library"
                     )
                 for width, size in (
                     (1440, "100%"),
