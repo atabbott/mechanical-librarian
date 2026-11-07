@@ -1698,6 +1698,49 @@ def _throttling_entries() -> list[dict[str, object]]:
     ]
 
 
+def _shadow_outcome_set(
+    outcome_set_id: str, destinations: tuple[str, ...]
+) -> dict[str, object]:
+    """Return one preview outcome set with every member the server sends."""
+    return {
+        "schema_version": "shadow-outcome-set-v11",
+        "authority": "none",
+        "posture": "preview",
+        "outcome_set_id": outcome_set_id,
+        "review_case_id": "case-" + outcome_set_id,
+        "report_id": "report_" + "a" * 64,
+        "proposal_set_id": "proposal_set_" + "b" * 64,
+        "resolved_policy_id": "resolved_policy_" + "c" * 64,
+        "source_decision_set_id": "decision_set-" + outcome_set_id,
+        "policy_profile_id": "policy-active-1",
+        "policy_generation": 1,
+        "decision_policy_version": "synthetic",
+        "decision_policy_sha256": "e" * 64,
+        "catalogue_sha256": "f" * 64,
+        "target_fingerprint": "fingerprint-" + outcome_set_id,
+        "evaluated_at": 1,
+        "outcomes": [
+            {
+                "outcome_id": f"{outcome_set_id}-{destination}",
+                "action_id": f"action-{destination}",
+                "proposal_id": f"proposal-{destination}",
+                "candidate_id": None,
+                "qualification_candidate_id": f"qualification-{destination}",
+                "rule_id": "synthetic",
+                "reason_code": "synthetic",
+                "citation_ids": [],
+                "combination_ids": [],
+                "destination": destination,
+                "disposition": "manual",
+                "policy_category": None,
+                "policy_destination": "ask",
+                "policy_option": None,
+            }
+            for destination in destinations
+        ],
+    }
+
+
 def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     """Return a fresh response for one synthetic API target or absolute URL."""
     parsed = urlsplit(target)
@@ -1970,14 +2013,10 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             },
         }
     if path == "/api/v1/metadata-policy/validate":
+        # Validation answers the validated notebook, as the state read does.
         state = rich_payload("/api/v1/metadata-policy/state")
         assert isinstance(state, dict)
-        return {
-            "schema_version": "metadata-policy-profile-v3",
-            "policy_id": "policy_" + "d" * 64,
-            "profile": state["profile"],
-            "rich_qualification": state["rich_qualification"],
-        }
+        return {**state, "policy_id": "policy_" + "d" * 64}
     if path == "/api/v1/metadata-policy/drafts":
         return {
             "policy_id": "policy_" + "d" * 64,
@@ -2093,27 +2132,21 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "schema_version": "shadow-posture-v1",
             "posture": "preview",
             "authority": "none",
-            "can_leave_preview": True,
+            "can_leave_preview": False,
         }
     if path == "/api/v1/metadata-policy/automatic-safety":
         return {
             "paused": False,
             "global_suspension": None,
-            "category_suspensions": {"title": {"reason": "target_changed", "count": 2}},
+            "category_suspensions": {"title": "target_changed"},
         }
     if path == "/api/v1/metadata-policy/shadow/outcomes":
         return {
             "schema_version": "shadow-outcome-sample-v1",
             "authority": "none",
             "items": [
-                {
-                    "outcome_set_id": "preview-1",
-                    "outcomes": [{"destination": "title"}, {"destination": "authors"}],
-                },
-                {
-                    "outcome_set_id": "preview-2",
-                    "outcomes": [{"destination": "series"}],
-                },
+                _shadow_outcome_set("preview-1", ("title", "authors")),
+                _shadow_outcome_set("preview-2", ("series",)),
             ],
             "next_cursor": None,
         }

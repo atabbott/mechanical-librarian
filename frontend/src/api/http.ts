@@ -837,14 +837,17 @@ export type PreparationView = ResponseSchema<'_PreparationResponse'>
 export type PreparationProgress = ResponseSchema<'_PreparationProgress'>
 export type ProviderThrottlingView = ResponseSchema<'_PreparationThrottling'>
 export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
-export type PolicyStateView = Schema<'_PolicyProfileResponse'>
-export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
-export type AutomaticSafetyView = Schema<'_AutomaticSafetyResponse'>
-export type ShadowSampleView = Schema<'_ShadowSampleResponse'>
-export type PolicyTransitionView = Schema<'_PolicyTransitionResponse'>
+// The policy family is decoded centrally (#1692): its views are the
+// response-truth types. Request bodies stay on the request schema.
+export type PolicyStateView = ResponseSchema<'_PolicyProfileResponse'>
+export type ShadowPostureView = ResponseSchema<'_ShadowPostureResponse'>
+export type AutomaticSafetyView = ResponseSchema<'_AutomaticSafetyResponse'>
+export type ShadowSampleView = ResponseSchema<'_ShadowSampleResponse'>
+export type PolicyTransitionView = ResponseSchema<'_PolicyTransitionResponse'>
 export type PolicyDraft = Schema<'_PolicyDraftRequest'>
-export type PolicyPreviewView = Schema<'_PolicyPreviewResponse'>
-export type PolicyActivationView = Schema<'_PolicyActivationResponse'>
+export type PolicyActivationRequest = Schema<'_PolicyActivationRequest'>
+export type PolicyPreviewView = ResponseSchema<'_PolicyPreviewResponse'>
+export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
 // The activity family is decoded centrally (#1691): its views are the
 // response-truth types, and only the example adds a label of its own.
 type ActivityDto = ResponseSchema<'_ActivityResponse'>
@@ -1084,6 +1087,11 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<PolicyTransitionView | null>
+  previewPolicy(draft: PolicyDraft, signal?: AbortSignal): Promise<PolicyPreviewView>
+  activatePolicy(
+    request: PolicyActivationRequest,
+    signal?: AbortSignal,
+  ): Promise<PolicyActivationView>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
   getActivity(
     search?: ActivitySearch,
@@ -1242,6 +1250,22 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'GET /api/v1/activity/{event_id}/transitions',
   'POST /api/v1/activity/consent',
   'POST /api/v1/activity/{connection}/{library}/revoke',
+  'GET /api/v1/metadata-policy/state',
+  'GET /api/v1/metadata-policy/shadow',
+  'GET /api/v1/metadata-policy/shadow/outcomes',
+  'GET /api/v1/metadata-policy/transition',
+  'GET /api/v1/metadata-policy/automatic-safety',
+  'POST /api/v1/metadata-policy/validate',
+  'POST /api/v1/metadata-policy/preview',
+  'POST /api/v1/metadata-policy/drafts',
+  'POST /api/v1/metadata-policy/activate',
+  'POST /api/v1/metadata-policy/automatic-safety/pause',
+  'POST /api/v1/metadata-policy/automatic-safety/recover',
+  'POST /api/v1/metadata-policy/automatic-safety/suspend',
+  'POST /api/v1/metadata-policy/shadow/enter',
+  'POST /api/v1/metadata-policy/shadow/confirm-automatic',
+  'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
+  'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1725,9 +1749,11 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    const value = await this.read('/api/v1/metadata-policy/automatic-safety', signal, workClass)
-    if (!record(value)) throw new ApiError(502, 'invalid_automatic_safety_response')
-    return value as AutomaticSafetyView
+    return (await this.read(
+      '/api/v1/metadata-policy/automatic-safety',
+      signal,
+      workClass,
+    )) as AutomaticSafetyView
   }
   async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return schemaVersionOnly<ShadowSampleView>(
@@ -1740,6 +1766,39 @@ export class ReviewApiClient implements ReviewHttp {
     return value === null
       ? null
       : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
+  }
+  // A preview writes nothing, so an answer that fails decoding or a named check
+  // is a 502, never an uncertain write (#1692).
+  async previewPolicy(draft: PolicyDraft, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/metadata-policy/preview',
+      draft,
+      signal,
+      undefined,
+      'POST',
+      true,
+      true,
+      (value) => mapPolicyPreview(value as PolicyPreviewView),
+    )
+  }
+  // The activation may have committed, so an answer for another policy is an
+  // uncertain write, not a refusal (ADR-0091 P-X3).
+  async activatePolicy(request: PolicyActivationRequest, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/metadata-policy/activate',
+      request,
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value) => {
+        const activation = value as PolicyActivationView
+        if (activation.policy_id !== request.policy_id)
+          throw new ApiError(502, 'invalid_policy_activation_response')
+        return activation
+      },
+    )
   }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
     const writesNothing = path === 'validate' || path === 'preview'
@@ -2232,24 +2291,35 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
   return value
 }
 // A deliberate, named exception to the rule that every field a view reads is
-// checked. These responses are handed back as their generated DTO unchanged
-// instead of being narrowed into a hand-written view model, and their
-// operations are not yet decoded centrally, so the only invariant this file
-// asserts for them is the version handshake: a hand-written copy of
-// docs/reference/review-openapi-v1.json would become a second contract and
-// would fail closed on responses the server is entitled to send. The families
-// that are decoded (`DECODED`: preparation, library, attention, the case
-// detail, settings, reviewer access and activity) are checked field by field
-// by their generated decoders instead, and their mappers keep only the checks
-// the schema cannot state (ADR-0091). This
-// is the one place in the file allowed to widen an unchecked document to a DTO
-// type, which is why the call sites carry no cast of their own.
+// checked. It predates the decoders: the only invariant it asserts is the
+// version handshake, because a hand-written copy of
+// docs/reference/review-openapi-v1.json would become a second contract. Every
+// family is now decoded (`DECODED`), so the policy reads that still pass
+// through here have already been checked field by field by their generated
+// decoders; stage 4 deletes this with `validateObject` (#1684). This is the one
+// place in the file allowed to widen a document to a DTO type, which is why
+// the call sites carry no cast of their own.
 // The lint rule below objects that a type parameter used once is an assertion in
 // disguise. It is, deliberately: this is the file's single declared assertion seam,
 // and naming it here is what keeps the call sites free of casts of their own.
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 const schemaVersionOnly = <T>(value: unknown, name: string): T =>
   validateObject(value, name) as unknown as T
+// The checks the preview schema cannot state (ADR-0091): the decoder has
+// already enforced every field.
+const mapPolicyPreview = (value: PolicyPreviewView): PolicyPreviewView => {
+  for (const library of value.libraries) {
+    // P-X1: one comparison per sampled case.
+    if (library.comparisons.length !== library.cases.length)
+      throw new ApiError(502, 'invalid_policy_preview_comparisons')
+    // P-X2: both sides of a comparison describe the same field.
+    for (const comparison of library.comparisons)
+      for (const field of comparison.fields)
+        if (field.active.field !== field.draft.field)
+          throw new ApiError(502, 'invalid_policy_preview_field')
+  }
+  return value
+}
 // The decoder holds the acknowledgement's shape; the confirmed case must be the
 // one the decision was recorded on (ADR-0091).
 const mapDecisionAcknowledgement = (

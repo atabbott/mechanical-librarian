@@ -865,6 +865,55 @@ def test_an_automatic_description_plan_from_before_leaving_automatic_is_stale(
     repository.close()
 
 
+@pytest.mark.parametrize("ask_only_policy", [False, True])
+def test_leaving_automatic_reconciles_a_store_whose_only_automatic_record_is_a_description(
+    tmp_path: Path, ask_only_policy: bool
+) -> None:
+    """An automatic description alone reactivates the unchanged policy on
+    leaving Automatic, even under a policy with no automatic destination,
+    since its admission does not depend on one (#1574)."""
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic_policy=("cover_order", "fixed_source_order"),
+        ask_only_policy=ask_only_policy,
+    )
+    decision = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    connection = repository._connection
+    assert connection.execute(
+        "SELECT count(*) FROM automatic_decisions"
+    ).fetchone() == (0,)
+    assert connection.execute(
+        "SELECT count(*) FROM current_cover_selection_authorities"
+    ).fetchone() == (0,)
+    assert decision.to_json() in repository.pending_field_effect_decision_documents(100)
+    policy_id, generation, posture = connection.execute(
+        "SELECT active_policy_id,generation,posture FROM metadata_policy_state"
+    ).fetchone()
+    assert posture == "automatic"
+    assert repository.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    assert connection.execute(
+        "SELECT active_policy_id,generation FROM metadata_policy_state"
+    ).fetchone() == (policy_id, generation + 1)
+    assert connection.execute(
+        "SELECT count(*) FROM current_review_case_lineages "
+        "WHERE review_case_id IS NOT NULL"
+    ).fetchone() == (0,)
+    transition = repository.metadata_policy_transition()
+    assert transition is not None
+    assert (
+        transition.from_policy_id,
+        transition.to_policy_id,
+        transition.generation,
+    ) == (policy_id, policy_id, generation + 1)
+    # Its binding names the earlier generation, so it no longer authorizes.
+    assert decision.to_json() not in repository.pending_field_effect_decision_documents(
+        100
+    )
+    repository.close()
+
+
 def test_advice_automatic_off_retains_qualified_deterministic_description_fill(
     tmp_path,
 ):
@@ -2904,10 +2953,16 @@ def test_an_automatic_no_change_reopens_after_leaving_automatic(
     open_repository(tmp_path / "reports.sqlite").close()
 
 
+@pytest.mark.parametrize("descriptions_only", [False, True])
 def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
-    tmp_path: Path,
+    tmp_path: Path, descriptions_only: bool
 ) -> None:
-    """An earlier generation's automatic description never waits again (#1573)."""
+    """An earlier generation's automatic description never waits again (#1573).
+
+    A store whose only automatic record is the description reconciles on
+    leaving Automatic too, so it ends with a current-generation automatic
+    description that resolves (#1574).
+    """
     import hashlib
     from types import SimpleNamespace
     from typing import Any
@@ -2935,7 +2990,15 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     def probe(repository, report, deterministic, access, calls):
         captured["access"] = access
 
-    repository, store, binding, _, _ = _prepared(tmp_path, pipeline_probe=probe)
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        pipeline_probe=probe,
+        automatic_policy=(
+            ("cover_order", "fixed_source_order") if descriptions_only else None
+        ),
+    )
+    # The field decisions a descriptions-only store never has.
+    fields = set() if descriptions_only else {2}
     report, *_ = _automatic_no_change_inputs("description_preserved")
     target = report.target
     connection = repository._connection
@@ -3086,11 +3149,19 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     drain()
     ((earlier, earlier_generation, earlier_current),) = automatic_descriptions()
     assert (earlier_generation, earlier_current) == (2, True)
-    assert field_generations() == {2}
+    assert field_generations() == fields
+    assert connection.execute(
+        "SELECT count(*) FROM current_cover_selection_authorities"
+    ).fetchone() == (0,)
     assert [item.decision_id for item in pending_descriptions()] == [earlier]
 
     now[0] = 20
     assert repository.enter_shadow_preview(20, (target.library,)) == "preview"
+    # Leaving reactivates the unchanged policy whatever the store's automatic
+    # records are (#1574).
+    assert connection.execute(
+        "SELECT generation,posture FROM metadata_policy_state"
+    ).fetchone() == (3, "preview")
     now[0] = 30
     drain()
     assert pending_descriptions() == [] and automatic_counted() == 0
@@ -3108,7 +3179,7 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     assert descriptions[0] == (earlier, 2, False)
     ((current, current_generation, is_current),) = descriptions[1:]
     assert (current_generation, is_current) == (3, True)
-    assert field_generations() == {2, 3}
+    assert field_generations() == ({2, 3} if fields else set())
     (decision,) = pending_descriptions()
     assert decision.decision_id == current
     assert PersistedFieldEffectAuthority(repository).resolve(decision).decision_value

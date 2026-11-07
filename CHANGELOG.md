@@ -32,6 +32,9 @@ brackets are GitHub issues.
 - When the browser cannot read a decision's confirmation, it now says the
   outcome is uncertain and reloads the case instead of offering Try the same
   decision again, which would read the same confirmation (#1688).
+- When the browser loses or cannot read the answer to saving a policy
+  snapshot, it now says the snapshot could not be confirmed and that validating
+  again is safe, instead of a general uncertain message (#1692).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
@@ -350,6 +353,10 @@ brackets are GitHub issues.
   of Attention, so pausing automation after leaving Automatic lists every field
   the work page asks for. Library's preparation card says the pass was
   "Started when Automatic was turned on" (#1573, #1601).
+- Switching from Automatic to Preview now re-prepares every work when the
+  only automatic decisions are covers or descriptions, as it already did for
+  other fields, and Turn on Automatic waits until that finishes. An automatic
+  description counts even when the policy makes nothing automatic (#1574).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

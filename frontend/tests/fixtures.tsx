@@ -15,6 +15,8 @@ import type {
   CaseDetailView,
   DecisionAcknowledgementView,
   LibraryView,
+  PolicyActivationView,
+  PolicyPreviewView,
   PolicyStateView,
   PreparationView,
   ReviewHttp,
@@ -414,6 +416,16 @@ export const createHttp = (): ReviewHttp => ({
   })),
   getPolicyTransition: vi.fn(async () => null),
   policyCommand: async <T,>() => ({}) as T,
+  // The page previews and activates through typed client methods; this fake
+  // sends both through `policyCommand`, so a test scripts every policy command
+  // by its path in one place. The named checks those methods make are the
+  // real client's and are tested through it.
+  previewPolicy(draft) {
+    return this.policyCommand<PolicyPreviewView>('preview', draft)
+  },
+  activatePolicy(request) {
+    return this.policyCommand<PolicyActivationView>('activate', request)
+  },
   getActivity: vi.fn(async () => activity()),
   getActivityPermissionReadiness: vi.fn(async () => {
     const data = activity()

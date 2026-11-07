@@ -338,7 +338,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     ],
                 }
             route.fulfill(
-                status=200,
+                # The server answers a saved policy snapshot 201 Created, the
+                # one status the browser decodes for it.
+                status=201 if path == "/api/v1/metadata-policy/drafts" else 200,
                 content_type="application/json",
                 body=json.dumps(payload),
             )
@@ -3533,7 +3535,13 @@ def _serve_cohort(
                 # A paused connection withholds the handoff, so none is paused.
                 assert isinstance(payload, dict)
                 payload["connections"] = []
-            route.fulfill(content_type="application/json", body=json.dumps(payload))
+            route.fulfill(
+                # The server answers a saved policy snapshot 201 Created, the
+                # one status the browser decodes for it.
+                status=201 if path == "/api/v1/metadata-policy/drafts" else 200,
+                content_type="application/json",
+                body=json.dumps(payload),
+            )
         elif path.startswith("/assets/review-app/"):
             relative = path.removeprefix("/assets/review-app/")
             css = relative.endswith(".css")

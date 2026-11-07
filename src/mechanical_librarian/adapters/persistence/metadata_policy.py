@@ -182,20 +182,34 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 active_profile = MetadataPolicyProfile.from_data(
                     json.loads(active_document[0])
                 )
-                # A policy with no automatic destination has no affected
-                # automatic cohort.  Preserve the ordinary Preview workflow.
-                affected = (
-                    self._connection.execute(
-                        "SELECT 1 FROM automatic_decisions LIMIT 1"
-                    ).fetchone()
-                    if any(
-                        value == "automatic" for _, value in active_profile.destinations
-                    )
-                    else None
-                )
+                # Field decisions and cover selections are automatic only under
+                # a policy destination, so a policy with none has no affected
+                # field or cover cohort.  An automatic description is admitted
+                # by the description advice setting in the Automatic posture,
+                # whatever the policy's destinations, so it always counts.
+                terms = [
+                    "SELECT 1 FROM current_description_decisions current "
+                    "JOIN description_decisions decision ON decision.decision_id=current.decision_id "
+                    "WHERE CASE WHEN json_valid(decision.document) "
+                    "THEN json_extract(decision.document,'$.origin') END='automatic_policy'"
+                ]
+                if any(
+                    value == "automatic" for _, value in active_profile.destinations
+                ):
+                    terms[:0] = [
+                        "SELECT 1 FROM automatic_decisions",
+                        "SELECT 1 FROM current_cover_selection_authorities current "
+                        "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
+                        "WHERE selection.kind='automatic'",
+                    ]
+                affected = self._connection.execute(
+                    " UNION ALL ".join(terms) + " LIMIT 1"
+                ).fetchone()
                 # There is no prior automatic authority to reconcile until a
-                # current cohort has actually received an automatic decision.
-                # Initial Preview remains a harmless report-only entry.
+                # current cohort has actually received an automatic field
+                # decision, cover selection or description decision.  Initial
+                # Preview, and Preview with none of them, remains a harmless
+                # report-only entry.
                 if affected is not None:
                     resolutions = tuple(
                         self._connection.execute(

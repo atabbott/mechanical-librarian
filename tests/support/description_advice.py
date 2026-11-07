@@ -26,11 +26,19 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
     description_digest,
 )
+from mechanical_librarian.domain.metadata_policy import (
+    DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
+    MetadataPolicyProfile,
+    human_review_destinations,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     ProviderCandidate,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import _claim, _target_work_candidate
@@ -75,17 +83,32 @@ def _prepared(
     report_override=None,
     contained_identity=None,
     result_current=True,
+    automatic_policy: tuple[str, str] | None = None,
+    ask_only_policy: bool = False,
 ):
+    """Prepare description advice for one admitted case in Automatic.
+
+    ``automatic_policy`` chooses the automatic category and option instead of
+    the description one, so that no field decision is made for the
+    description.  ``ask_only_policy`` then activates a policy with no
+    automatic destination, still in Automatic, before advice is prepared.
+    Without a description decision the case is the current one.
+    """
     repository = open_repository(tmp_path / "reports.sqlite")
     report, category, option, _ = _automatic_no_change_inputs("description_preserved")
     if report_override is not None:
         report = report_override
+    if automatic_policy is not None:
+        category, option = automatic_policy
     existing = _automatic_decisions(
         SimpleNamespace(repository=repository), report, category, option, qualified=True
     )
+    if ask_only_policy:
+        _activate_ask_only_policy(repository, report)
     deterministic = next(
-        decision for decision in existing if decision.destination == "description"
-    )
+        (decision for decision in existing if decision.destination == "description"),
+        None,
+    ) or _current_case(repository)
     calls = []
     identity = contained_identity or (
         lambda: ("gpt-5.6-sol", b"synthetic-contained-profile")
@@ -178,6 +201,49 @@ def _prepared(
         historical = store.read(binding.review_case_id)["candidate"]
         candidate = DescriptionAdviceCandidate.model_validate(historical)
     return repository, store, binding, candidate, deterministic
+
+
+def _current_case(repository) -> SimpleNamespace:
+    """The one current case, as a decision's case and proposal set name it."""
+    ((review_case_id, proposal_set_id),) = repository._connection.execute(
+        "SELECT c.review_case_id,c.proposal_set_id FROM current_review_case_lineages l "
+        "JOIN review_cases c ON c.review_case_id=l.review_case_id"
+    ).fetchall()
+    return SimpleNamespace(
+        destination="description",
+        review_case_id=review_case_id,
+        proposal_set_id=proposal_set_id,
+    )
+
+
+def _activate_ask_only_policy(repository, report) -> None:
+    """Activate a policy with no automatic destination in Automatic and
+    readmit the report's work under it."""
+    active_policy_id, generation = repository._connection.execute(
+        "SELECT active_policy_id,generation FROM metadata_policy_state"
+    ).fetchone()
+    profile = MetadataPolicyProfile.create(
+        "Ask only",
+        dict(DEFAULT_OPTIONS),
+        {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        },
+    )
+    resolved = resolve_policy(profile, report.target.library)
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        active_policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        5,
+        expected_active_generation=generation,
+    )
+    proposal_set = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish_proposal(proposal_set)
+    repository.admit_review_case(proposal_set)
 
 
 def _guarded_application(repository, root, authority):

@@ -30,6 +30,7 @@ import {
   targetField,
   targetIdentity,
 } from './wireFixtures'
+import activationCapture from './wire/post-metadata-policy-activate.200.json'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -4278,8 +4279,38 @@ describe('central response decoding (#1685)', () => {
       { events: [] },
       '/has_more',
     ],
+    [
+      'GET /api/v1/metadata-policy/state',
+      (client: ReviewApiClient) => client.getPolicyState(),
+      policyProfile({ policy_id: undefined }),
+      '/policy_id',
+    ],
+    [
+      'GET /api/v1/metadata-policy/shadow',
+      (client: ReviewApiClient) => client.getShadowPosture(),
+      { schema_version: 'shadow-posture-v1' },
+      '/authority',
+    ],
+    [
+      'GET /api/v1/metadata-policy/shadow/outcomes',
+      (client: ReviewApiClient) => client.getShadowSample(),
+      { schema_version: 'shadow-outcome-sample-v1' },
+      '/authority',
+    ],
+    [
+      'GET /api/v1/metadata-policy/transition',
+      (client: ReviewApiClient) => client.getPolicyTransition(),
+      { schema_version: 'metadata-policy-transition-v1' },
+      '/acknowledged',
+    ],
+    [
+      'GET /api/v1/metadata-policy/automatic-safety',
+      (client: ReviewApiClient) => client.getAutomaticSafety(),
+      {},
+      '/category_suspensions',
+    ],
   ] as const)(
-    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1691)',
+    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1692)',
     async (operation, read, document, at) => {
       const failure = await read(answering(document)).catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(ResponseDecodeError)
@@ -4512,12 +4543,24 @@ describe('central response decoding (#1685)', () => {
   it('marks only policy validate and preview as writing nothing', async () => {
     const client = answering({ ok: true })
     const spy = vi.spyOn(client as unknown as { mutate: Mutate }, 'mutate')
-    await client.policyCommand('validate', {})
-    await client.policyCommand('preview', {})
-    await client.policyCommand('drafts', {})
+    // Each answer is undecodable; only the flags each command sends matter here.
+    const ignore = () => undefined
+    await client.policyCommand('validate', {}).catch(ignore)
+    await client.policyCommand('preview', {}).catch(ignore)
+    await client.previewPolicy({ name: 'Draft', options: {}, destinations: {} }).catch(ignore)
+    await client.policyCommand('drafts', {}).catch(ignore)
+    await client
+      .activatePolicy({
+        policy_id: 'policy-2',
+        expected_active_policy_id: 'policy-1',
+        expected_active_generation: 1,
+      })
+      .catch(ignore)
     expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([
       [true, true],
       [true, true],
+      [true, true],
+      [false, false],
       [false, false],
     ])
     spy.mockClear()
@@ -4526,10 +4569,14 @@ describe('central response decoding (#1685)', () => {
     expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([[true, false]])
   })
 
+  // Every operation the client calls with a JSON answer is now gated (#1692);
+  // return to automatic documents only 204, so it stays outside the gate.
   it('passes an operation outside the decode gate through unchanged', async () => {
-    await expect(answering({ unexpected: true }, 201).policyCommand('drafts', {})).resolves.toEqual(
-      { unexpected: true },
-    )
+    await expect(
+      mutateOf(answering({ unexpected: true }))(
+        '/api/v1/review-cases/case-1/fields/title/return-to-automatic',
+      ),
+    ).resolves.toEqual({ unexpected: true })
   })
 })
 
@@ -5231,5 +5278,179 @@ describe('activity write decoding (#1691)', () => {
       [{ events: [{ ...transition, failure: 1 }], has_more: false }, 'type@/events/0/failure'],
     ] as const)
       await expect(read(body)).rejects.toMatchObject(refused(failure))
+  })
+})
+
+describe('policy decoding (#1692)', () => {
+  const answering = (body: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(body, { status }))
+    return {
+      fetchMock,
+      client: new ReviewApiClient({ csrf, buildIdentity: 'c'.repeat(64), fetch: fetchMock }),
+    }
+  }
+  const draft = { name: 'Draft', options: {}, destinations: {} }
+  const capture = policyPreview()
+  // One sampled work whose comparison describes the same field on both sides.
+  const impact = {
+    current_value: 'Old tag',
+    desired_value: 'New tag',
+    field: 'tags',
+    narrowed_for_target: false,
+    option: 'fill_empty',
+    outcome: 'projected',
+    qualified_value: 'New tag',
+    reason: null,
+    target_state: 'available',
+  }
+  const sampled = (comparison: Record<string, unknown> = {}, cases = 1) =>
+    policyPreview({
+      libraries: [
+        {
+          ...capture.libraries[0],
+          affected_categories: ['tags'],
+          cases: Array.from({ length: cases }, (_, index) => ({
+            fields: [impact],
+            proposal_set_id: `proposal-${String(index)}`,
+            report_id: `report-${String(index)}`,
+            resolved_policy_id: 'resolved-policy',
+            work_label: `Work ${String(index)}`,
+          })),
+          cases_total: cases,
+          comparisons: [
+            {
+              media_kind: 'ebook',
+              fields: [
+                {
+                  active: { ...impact, desired_value: 'Old tag', qualified_value: 'Old tag' },
+                  draft: impact,
+                  active_destination: 'ask',
+                  draft_destination: 'automatic',
+                  changed: true,
+                  ...comparison,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  const activation = activationCapture.body
+  const request = {
+    policy_id: activation.policy_id,
+    expected_active_policy_id: 'policy-active',
+    expected_active_generation: 1,
+  }
+
+  it('reads an absent transition as none', async () => {
+    await expect(answering(null).client.getPolicyTransition()).resolves.toBeNull()
+  })
+
+  it('accepts a preview whose comparisons match its sampled works', async () => {
+    const { client, fetchMock } = answering(sampled())
+    expect((await client.previewPolicy(draft)).libraries[0]?.cases).toHaveLength(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/metadata-policy/preview')
+  })
+
+  // Validate and preview write nothing, so an answer they cannot read is a
+  // 502, never an uncertain write (Q4).
+  it.each([
+    [
+      'POST /api/v1/metadata-policy/validate',
+      (client: ReviewApiClient) => client.policyCommand('validate', draft),
+      'required@/audiobook_qualification',
+    ],
+    [
+      'POST /api/v1/metadata-policy/preview',
+      (client: ReviewApiClient) => client.previewPolicy(draft),
+      'required@/active_generation',
+    ],
+    [
+      'POST /api/v1/metadata-policy/preview',
+      (client: ReviewApiClient) => client.policyCommand('preview', draft),
+      'required@/active_generation',
+    ],
+  ] as const)(
+    'reports an undecodable %s answer as a 502 (%#)',
+    async (operation, send, failure) => {
+      const refusal = await send(answering({}).client).catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(ResponseDecodeError)
+      expect(refusal).not.toBeInstanceOf(AmbiguousMutationError)
+      expect(refusal).toMatchObject({ ...refused(failure), operation, responseStatus: 200 })
+      expect((refusal as Error).message).not.toContain('/')
+    },
+  )
+
+  it.each([
+    ['P-X1: a comparison per sampled work', sampled({}, 2), 'invalid_policy_preview_comparisons'],
+    [
+      'P-X2: both sides of a comparison name one field',
+      sampled({ active: { ...impact, field: 'genres' } }),
+      'invalid_policy_preview_field',
+    ],
+  ])('refuses a preview that fails %s as a 502', async (_check, answer, code) => {
+    const refusal = await answering(answer)
+      .client.previewPolicy(draft)
+      .catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(ApiError)
+    expect(refusal).not.toBeInstanceOf(AmbiguousMutationError)
+    expect(refusal).toMatchObject({ status: 502, code })
+  })
+
+  it('accepts an activation of the requested policy', async () => {
+    const { client, fetchMock } = answering(activation)
+    expect(await client.activatePolicy(request)).toEqual(activation)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/metadata-policy/activate')
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(JSON.stringify(request))
+  })
+
+  it('reports an activation of another policy as uncertain (P-X3)', async () => {
+    const refusal = await answering(activation)
+      .client.activatePolicy({ ...request, policy_id: 'policy-other' })
+      .catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(UncertainMutationError)
+    expect(refusal).toMatchObject({
+      ...uncertain('invariant@invalid_policy_activation_response'),
+      operation: 'POST /api/v1/metadata-policy/activate',
+      responseStatus: 200,
+    })
+    expect(uncertainWriteOutcome(refusal)).toBe(true)
+  })
+
+  type Unsafe = readonly [operation: string, send: (client: ReviewApiClient) => Promise<unknown>]
+  const policyPath = (operation: string) =>
+    operation
+      .slice('POST /api/v1/metadata-policy/'.length)
+      .replace('{transition_id}', 'transition-1')
+  const commands: readonly Unsafe[] = [
+    'POST /api/v1/metadata-policy/drafts',
+    'POST /api/v1/metadata-policy/automatic-safety/pause',
+    'POST /api/v1/metadata-policy/automatic-safety/recover',
+    'POST /api/v1/metadata-policy/automatic-safety/suspend',
+    'POST /api/v1/metadata-policy/shadow/enter',
+    'POST /api/v1/metadata-policy/shadow/confirm-automatic',
+    'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
+    'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
+  ].map((operation): Unsafe => [
+    operation,
+    (client) => client.policyCommand(policyPath(operation), {}),
+  ])
+  it.each<Unsafe>([
+    ...commands,
+    ['POST /api/v1/metadata-policy/activate', (client) => client.activatePolicy(request)],
+  ])('reports an undecodable %s answer as uncertain', async (operation, send) => {
+    const status = operation.endsWith('/drafts') ? 201 : 200
+    const { client, fetchMock } = answering({ invented: true }, status)
+    const refusal = await send(client).catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(UncertainMutationError)
+    expect(refusal).toBeInstanceOf(AmbiguousMutationError)
+    expect(refusal).toMatchObject({
+      ...uncertain('unknown_key@/invented'),
+      operation,
+      responseStatus: status,
+    })
+    expect((refusal as Error).message).not.toContain('/')
+    expect(uncertainWriteOutcome(refusal)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 })
