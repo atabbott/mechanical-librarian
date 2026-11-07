@@ -243,20 +243,26 @@ describe('Policy route', () => {
       return { http, policyCommand, readsBefore }
     }
 
-    it('says a snapshot that may have been saved could not be confirmed', async () => {
-      const { http, readsBefore } = await run('drafts', new ApiError(503, 'persistence'))
+    it.each([
+      ['a server failure', new ApiError(503, 'persistence')],
+      ['a lost answer', new AmbiguousMutationError()],
+    ])(
+      'says a snapshot that may have been saved could not be confirmed after %s',
+      async (_name, failure) => {
+        const { http, readsBefore } = await run('drafts', failure)
 
-      expect(
-        await screen.findByText(
-          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
-        ),
-      ).toBeVisible()
-      expect(screen.queryByText(/snapshot was not saved/u)).toBeNull()
-      // The authoritative state is read again rather than assumed.
-      await waitFor(() =>
-        expect(vi.mocked(http.getPolicyState).mock.calls.length).toBeGreaterThan(readsBefore),
-      )
-    })
+        expect(
+          await screen.findByText(
+            'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+          ),
+        ).toBeVisible()
+        expect(screen.queryByText(/snapshot was not saved/u)).toBeNull()
+        // The authoritative state is read again rather than assumed.
+        await waitFor(() =>
+          expect(vi.mocked(http.getPolicyState).mock.calls.length).toBeGreaterThan(readsBefore),
+        )
+      },
+    )
 
     it('keeps the invalid-draft copy for a refused snapshot', async () => {
       await run('drafts', new ApiError(422, 'policy_validation'))
@@ -285,25 +291,26 @@ describe('Policy route', () => {
       const user = userEvent.setup()
       const transport = answeringClient({ invented: true }, failing === 'drafts' ? 201 : 200)
       const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
-        if (path === failing)
-          return path === 'preview'
-            ? transport.previewPolicy(body as PolicyDraft)
-            : transport.policyCommand(path, body)
+        // The page previews only through the typed method below.
+        if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
+        if (path === failing) return transport.policyCommand(path, body)
         if (path === 'drafts')
           return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
         return {}
       })
+      const previewPolicy = vi.fn((draft: PolicyDraft) => transport.previewPolicy(draft))
       const http: ReviewHttp = {
         ...createHttp(),
         policyCommand: <T,>(path: string, body?: unknown) =>
           policyCommand(path, body) as Promise<T>,
+        previewPolicy,
       }
       renderRoute('/policy?section=curation', http)
       const tags = await screen.findByRole('region', { name: 'Tags' })
       await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
       const readsBefore = vi.mocked(http.getPolicyState).mock.calls.length
       await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-      return { http, policyCommand, readsBefore }
+      return { http, policyCommand, previewPolicy, readsBefore }
     }
 
     it('to validation says nothing was saved', async () => {
@@ -317,11 +324,11 @@ describe('Policy route', () => {
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
     })
 
-    it('to the snapshot save is uncertain and reloads the policy state', async () => {
+    it('to the snapshot save could not be confirmed and reloads the policy state', async () => {
       const { http, policyCommand, readsBefore } = await run('drafts')
       expect(
         await screen.findByText(
-          'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
         ),
       ).toBeVisible()
       await waitFor(() =>
@@ -331,18 +338,15 @@ describe('Policy route', () => {
     })
 
     it('to the preview names the unavailable preview, not an uncertain write', async () => {
-      const { policyCommand } = await run('preview')
+      const { policyCommand, previewPolicy } = await run('preview')
       expect(
         await screen.findByText(
           'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
         ),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
-      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual([
-        'validate',
-        'drafts',
-        'preview',
-      ])
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
+      expect(previewPolicy).toHaveBeenCalledOnce()
     })
   })
 
@@ -351,21 +355,24 @@ describe('Policy route', () => {
   it('refuses a preview of another snapshot as an unavailable preview', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      // The page previews only through the typed method below.
+      if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
       if (path === 'drafts')
         return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
-      if (path === 'preview')
-        return {
-          active_policy_id: 'policy-active',
-          policy_id: 'policy-other',
-          schema_version: 'metadata-policy-preview-v1',
-          active_generation: 1,
-          libraries: [],
-        }
       return {}
     })
+    const previewPolicy = vi.fn(async (): Promise<PolicyPreviewView> => ({
+      active_policy_id: 'policy-active',
+      policy_id: 'policy-other',
+      schema_version: 'metadata-policy-preview-v1',
+      active_generation: 1,
+      libraries: [],
+      rich_qualification: [],
+    }))
     const http: ReviewHttp = {
       ...createHttp(),
       policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+      previewPolicy,
     }
     renderRoute('/policy?section=curation', http)
     const tags = await screen.findByRole('region', { name: 'Tags' })
@@ -381,6 +388,7 @@ describe('Policy route', () => {
     expect(
       screen.queryByText('Impact preview is current. The active policy is unchanged.'),
     ).toBeNull()
+    expect(previewPolicy).toHaveBeenCalledOnce()
   })
 
   it('opens Automatic for the ASIN only once an audiobook record qualifies it', async () => {
@@ -887,7 +895,7 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText(
-        'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+        'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
       ),
     ).toBeVisible()
     expect(policyCommand.mock.calls.map(([path]) => path)).toEqual([
@@ -1733,23 +1741,28 @@ describe('Policy route', () => {
   ])('treats %s successful activation response as uncertain', async (_name, answer) => {
     const user = userEvent.setup()
     const transport = answeringClient(answer)
-    const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      // The page previews and activates only through the typed methods below.
+      if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
       if (path === 'drafts')
         return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
-      if (path === 'preview')
-        return {
-          active_policy_id: 'policy-active',
-          policy_id: 'policy-draft',
-          schema_version: 'metadata-policy-preview-v1',
-          active_generation: 1,
-          libraries: [],
-        }
-      if (path === 'activate') return transport.activatePolicy(body as PolicyActivationRequest)
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
+    const activatePolicy = vi.fn((request: PolicyActivationRequest) =>
+      transport.activatePolicy(request),
+    )
     const http: ReviewHttp = {
       ...createHttp(),
-      policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+      previewPolicy: async (): Promise<PolicyPreviewView> => ({
+        active_policy_id: 'policy-active',
+        policy_id: 'policy-draft',
+        schema_version: 'metadata-policy-preview-v1',
+        active_generation: 1,
+        libraries: [],
+        rich_qualification: [],
+      }),
+      activatePolicy,
     }
     renderRoute('/policy?section=identity', http)
 
@@ -1765,6 +1778,11 @@ describe('Policy route', () => {
       ),
     ).toBeVisible()
     expect(screen.queryByText('Policy activated.')).toBeNull()
+    expect(activatePolicy).toHaveBeenCalledWith({
+      policy_id: 'policy-draft',
+      expected_active_policy_id: 'policy-active',
+      expected_active_generation: 1,
+    })
   })
 
   it('retains the reviewed preview while an earlier policy transition is processing', async () => {
