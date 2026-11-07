@@ -227,6 +227,7 @@ export default function LibraryPage({
   retained,
   pending,
   failed,
+  error,
   retry,
   onRailRetaining,
 }: {
@@ -235,6 +236,8 @@ export default function LibraryPage({
   retained: boolean
   pending: boolean
   failed: boolean
+  /** The works read's failure, which a build mismatch makes unrecoverable by another try. */
+  error: unknown
   retry: () => void
   /** Reports whether the attention rail is showing a retained queue. */
   onRailRetaining?: (retaining: boolean) => void
@@ -2078,7 +2081,9 @@ export default function LibraryPage({
           <div className="library-work-list" aria-busy={retained || undefined}>
             {!data ? (
               <div className="empty-copy" aria-busy={!failed}>
-                {failed ? (
+                {failed && error instanceof BuildMismatchError ? (
+                  <StaleBuildRead lead="Works were not loaded." />
+                ) : failed ? (
                   <>
                     <p role="alert">Works are unavailable.</p>
                     <button type="button" onClick={retry}>
@@ -2315,7 +2320,8 @@ export default function LibraryPage({
             identityPending || leaving || successorPending === search.preview ? (
               <p role="status">Loading selected work…</p>
             ) : identityError &&
-              (attention.error instanceof BuildMismatchError ||
+              (error instanceof BuildMismatchError ||
+                attention.error instanceof BuildMismatchError ||
                 detail.error instanceof BuildMismatchError) ? (
               <StaleBuildRead lead="Selected work was not loaded." />
             ) : identityError ? (
@@ -2571,6 +2577,8 @@ export default function LibraryPage({
                       attention.isPlaceholderData ||
                       attention.isFetchingNextPage ? (
                       <span>Looking for the next visible work…</span>
+                    ) : nextWorkError && attention.error instanceof BuildMismatchError ? (
+                      <StaleBuildRead lead="The next attention work was not loaded." />
                     ) : nextWorkError ? (
                       <>
                         <span>The next attention work could not be loaded.</span>
@@ -3050,7 +3058,9 @@ export default function LibraryPage({
               </div>
               <button onClick={closeAttention}>Close</button>
             </header>
-            {attention.data === undefined ? (
+            {attention.data === undefined && attention.error instanceof BuildMismatchError ? (
+              <StaleBuildRead lead="Attention was not loaded." ref={attentionRetry} />
+            ) : attention.data === undefined ? (
               <p role={attention.isError ? 'alert' : 'status'}>
                 {attention.isError ? (
                   <>
@@ -3062,7 +3072,8 @@ export default function LibraryPage({
                         void attention.refetch().then((result) => {
                           // The retry removes this button while it reads, so
                           // the rail's heading takes focus back on success
-                          // (#1399) and Try again does when it fails again.
+                          // (#1399) and the control that replaces it does when
+                          // it fails again: Try again, or Reload on a newer build.
                           const active = document.activeElement
                           if (
                             active &&
@@ -3162,7 +3173,9 @@ export default function LibraryPage({
                     {attention.isFetchingNextPage ? 'Loading more…' : 'Load more attention'}
                   </button>
                 ) : null}
-                {attention.isFetchNextPageError ? (
+                {attention.isFetchNextPageError && attention.error instanceof BuildMismatchError ? (
+                  <StaleBuildRead lead="More attention was not loaded." />
+                ) : attention.isFetchNextPageError ? (
                   <p role="alert">
                     More attention could not be loaded.{' '}
                     <button type="button" onClick={() => void attention.fetchNextPage()}>

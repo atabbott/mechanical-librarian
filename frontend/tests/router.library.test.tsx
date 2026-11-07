@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   ApiError,
+  BuildMismatchError,
   CsrfRenewedError,
   EMPTY_TARGET_TEXT,
   UncertainMutationError,
@@ -187,6 +188,50 @@ it('retries unavailable Works while the Library shell remains usable', async () 
   expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
   expect(getLibrary.mock.calls.length).toBeGreaterThan(failedReads)
   await waitFor(() => expect(screen.queryByText('Works are unavailable.')).toBeNull())
+})
+
+it.each(['/library?lens=all', '/library?lens=all&q=needle'])(
+  'offers a reload, not another try, when Works meet a newer build at %s',
+  async (path) => {
+    const getLibrary = vi.fn(async () => {
+      throw new BuildMismatchError()
+    })
+    renderRoute(path, { ...createHttp(), getLibrary })
+    const lead = await screen.findByText(
+      'Works were not loaded. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(lead).toBeVisible()
+    expect(lead).not.toHaveAttribute('role')
+    const list = document.querySelector<HTMLElement>('.library-work-list')
+    if (!list) throw new Error('the works list is required')
+    expect(
+      within(list).getByRole('button', { name: 'Reload the current application' }),
+    ).toBeVisible()
+    expect(screen.queryByText('Works are unavailable.')).toBeNull()
+    expect(within(list).queryByRole('button', { name: 'Try again' })).toBeNull()
+  },
+)
+
+it('offers a reload for the selected work when only the Works read met a newer build', async () => {
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getLibrary: vi.fn(async () => {
+      throw new BuildMismatchError()
+    }),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      throw new ApiError(503, 'unavailable')
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http)
+  const lead = await screen.findByText(
+    'Selected work was not loaded. This tab is running an earlier build.',
+    { exact: false },
+  )
+  expect(lead).toBeVisible()
+  expect(lead).not.toHaveAttribute('role')
+  expect(screen.queryByText(/Selected work could not be loaded\./u)).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
 
 it('holds Library in its pending state until the handoff consent read settles', async () => {
@@ -8652,6 +8697,99 @@ describe('Library route', () => {
     expect(document.body).not.toHaveFocus()
   })
 
+  it('offers a reload, not another try, when the Attention queue meets a newer build', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async () => {
+        throw new BuildMismatchError()
+      }),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    const lead = await within(rail).findByText(
+      'Attention was not loaded. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(lead).toBeVisible()
+    expect(lead).not.toHaveAttribute('role')
+    expect(
+      within(rail).getByRole('button', { name: 'Reload the current application' }),
+    ).toBeVisible()
+    expect(within(rail).queryByText(/Attention could not be loaded\./u)).toBeNull()
+    expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('moves focus to Reload when an Attention retry meets a newer build (#1399)', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async () => {
+        calls += 1
+        if (calls === 1) throw new Error('temporary attention failure')
+        throw new BuildMismatchError()
+      }),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
+    await user.click(await within(rail).findByRole('button', { name: 'Try again' }))
+    // The retry removes Try again; the failed read focuses the control that
+    // replaces it, which on a newer build is the reload.
+    await waitFor(() =>
+      expect(
+        within(rail).getByRole('button', { name: 'Reload the current application' }),
+      ).toHaveFocus(),
+    )
+    expect(document.body).not.toHaveFocus()
+    expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('offers a reload, not another try, when more attention meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async (search: AttentionSearch) => {
+        if (search.cursor) throw new BuildMismatchError()
+        return {
+          total: 2,
+          nextCursor: 'next',
+          items: [
+            {
+              id: 'case-1',
+              destination: 'title' as const,
+              title: 'A Book',
+              authors: [],
+              library: 'Books',
+              mediaKind: 'epub' as const,
+              classificationReason: 'Canonical library attention reason',
+              notices: [],
+              provenance: [],
+              workAttentionCount: 1,
+            },
+          ],
+        }
+      }),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
+    const lead = await within(rail).findByText(
+      'More attention was not loaded. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(lead).toBeVisible()
+    expect(lead).not.toHaveAttribute('role')
+    expect(
+      within(rail).getByRole('button', { name: 'Reload the current application' }),
+    ).toBeVisible()
+    expect(within(rail).getByText('A Book')).toBeVisible()
+    expect(within(rail).queryByText(/More attention could not be loaded\./u)).toBeNull()
+    expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
   it.each(['Close', 'toggle', 'Escape'] as const)(
     'cancels the opening reveal when %s closes the rail before it runs (#1563)',
     async (closer) => {
@@ -14122,6 +14260,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const completeUnderSearch = async (
     entry: string,
     summary: (decided: boolean) => Promise<LibraryView>,
+    attention?: (decided: boolean) => ReturnType<ReviewHttp['getAttention']>,
   ) => {
     const user = userEvent.setup()
     let decided = false
@@ -14134,9 +14273,11 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         search.q ? counted(decided ? 0 : 1, 1) : summary(decided),
       ),
       getAttention: vi.fn(async () =>
-        decided
-          ? { total: 0, items: [] }
-          : { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] },
+        attention
+          ? attention(decided)
+          : decided
+            ? { total: 0, items: [] }
+            : { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] },
       ),
       getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
@@ -14220,6 +14361,29 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await waitFor(() =>
       expect(footer).toHaveTextContent(/^All visible review work is complete\.$/u),
     )
+  })
+
+  it('V4: the next work offers a reload, not another try, when it meets a newer build', async () => {
+    const footer = await completeUnderSearch(
+      '/library?lens=all&q=needle&preview=case-1&field=title',
+      async (decided) => counted(decided ? 0 : 1, 4),
+      async (decided) => {
+        if (decided) throw new BuildMismatchError()
+        return { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] }
+      },
+    )
+    if (!footer) throw new Error('completion footer is required')
+    const lead = await within(footer).findByText(
+      'The next attention work was not loaded. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(lead).toBeVisible()
+    expect(lead).not.toHaveAttribute('role')
+    expect(
+      within(footer).getByRole('button', { name: 'Reload the current application' }),
+    ).toBeVisible()
+    expect(within(footer).queryByText('The next attention work could not be loaded.')).toBeNull()
+    expect(within(footer).queryByRole('button', { name: 'Try finding next work again' })).toBeNull()
   })
 
   it('V5: the default landing and the summary share one request', async () => {
@@ -14464,6 +14628,26 @@ describe('a focused field decision (#1519)', () => {
     })
     const region = await screen.findByRole('region', { name: 'Recorded observations' })
     expect(within(region).getByRole('button', { name: 'Retry observations' })).toBeVisible()
+  })
+
+  it('offers a reload, not Retry observations, when observations meet a newer build', async () => {
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+        throw new BuildMismatchError()
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    const lead = await within(region).findByText(
+      'The observations were not loaded. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(lead).toBeVisible()
+    expect(lead).not.toHaveAttribute('role')
+    expect(
+      within(region).getByRole('button', { name: 'Reload the current application' }),
+    ).toBeVisible()
+    expect(within(region).queryByText(/The observations could not be loaded\./u)).toBeNull()
+    expect(within(region).queryByRole('button', { name: 'Retry observations' })).toBeNull()
   })
 
   it('shows the external-library card only for a recorded change', async () => {
