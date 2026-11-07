@@ -57,12 +57,12 @@ it('keeps navigation available during initial Activity failure and retries the r
   expect(await screen.findByRole('heading', { name: 'Loading activity…' })).toBeVisible()
   expect(screen.getByRole('navigation', { name: 'Primary workspace' })).toBeVisible()
   await act(async () => rejectRead(new ApiError(503, 'unavailable')))
-  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded." })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
   expect(screen.getByRole('link', { name: 'Library' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   await waitFor(() => {
     expect(http.getActivity).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('heading', { name: "Activity couldn't be loaded." })).toBeVisible()
+    expect(screen.getByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
   })
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
@@ -79,7 +79,7 @@ it('explains a lost Activity read in plain words and retries it', async () => {
     .mockRejectedValueOnce(new NetworkUnavailableError())
     .mockResolvedValue(activity())
   renderRoute('/activity', http)
-  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded." })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
   expect(screen.getByRole('alert')).toHaveTextContent(
     "Couldn't reach the server. Check that Mechanical Librarian is running, then try again.",
   )
@@ -116,7 +116,7 @@ it.each([
     http.getActivity = vi.fn<ReviewHttp['getActivity']>().mockRejectedValue(error)
     renderRoute('/activity', http)
     expect(
-      await screen.findByRole('heading', { name: "Activity couldn't be loaded." }),
+      await screen.findByRole('heading', { name: "Activity couldn't be loaded" }),
     ).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(message)
     expect(screen.getByText(detail).closest('details')).not.toHaveAttribute('open')
@@ -1595,12 +1595,9 @@ describe('Activity route', () => {
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     expect(
-      await screen.findByText(
-        'Recorded transitions were not loaded. This tab is running an earlier build.',
-        { exact: false },
-      ),
+      await screen.findByText('Recorded transitions were not loaded.', { exact: false }),
     ).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(
       screen.queryByText('Recorded transitions could not be loaded.', { exact: false }),
     ).toBeNull()
@@ -1632,13 +1629,12 @@ describe('Activity route', () => {
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     await user.click(await screen.findByRole('button', { name: 'Load more transitions' }))
-    const lead = await screen.findByText(
-      'More recorded transitions were not loaded. This tab is running an earlier build.',
-      { exact: false },
-    )
+    const lead = await screen.findByText('More recorded transitions were not loaded.', {
+      exact: false,
+    })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
-    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(
       screen.queryByText('More recorded transitions could not be loaded.', { exact: false }),
     ).toBeNull()

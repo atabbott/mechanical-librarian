@@ -82,7 +82,7 @@ describe('Policy route', () => {
     }
     renderRoute('/policy?section=curation', http)
 
-    expect(await screen.findByRole('heading', { name: "Policy couldn't be loaded." })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: "Policy couldn't be loaded" })).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(
       "The server sent an answer this page couldn't read. Try again.",
     )

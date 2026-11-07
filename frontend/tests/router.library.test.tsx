@@ -197,17 +197,12 @@ it.each(['/library?lens=all', '/library?lens=all&q=needle'])(
       throw new BuildMismatchError()
     })
     renderRoute(path, { ...createHttp(), getLibrary })
-    const lead = await screen.findByText(
-      'Works were not loaded. This tab is running an earlier build.',
-      { exact: false },
-    )
+    const lead = await screen.findByText('Works were not loaded.', { exact: false })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     const list = document.querySelector<HTMLElement>('.library-work-list')
     if (!list) throw new Error('the works list is required')
-    expect(
-      within(list).getByRole('button', { name: 'Reload the current application' }),
-    ).toBeVisible()
+    expect(within(list).getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(screen.queryByText('Works are unavailable.')).toBeNull()
     expect(within(list).queryByRole('button', { name: 'Try again' })).toBeNull()
   },
@@ -224,10 +219,7 @@ it('offers a reload for the selected work when only the Works read met a newer b
     }),
   }
   renderRoute('/library?lens=all&preview=case-1', http)
-  const lead = await screen.findByText(
-    'Selected work was not loaded. This tab is running an earlier build.',
-    { exact: false },
-  )
+  const lead = await screen.findByText('Selected work was not loaded.', { exact: false })
   expect(lead).toBeVisible()
   expect(lead).not.toHaveAttribute('role')
   expect(screen.queryByText(/Selected work could not be loaded\./u)).toBeNull()
@@ -253,15 +245,13 @@ it('moves focus to Reload when a selected-work retry meets a newer build (#1288)
   await user.click(within(failure).getByRole('button', { name: 'Try again' }))
   // The retry removes Try again; the failed read focuses the control that
   // replaces it, which on a newer build is the reload.
-  await screen.findByText('Selected work was not loaded. This tab is running an earlier build.', {
+  await screen.findByText('Selected work was not loaded.', {
     exact: false,
   })
   const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
   if (!workspace) throw new Error('the selected work workspace is required')
   await waitFor(() =>
-    expect(
-      within(workspace).getByRole('button', { name: 'Reload the current application' }),
-    ).toHaveFocus(),
+    expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
   )
   expect(document.body).not.toHaveFocus()
 })
@@ -297,15 +287,13 @@ it('moves focus to Reload when both selected-work reads meet a newer build, the 
   await waitFor(() => expect(http.getAttention).toHaveBeenCalledTimes(2))
   await screen.findByText('Loading selected work…')
   releaseWorks()
-  await screen.findByText('Selected work was not loaded. This tab is running an earlier build.', {
+  await screen.findByText('Selected work was not loaded.', {
     exact: false,
   })
   const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
   if (!workspace) throw new Error('the selected work workspace is required')
   await waitFor(() =>
-    expect(
-      within(workspace).getByRole('button', { name: 'Reload the current application' }),
-    ).toHaveFocus(),
+    expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
   )
   expect(document.body).not.toHaveFocus()
 })
@@ -324,15 +312,13 @@ it('moves focus to Reload when a selected detail retry meets a newer build (#128
   const failure = await screen.findByText(/Selected work could not be loaded\./u)
   retried = true
   await user.click(within(failure).getByRole('button', { name: 'Try again' }))
-  await screen.findByText('Selected work was not loaded. This tab is running an earlier build.', {
+  await screen.findByText('Selected work was not loaded.', {
     exact: false,
   })
   const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
   if (!workspace) throw new Error('the selected work workspace is required')
   await waitFor(() =>
-    expect(
-      within(workspace).getByRole('button', { name: 'Reload the current application' }),
-    ).toHaveFocus(),
+    expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
   )
   expect(document.body).not.toHaveFocus()
 })
@@ -8816,15 +8802,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
-    const lead = await within(rail).findByText(
-      'Attention was not loaded. This tab is running an earlier build.',
-      { exact: false },
-    )
+    const lead = await within(rail).findByText('Attention was not loaded.', { exact: false })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
-    expect(
-      within(rail).getByRole('button', { name: 'Reload the current application' }),
-    ).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(within(rail).queryByText(/Attention could not be loaded\./u)).toBeNull()
     expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
   })
@@ -8848,11 +8829,7 @@ describe('Library route', () => {
     await user.click(await within(rail).findByRole('button', { name: 'Try again' }))
     // The retry removes Try again; the failed read focuses the control that
     // replaces it, which on a newer build is the reload.
-    await waitFor(() =>
-      expect(
-        within(rail).getByRole('button', { name: 'Reload the current application' }),
-      ).toHaveFocus(),
-    )
+    await waitFor(() => expect(within(rail).getByRole('button', { name: 'Reload' })).toHaveFocus())
     expect(document.body).not.toHaveFocus()
     expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
   })
@@ -8886,15 +8863,10 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
     await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
-    const lead = await within(rail).findByText(
-      'More attention was not loaded. This tab is running an earlier build.',
-      { exact: false },
-    )
+    const lead = await within(rail).findByText('More attention was not loaded.', { exact: false })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
-    expect(
-      within(rail).getByRole('button', { name: 'Reload the current application' }),
-    ).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(within(rail).getByText('A Book')).toBeVisible()
     expect(within(rail).queryByText(/More attention could not be loaded\./u)).toBeNull()
     expect(within(rail).queryByRole('button', { name: 'Try again' })).toBeNull()
@@ -8932,7 +8904,7 @@ describe('Library route', () => {
     const alert = await within(rail).findByRole('alert')
     expect(alert).toHaveTextContent(/^More attention could not be loaded\. Try again$/u)
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeVisible()
-    expect(within(rail).queryByText(/This tab is running an earlier build/u)).toBeNull()
+    expect(within(rail).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
   it.each(['Close', 'toggle', 'Escape'] as const)(
@@ -13413,7 +13385,7 @@ describe('library provider throttling notice (#1282)', () => {
     libraries: [],
     provider_throttling: { generation: 4, retry, entries },
   })
-  const notice = () => screen.findByRole('region', { name: 'Provider lookups waiting to retry' })
+  const notice = () => screen.findByRole('region', { name: 'Source lookups waiting to retry' })
   const container = () => document.querySelector<HTMLElement>('.provider-throttle-notice')
   const freezeNoon = () => {
     vi.useFakeTimers({ toFake: ['Date'], now: noon })
@@ -13465,13 +13437,13 @@ describe('library provider throttling notice (#1282)', () => {
       month: 'short',
     }).format(tomorrow)
     expect(items.map((item) => item.querySelector('span')?.textContent)).toEqual([
-      `Google Books · Synthetic ebooks: It is limiting requests. 214 deferred lookups. Next automatic retry ${clock(today)}.`,
-      'Hardcover · Synthetic ebooks: It refused the configured API key. 1 deferred lookup. Waits for Retry now after the source is fixed.',
-      `Open Library · Synthetic audiobooks with a long library name: It did not answer. ${(10_000).toLocaleString()} deferred lookups. No automatic retry remains.`,
-      `Google Books · Second shelf: Its request quota is used up. 3 deferred lookups. Next automatic retry ${day}, ${clock(tomorrow)}.`,
-      'iTunes · Synthetic ebooks: It is limiting requests. 214 deferred lookups. Retrying now.',
-      'Audnexus · Synthetic ebooks: 214 deferred lookups. Retry due now.',
-      'Inventaire · Synthetic ebooks: Its settings need checking. 2 deferred lookups. Retry due now.',
+      `Google Books · Synthetic ebooks: It is limiting requests. 214 lookups waiting. Next automatic retry ${clock(today)}.`,
+      'Hardcover · Synthetic ebooks: It refused the API key. 1 lookup waiting. No automatic retry. Fix the source, then retry.',
+      `Open Library · Synthetic audiobooks with a long library name: It did not answer. ${(10_000).toLocaleString()} lookups waiting. No automatic retry remains.`,
+      `Google Books · Second shelf: Its request quota is used up. 3 lookups waiting. Next automatic retry ${day}, ${clock(tomorrow)}.`,
+      'iTunes · Synthetic ebooks: It is limiting requests. 214 lookups waiting. Retrying now.',
+      'Audnexus · Synthetic ebooks: 214 lookups waiting. Retry due now.',
+      'Inventaire · Synthetic ebooks: Its settings need checking. 2 lookups waiting. Retry due now.',
     ])
     // Only the first two entries carry a remedy, each one link to Metadata sources.
     expect(
@@ -13495,7 +13467,7 @@ describe('library provider throttling notice (#1282)', () => {
   it.each([
     [
       'managed_by_file',
-      'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+      'To retry, raise provider_recovery_generation by one in /data/config.json and restart the service.',
     ],
     ['unavailable', null],
   ] as const)('offers no Retry now when retry is %s', async (retry, instruction) => {
@@ -13523,7 +13495,7 @@ describe('library provider throttling notice (#1282)', () => {
     expect(empty).toBeEmptyDOMElement()
     // Empty, it is no landmark: no region role and no label (#1282 R3 F4).
     expect(empty).not.toHaveAttribute('aria-label')
-    expect(screen.queryByRole('region', { name: 'Provider lookups waiting to retry' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Source lookups waiting to retry' })).toBeNull()
     current = throttled([])
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     await waitFor(() => expect(within(empty).getByRole('status')).toBeEmptyDOMElement())
@@ -13581,7 +13553,7 @@ describe('library provider throttling notice (#1282)', () => {
     expect(timers().map(([delay]) => delay > 80_000 && delay <= 90_000)).toEqual([true])
     const reads = vi.mocked(http.getPreparation).mock.calls.length
     await act(() => vi.advanceTimersByTimeAsync(91_000))
-    expect(items[0]).toHaveTextContent('214 deferred lookups. Retry due now.')
+    expect(items[0]).toHaveTextContent('214 lookups waiting. Retry due now.')
     expect(items[1]).toHaveTextContent(`Next automatic retry ${clock(later)}.`)
     expect(vi.mocked(http.getPreparation).mock.calls.length).toBe(reads)
     // The next timer runs to the next wait; a change replaces it.
@@ -13640,7 +13612,7 @@ describe('library provider throttling notice (#1282)', () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
     await user.click(button)
-    await waitFor(() => expect(status).toHaveTextContent('Retry now accepted.'))
+    await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
     expect(status).toHaveClass('provider-throttle-outcome', 'provider-throttle-status')
     await user.click(button)
     await waitFor(() => expect(alert).toHaveTextContent('Retry now was already pressed elsewhere.'))
@@ -13675,9 +13647,7 @@ describe('library provider throttling notice (#1282)', () => {
     expect(http.retryProviderRecovery).toHaveBeenCalledWith(4)
     const reads = vi.mocked(http.getPreparation).mock.calls.length
     await act(async () => release(settingsView()))
-    await waitFor(() =>
-      expect(status).toHaveTextContent('Retry now accepted. Every deferred lookup will retry now.'),
-    )
+    await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
     expect(within(region).getByRole('status')).toBe(status)
     await waitFor(() =>
       expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(reads),
@@ -13687,13 +13657,10 @@ describe('library provider throttling notice (#1282)', () => {
   })
 
   it.each([
-    [
-      new ApiError(409, 'provider_recovery_stale'),
-      'Retry now was already pressed elsewhere. The notice now shows the current state.',
-    ],
+    [new ApiError(409, 'provider_recovery_stale'), 'Retry now was already pressed elsewhere.'],
     [
       new ApiError(409, 'settings_managed_by_file'),
-      'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+      'To retry, raise provider_recovery_generation by one in /data/config.json and restart the service.',
     ],
     [
       new ApiError(409, 'settings_stale'),
@@ -13701,7 +13668,7 @@ describe('library provider throttling notice (#1282)', () => {
     ],
     [
       new ApiError(503, 'settings_unavailable'),
-      'Retry now could not be confirmed. Check the notice before pressing it again.',
+      'No answer came back. Check whether the lookups are retrying before pressing Retry now again.',
     ],
     [
       // A 2xx the decoder refused (#1689).
@@ -13711,7 +13678,7 @@ describe('library provider throttling notice (#1282)', () => {
         at: '/secrets',
         reason: 'required',
       }),
-      'Retry now could not be confirmed. Check the notice before pressing it again.',
+      'No answer came back. Check whether the lookups are retrying before pressing Retry now again.',
     ],
   ])('alerts a refused Retry now (%s) and refreshes the notice', async (error, copy) => {
     const user = userEvent.setup()
@@ -13753,7 +13720,9 @@ describe('library provider throttling notice (#1282)', () => {
     expect(document.activeElement).not.toBe(document.body)
     const main = document.getElementById('main-content')
     expect(document.activeElement).toBe(main?.querySelector('[data-route-focus]') ?? main)
-    expect(within(region).getByRole('status')).toHaveTextContent('Retry now accepted.')
+    expect(within(region).getByRole('status')).toHaveTextContent(
+      'Every waiting lookup is retrying now.',
+    )
   })
 })
 
@@ -14524,15 +14493,12 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       },
     )
     if (!footer) throw new Error('completion footer is required')
-    const lead = await within(footer).findByText(
-      'The next attention work was not loaded. This tab is running an earlier build.',
-      { exact: false },
-    )
+    const lead = await within(footer).findByText('The next attention work was not loaded.', {
+      exact: false,
+    })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
-    expect(
-      within(footer).getByRole('button', { name: 'Reload the current application' }),
-    ).toBeVisible()
+    expect(within(footer).getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(within(footer).queryByText('The next attention work could not be loaded.')).toBeNull()
     expect(within(footer).queryByRole('button', { name: 'Try finding next work again' })).toBeNull()
   })
@@ -14553,7 +14519,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(
       within(footer).getByRole('button', { name: 'Try finding next work again' }),
     ).toBeVisible()
-    expect(within(footer).queryByText(/This tab is running an earlier build/u)).toBeNull()
+    expect(within(footer).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
   it('V5: the default landing and the summary share one request', async () => {
@@ -14807,15 +14773,12 @@ describe('a focused field decision (#1519)', () => {
       }),
     })
     const region = await screen.findByRole('region', { name: 'Recorded observations' })
-    const lead = await within(region).findByText(
-      'The observations were not loaded. This tab is running an earlier build.',
-      { exact: false },
-    )
+    const lead = await within(region).findByText('The observations were not loaded.', {
+      exact: false,
+    })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
-    expect(
-      within(region).getByRole('button', { name: 'Reload the current application' }),
-    ).toBeVisible()
+    expect(within(region).getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(within(region).queryByText(/The observations could not be loaded\./u)).toBeNull()
     expect(within(region).queryByRole('button', { name: 'Retry observations' })).toBeNull()
   })
