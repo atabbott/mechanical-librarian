@@ -1,12 +1,13 @@
 import { queryWorkClass } from '../queryWork'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { BuildMismatchError } from '../api/http'
 import type { ChoiceContextView, EvidenceView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
+import { focusAfterRetry } from '../focusAfterRetry'
 import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labels'
 import { useReviewContext } from '../router'
 
@@ -107,16 +108,22 @@ export function RecordedFieldObservations({
       ),
   )
   const missing = evidence.data?.pages[0]?.missingLineageCount ?? 0
+  // Retry observations, or Reload once the tab is on an earlier build.
+  const observationsRetry = useRef<HTMLButtonElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const list = useRef<HTMLUListElement>(null)
   // The section is there only when this field has observations to show, more
   // may be loaded, or they could not be read (#1519).
   if (!observations.length && !evidence.isError && !evidence.hasNextPage && !missing) return null
   return (
     <section className="recorded-field-observations" aria-label="Recorded observations">
-      <h3>Recorded observations</h3>
+      <h3 ref={heading} tabIndex={-1}>
+        Recorded observations
+      </h3>
       {observations.length ? (
-        <ul className="evidence-values">
+        <ul className="evidence-values" ref={list}>
           {observations.map((item, index) => (
-            <li key={`${item.source}:${item.observation}:${String(index)}`}>
+            <li key={`${item.source}:${item.observation}:${String(index)}`} tabIndex={-1}>
               <p>{observationText(item.observation)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
@@ -127,14 +134,21 @@ export function RecordedFieldObservations({
       ) : null}
       {missing ? <p>Some referenced observations are unavailable.</p> : null}
       {evidence.error instanceof BuildMismatchError ? (
-        <StaleBuildRead lead="The observations were not loaded." />
+        <StaleBuildRead lead="The observations were not loaded." ref={observationsRetry} />
       ) : evidence.isError ? (
         <p role="alert">
           The observations could not be loaded.{' '}
           <button
+            ref={observationsRetry}
             type="button"
             onClick={() =>
-              void (evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch())
+              void (
+                evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch()
+              ).then((result) =>
+                focusAfterRetry(() =>
+                  result.isSuccess ? heading.current : observationsRetry.current,
+                ),
+              )
             }
           >
             Retry observations
@@ -143,11 +157,23 @@ export function RecordedFieldObservations({
       ) : null}
       {evidence.hasNextPage ? (
         <p>
-          More observations remain.{' '}
+          More observations remain. {/* Busy, not disabled, so focus stays on it while it reads. */}
           <button
             type="button"
-            disabled={evidence.isFetchingNextPage}
-            onClick={() => void evidence.fetchNextPage()}
+            aria-disabled={evidence.isFetchingNextPage || undefined}
+            onClick={() => {
+              if (evidence.isFetchingNextPage) return
+              const from = observations.length
+              // A last page removes this button: focus moves to the first
+              // observation it added.
+              void evidence
+                .fetchNextPage()
+                .then(() =>
+                  focusAfterRetry(
+                    () => list.current?.querySelectorAll('li')[from] ?? heading.current,
+                  ),
+                )
+            }}
           >
             {evidence.isFetchingNextPage ? 'Loading observations…' : 'Load more observations'}
           </button>

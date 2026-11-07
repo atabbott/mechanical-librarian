@@ -15160,6 +15160,79 @@ describe('a focused field decision (#1519)', () => {
     expect(within(region).queryByRole('button', { name: 'Retry observations' })).toBeNull()
   })
 
+  it.each(['mismatch', 'success'] as const)(
+    'moves focus to what replaces Retry observations after a %s (#1742)',
+    async (outcome) => {
+      const user = userEvent.setup()
+      let reads = 0
+      open(focused(), {
+        getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return {
+            items: [
+              {
+                destinations: ['title'],
+                observation: 'Title: Another title',
+                role: 'external_observation',
+                source: 'Open Library',
+              },
+            ],
+            missingLineageCount: 0,
+            sourceLedger: [],
+          }
+        }),
+      })
+      const region = await screen.findByRole('region', { name: 'Recorded observations' })
+      await user.click(await within(region).findByRole('button', { name: 'Retry observations' }))
+      const target =
+        outcome === 'mismatch'
+          ? await within(region).findByRole('button', { name: 'Reload the current application' })
+          : await within(region).findByRole('heading', { name: 'Recorded observations' })
+      await waitFor(() => expect(target).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    },
+  )
+
+  it('keeps Load more observations focusable while it reads (#1742)', async () => {
+    const user = userEvent.setup()
+    let release: () => void = () => undefined
+    const item = (observation: string) => ({
+      destinations: ['title' as const],
+      observation,
+      role: 'external_observation' as const,
+      source: 'Open Library',
+    })
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async (_caseId, cursor) => {
+        if (!cursor)
+          return {
+            items: [item('Title: Another title')],
+            missingLineageCount: 0,
+            sourceLedger: [],
+            nextCursor: 'page-two',
+          }
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return { items: [item('Title: A later title')], missingLineageCount: 0, sourceLedger: [] }
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    const more = await within(region).findByRole('button', { name: 'Load more observations' })
+    await user.click(more)
+    const loading = await within(region).findByRole('button', { name: 'Loading observations…' })
+    expect(loading).toBe(more)
+    expect(loading).not.toBeDisabled()
+    expect(loading).toHaveAttribute('aria-disabled', 'true')
+    expect(loading).toHaveFocus()
+    await act(async () => release())
+    // The last page removes Load more; focus moves to the first observation it added.
+    const added = await within(region).findByText('Title: A later title')
+    await waitFor(() => expect(added.closest('li')).toHaveFocus())
+  })
+
   it('shows the external-library card only for a recorded change', async () => {
     open(focused({ effectCapability: 'allowed' }))
     await screen.findByRole('radio', { name: 'Choose current value: Old title' })
