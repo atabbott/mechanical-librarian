@@ -1792,6 +1792,9 @@ def _cover_id(source: dict[str, Any]) -> _CoverId:
     covers = source["covers"]
     if type(covers) is not list:
         return _CoverId(None, CoverSourceState.REJECTED)
+    # `-1` is Open Library's "no cover" marker, not an invalid id: it is
+    # dropped, and any other invalid member still rejects the whole list.
+    covers = [value for value in covers if not (type(value) is int and value == -1)]
     values = tuple(
         sorted(
             {
@@ -2254,7 +2257,9 @@ def _parser_optional_rejections(
                 count += 1
             # For "covers" the expected member type is `int`, and the branch
             # above has already counted every item that is not that type.
-            elif field == "covers" and not 0 < cast(int, item) <= 2_147_483_647:
+            elif field == "covers" and not (
+                0 < cast(int, item) <= 2_147_483_647 or item == -1
+            ):
                 count += 1
             elif expected is str:
                 try:

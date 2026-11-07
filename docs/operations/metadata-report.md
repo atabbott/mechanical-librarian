@@ -454,7 +454,9 @@ request follows only that fixed two-redirect route (the boundary is in
 off-route redirect is `unsafe_remote`. Every cover source carries
 `final_host`: for a retrieved Open Library cover, the closed host family that
 served it (`covers.openlibrary.org`, `archive.org` or `us.archive.org`), and
-null for every other source.
+null for every other source. A `-1` in an Open Library cover list is its "no
+cover" marker and is ignored; any other invalid member still makes the list
+`rejected`.
 
 An EPUB whose cover declaration is malformed keeps an `absent` cover source.
 When it declares a cover another way, `local.cover_recovery` records the

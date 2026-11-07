@@ -95,7 +95,8 @@ brackets are GitHub issues.
   toggle, as Close and Escape do (#1566).
 - **Clean rebuild required.** Older Open Library covers, which Open Library
   serves from the Internet Archive, are now fetched and judged like any other
-  cover instead of being reported unavailable (#1752).
+  cover instead of being reported unavailable (#1752). A "no cover" marker in
+  an Open Library cover list no longer hides the record's real covers (#1753).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
