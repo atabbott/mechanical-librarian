@@ -184,7 +184,8 @@ The lenses are All (the default), Needs attention, No attention needed, Not
 matched and Could not finish, in one row that scrolls sideways when the panel is narrow. Lens,
 search, cursors, selected work and field live in the URL, so deep links and
 Back and Forward work. The pager offers only the moves that exist and is absent
-when the works fit on one page.
+when the works fit on one page. An empty list says so in one line; with no
+library connected it links to Settings to add one.
 
 Works needing a decision come first: those whose lookups all finished, then
 those with a lookup that gave no usable answer, under **Every lookup

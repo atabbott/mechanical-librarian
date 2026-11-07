@@ -172,13 +172,60 @@ it('keeps resync debt with its exact collection while search and cursor replace 
   expect(http.getLibrary).toHaveBeenCalledTimes(6)
 })
 
+// One connected library, so the list fills from its first scan by itself.
+const connectedPreparation: PreparationView = {
+  ...idlePreparation,
+  libraries: [
+    {
+      blocked: 0,
+      recorded: 0,
+      not_matched: 0,
+      checked: 0,
+      connection: 'primary',
+      library: 'books',
+      library_id: 'books',
+      ready: 0,
+      rescan_requested: false,
+      scan_id: null,
+      state: 'idle' as const,
+      total: 0,
+      stages: [],
+    },
+  ],
+}
+
 it.each([
-  ['/library?lens=all', 'No works yet.', false],
-  ['/library?lens=not_matched', 'No works here.', false],
-  ['/library?lens=all&q=needle', 'No works match this search.', true],
-] as const)('says an empty Works list at %s in one line (#1765)', async (path, line, clear) => {
-  renderRoute(path, {
+  ['/library?lens=all', true, 'No works yet.', false],
+  ['/library?lens=not_matched', true, 'No works here.', false],
+  ['/library?lens=not_matched', false, 'No works here.', false],
+  ['/library?lens=all&q=needle', true, 'No works match this search.', true],
+  ['/library?lens=all&q=needle', false, 'No works match this search.', true],
+] as const)(
+  'says an empty Works list at %s (library connected: %s) in one line (#1765)',
+  async (path, connected, line, clear) => {
+    const { queryClient } = renderRoute(path, {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => (connected ? connectedPreparation : idlePreparation)),
+      getLibrary: vi.fn(async (search: LibrarySearch) => ({
+        ...library,
+        lens: search.lens,
+        counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+        works: [],
+      })),
+    })
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBeDefined())
+    const empty = (await screen.findByText(line)).closest('.empty-copy')
+    if (!(empty instanceof HTMLElement)) throw new Error('the empty Works line is required')
+    expect(empty.textContent).toBe(clear ? `${line}Clear search` : line)
+    expect(Boolean(within(empty).queryByRole('button', { name: 'Clear search' }))).toBe(clear)
+    expect(within(empty).queryByRole('link')).toBeNull()
+  },
+)
+
+it('names Settings as the way to fill Works when no library is connected (#1765)', async () => {
+  const { queryClient } = renderRoute('/library?lens=all', {
     ...createHttp(),
+    getPreparation: vi.fn(async () => idlePreparation),
     getLibrary: vi.fn(async (search: LibrarySearch) => ({
       ...library,
       lens: search.lens,
@@ -186,10 +233,17 @@ it.each([
       works: [],
     })),
   })
-  const empty = (await screen.findByText(line)).closest('.empty-copy')
+  await waitFor(() =>
+    expect(queryClient.getQueryData(['review-preparation'])).toEqual(idlePreparation),
+  )
+  const empty = (await screen.findByText(/^No works yet\. Add a library in/u)).closest(
+    '.empty-copy',
+  )
   if (!(empty instanceof HTMLElement)) throw new Error('the empty Works line is required')
-  expect(empty).toHaveTextContent(clear ? `${line}Clear search` : line)
-  expect(Boolean(within(empty).queryByRole('button', { name: 'Clear search' }))).toBe(clear)
+  expect(empty.textContent).toBe('No works yet. Add a library in Settings.')
+  const settings = within(empty).getByRole('link', { name: 'Settings' })
+  expect(settings).toHaveAttribute('href', '/settings?group=libraries')
+  expect(within(empty).queryByRole('button', { name: 'Clear search' })).toBeNull()
 })
 
 it('retries unavailable Works while the Library shell remains usable', async () => {
@@ -266,6 +320,75 @@ it('offers a reload for the selected work when only the Works read met a newer b
   expect(lead).not.toHaveAttribute('role')
   expect(screen.queryByText(/Selected work could not be loaded\./u)).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+const restartSentence = 'If trying again does not help, restart the Mechanical Librarian service.'
+const restartCount = () => document.body.textContent.split(restartSentence).length - 1
+
+it('says to restart the service once when Works, the selected work and Attention all fail (#1765)', async () => {
+  const unavailable = async () => {
+    throw new ApiError(503, 'unavailable')
+  }
+  renderRoute('/library?lens=all&preview=case-1&attention=open', {
+    ...createHttp(),
+    getLibrary: vi.fn(unavailable),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(unavailable),
+    getAttention: vi.fn(unavailable),
+  })
+  const works = await screen.findByText(`Works could not be loaded. ${restartSentence}`)
+  const selected = await screen.findByText(/Selected work could not be loaded\./u)
+  const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+  const attention = await within(rail).findByText(/Attention could not be loaded\./u)
+  expect(works).toBeVisible()
+  // Each failure keeps its own Try again; only the Works failure says to restart.
+  expect(selected.textContent.trim()).toBe('Selected work could not be loaded. Try again')
+  expect(attention.textContent).toBe('Attention could not be loaded. Try again')
+  expect(restartCount()).toBe(1)
+})
+
+it('keeps the restart sentence where a narrow layout hides the Works failure (#1765)', async () => {
+  // Every width query matches: the selected work replaces the list, and the
+  // Attention rail covers the workspace.
+  const previousMatchMedia = window.matchMedia
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+  )
+  onTestFinished(() => {
+    vi.stubGlobal('matchMedia', previousMatchMedia)
+  })
+  const unavailable = async () => {
+    throw new ApiError(503, 'unavailable')
+  }
+  renderRoute('/library?lens=all&preview=case-1&attention=open', {
+    ...createHttp(),
+    getLibrary: vi.fn(unavailable),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(unavailable),
+    getAttention: vi.fn(unavailable),
+  })
+  await screen.findByText(`Works could not be loaded. ${restartSentence}`)
+  const selected = await screen.findByText(/Selected work could not be loaded\./u)
+  const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+  const attention = await within(rail).findByText(/Attention could not be loaded\./u)
+  expect(selected.textContent.trim()).toBe(
+    `Selected work could not be loaded. ${restartSentence} Try again`,
+  )
+  expect(attention.textContent).toBe(`Attention could not be loaded. ${restartSentence} Try again`)
+})
+
+it('says to restart the service on the selected work when only it fails (#1765)', async () => {
+  renderRoute('/library?lens=all&preview=case-1', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      throw new ApiError(503, 'unavailable')
+    }),
+  })
+  const selected = await screen.findByText(/Selected work could not be loaded\./u)
+  expect(selected.textContent.trim()).toBe(
+    `Selected work could not be loaded. ${restartSentence} Try again`,
+  )
+  expect(screen.queryByText(/Works could not be loaded\./u)).toBeNull()
+  expect(restartCount()).toBe(1)
 })
 
 it('moves focus to Reload when a selected-work retry meets a newer build (#1288)', async () => {
@@ -2193,7 +2316,7 @@ describe('Library route', () => {
         mediaHealth: [],
         provider: 'hardcover-main',
         reason: 'A source refused its credentials.',
-        recovery: 'Update the configured provider credentials, then scan this library again.',
+        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -2238,7 +2361,7 @@ describe('Library route', () => {
     expect(terminal?.querySelector('button, a, details, [tabindex]')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
     expect(terminal).toHaveTextContent(
-      'Update the configured provider credentials, then scan this library again.',
+      'Replace them in Settings → Metadata sources, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
 
@@ -2349,7 +2472,7 @@ describe('Library route', () => {
         mediaHealth: [
           {
             bound:
-              "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+              'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
             cited: ['local_abc123', 'audible-product-B0SYNE7P1K'],
             expected: '20 h stated by the matched edition',
             kind: 'runtime_short_of_provider' as const,
@@ -2467,7 +2590,7 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(
         within(health).getByText(
-          "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+          'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
         ),
       ).toBeVisible()
       expect(
@@ -2574,7 +2697,7 @@ describe('Library route', () => {
         mediaHealth: [],
         provider: 'hardcover-main',
         reason: 'A source refused its credentials.',
-        recovery: 'Update the configured provider credentials, then scan this library again.',
+        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,

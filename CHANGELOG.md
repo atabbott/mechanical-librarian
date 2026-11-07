@@ -107,7 +107,8 @@ brackets are GitHub issues.
 - Library's work list, work summary, preview and Attention queue read plainly.
   A failed book says what to do next, source rows drop internal words, empty
   sections no longer show, and a failed load says to try again or restart the
-  service. The Sources heading wraps on a phone with large text (#1765).
+  service. An empty Library with no library connected links to Settings to add
+  one. The Sources heading wraps on a phone with large text (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

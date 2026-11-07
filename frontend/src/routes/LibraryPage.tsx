@@ -13,7 +13,16 @@ import { MediaHealth } from '../components/MediaHealth'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { ComponentPropsWithRef, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
@@ -110,6 +119,8 @@ import {
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
 const searchNavigationDelay = 150
+/** What to do when a read keeps failing, said once on a screen (#1765). */
+const RESTART_SENTENCE = 'If trying again does not help, restart the Mechanical Librarian service.'
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
 const prefetchIntentDelay = 50
@@ -131,8 +142,25 @@ const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
   <a {...props} aria-current={props['aria-current'] ? 'true' : undefined} />
 ))
 // The compact layout, where the selected work replaces the list.
+const compactQuery = '(max-width: 1024px)'
 const compactWidth = () =>
-  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
+  typeof window.matchMedia === 'function' && window.matchMedia(compactQuery).matches
+// Below this the open Attention rail is a drawer over the workspace or the
+// whole screen, never a column beside the works.
+const railCoversQuery = '(max-width: 1199px)'
+// Whether `query` matches now, following the viewport as it changes.
+const useMediaMatch = (query: string) =>
+  useSyncExternalStore(
+    (change) => {
+      if (typeof window.matchMedia !== 'function') return () => undefined
+      const media = window.matchMedia(query)
+      media.addEventListener('change', change)
+      return () => {
+        media.removeEventListener('change', change)
+      }
+    },
+    () => typeof window.matchMedia === 'function' && window.matchMedia(query).matches,
+  )
 const narrowWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
@@ -244,6 +272,15 @@ export default function LibraryPage({
   onRailRetaining?: (retaining: boolean) => void
 }) {
   const works = useMemo(() => data?.works ?? [], [data?.works])
+  // The restart sentence is said once a screen: on the Works failure when that
+  // shows, otherwise on whichever other read failed (#1765). The compact layout
+  // hides the list behind a selected work, and below 1200px the Attention rail
+  // covers the workspace, so each says it there.
+  const worksSaysRestart = !data && failed && !(error instanceof BuildMismatchError)
+  const compactLayout = useMediaMatch(compactQuery)
+  const railCoversWorks = useMediaMatch(railCoversQuery)
+  const restartSentence = worksSaysRestart && !compactLayout ? '' : ` ${RESTART_SENTENCE}`
+  const railRestartSentence = worksSaysRestart && !railCoversWorks ? '' : ` ${RESTART_SENTENCE}`
   // Retained rows stay visible, but selection resolves only against the URL's own result.
   const currentWorks = retained ? noWorks : works
   const reading = pending || retained
@@ -266,6 +303,7 @@ export default function LibraryPage({
   const summaryNotMatched = summary.data?.counts.notMatched
   const summaryFailed = summary.data?.counts.failed
   const preparationState = usePreparation()
+  const noLibraryConnected = preparationState.data?.libraries.length === 0
   const presentation =
     preparationState.data?.presentation?.state === 'dismissed'
       ? null
@@ -2062,10 +2100,7 @@ export default function LibraryPage({
                   <StaleBuildRead lead="Works were not loaded." />
                 ) : failed ? (
                   <>
-                    <p role="alert">
-                      Works could not be loaded. If trying again does not help, restart the
-                      Mechanical Librarian service.
-                    </p>
+                    <p role="alert">Works could not be loaded. {RESTART_SENTENCE}</p>
                     <button type="button" onClick={retry}>
                       Try again
                     </button>
@@ -2077,11 +2112,23 @@ export default function LibraryPage({
             ) : works.length === 0 ? (
               <div className="empty-copy">
                 <p>
-                  {search.q
-                    ? 'No works match this search.'
-                    : data.lens === 'all'
-                      ? 'No works yet.'
-                      : 'No works here.'}
+                  {search.q ? (
+                    'No works match this search.'
+                  ) : data.lens !== 'all' ? (
+                    'No works here.'
+                  ) : noLibraryConnected ? (
+                    // Only a confirmed snapshot with no library names the way
+                    // to fill the list; with one, the first scan fills it.
+                    <>
+                      No works yet. Add a library in{' '}
+                      <Link to="/settings" search={{ group: 'libraries' }}>
+                        Settings
+                      </Link>
+                      .
+                    </>
+                  ) : (
+                    'No works yet.'
+                  )}
                 </p>
                 {search.q ? (
                   <button
@@ -2301,8 +2348,7 @@ export default function LibraryPage({
               />
             ) : identityError ? (
               <p role="alert">
-                Selected work could not be loaded. If trying again does not help, restart the
-                Mechanical Librarian service.{' '}
+                {`Selected work could not be loaded.${restartSentence}`}{' '}
                 <button
                   ref={selectedDetailRetryButton}
                   onClick={() => {
@@ -2341,7 +2387,7 @@ export default function LibraryPage({
           ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
-                'Selected work could not be loaded. If trying again does not help, restart the Mechanical Librarian service.'}{' '}
+                `Selected work could not be loaded.${restartSentence}`}{' '}
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
@@ -2553,10 +2599,7 @@ export default function LibraryPage({
                       <StaleBuildRead lead="The next work was not loaded." />
                     ) : nextWorkError ? (
                       <>
-                        <span>
-                          The next work could not be loaded. If trying again does not help, restart
-                          the Mechanical Librarian service.
-                        </span>
+                        <span>{`The next work could not be loaded.${restartSentence}`}</span>
                         <Button variant="primary" type="button" onClick={retryNextWork}>
                           Try again
                         </Button>
@@ -3012,6 +3055,7 @@ export default function LibraryPage({
           selected={selected}
           closeAttention={closeAttention}
           selectFromQueue={selectFromQueue}
+          restartSentence={railRestartSentence}
         />
       </div>
     </div>
