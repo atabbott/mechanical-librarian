@@ -1155,6 +1155,16 @@ const decision: DecisionCommand = {
 type Binding = NonNullable<DecisionCommand['authoredDescription']>['binding']
 const authored = { ...decision, authoredDescription: { candidateId: 'c', binding: {} as Binding } }
 const policy = (c: Case) => client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length))
+// Preview and activation go through the typed methods the Policy page calls,
+// so their named checks run (#1692). A captured activation activated the
+// policy it names.
+const draft = { name: 'Draft', options: {}, destinations: {} }
+const activated = (c: Case) => {
+  const document = c.doc()
+  return typeof document === 'object' && document !== null && 'policy_id' in document
+    ? String(document.policy_id)
+    : ''
+}
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
   'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
@@ -1191,10 +1201,15 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/metadata-policy/shadow/outcomes': (c) => client(c).getShadowSample(),
   'GET /api/v1/metadata-policy/transition': (c) => client(c).getPolicyTransition(),
   'GET /api/v1/metadata-policy/automatic-safety': (c) => client(c).getAutomaticSafety(),
-  'POST /api/v1/metadata-policy/activate': policy,
+  'POST /api/v1/metadata-policy/activate': (c) =>
+    client(c).activatePolicy({
+      policy_id: activated(c),
+      expected_active_policy_id: 'policy-active',
+      expected_active_generation: 1,
+    }),
   'POST /api/v1/metadata-policy/automatic-safety/suspend': policy,
   'POST /api/v1/metadata-policy/drafts': policy,
-  'POST /api/v1/metadata-policy/preview': policy,
+  'POST /api/v1/metadata-policy/preview': (c) => client(c).previewPolicy(draft),
   'POST /api/v1/metadata-policy/shadow/confirm-automatic': policy,
   'POST /api/v1/metadata-policy/validate': policy,
 }

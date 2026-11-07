@@ -85,7 +85,8 @@ documents (identity), a check whose only owner is persisted (persisted), or one
 that shares the persisted Decimal price grammar no regex states (shared
 grammar). Each line gives the check, its owner and why. The first 40 are the
 `mapper_cross_field` rows of `frontend/tests/decoderDifferential.test.ts`; X40
-to X61 are checks that suite does not exercise.
+to X61 and the policy checks P-X1 to P-X4 are checks that suite does not
+exercise.
 
 - `check:mapActivity.failure-reasons-order`: failure reasons ascend.
   `_ProviderRecoveryActivity.failure_reasons`. Positional.
@@ -229,6 +230,17 @@ to X61 are checks that suite does not exercise.
   candidate order. `_CoverConsiderationResponse.choice_contexts`. Positional.
 - X61: an unavailable reason needs the `unavailable` status.
   `_CoverConsiderationResponse.reviewer_unavailable_reason`. Cross-field.
+- P-X1: a preview library has one comparison per sampled work.
+  `_PolicyImpactResponse.comparisons` and `cases`. Cross-field.
+- P-X2: both sides of a field comparison describe the same field.
+  `_PolicyFieldComparisonResponse.active` and `draft`. Cross-field.
+- P-X3: an activation answers for the policy the request named.
+  `_PolicyActivationResponse.policy_id` and the request's `policy_id`.
+  Identity across documents. A failure is an uncertain write.
+- P-X4: a preview is of the snapshot just saved.
+  `_PolicyPreviewResponse.policy_id` and `_PolicyDraftResponse.policy_id`.
+  Identity across documents; the Policy page makes it, because it compares two
+  answers.
 
 ## Alternatives rejected
 
@@ -259,6 +271,8 @@ to X61 are checks that suite does not exercise.
 
 ### Neutral or deferred
 
-- The decoders, the required-property rule and the removal of the
-  hand-written checks follow in later stages. ADR-0043's HTTP-module text is
-  edited when the decoders replace the mappers.
+- Since #1684 every response family the browser reads is decoded, the
+  hand-written checks the schema states are removed, and ADR-0043's
+  HTTP-module text and drift check are amended. A later stage removes the
+  per-operation decode gate and the version-only reads that remain for some
+  policy responses, and types every policy command.

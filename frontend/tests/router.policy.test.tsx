@@ -10,6 +10,8 @@ import {
   UncertainMutationError,
 } from '../src/api/http'
 import type {
+  PolicyActivationRequest,
+  PolicyDraft,
   PolicyStateView,
   PolicyPreviewView,
   PreparationView,
@@ -20,6 +22,15 @@ import { normalizePolicySearch } from '../src/router'
 import { createHttp, idlePreparation, inertAudiobookQualification, renderRoute } from './fixtures'
 import { savedDocument, view } from './settingsFixtures'
 import { policyProfile } from './wireFixtures'
+
+// The real client answering every request with `body`, so a test sees what the
+// page makes of an answer the client cannot read (#1692).
+const answeringClient = (body: unknown, status = 200) =>
+  new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn<typeof fetch>(async () => Response.json(body, { status })),
+  })
 
 const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][number]['fields']) =>
   fields.map((draft) => ({
@@ -265,6 +276,111 @@ describe('Policy route', () => {
       ).toBeVisible()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
     })
+  })
+
+  // Validate and preview write nothing, so an answer the client cannot read is
+  // that phase's failure; only the snapshot save may have written (#1692).
+  describe('an undecodable answer', () => {
+    const run = async (failing: 'validate' | 'drafts' | 'preview') => {
+      const user = userEvent.setup()
+      const transport = answeringClient({ invented: true }, failing === 'drafts' ? 201 : 200)
+      const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
+        if (path === failing)
+          return path === 'preview'
+            ? transport.previewPolicy(body as PolicyDraft)
+            : transport.policyCommand(path, body)
+        if (path === 'drafts')
+          return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
+        return {}
+      })
+      const http: ReviewHttp = {
+        ...createHttp(),
+        policyCommand: <T,>(path: string, body?: unknown) =>
+          policyCommand(path, body) as Promise<T>,
+      }
+      renderRoute('/policy?section=curation', http)
+      const tags = await screen.findByRole('region', { name: 'Tags' })
+      await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
+      const readsBefore = vi.mocked(http.getPolicyState).mock.calls.length
+      await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+      return { http, policyCommand, readsBefore }
+    }
+
+    it('to validation says nothing was saved', async () => {
+      const { policyCommand } = await run('validate')
+      expect(
+        await screen.findByText(
+          'The complete draft could not be validated. Nothing was saved or activated; try again.',
+        ),
+      ).toBeVisible()
+      expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
+    })
+
+    it('to the snapshot save is uncertain and reloads the policy state', async () => {
+      const { http, policyCommand, readsBefore } = await run('drafts')
+      expect(
+        await screen.findByText(
+          'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+        ),
+      ).toBeVisible()
+      await waitFor(() =>
+        expect(vi.mocked(http.getPolicyState).mock.calls.length).toBeGreaterThan(readsBefore),
+      )
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
+    })
+
+    it('to the preview names the unavailable preview, not an uncertain write', async () => {
+      const { policyCommand } = await run('preview')
+      expect(
+        await screen.findByText(
+          'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+        ),
+      ).toBeVisible()
+      expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual([
+        'validate',
+        'drafts',
+        'preview',
+      ])
+    })
+  })
+
+  // P-X4 (ADR-0091): the preview must be of the snapshot just saved. It
+  // compares two answers, so the page makes the check, not the client.
+  it('refuses a preview of another snapshot as an unavailable preview', async () => {
+    const user = userEvent.setup()
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      if (path === 'drafts')
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
+      if (path === 'preview')
+        return {
+          active_policy_id: 'policy-active',
+          policy_id: 'policy-other',
+          schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
+          libraries: [],
+        }
+      return {}
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+    }
+    renderRoute('/policy?section=curation', http)
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+
+    expect(
+      await screen.findByText(
+        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
+    expect(
+      screen.queryByText('Impact preview is current. The active policy is unchanged.'),
+    ).toBeNull()
   })
 
   it('opens Automatic for the ASIN only once an audiobook record qualifies it', async () => {
@@ -1602,9 +1718,22 @@ describe('Policy route', () => {
     },
   )
 
-  it('treats a malformed successful activation response as uncertain', async () => {
+  // The real client reads the answer: one it cannot decode, or one for another
+  // policy (ADR-0091 P-X3), may still have activated (#1692).
+  it.each([
+    ['an undecodable', {}],
+    [
+      'another policy’s',
+      {
+        policy_id: 'policy-other',
+        schema_version: 'metadata-policy-activation-v1',
+        transition: null,
+      },
+    ],
+  ])('treats %s successful activation response as uncertain', async (_name, answer) => {
     const user = userEvent.setup()
-    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+    const transport = answeringClient(answer)
+    const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
       if (path === 'drafts')
         return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview')
@@ -1615,12 +1744,12 @@ describe('Policy route', () => {
           active_generation: 1,
           libraries: [],
         }
-      if (path === 'activate') return {}
+      if (path === 'activate') return transport.activatePolicy(body as PolicyActivationRequest)
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+      policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
     }
     renderRoute('/policy?section=identity', http)
 
@@ -2095,39 +2224,44 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
 })
 
-it('reports an unconfirmed automatic pause from refreshed state without resending it', async () => {
-  const user = userEvent.setup()
-  let paused = false
-  const command = vi.fn(async () => {
-    // The pause committed; only its response failed.
-    paused = true
-    throw new ApiError(503, 'persistence')
-  })
-  const http: ReviewHttp = {
-    ...createHttp(),
-    getAutomaticSafety: vi.fn(async () => ({
-      paused,
-      global_suspension: null,
-      category_suspensions: {},
-    })),
-    policyCommand: command,
-  }
-  renderRoute('/policy', http)
-  await screen.findByRole('heading', { name: 'Library policy' })
-  const summary = screen.getByText('Safety').closest('summary')
-  if (!summary) throw new Error('Safety summary missing')
-  await user.click(summary)
-  await user.click(screen.getByRole('button', { name: 'Pause automatic decisions' }))
+it.each(['a server failure', 'an undecodable answer (#1692)'])(
+  'reports an unconfirmed automatic pause after %s from refreshed state without resending it',
+  async (failure) => {
+    const user = userEvent.setup()
+    let paused = false
+    const transport = answeringClient({ invented: true })
+    const command = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
+      // The pause committed; only its response failed.
+      paused = true
+      if (failure === 'a server failure') throw new ApiError(503, 'persistence')
+      return transport.policyCommand(path, body)
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAutomaticSafety: vi.fn(async () => ({
+        paused,
+        global_suspension: null,
+        category_suspensions: {},
+      })),
+      policyCommand: <T,>(path: string, body?: unknown) => command(path, body) as Promise<T>,
+    }
+    renderRoute('/policy', http)
+    await screen.findByRole('heading', { name: 'Library policy' })
+    const summary = screen.getByText('Safety').closest('summary')
+    if (!summary) throw new Error('Safety summary missing')
+    await user.click(summary)
+    await user.click(screen.getByRole('button', { name: 'Pause automatic decisions' }))
 
-  expect(
-    await screen.findByText(
-      'The policy change could not be confirmed. It may have been saved; the current policy state is shown. Check it before pressing again.',
-    ),
-  ).toBeVisible()
-  expect(await screen.findByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
-  expect(screen.queryByText(/Nothing changed/u)).toBeNull()
-  expect(command).toHaveBeenCalledOnce()
-})
+    expect(
+      await screen.findByText(
+        'The policy change could not be confirmed. It may have been saved; the current policy state is shown. Check it before pressing again.',
+      ),
+    ).toBeVisible()
+    expect(await screen.findByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+    expect(screen.queryByText(/Nothing changed/u)).toBeNull()
+    expect(command).toHaveBeenCalledOnce()
+  },
+)
 
 it('keeps a refused Automatic confirmation as nothing changed', async () => {
   const user = userEvent.setup()
