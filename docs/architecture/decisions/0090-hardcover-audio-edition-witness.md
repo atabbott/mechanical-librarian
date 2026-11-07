@@ -112,6 +112,26 @@ from Audible.
    An edition ASIN may be ISBN-shaped, as some Audible productions are; the
    work-level Hardcover ASIN rule is unchanged.
 
+### The companion EPUB's book (#1468)
+
+An audiobook item may hold an EPUB beside its tracks. Hardcover is also asked
+that EPUB's ISBN ([ADR-0061](0061-audiobook-provider-posture.md), clause 9
+amendment) and reads the audio editions of the book it names, under the same
+bounds, band and narrator filter as on a title-and-author lane. The book is
+kept at work shape only when it is this work by the target's title and authors,
+or when it lists an audio edition counted against the file, so a companion that
+is another book (a study guide, a companion volume) adds nothing. Its editions
+join the witness and the leads exactly as any counted edition does: a match
+they challenge is challenged, and no second rule is added for them.
+
+The ISBN names the book, so a product whose ASIN is one of that book's counted
+editions is that book's work whatever its title says. An identifier lane admits
+such a product's work as it admits a product found on an alternative title,
+and keeps it only as the recording the tight band corroborates. The ISBN
+confirms the work, never the recording: a product outside the band, crediting
+only narrators the file does not, or of another language or abridgement is
+refused, and editions that disagree on the cast link nothing.
+
 ## Consequences
 
 ### Positive
@@ -187,3 +207,7 @@ Rejected: it would measure Audible against itself.
 - Before release, the cold-start report on a real library gives the measured
   witness counts, before any lead resolves them. The re-cut expects about 5
   challenges in 42 checked audiobooks.
+- `tests/unit/test_companion_epub_matching.py` covers the companion ISBN lane
+  and its single authority, the books it keeps, the editions it links, the
+  witness challenging a match from them, and each refusal of a linked product:
+  outside the band, another cast and another language (#1468).
