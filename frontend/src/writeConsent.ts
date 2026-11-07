@@ -111,7 +111,9 @@ export const writesOffSentence = (
     return holding.length && held.length
       ? `Writes are off. Writes to ${libraryList(held.map(libraryName))} are held.`
       : 'Writes are off.'
-  if (!others.length) return 'Writes are off.'
+  // Every library writes; a field still waiting on permission is said by the
+  // line under this sentence, not by calling writes off (#1765).
+  if (!others.length) return `Writes are on for ${libraryList(on.map(libraryName))}.`
   const waiting = others.filter((library) => !held.includes(library))
   return [
     `Writes are on for ${libraryList(on.map(libraryName))}`,

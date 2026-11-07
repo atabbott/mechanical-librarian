@@ -461,4 +461,17 @@ describe('consent outlives a suspension (#1286 B1)', () => {
       'Writes are off. Writes to research are held.',
     )
   })
+
+  it('says writes are on when every library writes, even with a field still waiting', () => {
+    const fiction = library('fiction', [
+      destination('title', 'allowed', true),
+      destination('genres', 'allowed', false),
+    ])
+    const data = {
+      capabilities: [fiction.capability],
+      configured_libraries: [fiction.configured],
+    }
+    // The waiting field is said by the line under this sentence (#1765).
+    expect(writesOffSentence(data, ['fiction'], (name) => name)).toBe('Writes are on for fiction.')
+  })
 })
