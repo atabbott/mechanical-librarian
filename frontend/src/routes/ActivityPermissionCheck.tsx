@@ -49,7 +49,7 @@ export const ActivityPermissionCheck = ({
 }) => {
   // Another check cannot succeed on an earlier build: only a reload can.
   const staleLead = basisStale
-    ? 'Permission readiness was not loaded, so no permission was granted.'
+    ? 'Permission readiness was not checked again, so no permission was granted.'
     : permissions.error instanceof BuildMismatchError
       ? 'Permission readiness was not loaded.'
       : null

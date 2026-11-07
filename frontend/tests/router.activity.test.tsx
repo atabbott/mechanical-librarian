@@ -3475,7 +3475,7 @@ describe('write-permission readiness on an earlier build (#1742)', () => {
     await user.click(confirm)
     const reload = await screen.findByRole('button', { name: reloadName })
     staleLead(
-      'Permission readiness was not loaded, so no permission was granted. This tab is running an earlier build.',
+      'Permission readiness was not checked again, so no permission was granted. This tab is running an earlier build.',
     )
     await waitFor(() => expect(reload).toHaveFocus())
     expect(confirm).toHaveAttribute('aria-disabled', 'true')

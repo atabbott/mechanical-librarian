@@ -3216,7 +3216,7 @@ describe('Description preferences on an earlier build (#1742)', () => {
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
-  it('says the preferences were not reloaded when the reload after an uncertain save meets a newer build', async () => {
+  it('says it is not known whether the preferences were saved when the reload after an uncertain save meets a newer build', async () => {
     const user = userEvent.setup()
     const http = createHttp()
     let saved = false
@@ -3235,7 +3235,7 @@ describe('Description preferences on an earlier build (#1742)', () => {
     await within(region).findByRole('button', { name: reloadName })
     staleLead(
       region,
-      'Description preferences could not be confirmed, and the saved preferences were not reloaded. This tab is running an earlier build.',
+      'It is not known whether description preferences were saved. This tab is running an earlier build.',
     )
     expect(within(region).queryByText(/were reloaded/u)).toBeNull()
     expect(

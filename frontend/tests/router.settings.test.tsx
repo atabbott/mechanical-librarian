@@ -578,13 +578,15 @@ describe('owner settings route', () => {
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Retry settings reload' })).toBeVisible()
     expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
+    // Nothing is still coming, so the tray does not say it is waiting (#1742).
+    expect(screen.queryByText(/Waiting for current settings/u)).toBeNull()
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
   describe('an uncertain save on an earlier build (#1742)', () => {
     const reloadName = 'Reload the current application'
     const lead =
-      'Save outcome is uncertain and Settings were not reloaded. This tab is running an earlier build.'
+      'It is not known whether Settings were saved. This tab is running an earlier build.'
     const saveUncertain = async (http: ReturnType<typeof createHttp>) => {
       const user = userEvent.setup()
       http.writeSettings = vi.fn(async () => {
@@ -612,6 +614,7 @@ describe('owner settings route', () => {
       expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
       expect(screen.queryByRole('button', { name: 'Retry settings reload' })).toBeNull()
       expect(screen.queryByText(/could not be reloaded/u)).toBeNull()
+      expect(screen.queryByText(/Waiting for current settings/u)).toBeNull()
     }
 
     it('offers the reload when the reconciling read meets a newer build', async () => {
@@ -659,7 +662,7 @@ describe('owner settings route', () => {
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
     const reload = await screen.findByRole('button', { name: 'Reload the current application' })
     const element = screen.getByText(
-      'Settings were not saved. This tab is running an earlier build.',
+      'Settings were not saved. Reloading discards your unsaved changes. This tab is running an earlier build.',
       { exact: false },
     )
     expect(element).not.toHaveAttribute('role')

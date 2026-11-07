@@ -364,10 +364,7 @@ export default function SettingsPage() {
       {saved ? <SavedNotice>Settings saved and in use.</SavedNotice> : null}
       {reconciliation === 'stale' ? (
         <div key="stale" className="settings-stale-recovery">
-          <StaleBuildRead
-            lead="Save outcome is uncertain and Settings were not reloaded."
-            ref={staleReload}
-          />
+          <StaleBuildRead lead="It is not known whether Settings were saved." ref={staleReload} />
         </div>
       ) : reconciliation !== 'idle' ? (
         <div
@@ -399,6 +396,7 @@ export default function SettingsPage() {
         saveBlocked={
           reconciliation === 'checking' || reconciliation === 'failed' || reconciliation === 'stale'
         }
+        reloadEnded={reconciliation === 'failed' || reconciliation === 'stale'}
         onSaved={(value) => {
           queryClient.setQueryData(['settings'], value)
           queryClient.setQueryData(['appearance'], {
@@ -422,6 +420,7 @@ export default function SettingsPage() {
 const SettingsEditor = ({
   view,
   saveBlocked,
+  reloadEnded,
   onSaved,
   onEdited,
   onStale,
@@ -429,6 +428,8 @@ const SettingsEditor = ({
 }: {
   view: SettingsView
   saveBlocked: boolean
+  /** The reload after an uncertain save failed or met a newer build: nothing is still coming. */
+  reloadEnded: boolean
   onSaved: (value: SettingsView) => void
   onEdited: () => void
   onStale: () => Promise<unknown>
@@ -611,7 +612,10 @@ const SettingsEditor = ({
   const statusCopy = mutation.isPending
     ? 'Saving settings…'
     : status === 'uncertain'
-      ? 'Save outcome uncertain. Waiting for current settings.'
+      ? // Once the reload has ended, the message above the form says what is true.
+        reloadEnded
+        ? null
+        : 'Save outcome uncertain. Waiting for current settings.'
       : status === 'failed'
         ? refusalCopy(
             mutation.error,
@@ -1227,7 +1231,10 @@ const SettingsEditor = ({
               </strong>
               {changed ? <span>{changedSections.map((item) => item.label).join(', ')}</span> : null}
               {buildStale ? (
-                <StaleBuildRead lead="Settings were not saved." ref={statusReload} />
+                <StaleBuildRead
+                  lead="Settings were not saved. Reloading discards your unsaved changes."
+                  ref={statusReload}
+                />
               ) : statusCopy ? (
                 <p
                   ref={statusTarget}
