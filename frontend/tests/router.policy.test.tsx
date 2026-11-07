@@ -7,6 +7,7 @@ import {
   ApiError,
   BuildMismatchError,
   ReviewApiClient,
+  UncertainMutationError,
 } from '../src/api/http'
 import type {
   PolicyStateView,
@@ -17,7 +18,7 @@ import type {
 } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, idlePreparation, inertAudiobookQualification, renderRoute } from './fixtures'
-import { view } from './settingsFixtures'
+import { savedDocument, view } from './settingsFixtures'
 import { policyProfile } from './wireFixtures'
 
 const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][number]['fields']) =>
@@ -1680,7 +1681,7 @@ it('saves description preferences independently next to Cover guidance and keeps
   http.getSettings = vi.fn(async () => initial)
   http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => ({
     ...initial,
-    document: write.document,
+    document: savedDocument(write.document),
   }))
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Description advice' })
@@ -1725,43 +1726,57 @@ it('saves description preferences independently next to Cover guidance and keeps
   expect(within(region).getByRole('link')).toHaveAttribute('href', '/settings?group=reviewer')
 })
 
-it('reloads unconfirmed description preferences and says they may have been saved', async () => {
-  const http = createHttp()
-  const initial = view()
-  let current = initial
-  http.getSettings = vi.fn(async () => current)
-  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
-    // The save committed; only its response failed.
-    current = { ...initial, document: write.document }
-    throw new ApiError(503, 'settings_unavailable')
-  })
-  renderRoute('/policy?section=curation', http)
-  const region = await screen.findByRole('region', { name: 'Description advice' })
-  const marketing = await within(region).findByRole('group', { name: 'Remove marketing material' })
-  await userEvent.setup().click(within(marketing).getByRole('button', { name: 'Off' }))
-  const reads = vi.mocked(http.getSettings).mock.calls.length
-  await userEvent
-    .setup()
-    .click(within(region).getByRole('button', { name: 'Save description preferences' }))
+it.each([
+  new ApiError(503, 'settings_unavailable'),
+  // A 2xx the decoder refused (#1689).
+  new UncertainMutationError({
+    operation: 'PATCH /api/v1/settings',
+    responseStatus: 200,
+    at: '/fields',
+    reason: 'required',
+  }),
+])(
+  'reloads unconfirmed description preferences and says they may have been saved (%s)',
+  async (failure) => {
+    const http = createHttp()
+    const initial = view()
+    let current = initial
+    http.getSettings = vi.fn(async () => current)
+    http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+      // The save committed; only its response failed.
+      current = { ...initial, document: savedDocument(write.document) }
+      throw failure
+    })
+    renderRoute('/policy?section=curation', http)
+    const region = await screen.findByRole('region', { name: 'Description advice' })
+    const marketing = await within(region).findByRole('group', {
+      name: 'Remove marketing material',
+    })
+    await userEvent.setup().click(within(marketing).getByRole('button', { name: 'Off' }))
+    const reads = vi.mocked(http.getSettings).mock.calls.length
+    await userEvent
+      .setup()
+      .click(within(region).getByRole('button', { name: 'Save description preferences' }))
 
-  expect(await within(region).findByRole('alert')).toHaveTextContent(
-    'Description preferences could not be confirmed. They may have been saved; the saved preferences were reloaded. Check them before saving again.',
-  )
-  await waitFor(() =>
-    expect(within(region).getByRole('status')).toHaveTextContent(
-      'Saved with their own button, not with the policy.',
-    ),
-  )
-  expect(within(region).queryByText(/Unsaved\./u)).toBeNull()
-  expect(vi.mocked(http.getSettings).mock.calls.length).toBeGreaterThan(reads)
-  expect(within(marketing).getByRole('button', { name: 'Off' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
-  expect(
-    within(region).getByRole('button', { name: 'Reload description preferences' }),
-  ).toBeVisible()
-})
+    expect(await within(region).findByRole('alert')).toHaveTextContent(
+      'Description preferences could not be confirmed. They may have been saved; the saved preferences were reloaded. Check them before saving again.',
+    )
+    await waitFor(() =>
+      expect(within(region).getByRole('status')).toHaveTextContent(
+        'Saved with their own button, not with the policy.',
+      ),
+    )
+    expect(within(region).queryByText(/Unsaved\./u)).toBeNull()
+    expect(vi.mocked(http.getSettings).mock.calls.length).toBeGreaterThan(reads)
+    expect(within(marketing).getByRole('button', { name: 'Off' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(
+      within(region).getByRole('button', { name: 'Reload description preferences' }),
+    ).toBeVisible()
+  },
+)
 
 it('holds description edits while unconfirmed preferences reload', async () => {
   const user = userEvent.setup()
@@ -1775,7 +1790,7 @@ it('holds description edits while unconfirmed preferences reload', async () => {
     return current
   })
   http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
-    current = { ...initial, document: write.document }
+    current = { ...initial, document: savedDocument(write.document) }
     held = true
     throw new ApiError(503, 'settings_unavailable')
   })
@@ -1814,7 +1829,7 @@ it('keeps a pending description preferences save focused and sends it once', asy
   http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(
     (write) =>
       new Promise((resolve) => {
-        release = () => resolve({ ...initial, document: write.document })
+        release = () => resolve({ ...initial, document: savedDocument(write.document) })
       }),
   )
   renderRoute('/policy?section=curation', http)
@@ -1844,7 +1859,7 @@ it('clears the unconfirmed description message once the owner reloads', async ()
   let current = initial
   http.getSettings = vi.fn(async () => current)
   http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
-    current = { ...initial, document: write.document }
+    current = { ...initial, document: savedDocument(write.document) }
     throw new ApiError(503, 'settings_unavailable')
   })
   renderRoute('/policy?section=curation', http)
@@ -1880,7 +1895,7 @@ it('keeps a pending description preferences reload focused and reads once', asyn
     return current
   })
   http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
-    current = { ...initial, document: write.document }
+    current = { ...initial, document: savedDocument(write.document) }
     throw new ApiError(503, 'settings_unavailable')
   })
   renderRoute('/policy?section=curation', http)

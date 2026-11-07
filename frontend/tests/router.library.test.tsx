@@ -13281,6 +13281,16 @@ describe('library provider throttling notice (#1282)', () => {
       new ApiError(503, 'settings_unavailable'),
       'Retry now could not be confirmed. Check the notice before pressing it again.',
     ],
+    [
+      // A 2xx the decoder refused (#1689).
+      new UncertainMutationError({
+        operation: 'POST /api/v1/provider-recovery/retry',
+        responseStatus: 200,
+        at: '/secrets',
+        reason: 'required',
+      }),
+      'Retry now could not be confirmed. Check the notice before pressing it again.',
+    ],
   ])('alerts a refused Retry now (%s) and refreshes the notice', async (error, copy) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {

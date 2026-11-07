@@ -17,7 +17,6 @@ import {
   mapActivityConsent,
   mapActivityPermissionReadiness,
   mapReviewerAccess,
-  mapSettings,
 } from '../src/api/http'
 import type { DecisionCommand } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
@@ -1181,7 +1180,7 @@ const reviewerAccess = (c: Case) => mapReviewerAccess(c.doc())
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
   'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
-  'GET /api/v1/settings': (c) => mapSettings(c.doc()),
+  'GET /api/v1/settings': (c) => client(c).getSettings(),
   'PUT /api/v1/reviewer-access/openrouter': reviewerAccess,
   'DELETE /api/v1/reviewer-access/openrouter': reviewerAccess,
   'POST /api/v1/reviewer-access/openrouter/refresh': reviewerAccess,
