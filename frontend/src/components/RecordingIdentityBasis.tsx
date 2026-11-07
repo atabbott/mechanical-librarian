@@ -30,6 +30,7 @@ export function RecordingIdentityBasis({
       (field) => field !== 'narrators' && offered.includes(field),
     )
     const narrators = offered.includes('narrators')
+    const fieldCount = named.length + (narrators ? 1 : 0)
     const sentences = [
       named.length
         ? `Book-level evidence supports ${new Intl.ListFormat('en', { type: 'conjunction' }).format(named.map((field) => (field === 'genres' ? 'genre' : destinationPhrase(field))))} choices.`
@@ -43,8 +44,12 @@ export function RecordingIdentityBasis({
       <section className="diagnostic-entry" aria-label="Book-level evidence">
         <p>{sentences.filter(Boolean).join(' ')}</p>
         <p>
-          {named.length || narrators ? 'Your choices apply only to these fields. ' : ''}Recording
-          identifiers and automatic changes are unavailable from this evidence.
+          {fieldCount === 1
+            ? 'Your choice applies only to this field. '
+            : fieldCount > 1
+              ? 'Your choices apply only to these fields. '
+              : ''}
+          Recording identifiers and automatic changes are unavailable from this evidence.
         </p>
       </section>
     )

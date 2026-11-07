@@ -11457,8 +11457,9 @@ def test_a_prepared_work_route_cover_keeps_the_case_readable():
     """Preparing a work-route cover leaves the case readable (#1642).
 
     The prepared consideration crosses the real wire parser: its offered
-    cover reads as an unconfirmed match, and the case, the field rail and the
-    work's Evidence page all still load after a reload.
+    cover reads as the matched book's cover whose recording is not confirmed,
+    and the case, the field rail and the work's Evidence page all still load
+    after a reload.
     """
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
         root = Path(directory)
@@ -11493,9 +11494,14 @@ def test_a_prepared_work_route_cover_keeps_the_case_readable():
                 page.get_by_role("button", name="Prepare cover comparison").click()
             assert prepared.value.status == 200
             for _ in range(2):
-                expect(
-                    page.get_by_text("Match not confirmed", exact=False).first
-                ).to_be_visible()
+                offered = page.locator(".cover-choice").filter(
+                    has_text="Same book · recording not confirmed"
+                )
+                expect(offered).to_have_count(1)
+                expect(offered).to_contain_text(
+                    "From the matched book, not a confirmed recording."
+                )
+                expect(offered).not_to_contain_text("Match not confirmed")
                 expect(
                     page.get_by_text("Selected work could not be loaded")
                 ).to_have_count(0)

@@ -143,6 +143,9 @@ to X61 are checks that suite does not exercise.
   identity outcome. `_CoverCandidate`. Cross-field.
 - `check:mapCoverConsideration.unconfirmed-unranked`: an unconfirmed candidate
   is neither selectable nor ranked. `_CoverCandidate`. Cross-field.
+- `check:mapCoverConsideration.match-reason`: a matched-book reason is carried
+  only by a proposed candidate whose identity is not a conflict.
+  `_CoverCandidate`. Cross-field.
 - `check:mapCoverObservation.binding`: an observation names its candidate
   reference and preview. `_CoverObservation`. Cross-field.
 - `check:mapCoverConsideration.unique-references`: candidate references are

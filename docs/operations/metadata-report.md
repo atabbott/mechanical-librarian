@@ -425,8 +425,11 @@ packet, and so the gallery and the owner's decision, then holds only the
 current cover and those offered covers. While no recording is admitted no
 cover is selectable, whatever its identity, so none is automatic: automatic
 cover admission and its validation both refuse such an audiobook. An owner
-choice of an unverified cover still confirms the unverified match. A work
-cover still pending keeps the gallery incomplete.
+choice of an unverified cover still confirms the unverified match. The review
+API marks an offered cover from the matched book with `match_reason`
+`matched_book`, computed when the consideration is read and never stored; it
+changes only the wording. A work cover still pending keeps the gallery
+incomplete.
 
 An EPUB whose cover declaration is malformed keeps an `absent` cover source.
 When it declares a cover another way, `local.cover_recovery` records the

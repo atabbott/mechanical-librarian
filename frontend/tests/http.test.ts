@@ -791,6 +791,16 @@ describe('ReviewApiClient', () => {
     await expect(
       retryCover(payload({ candidates: [candidate({ source_kinds: ['scraped'] })] })),
     ).rejects.toMatchObject(uncertain('enum@/candidates/0/source_kinds/0'))
+    // A matched-book reason is display only (#1642); the named check
+    // match-reason below keeps it to a proposed, non-conflicting cover.
+    expect(
+      (await retryCover(payload({ candidates: [candidate({ match_reason: 'matched_book' })] })))
+        .candidates[0]?.matchReason,
+    ).toBe('matched_book')
+    expect('matchReason' in ((await retryCover(payload())).candidates[0] ?? {})).toBe(false)
+    await expect(
+      retryCover(payload({ candidates: [candidate({ match_reason: 'same_book' })] })),
+    ).rejects.toMatchObject(uncertain('const@/candidates/0/match_reason'))
   })
   it('maps only the fixed unavailable reviewer-contract reasons', async () => {
     const payload = (reviewer_unavailable_reason: unknown) =>
@@ -1268,6 +1278,40 @@ describe('ReviewApiClient', () => {
         })
       ).items[0],
     ).toMatchObject({ category: 'cover', ownerOutcome: 'accept', ownerMatchUnconfirmed: true })
+    // A chosen cover from the matched book keeps its unconfirmed match and
+    // names its basis; History says so in its own words (#1642).
+    expect(
+      (
+        await readHistory({
+          ...payload,
+          items: [
+            {
+              ...cover,
+              decision: decisionProjection({
+                outcome: 'accept',
+                selected_value: { kind: 'cover', value: 'retained-artifact' },
+              }),
+              consideration: {
+                ...cover.consideration,
+                candidates: [
+                  coverCandidate({
+                    artifact_id: 'retained-artifact',
+                    match_reason: 'matched_book',
+                    match_state: 'match_not_confirmed',
+                  }),
+                ],
+              },
+            },
+          ],
+        })
+      ).items[0],
+    ).toMatchObject({
+      category: 'cover',
+      ownerOutcome: 'accept',
+      ownerMatchUnconfirmed: true,
+      ownerMatchedBook: true,
+      matchedBookOffered: true,
+    })
     for (const outcome of ['keep_current', 'reject']) {
       const mapped = (
         await readHistory({
@@ -4585,6 +4629,37 @@ describe('named cover and choice-context checks (#1688)', () => {
       'X59 alternative',
       { candidates: [coverCandidate({ deterministic_rank: null, deterministic_rank_key: null })] },
       'contradictory_cover_identity',
+    ],
+    // match-reason: a matched-book reason names only a proposed candidate
+    // whose identity is not a conflict (#1642).
+    [
+      'match-reason incumbent',
+      {
+        candidates: [retained({ match_reason: 'matched_book' })],
+        choice_contexts: [choiceContext()],
+        incumbent: { reference: 'candidate-1', state: 'available' },
+      },
+      'contradictory_cover_match_reason',
+    ],
+    [
+      'match-reason conflict',
+      {
+        candidates: [
+          coverCandidate({
+            identity: coverIdentity({ outcome: 'conflict' }),
+            manual_eligible: false,
+            match_reason: 'matched_book',
+            match_state: 'match_not_confirmed',
+            selectable: false,
+            deterministic_rank: null,
+            deterministic_rank_key: null,
+            state: 'excluded',
+          }),
+        ],
+        choice_contexts: [choiceContext()],
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+      },
+      'contradictory_cover_match_reason',
     ],
     // X60: proposed contexts follow the eligible alternatives in order.
     [

@@ -777,6 +777,8 @@ export interface CoverCandidateView {
   identity: Readonly<Record<string, unknown>>
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
+  /** A proposed cover from the matched book; the recording stays unconfirmed (#1642). */
+  matchReason?: 'matched_book'
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
@@ -894,6 +896,10 @@ export type HistoryItemView = (
       outcome: CoverHistoryOutcome
       ownerOutcome?: 'accept' | 'keep_current' | 'reject'
       ownerMatchUnconfirmed?: boolean
+      /** The chosen cover came from the matched book; its recording is unconfirmed. */
+      ownerMatchedBook?: boolean
+      /** A proposed cover came from the matched book, so policy notes name the recording. */
+      matchedBookOffered?: boolean
       policyReasons: readonly string[]
       policyStatus?: 'recommended' | 'abstained'
       reviewerStatus: 'completed' | 'failed' | 'unavailable'
@@ -3484,19 +3490,24 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       : { reviewerModel: consideration.reviewer_model }),
     outcome: item.kind,
     ...(ownerOutcome
-      ? {
-          ownerOutcome,
-          ...(consideration.candidates.some(
-            (candidate) =>
-              (ownerOutcome === 'keep_current'
-                ? candidate.incumbent
-                : ownerOutcome === 'accept' &&
-                  candidate.artifact_id === decision?.selected_value?.value) &&
-              candidate.match_state === 'match_not_confirmed',
+      ? (() => {
+          const chosen = consideration.candidates.find((candidate) =>
+            ownerOutcome === 'keep_current'
+              ? candidate.incumbent
+              : ownerOutcome === 'accept' &&
+                candidate.artifact_id === decision?.selected_value?.value,
           )
-            ? { ownerMatchUnconfirmed: true }
-            : {}),
-        }
+          return {
+            ownerOutcome,
+            ...(chosen?.match_state === 'match_not_confirmed'
+              ? { ownerMatchUnconfirmed: true }
+              : {}),
+            ...(chosen?.match_reason === 'matched_book' ? { ownerMatchedBook: true } : {}),
+          }
+        })()
+      : {}),
+    ...(consideration.candidates.some((candidate) => candidate.match_reason === 'matched_book')
+      ? { matchedBookOffered: true }
       : {}),
     policyReasons: policy === null ? [] : policy.reasons,
     ...(policy === null ? {} : { policyStatus: policy.status }),
@@ -3612,6 +3623,11 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       (confirmed && !incumbent && deterministicRankKey === null)
     )
       throw new ApiError(502, 'contradictory_cover_identity')
+    // match-reason. Display only: the identity, selection and rank checks
+    // above are unchanged.
+    const matchReason = candidate.match_reason
+    if (matchReason !== null && (incumbent || identity.outcome === 'conflict'))
+      throw new ApiError(502, 'contradictory_cover_match_reason')
     return {
       artifactId: candidate.artifact_id,
       deterministicCitations: candidate.deterministic_citations,
@@ -3621,6 +3637,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       identity,
       incumbent,
       matchState,
+      ...(matchReason === null ? {} : { matchReason }),
       observation,
       originalSha256: candidate.original_sha256,
       ordinal: candidate.ordinal,
