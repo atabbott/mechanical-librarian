@@ -331,7 +331,11 @@ never subtitle. The date reads as the book's first publication. A narrator
 choice from a Hardcover audio edition has its own sentence, is offered only for
 an empty field, and each evidence row names its edition by number and runtime.
 The cover gallery holds only the current cover and the covers the work route
-offers; choosing one asks the owner to confirm an unverified match.
+offers. Such a cover reads "Same book · recording not confirmed" and says it
+comes from the matched book, not a confirmed recording; its identity stays
+unverified, so choosing it still confirms an unverified match, and History
+says the same. The note's "Your choice applies only to this field" follows
+the number of fields offered.
 Recording identifiers and automatic changes stay unavailable. A description
 or genre that only trims or extends the current value is optional, unless the
 current value is a placeholder, contains markup, is visibly cut off, or lists

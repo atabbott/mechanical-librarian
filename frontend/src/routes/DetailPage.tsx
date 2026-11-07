@@ -170,7 +170,11 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       {item.ownerOutcome ? (
         <p>
           Owner-confirmed choice: {coverOwnerWords[item.ownerOutcome]}.
-          {item.ownerMatchUnconfirmed ? ' Match not confirmed by automated evidence.' : ''}{' '}
+          {item.ownerMatchedBook
+            ? ' This cover comes from the matched book; the recording is not confirmed.'
+            : item.ownerMatchUnconfirmed
+              ? ' Match not confirmed by automated evidence.'
+              : ''}{' '}
           Recording a choice is separate from verified application.
         </p>
       ) : null}
@@ -182,7 +186,11 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       {item.policyReasons.length ? (
         <ul className="diagnostic-limitations" aria-label="Cover policy limitations">
           {item.policyReasons.map((reason) => (
-            <li key={reason}>{coverNoteLabel(reason)}</li>
+            <li key={reason}>
+              {item.matchedBookOffered && reason === 'no_confirmed_candidates'
+                ? 'No cover is confirmed for this recording'
+                : coverNoteLabel(reason)}
+            </li>
           ))}
         </ul>
       ) : null}

@@ -20,6 +20,8 @@ import {
   caseHistory,
   coverCandidate,
   coverConsideration,
+  coverIdentity,
+  coverPolicyReport,
   decisionProjection,
   historyCoverItem,
 } from './wireFixtures'
@@ -145,7 +147,8 @@ describe('Library review ownership', () => {
         'Book-level evidence supports title choices. The exact recording remains unresolved.',
       ),
     ).toBeVisible()
-    expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
+    // One offered field reads in the singular (#1642).
+    expect(within(section).getByText(/^Your choice applies only to this field\./u)).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
   })
 
@@ -239,7 +242,13 @@ describe('Library review ownership', () => {
         'A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
       ),
     ).toBeVisible()
-    expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
+    // Narrators alone are one field, so the note reads in the singular.
+    expect(
+      within(section).getByText(
+        'Your choice applies only to this field. Recording identifiers and automatic changes are unavailable from this evidence.',
+      ),
+    ).toBeVisible()
+    expect(within(section).queryByText(/these fields/u)).toBeNull()
   })
 
   it('states media health on the case an admitted audiobook opens', async () => {
@@ -1416,4 +1425,51 @@ it('retains unconfirmed incumbent evidence in actual mapped owner history', asyn
   expect(await screen.findByText(/Owner-confirmed choice: the current cover\./u)).toHaveTextContent(
     'Match not confirmed by automated evidence. Recording a choice is separate from verified application.',
   )
+})
+
+it('says a chosen cover from the matched book leaves the recording unconfirmed (#1642)', async () => {
+  const http = createHttp()
+  http.getHistory = vi.fn(async () =>
+    readHistory(
+      caseHistory({
+        items: [
+          historyCoverItem({
+            kind: 'selected',
+            occurred_at: 3,
+            consideration: coverConsideration({
+              candidates: [
+                coverCandidate({
+                  artifact_id: 'matched-book-cover',
+                  deterministic_rank: null,
+                  deterministic_rank_key: null,
+                  identity: coverIdentity({ outcome: 'unknown' }),
+                  match_reason: 'matched_book',
+                  match_state: 'match_not_confirmed',
+                  selectable: false,
+                  state: 'excluded',
+                }),
+              ],
+              policy: coverPolicyReport({
+                acceptable_candidate_references: [],
+                reasons: ['no_confirmed_candidates'],
+                status: 'abstained',
+              }),
+              reviewer_status: 'unavailable',
+            }),
+            decision: decisionProjection({
+              outcome: 'accept',
+              selected_value: { kind: 'cover', value: 'matched-book-cover' },
+            }),
+          }),
+        ],
+      }),
+    ),
+  )
+  renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
+  expect(await screen.findByText(/Owner-confirmed choice: a proposed cover\./u)).toHaveTextContent(
+    'This cover comes from the matched book; the recording is not confirmed. Recording a choice is separate from verified application.',
+  )
+  expect(screen.getByText('No cover is confirmed for this recording')).toBeVisible()
+  expect(screen.queryByText('No cover is confirmed for this book')).toBeNull()
+  expect(screen.queryByText(/Match not confirmed by automated evidence/u)).toBeNull()
 })

@@ -5021,6 +5021,41 @@ describe('Library route', () => {
       )
       expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
     })
+
+    it('names a cover from the matched book without confirming its recording (#1642)', async () => {
+      const user = userEvent.setup()
+      const matched = `cover_transport_ref_${'5'.repeat(64)}`
+      const http = coverHttp((consideration) => ({
+        candidates: consideration.candidates.map((candidate) =>
+          candidate.reference === matched
+            ? { ...candidate, matchReason: 'matched_book' as const }
+            : candidate,
+        ),
+      }))
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const card = within(group).getByRole('radio', {
+        name: 'Choose Open Library cover, 800 × 1200 px (4)',
+      })
+      expect(card).toHaveTextContent('Same book · recording not confirmed')
+      expect(card).toHaveTextContent('From the matched book, not a confirmed recording.')
+      expect(card).not.toHaveTextContent('Match not confirmed')
+      expect(card).not.toHaveTextContent("We couldn't confirm")
+      // Other unconfirmed covers keep their wording.
+      expect(
+        within(group).getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (5)' }),
+      ).toHaveTextContent('Match not confirmed')
+      // The match stays unverified, so the tap still confirms it.
+      await user.click(card)
+      expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          outcome: 'accept',
+          coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+        }),
+      )
+    })
   })
 
   it.each([
