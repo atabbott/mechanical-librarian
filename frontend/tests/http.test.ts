@@ -3289,6 +3289,34 @@ it.each([
   await expect(readCase(changed)).rejects.toThrow(ApiError)
 })
 
+it.each([
+  // X49: a candidate's description is not blank.
+  [{ output: { description: '   ' } }, 'invalid_description_text'],
+  // X50: the candidate binds the advice's attempt, engine and model.
+  [{ model: 'another-model' }, 'invalid_description_candidate_binding'],
+] as const)('refuses a description candidate the schema admits: %j', async (change, code) => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const changed = {
+    ...payload,
+    fields: payload.fields.map((field) => {
+      if (field.destination !== 'description' || !field.description_advice?.candidate) return field
+      const { candidate } = field.description_advice
+      return {
+        ...field,
+        description_advice: {
+          ...field.description_advice,
+          candidate: {
+            ...candidate,
+            ...change,
+            output: { ...candidate.output, ...('output' in change ? change.output : {}) },
+          },
+        },
+      }
+    }),
+  }
+  await expect(readCase(changed)).rejects.toThrow(new ApiError(502, code))
+})
+
 it.each(['selected', 'requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)(
   'parses actual serialized retained selection during %s advice',
   async (state) => {
