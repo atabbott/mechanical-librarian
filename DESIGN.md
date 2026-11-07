@@ -525,8 +525,9 @@ the real actor. An error names what failed and the one thing to do. No
 reassurance the reader did not ask for, no hedging around a fact the product
 knows, no lists of three for rhythm, no "not X but Y", no em dashes, no bold
 for emphasis, no exclamation marks, and no promotional vocabulary (seamless,
-powerful, effortless, unlock, leverage). The product never says it learns or
-understands; it says what it did.
+powerful, effortless, unlock, leverage). "Learns" and "taught" are said only
+of the parts that are, the taste profile and the reviewer; the rest says what
+it did.
 
 The working checklist a change is held to, with the full vocabulary and the
 scan to run before review, is the development controls' `product-copy.md`,
