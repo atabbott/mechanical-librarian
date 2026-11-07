@@ -151,6 +151,12 @@ def _r1_prior(**series: object) -> dict[str, a3.Prior]:
     }
 
 
+# A subtitle change the field selected before the overwrite.
+SUBTITLE = {
+    "subtitle": _prior("propose_change", selected="t", assessment="fills_empty")
+}
+
+
 # --- The mirrored duplicate check ------------------------------------------
 
 
@@ -329,7 +335,7 @@ def test_r1_admits_the_series_fill_beside_a_kept_title_holding_the_name() -> Non
                 _r1_combination(),
                 _r1_combination(subtitle=_part(C, "t", texts=[("Z",)])),
             ],
-            _r1_prior(),
+            {**_r1_prior(), **SUBTITLE},
             "refused_ambiguous",
         ),
         (
@@ -354,7 +360,7 @@ def test_r1_admits_the_series_fill_beside_a_kept_title_holding_the_name() -> Non
         ),
         (
             [_r1_combination(subtitle=_part(C, "t", texts=[("BETA",)]))],
-            _r1_prior(),
+            {**_r1_prior(), **SUBTITLE},
             "refused_clause",
         ),
         (
@@ -374,6 +380,16 @@ def test_r1_admits_the_series_fill_beside_a_kept_title_holding_the_name() -> Non
         ([_r1_combination()], _r1_prior(alternatives=2), "refused_shape"),
         ([_r1_combination()], _r1_prior(assessment="replaces_target"), "refused_shape"),
         ([_r1_combination()], _r1_prior(selected="other"), "refused_shape"),
+        (
+            [_r1_combination(subtitle=_part(C, "other", texts=[("Z",)]))],
+            {**_r1_prior(), **SUBTITLE},
+            "refused_shape",
+        ),
+        (
+            [_r1_combination(subtitle=_part(C, "t", texts=[("Z",)]))],
+            _r1_prior(),
+            "refused_shape",
+        ),
         (
             [_r1_combination()],
             {**_r1_prior(), "title": _prior("propose_change")},
@@ -396,6 +412,8 @@ def test_r1_admits_the_series_fill_beside_a_kept_title_holding_the_name() -> Non
         "two-alternatives",
         "not-a-fill",
         "another-selection",
+        "another-subtitle",
+        "subtitle-kept-before",
         "new-title",
         "main-forms-one",
     ],
@@ -405,6 +423,16 @@ def test_r1_refuses_each_listed_condition(
 ) -> None:
     verdict = a3.relax_r1(_replay(combinations, prior), _case())
     assert (verdict.outcome, verdict.admitted) == (outcome, ())
+
+
+def test_a_relaxation_admits_only_the_subtitle_selected_before_the_overwrite() -> None:
+    chosen = _r1_combination(subtitle=_part(C, "t", texts=[("Z",)]))
+    other = _r1_combination(subtitle=_part(C, "other", texts=[("Z",)]))
+    prior = {**_r1_prior(), **SUBTITLE}
+    # The combination with another subtitle never qualifies, nor competes.
+    assert a3.relax_r1(_replay([other], prior), _case()).outcome == "refused_shape"
+    verdict = a3.relax_r1(_replay([other, chosen], prior), _case())
+    assert verdict == a3.Verdict("admitted", ("series",), chosen)
 
 
 def test_r1_refuses_a_fill_that_cites_a_wrong_work_record() -> None:
@@ -469,7 +497,7 @@ def test_r2_admits_a_new_title_and_its_same_name_series() -> None:
                 _r2_combination(),
                 _r2_combination(subtitle=_part(C, "t", texts=[("Z",)])),
             ],
-            _r2_prior(),
+            {**_r2_prior(), **SUBTITLE},
             "refused_ambiguous",
         ),
         (
@@ -489,6 +517,11 @@ def test_r2_admits_a_new_title_and_its_same_name_series() -> None:
         ),
         ([_r2_combination()], _r2_prior(selected="other"), "refused_shape"),
         (
+            [_r2_combination(subtitle=_part(C, "other", texts=[("Z",)]))],
+            {**_r2_prior(), **SUBTITLE},
+            "refused_shape",
+        ),
+        (
             [_r2_combination()],
             {**_r2_prior(), "title": _prior("keep", selected="new")},
             "refused_shape",
@@ -502,6 +535,7 @@ def test_r2_admits_a_new_title_and_its_same_name_series() -> None:
         "held-first-series",
         "degraded-title",
         "another-title",
+        "another-subtitle",
         "kept-title",
     ],
 )

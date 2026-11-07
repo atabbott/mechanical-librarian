@@ -594,6 +594,24 @@ def masked_member(combination: Combination, replay: CaseReplay) -> bool:
     )
 
 
+def own_selections(combination: Combination, replay: CaseReplay) -> bool:
+    """Whether every value the combination changes is its field's pre-A3 selection."""
+    alternatives = {
+        "title": combination.title_alternative,
+        "subtitle": combination.subtitle.alternative,
+        "series": combination.series.alternative,
+    }
+    for destination, kind in _members(combination):
+        prior = replay.prior.get(destination)
+        if kind == CANDIDATE and (
+            prior is None
+            or prior.selected is None
+            or alternatives[destination] != prior.selected
+        ):
+            return False
+    return True
+
+
 def degraded_title(value: str | None) -> bool:
     """The checkout's degraded-title refusal (#1283) on the combination's title."""
     return (
@@ -639,9 +657,12 @@ def _qualify(
     open_shape = [item for item in shape if not masked_member(item, replay)]
     if not open_shape:
         return Verdict("refused_masked")
+    selected = [item for item in open_shape if own_selections(item, replay)]
+    if not selected:
+        return Verdict("refused_shape")
     qualifying = {
         item.key(): item
-        for item in open_shape
+        for item in selected
         if clauses(item, same_name_rule=True) == (clause,)
     }
     if not qualifying:
