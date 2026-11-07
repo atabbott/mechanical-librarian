@@ -574,10 +574,10 @@ describe('Policy route', () => {
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. Owner choice required. If set to Automatic: No automatic effect. Owner review required.',
+      'Ebooks: Ask me. You choose each value. If set to Automatic: No automatic effect. You review each change.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me. Owner choice required. If set to Automatic: Fill empty ASIN.',
+      'Audiobooks: Ask me. You choose each value. If set to Automatic: Fill empty ASIN.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field\. Automatic available\./u)).toBeVisible()
@@ -592,7 +592,7 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. Owner choice required. If set to Automatic: No automatic effect. Owner review required.',
+      'Ebooks: Ask me. You choose each value. If set to Automatic: No automatic effect. You review each change.',
     )
   })
 
@@ -1114,7 +1114,7 @@ describe('Policy route', () => {
     expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
     expect(
       screen.getByText(
-        /draft saved; activate to keep it\. Reloading starts from the active policy\.$/u,
+        /draft saved\. Activate to keep it\. Reloading starts from the active policy\.$/u,
       ),
     ).toBeVisible()
     expect(screen.queryByText(/snapshot saved automatically/u)).toBeNull()
@@ -2577,8 +2577,8 @@ it.each([
 )
 
 it.each([
-  ['ignore', 'Ignored. No metadata action.'],
-  ['ask', 'Ask me. Owner choice required.'],
+  ['ignore', 'Ignored. This field is left alone.'],
+  ['ask', 'Ask me. You choose each value.'],
   ['automatic', 'Automatic.'],
 ])(
   'states selected %s behavior before eligibility in cards and activation',

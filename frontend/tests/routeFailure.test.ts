@@ -13,7 +13,7 @@ const network =
 const unreadable = "The server sent an answer this page couldn't read. Try again."
 const server = "The server couldn't answer. Try again in a moment."
 const refused = "This page isn't available."
-const unexpected = 'Something went wrong showing this page. Try again.'
+const unexpected = "This page couldn't be shown. Try again."
 
 const decodeFailure = new ResponseDecodeError({
   operation: 'GET /api/v1/metadata-policy/state',

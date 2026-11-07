@@ -22,7 +22,7 @@ const copy = {
   unreadable: "The server sent an answer this page couldn't read. Try again.",
   server: "The server couldn't answer. Try again in a moment.",
   refused: "This page isn't available.",
-  unexpected: 'Something went wrong showing this page. Try again.',
+  unexpected: "This page couldn't be shown. Try again.",
 } as const
 
 const apiDetail = (error: ApiError) => `${String(error.status)} · ${error.code}`
