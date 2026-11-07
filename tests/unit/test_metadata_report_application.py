@@ -91,7 +91,10 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioInspectionOutcome,
+    AudioSidecarBinding,
     AudioSidecarDigest,
+    AudioSidecarKind,
+    AudioSidecarRefusal,
     AudioTrackDigest,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -547,10 +550,10 @@ def test_repository_closes_when_inspection_or_provider_validation_fails() -> Non
     repository = FakeReportRepository()
 
     class BrokenInspector:
-        def inspect(self, *args):
+        def inspect(self, *args, **_keywords):
             raise RuntimeError("broken")
 
-        def unchanged(self, *args):
+        def unchanged(self, *args, **_keywords):
             return True
 
     service = GenerateMetadataReport(
@@ -2501,9 +2504,22 @@ def test_a_revalidation_that_outran_the_item_budget_keeps_its_typed_terminal() -
     assert audio_inspector.verifications == 1
 
 
+def _sidecar(name: str, digest: str) -> AudioSidecarDigest:
+    if name == "metadata.json":
+        return AudioSidecarDigest(
+            name,
+            digest,
+            AudioSidecarKind.AUDIOBOOKSHELF_RECORD,
+            AudioSidecarBinding.FOLDER,
+            (AudioSidecarRefusal.TARGET_RECORD,),
+        )
+    kind = AudioSidecarKind(name.rsplit(".", 1)[1])
+    return AudioSidecarDigest(name, digest, kind, AudioSidecarBinding.TRACK)
+
+
 _SIDECARS = (
-    AudioSidecarDigest("book.opf", "1" * 64),
-    AudioSidecarDigest("metadata.json", "2" * 64),
+    _sidecar("book.opf", "1" * 64),
+    _sidecar("metadata.json", "2" * 64),
 )
 
 
@@ -2537,9 +2553,12 @@ def test_a_published_audiobook_report_records_the_sidecars_it_read() -> None:
     assert _SIDECARS == published.audio.sidecars
     assert MetadataReport.from_json(published.to_json()) == published
     assert [
-        {"digest": "1" * 64, "name": "book.opf"},
-        {"digest": "2" * 64, "name": "metadata.json"},
-    ] == cast(dict, published.to_data()["audio"])["sidecars"]
+        (entry["name"], entry["digest"], entry["kind"], entry["refusals"])
+        for entry in cast(dict, published.to_data()["audio"])["sidecars"]
+    ] == [
+        ("book.opf", "1" * 64, "opf", []),
+        ("metadata.json", "2" * 64, "audiobookshelf_record", ["target_record"]),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2547,11 +2566,9 @@ def test_a_published_audiobook_report_records_the_sidecars_it_read() -> None:
     [
         pytest.param((), id="every_sidecar_removed"),
         pytest.param(_SIDECARS[:1], id="one_sidecar_removed"),
+        pytest.param((*_SIDECARS, _sidecar("book.nfo", "3" * 64)), id="sidecar_added"),
         pytest.param(
-            (*_SIDECARS, AudioSidecarDigest("book.nfo", "3" * 64)), id="sidecar_added"
-        ),
-        pytest.param(
-            (AudioSidecarDigest("book.opf", "9" * 64), _SIDECARS[1]),
+            (_sidecar("book.opf", "9" * 64), _SIDECARS[1]),
             id="sidecar_edited",
         ),
     ],

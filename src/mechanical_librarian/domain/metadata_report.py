@@ -25,7 +25,12 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioObservation,
     AudioObservationKind,
+    AudioSidecarBinding,
     AudioSidecarDigest,
+    AudioSidecarKind,
+    AudioSidecarRefusal,
+    AudioSidecarShadow,
+    AudioSidecarShadowField,
     AudioTrackDigest,
     normalize_duration_seconds,
 )
@@ -97,7 +102,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v71"
+REPORT_SCHEMA = "metadata-report-v72"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -4888,6 +4893,52 @@ def _unbound_manifestation_link_allowed(
     )
 
 
+def _validate_sidecar_claims(
+    audio: AudioFacts,
+    local_claims: tuple[LocalClaim, ...],
+    fields: tuple[TargetField, ...],
+) -> None:
+    """Hold a sidecar manifest's claim provenance to what the report carries.
+
+    A document names only `sidecar` claims this report carries.  And no claim
+    from an `.opf` or `.nfo` document repeats the target's own record: such a
+    value is Audiobookshelf's record echoed back, withheld before it can
+    become a claim, so no consumer can count the target twice (#1481).
+    """
+    if not audio.sidecars:
+        return
+    from mechanical_librarian.domain.audio_sidecar_association import (
+        AudioAssociationContext,
+        target_echo,
+    )
+
+    claims = {claim.reference: claim for claim in local_claims}
+    context = AudioAssociationContext(None, fields, None)
+    for entry in audio.sidecars:
+        stated = tuple(
+            claims[reference]
+            for reference in entry.claims
+            if reference in claims and claims[reference].basis == "sidecar"
+        )
+        if len(stated) != len(entry.claims):
+            raise ReportValueError("audio sidecar claim provenance is unresolved")
+        if entry.kind not in {AudioSidecarKind.OPF, AudioSidecarKind.NFO}:
+            continue
+        series_names = tuple(
+            claim.canonical
+            for claim in stated
+            if claim.kind is ClaimKind.SERIES and claim.canonical is not None
+        )
+        for claim in stated:
+            if claim.canonical is not None and target_echo(
+                context,
+                AudioInspectionField(claim.kind.value),
+                claim.canonical,
+                series_names,
+            ):
+                raise ReportValueError("audio sidecar claim echoes the target")
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataReport:
     report_id: str
@@ -5048,6 +5099,7 @@ class MetadataReport:
                 for reference in track.claims
             ):
                 raise ReportValueError("audio track claim provenance is unresolved")
+            _validate_sidecar_claims(self.audio, self.local_claims, self.target.fields)
             if self.file.content_digest != audio_set_content_digest(
                 tuple(track.digest for track in self.audio.tracks)
             ):
@@ -6067,12 +6119,14 @@ def recording_association_references(
         or _provider_candidate_has_work_identity_veto(candidate)
     ):
         return ()
+    # Item identity binds from an ASIN read off the recording's own embedded
+    # tags and from nothing else: not a sidecar, not a path (#1481).
     item = tuple(
         c.reference
         for c in local_claims
         if c.kind is ClaimKind.ASIN
         and c.state is FieldState.VALID
-        and c.basis in {"embedded_tag", "filename"}
+        and c.basis == "embedded_tag"
         and canonical_asin(c.canonical) == asins[0].value
     )
     if item:
@@ -7620,9 +7674,42 @@ def _audio_observation_from_data(value: object) -> AudioObservation:
 
 
 def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
-    item = _object(value, {"digest", "name"})
+    item = _object(
+        value,
+        {
+            "binding",
+            "claims",
+            "digest",
+            "disputed",
+            "echoed",
+            "kind",
+            "name",
+            "refusals",
+            "shadow",
+        },
+    )
     try:
-        return AudioSidecarDigest(item["name"], item["digest"])
+        return AudioSidecarDigest(
+            item["name"],
+            item["digest"],
+            AudioSidecarKind(item["kind"]),
+            AudioSidecarBinding(item["binding"]),
+            tuple(AudioSidecarRefusal(value) for value in _strings(item["refusals"])),
+            tuple(_strings(item["claims"])),
+            tuple(AudioInspectionField(value) for value in _strings(item["disputed"])),
+            tuple(AudioInspectionField(value) for value in _strings(item["echoed"])),
+            tuple(
+                AudioSidecarShadow(
+                    AudioSidecarShadowField(shadow["field"]),
+                    shadow["observed"],
+                    shadow["canonical"],
+                )
+                for shadow in (
+                    _object(entry, {"canonical", "field", "observed"})
+                    for entry in _list(item["shadow"])
+                )
+            ),
+        )
     except ValueError as error:
         raise ReportValueError("audio sidecar manifest is invalid") from error
 

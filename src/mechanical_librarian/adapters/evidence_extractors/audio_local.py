@@ -15,10 +15,13 @@ from dataclasses import dataclass
 
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_ASSOCIATION_CREATORS,
     MAX_CHAPTERS,
     MAX_DESCRIPTION_CHARACTERS,
     MAX_DURATION_MILLISECONDS,
+    MAX_FACTS,
     MAX_OBSERVED_CHARACTERS,
+    MAX_SIDECAR_SHADOW,
     NON_LINGUISTIC_LANGUAGE_CODES,
     AudioChapter,
     AudioContainerFacts,
@@ -29,6 +32,12 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioInspectionOutcome,
     AudioPerformanceType,
+    AudioSidecarBinding,
+    AudioSidecarKind,
+    AudioSidecarReading,
+    AudioSidecarShadow,
+    AudioSidecarShadowField,
+    association_text,
     normalize_duration_seconds,
 )
 from mechanical_librarian.domain.evidence_bounds import (
@@ -53,9 +62,11 @@ _TRUE_VALUES = frozenset({"1", "true", "yes", "y"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "n"})
 _SEQUENCE = re.compile(r"^\d{1,4}(?:\.\d{1,3})?$")
 _CHAPTER_SECONDS = re.compile(r"^\d{1,9}(?:\.\d{1,9})?$")
-_XML_ELEMENT = re.compile(
-    r"<(?:[A-Za-z][\w.-]*:)?(language|description|title|creator|contributor)\b"
-    r"([^>]*)>([^<]{0,4096})</",
+# The head of one recognised OPF element, matched anchored at a `<` and never
+# searched: the prefix run is bounded by the next character no name can hold,
+# so each attempt costs the name it reads, and names never overlap (#1481).
+_XML_ELEMENT_HEAD = re.compile(
+    r"<(?:[A-Za-z][\w.-]*:)?(language|description|title|creator|contributor)\b",
     re.IGNORECASE,
 )
 # One `name="value"` pair of a captured attribute run, consumed in sequence so
@@ -71,10 +82,20 @@ _MAX_XML_ATTRIBUTES = 32
 # MARC relators for a spoken performance.  An OPF contributor is a contributor
 # of some kind; only these two say the kind is the one this evidence claims.
 _NARRATOR_ROLES = frozenset({"nrt", "prf"})
-_XML_META = re.compile(
-    r"<meta\b[^>]*\bname\s*=\s*\"([\w:.-]{1,64})\"[^>]*\bcontent\s*=\s*\"([^\"]{0,512})\"",
-    re.IGNORECASE,
-)
+# A `<meta>` is read only when a double-quoted `name` precedes a double-quoted
+# `content`.  Each fragment is matched anchored at a candidate position found by
+# a literal scan, never searched across the tag (#1481).
+_XML_META_HEAD = re.compile(r"<meta\b", re.IGNORECASE)
+_XML_META_NAME_WORD = re.compile(r"name", re.IGNORECASE)
+_XML_META_NAME = re.compile(r"\bname\s*=\s*\"([\w:.-]{1,64})\"", re.IGNORECASE)
+_XML_META_CONTENT_WORD = re.compile(r"content", re.IGNORECASE)
+_XML_META_CONTENT = re.compile(r"\bcontent\s*=\s*\"([^\"]{0,512})\"", re.IGNORECASE)
+# The scanner's own bounds: an element or meta tag must close within this many
+# characters of its name, a name is at most 64 characters, element text runs at
+# most this far, and at most 64 matches are read per grammar.
+_MAX_XML_TAG_CHARACTERS = 4_096
+_MAX_XML_NAME_CHARACTERS = 64
+_MAX_XML_MATCHES = 64
 _NFO_LINE = re.compile(r"^\s*([A-Za-z][\w .-]{0,63})\s*:\s*(.{1,512})$")
 _CUE_LINE = re.compile(r"^\s*(REM\s+[A-Z_]{1,32}|PERFORMER|TITLE)\s+(.{1,512})$")
 _XML_ENTITIES = (
@@ -211,33 +232,84 @@ class AudioInterpretation:
     # target.  It exists so a per-track chapter can be named by the recording.
     title: str | None = None
     chapter_rows_omitted: bool = False
+    # Association text and per-sidecar readings (#1481): the `album` tag, the
+    # person tags, and each sidecar's own facts and association text, kept
+    # apart so the parent can decide which documents belong to the item.
+    album: str | None = None
+    creators: tuple[str, ...] = ()
+    sidecars: tuple[AudioSidecarReading, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.chapter_rows_omitted) is not bool:
             raise ValueError("audio chapter omission is invalid")
 
 
-def sidecar_surface(name: str, media_name: str) -> AudioEvidenceSurface | None:
-    """Classify one directory entry as a supported sidecar, or not at all."""
-    if type(name) is not str or type(media_name) is not str or "/" in name:
+@dataclass(frozen=True, slots=True)
+class SidecarClassification:
+    """One recognised document's kind, binding and, when bound, its track.
+
+    ``track`` is the 1-based position in the item's track names of the track a
+    document is named for, and ``None`` for a folder-level document.
+    """
+
+    kind: AudioSidecarKind
+    binding: AudioSidecarBinding
+    track: int | None = None
+
+
+_RECORD_NAMES = frozenset({"metadata.json", "metadata.abs"})
+_LIBATION_SUFFIX = ".metadata.json"
+_FOLDER_KINDS = {
+    ".opf": AudioSidecarKind.OPF,
+    ".nfo": AudioSidecarKind.NFO,
+    ".cue": AudioSidecarKind.CUE,
+}
+
+
+def classify_sidecar(
+    name: str, media_names: tuple[str, ...]
+) -> SidecarClassification | None:
+    """Classify one directory entry as a recognised document, or not at all.
+
+    Audiobookshelf's own ``metadata.json`` and ``metadata.abs`` are its record.
+    A document whose name less its extension is a track's name less its
+    extension is bound to that track; Libation's ``<stem>.metadata.json`` is
+    recognised only so.  Every other ``.opf``, ``.nfo`` and ``.cue`` belongs to
+    the folder (#1481).
+    """
+    if (
+        type(name) is not str
+        or "/" in name
+        or type(media_names) is not tuple
+        or any(type(value) is not str for value in media_names)
+    ):
         return None
     lowered = name.lower()
-    stem = media_name.rsplit(".", 1)[0].lower()
-    if lowered == "metadata.json":
-        return AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF
-    if lowered.endswith(".metadata.json"):
+    stems = tuple(value.rsplit(".", 1)[0].lower() for value in media_names)
+    if lowered in _RECORD_NAMES:
+        return SidecarClassification(
+            AudioSidecarKind.AUDIOBOOKSHELF_RECORD, AudioSidecarBinding.FOLDER
+        )
+    if lowered.endswith(_LIBATION_SUFFIX):
+        stem = lowered[: -len(_LIBATION_SUFFIX)]
         return (
-            AudioEvidenceSurface.SIDECAR_LIBATION
-            if lowered[: -len(".metadata.json")] == stem
+            SidecarClassification(
+                AudioSidecarKind.LIBATION,
+                AudioSidecarBinding.TRACK,
+                stems.index(stem) + 1,
+            )
+            if stem in stems
             else None
         )
-    if lowered.endswith(".opf"):
-        return AudioEvidenceSurface.SIDECAR_OPF
-    if lowered.endswith(".nfo"):
-        return AudioEvidenceSurface.SIDECAR_NFO
-    if lowered.endswith(".cue"):
-        return AudioEvidenceSurface.SIDECAR_CUE
-    return None
+    kind = _FOLDER_KINDS.get(lowered[-4:])
+    if kind is None:
+        return None
+    stem = lowered[:-4]
+    if stem in stems:
+        return SidecarClassification(
+            kind, AudioSidecarBinding.TRACK, stems.index(stem) + 1
+        )
+    return SidecarClassification(kind, AudioSidecarBinding.FOLDER)
 
 
 def interpret(
@@ -271,15 +343,24 @@ def interpret(
     builder.duration(container.get("duration"))
     builder.stream_language(streams)
     _tag_facts(builder, container.get("tags"), tag_surface, limits)
-    for sidecar in sidecars[: limits.sidecar_documents]:
-        _sidecar_facts(builder, sidecar, limits)
     builder.bracketed(path)
+    facts = builder.result()
+    # Each sidecar is read on its own, under the one fact budget the whole
+    # child answer shares, so the parent can keep or drop a document whole.
+    readings: list[AudioSidecarReading] = []
+    budget = MAX_FACTS - len(facts)
+    for sidecar in sidecars[: limits.sidecar_documents]:
+        reading = _sidecar_reading(sidecar, source, limits, budget)
+        if reading is None:
+            continue
+        budget -= len(reading.facts)
+        readings.append(reading)
     chapters, truncated, omitted = _chapters(probe.get("chapters"), limits)
     cover = _embedded_cover(streams)
-    facts = builder.result()
+    album, creators = _file_association(container.get("tags"), limits)
     outcome = (
         AudioInspectionOutcome.SUCCESS
-        if facts or chapters or cover.present
+        if facts or chapters or cover.present or any(r.facts for r in readings)
         else AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE
     )
     return AudioInterpretation(
@@ -291,15 +372,60 @@ def interpret(
         _container_facts(container, streams),
         _container_title(container),
         omitted,
+        album,
+        creators,
+        tuple(readings),
     )
+
+
+# The tags whose values name a person, read only as association text.
+_PERSON_TAG_KEYS = frozenset(
+    {"artist", "album_artist", "composer", "narrator", "narrators", "narrated_by"}
+)
+
+
+def _file_association(
+    tags: object, limits: AudioInspectionLimits
+) -> tuple[str | None, tuple[str, ...]]:
+    """Read the file's own association text: its `album` tag and person tags."""
+    if type(tags) is not dict:
+        return None, ()
+    album: str | None = None
+    creators: list[str] = []
+    for index, (raw_key, value) in enumerate(sorted(tags.items())):
+        if index >= limits.tags:
+            break
+        if type(raw_key) is not str or type(value) is not str:
+            continue
+        if len(value) > limits.tag_value_characters:
+            continue
+        key, _mean = _normalized_key(raw_key)
+        text = association_text(value)
+        if text is None:
+            continue
+        if key == "album" and album is None:
+            album = text
+        elif (
+            key in _PERSON_TAG_KEYS
+            and text not in creators
+            and len(creators) < MAX_ASSOCIATION_CREATORS
+        ):
+            creators.append(text)
+    return album, tuple(creators)
 
 
 class _Builder:
     """Collect facts in one deterministic order without duplicating a surface."""
 
-    def __init__(self, source: Fingerprint, limits: AudioInspectionLimits) -> None:
+    def __init__(
+        self,
+        source: Fingerprint,
+        limits: AudioInspectionLimits,
+        budget: int = MAX_FACTS,
+    ) -> None:
         self._source = source
         self._limits = limits
+        self._budget = max(0, min(budget, limits.MAX_FACTS))
         self._seen: set[tuple[str, str, str, str | None, str]] = set()
         self._facts: list[AudioInspectionFact] = []
 
@@ -414,7 +540,7 @@ class _Builder:
         )
 
     def result(self) -> tuple[AudioInspectionFact, ...]:
-        return tuple(self._facts[: self._limits.MAX_FACTS])
+        return tuple(self._facts[: self._budget])
 
 
 def bounded_description(
@@ -724,97 +850,174 @@ def _embedded_cover(streams: list[object]) -> AudioEmbeddedCover:
     return AudioEmbeddedCover(False)
 
 
-def _sidecar_facts(
-    builder: _Builder, sidecar: AudioSidecar, limits: AudioInspectionLimits
-) -> None:
+def _sidecar_reading(
+    sidecar: AudioSidecar,
+    source: Fingerprint,
+    limits: AudioInspectionLimits,
+    budget: int,
+) -> AudioSidecarReading | None:
+    """Read one sidecar's facts and association text, apart from every other."""
     if type(sidecar) is not AudioSidecar:
-        return
-    if sidecar.surface in {
-        AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-        AudioEvidenceSurface.SIDECAR_LIBATION,
-    }:
-        _json_sidecar_facts(builder, sidecar)
+        return None
+    builder = _Builder(source, limits, budget)
+    text = _DocumentText()
+    if sidecar.surface is AudioEvidenceSurface.SIDECAR_LIBATION:
+        _libation_facts(builder, text, sidecar)
     elif sidecar.surface is AudioEvidenceSurface.SIDECAR_OPF:
-        _opf_sidecar_facts(builder, sidecar)
+        _opf_sidecar_facts(builder, text, sidecar)
     elif sidecar.surface is AudioEvidenceSurface.SIDECAR_NFO:
-        _line_sidecar_facts(builder, sidecar, _NFO_LINE, limits)
+        _line_sidecar_facts(builder, text, sidecar, _NFO_LINE, limits)
     elif sidecar.surface is AudioEvidenceSurface.SIDECAR_CUE:
-        _line_sidecar_facts(builder, sidecar, _CUE_LINE, limits)
+        _line_sidecar_facts(builder, text, sidecar, _CUE_LINE, limits)
+    else:
+        return None
+    try:
+        return AudioSidecarReading(
+            sidecar.name,
+            sidecar.surface,
+            builder.result(),
+            text.title,
+            tuple(text.creators),
+            text.file_reference,
+            tuple(text.shadow),
+            text.file_refused,
+        )
+    except ValueError:
+        return None
 
 
-_JSON_KEYS: dict[str, AudioInspectionField] = {
+class _DocumentText:
+    """One document's association text and shadow values, as it is read."""
+
+    def __init__(self) -> None:
+        self.title: str | None = None
+        self.creators: list[str] = []
+        self.file_reference: str | None = None
+        self.file_refused = False
+        self.shadow: list[AudioSidecarShadow] = []
+
+    def name_title(self, value: object) -> None:
+        if self.title is None:
+            self.title = association_text(value)
+
+    def add_creator(self, value: object) -> None:
+        text = association_text(value)
+        if (
+            text is not None
+            and text not in self.creators
+            and len(self.creators) < MAX_ASSOCIATION_CREATORS
+        ):
+            self.creators.append(text)
+
+    def add_shadow(self, field: AudioSidecarShadowField, value: object) -> None:
+        observed = _clean(value)
+        if observed is None or len(self.shadow) >= MAX_SIDECAR_SHADOW:
+            return
+        canonical: str | None = observed
+        if field is AudioSidecarShadowField.FORMAT_TYPE:
+            normalized = observed.lower().replace(" ", "_").replace("-", "_")
+            canonical = (
+                normalized
+                if normalized in {member.value for member in AudioPerformanceType}
+                else None
+            )
+        try:
+            entry = AudioSidecarShadow(field, observed, canonical)
+        except ValueError:
+            return
+        if entry not in self.shadow:
+            self.shadow.append(entry)
+
+
+# The JSON keys a Libation export carries that this build reads as claims,
+# after `_libation_key`.  Libation writes the Audible catalogue product, so a
+# key it never writes is not read (#1481).
+_LIBATION_CLAIM_KEYS: dict[str, AudioInspectionField] = {
     "asin": AudioInspectionField.ASIN,
-    "narrator": AudioInspectionField.CONTRIBUTOR,
-    "narrators": AudioInspectionField.CONTRIBUTOR,
     "language": AudioInspectionField.LANGUAGE,
-    "description": AudioInspectionField.DESCRIPTION,
     "publishersummary": AudioInspectionField.DESCRIPTION,
-    "seriesname": AudioInspectionField.SERIES,
-    "series": AudioInspectionField.SERIES,
-    "seriesposition": AudioInspectionField.SERIES_SEQUENCE,
-    "sequence": AudioInspectionField.SERIES_SEQUENCE,
 }
+_MAX_JSON_VALUES = 16
 
 
-def _json_sidecar_facts(builder: _Builder, sidecar: AudioSidecar) -> None:
+def _libation_key(raw_key: str) -> str:
+    return raw_key.strip().lower().replace("_", "")
+
+
+def _libation_facts(
+    builder: _Builder, text: _DocumentText, sidecar: AudioSidecar
+) -> None:
+    """Read what a Libation export carries, and nothing it does not.
+
+    Claims: `asin`, `narrators[].name`, `language`, `publisher_summary` and
+    `series[].sequence`.  Shadow only, until #1482 qualifies them:
+    `series[].title` and `format_type`.  Association text only: `title` and
+    `authors[].name`.  A product under a `product` wrapper is read wrapped.
+    """
     try:
         document = json.loads(sidecar.text)
     except (RecursionError, ValueError):
         return
     if type(document) is not dict:
         return
+    wrapped = document.get("product")
+    if "asin" not in document and type(wrapped) is dict:
+        document = wrapped
     for raw_key, value in sorted(document.items()):
         if type(raw_key) is not str:
             continue
-        key = raw_key.strip().lower().replace("_", "")
-        if key in {"abridged", "isabridged"}:
-            builder.performance(
-                sidecar.surface,
-                "abridged",
-                str(value).lower() if type(value) is bool else value,
-            )
-            continue
-        field = _JSON_KEYS.get(key)
-        if field is None:
-            continue
-        for resolved, observed in _json_values(field, value)[:16]:
-            if resolved is AudioInspectionField.SERIES_SEQUENCE and not _is_sequence(
-                observed
-            ):
-                continue
-            builder.add(
-                resolved,
-                sidecar.surface,
-                observed,
-                key=raw_key.strip().lower(),
-                role="narrator"
-                if resolved is AudioInspectionField.CONTRIBUTOR
-                else None,
-            )
+        key = _libation_key(raw_key)
+        support_key = raw_key.strip().lower()
+        field = _LIBATION_CLAIM_KEYS.get(key)
+        if field is not None:
+            builder.add(field, sidecar.surface, value, key=support_key)
+        elif key == "narrators" and type(value) is list:
+            for item in value[:_MAX_JSON_VALUES]:
+                if type(item) is dict:
+                    builder.add(
+                        AudioInspectionField.CONTRIBUTOR,
+                        sidecar.surface,
+                        item.get("name"),
+                        key=support_key,
+                        role="narrator",
+                    )
+        elif key == "series" and type(value) is list:
+            for item in value[:_MAX_JSON_VALUES]:
+                if type(item) is not dict:
+                    continue
+                sequence = item.get("sequence")
+                if _is_sequence(sequence):
+                    builder.add(
+                        AudioInspectionField.SERIES_SEQUENCE,
+                        sidecar.surface,
+                        sequence,
+                        key=support_key,
+                    )
+                text.add_shadow(AudioSidecarShadowField.SERIES_TITLE, item.get("title"))
+        elif key == "formattype":
+            text.add_shadow(AudioSidecarShadowField.FORMAT_TYPE, value)
+        elif key == "title":
+            text.name_title(value)
+        elif key == "authors" and type(value) is list:
+            for item in value[:_MAX_JSON_VALUES]:
+                if type(item) is dict:
+                    text.add_creator(item.get("name"))
 
 
-def _json_values(
-    field: AudioInspectionField, value: object
-) -> list[tuple[AudioInspectionField, object]]:
-    """Flatten one sidecar value, naming the field each element belongs to.
+def _xml_role(attributes: str) -> str | None:
+    """Return one element's declared role, read from its tokenized attributes.
 
-    A series entry states its own position, so that element is a sequence
-    rather than another series name.
+    The run is tokenized rather than searched, so only a parsed attribute name
+    can supply a role and no attribute's value can pretend to be one.
     """
-    if type(value) is not list:
-        return [(field, value)]
-    values: list[tuple[AudioInspectionField, object]] = []
-    for item in value:
-        if type(item) is not dict:
-            values.append((field, item))
-            continue
-        values.append((field, item.get("name")))
-        sequence = (
-            item.get("sequence") if field is AudioInspectionField.SERIES else None
-        )
-        if sequence is not None:
-            values.append((AudioInspectionField.SERIES_SEQUENCE, sequence))
-    return values
+    return next(
+        (
+            value.strip().lower()
+            for name, value in _xml_attributes(attributes).items()
+            if name == "role" or name.endswith(":role")
+        ),
+        None,
+    )
 
 
 def _is_narrator_role(attributes: str) -> bool:
@@ -824,20 +1027,8 @@ def _is_narrator_role(attributes: str) -> bool:
     is what says which somebody.  An editor is not a narrator, and a
     contributor carrying no role at all has not said, so neither becomes
     narrator evidence.
-
-    The run is tokenized rather than searched, so only a parsed attribute name
-    can supply a role and no attribute's value can pretend to be one.
     """
-    parsed = _xml_attributes(attributes)
-    role = next(
-        (
-            value
-            for name, value in parsed.items()
-            if name == "role" or name.endswith(":role")
-        ),
-        None,
-    )
-    return role is not None and role.strip().lower() in _NARRATOR_ROLES
+    return _xml_role(attributes) in _NARRATOR_ROLES
 
 
 def _xml_attributes(run: str) -> dict[str, str]:
@@ -865,14 +1056,137 @@ def _decode_entities(value: str) -> str:
     return value
 
 
-def _opf_sidecar_facts(builder: _Builder, sidecar: AudioSidecar) -> None:
+class _NextIndex:
+    """The next position of one character at or after a growing position.
+
+    Every query position is at least the one before it, so the text is
+    searched forward once in total rather than once per query.
+    """
+
+    def __init__(self, text: str, character: str) -> None:
+        self._text = text
+        self._character = character
+        self._found = -1
+        self._exhausted = False
+
+    def at_or_after(self, position: int) -> int:
+        if self._exhausted:
+            return -1
+        if self._found < position:
+            self._found = self._text.find(self._character, position)
+            if self._found < 0:
+                self._exhausted = True
+        return self._found
+
+
+def _xml_elements(text: str) -> list[tuple[str, str, str]]:
+    """Find the recognised OPF elements in one linear pass (#1481).
+
+    Each `<` is tried once.  A name is read anchored at it; the tag must close
+    at a `>` within 4 KiB of the name, and the element text runs to the next
+    `<`, within 4 KiB, which must open `</`.  These are the facts the
+    backtracking element pattern found, or fewer: a tag too long to read here
+    skips every candidate that shares its `>`, because that pattern would have
+    consumed them with it.
+    """
+    matches: list[tuple[str, str, str]] = []
+    closes = _NextIndex(text, ">")
+    opens = _NextIndex(text, "<")
+    position = 0
+    while len(matches) < _MAX_XML_MATCHES:
+        start = text.find("<", position)
+        if start < 0:
+            break
+        head = _XML_ELEMENT_HEAD.match(text, start)
+        if head is None:
+            position = start + 1
+            continue
+        end = head.end()
+        close = closes.at_or_after(end)
+        if close < 0:
+            break
+        if (
+            end - start - 1 > _MAX_XML_NAME_CHARACTERS
+            or close - end > _MAX_XML_TAG_CHARACTERS
+        ):
+            position = close + 1
+            continue
+        stop = opens.at_or_after(close + 1)
+        if (
+            stop < 0
+            or stop - close - 1 > _MAX_XML_TAG_CHARACTERS
+            or not text.startswith("</", stop)
+        ):
+            position = start + 1
+            continue
+        matches.append((head.group(1), text[end:close], text[close + 1 : stop]))
+        position = stop + 2
+    return matches
+
+
+def _xml_metas(text: str) -> list[tuple[str, str]]:
+    """Find `<meta name="…" content="…">` pairs in one linear pass (#1481).
+
+    Only a double-quoted `name` before a double-quoted `content` is read, as
+    the backtracking meta pattern required, and like it the last such `name`
+    and the last `content` after it are the pair.  A tag must close at a `>`
+    within 4 KiB and hold no other `<`, so tags never overlap; a reversed or
+    single-quoted pair is never read.
+    """
+    matches: list[tuple[str, str]] = []
+    closes = _NextIndex(text, ">")
+    position = 0
+    while len(matches) < _MAX_XML_MATCHES:
+        start = text.find("<", position)
+        if start < 0:
+            break
+        head = _XML_META_HEAD.match(text, start)
+        if head is None:
+            position = start + 1
+            continue
+        close = closes.at_or_after(head.end())
+        if close < 0:
+            break
+        if (
+            close - head.end() > _MAX_XML_TAG_CHARACTERS
+            or text.find("<", head.end(), close) >= 0
+        ):
+            position = start + 1
+            continue
+        contents = [
+            found
+            for word in _XML_META_CONTENT_WORD.finditer(text, head.end(), close)
+            if (found := _XML_META_CONTENT.match(text, word.start())) is not None
+        ]
+        if not contents:
+            position = start + 1
+            continue
+        content = contents[-1]
+        name = None
+        for word in _XML_META_NAME_WORD.finditer(text, head.end(), close):
+            found = _XML_META_NAME.match(text, word.start())
+            if found is not None and found.end() <= content.start():
+                name = found
+        if name is None:
+            position = start + 1
+            continue
+        matches.append((name.group(1), content.group(1)))
+        position = content.end()
+    return matches
+
+
+def _opf_sidecar_facts(
+    builder: _Builder, text: _DocumentText, sidecar: AudioSidecar
+) -> None:
     """Read a closed set of OPF elements as bounded text, not as a document.
 
     This is deliberately a recognition grammar rather than an XML parser: no
     external entity, no DTD, and no nesting is ever resolved, so an OPF sidecar
     cannot become a parser attack surface the way a real document tree would.
+    `dc:title` and each `dc:creator` with no role or the role `aut` are read as
+    association text only.
     """
-    for name, attributes, raw in _XML_ELEMENT.findall(sidecar.text)[:64]:
+    for name, attributes, raw in _xml_elements(sidecar.text):
         lowered = name.lower()
         value = _decode_entities(raw)
         if lowered == "language":
@@ -894,7 +1208,11 @@ def _opf_sidecar_facts(builder: _Builder, sidecar: AudioSidecar) -> None:
                 key="dc:contributor",
                 role="narrator",
             )
-    for name, raw in _XML_META.findall(sidecar.text)[:64]:
+        elif lowered == "title":
+            text.name_title(value)
+        elif lowered == "creator" and _xml_role(attributes) in {None, "aut"}:
+            text.add_creator(value)
+    for name, raw in _xml_metas(sidecar.text):
         key = name.lower()
         value = _decode_entities(raw)
         if key.endswith("series"):
@@ -928,20 +1246,64 @@ _LINE_KEYS: dict[str, AudioInspectionField] = {
     "description": AudioInspectionField.DESCRIPTION,
     "plot": AudioInspectionField.DESCRIPTION,
 }
+# NFO lines read as association text only.
+_NFO_TITLE_KEYS = frozenset({"title"})
+_NFO_CREATOR_KEYS = frozenset({"author", "authors"})
+
+
+def _cue_file_value(line: str) -> str | None:
+    """Return a CUE `FILE` line's raw file value, never a path read or opened."""
+    stripped = line.strip()
+    if stripped[:5].upper() != "FILE " and stripped[:5].upper() != "FILE\t":
+        return None
+    rest = stripped[5:].strip()
+    if rest.startswith('"'):
+        end = rest.find('"', 1)
+        return rest[1:end] if end > 0 else ""
+    parts = rest.split()
+    return parts[0] if parts else ""
 
 
 def _line_sidecar_facts(
     builder: _Builder,
+    text: _DocumentText,
     sidecar: AudioSidecar,
     grammar: re.Pattern[str],
     limits: AudioInspectionLimits,
 ) -> None:
+    cue = sidecar.surface is AudioEvidenceSurface.SIDECAR_CUE
+    # A CUE sheet's disc-level TITLE and PERFORMER come before its first TRACK.
+    disc_level = True
+    file_seen = False
     for line in sidecar.text.splitlines()[: limits.tags]:
+        if cue:
+            if line.strip()[:6].upper() in {"TRACK ", "TRACK\t"}:
+                disc_level = False
+            if not file_seen:
+                value = _cue_file_value(line)
+                if value is not None:
+                    # Compared later as a bare string against the item's track
+                    # names.  A value that is not readable association text --
+                    # a path, a control, an over-long name -- names none of
+                    # them, so it is recorded as another file, not as none.
+                    file_seen = True
+                    text.file_reference = association_text(value)
+                    text.file_refused = text.file_reference is None
         matched = grammar.match(line)
         if matched is None:
             continue
         key = " ".join(matched.group(1).split()).lower()
         value = matched.group(2).strip().strip('"')
+        if cue and disc_level:
+            if key == "title":
+                text.name_title(value)
+            elif key == "performer":
+                text.add_creator(value)
+        elif not cue:
+            if key in _NFO_TITLE_KEYS:
+                text.name_title(value)
+            elif key in _NFO_CREATOR_KEYS:
+                text.add_creator(value)
         if key in {"abridged", "rem abridged"}:
             builder.performance(sidecar.surface, "abridged", value)
             continue
@@ -963,7 +1325,8 @@ __all__ = [
     "AudioInterpretation",
     "AudioPathContext",
     "AudioSidecar",
+    "SidecarClassification",
     "bounded_description",
+    "classify_sidecar",
     "interpret",
-    "sidecar_surface",
 ]

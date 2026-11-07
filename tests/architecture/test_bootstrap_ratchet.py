@@ -53,7 +53,7 @@ SLACK = 10
 # Child, probe and container entry points stay in bootstrap by design. They
 # are exempt from the construct rules but pinned by ncnc size.
 ENTRY_POINTS = {
-    "audio_child.py": 264,
+    "audio_child.py": 267,
     "cover_child.py": 164,
     "epub_child.py": 667,
     "probe_shim.py": 66,

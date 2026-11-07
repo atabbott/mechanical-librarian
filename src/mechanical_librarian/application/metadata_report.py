@@ -41,6 +41,9 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarDigest,
     AudioTrackDigest,
 )
+from mechanical_librarian.domain.audio_sidecar_association import (
+    AudioAssociationContext,
+)
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
     RecordingAdmissionBasis,
@@ -275,8 +278,17 @@ class TargetSnapshot:
     # The one EPUB an audiobook item holds beside its tracks, read only as
     # corroborating evidence and never prepared on its own (#1319).
     companion: TargetFile | None = None
+    # The item's full file list as bare names, which tells an audiobook's own
+    # files from another item's in a shared folder (#1481).  `None` when the
+    # target stated none this build could read, which fails closed.
+    own_file_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.own_file_names is not None and (
+            type(self.own_file_names) is not tuple
+            or any(type(value) is not str or not value for value in self.own_file_names)
+        ):
+            raise MetadataReportError("target file names are invalid")
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
         if self.companion is not None and (
@@ -2146,6 +2158,8 @@ class AudioInspector(Protocol):
         mount: MediaMountConfiguration,
         tracks: tuple[TargetFile, ...],
         maximum_bytes: int,
+        *,
+        association: AudioAssociationContext,
     ) -> AudioInspectionResult: ...
     def unchanged(
         self,
@@ -2155,6 +2169,8 @@ class AudioInspector(Protocol):
         maximum_bytes: int,
         expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
         expected_tracks: tuple[AudioTrackDigest, ...] = (),
+        *,
+        own_file_names: tuple[str, ...] | None = None,
     ) -> bool: ...
 
 
@@ -3715,6 +3731,11 @@ class GenerateMetadataReport:
                             self._mount,
                             initial.files,
                             self._limits.audio_source_bytes,
+                            # What sidecar association reads about the
+                            # target item (#1481).
+                            association=AudioAssociationContext(
+                                initial.title, initial.fields, initial.own_file_names
+                            ),
                         )
                         # An audiobook is planned from its facts, so a result
                         # that states none is no inspection at all. Refuse it
@@ -4478,6 +4499,7 @@ def require_report_current(
             limits.audio_source_bytes,
             retained.sidecars,
             retained.tracks,
+            own_file_names=final.own_file_names,
         )
     else:
         matches = tuple(

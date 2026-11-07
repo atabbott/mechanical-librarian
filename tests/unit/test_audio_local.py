@@ -15,8 +15,8 @@ from mechanical_librarian.adapters.evidence_extractors import audio_local
 from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     AudioPathContext,
     AudioSidecar,
+    classify_sidecar,
     interpret,
-    sidecar_surface,
 )
 from mechanical_librarian.domain.audio_inspection import (
     NON_LINGUISTIC_LANGUAGE_CODES,
@@ -69,12 +69,22 @@ def _read(
     return interpret(document, sidecars, path, _SOURCE, limits)
 
 
+def _all_facts(
+    interpretation: audio_local.AudioInterpretation,
+) -> tuple[AudioInspectionFact, ...]:
+    """The file's facts, then each sidecar's own, as one sequence."""
+    return (
+        *interpretation.facts,
+        *(fact for reading in interpretation.sidecars for fact in reading.facts),
+    )
+
+
 def _values(
     interpretation: audio_local.AudioInterpretation, field: AudioInspectionField
 ) -> set[tuple[str, str]]:
     return {
         (value.surface.value, str(value.canonical_value))
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is field
     }
 
@@ -141,8 +151,8 @@ def test_a_code_that_names_no_language_is_no_language_claim(language: str) -> No
         _probe(format_name="mp3", tags={"language": language}),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                "metadata.json",
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
                 json.dumps({"language": language}),
             ),
             AudioSidecar(
@@ -264,7 +274,7 @@ def test_mp4_tags_separate_named_atoms_from_freeform_ones() -> None:
     }
     assert {
         value.role
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.CONTRIBUTOR
     } == {"narrator"}
 
@@ -374,7 +384,7 @@ def test_chapters_are_bounded_structure_and_never_facts() -> None:
     assert all(
         value.field is not AudioInspectionField.DESCRIPTION
         or "One" not in value.observed_value
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
     )
 
 
@@ -415,7 +425,7 @@ def test_embedded_cover_is_a_presence_fact_with_its_surface() -> None:
     )
     assert not any(
         "cover" in value.field.value or "artifact" in value.supporting_context
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
     )
 
 
@@ -429,60 +439,144 @@ def test_absent_cover_carries_no_surface() -> None:
 @pytest.mark.parametrize(
     ("name", "expected"),
     (
-        ("metadata.json", AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF),
-        ("book.metadata.json", AudioEvidenceSurface.SIDECAR_LIBATION),
+        ("metadata.json", ("audiobookshelf_record", "folder", None)),
+        ("METADATA.ABS", ("audiobookshelf_record", "folder", None)),
+        ("book.metadata.json", ("libation", "track", 1)),
         ("other.metadata.json", None),
-        ("metadata.opf", AudioEvidenceSurface.SIDECAR_OPF),
-        ("book.nfo", AudioEvidenceSurface.SIDECAR_NFO),
-        ("book.cue", AudioEvidenceSurface.SIDECAR_CUE),
+        ("metadata.opf", ("opf", "folder", None)),
+        ("book.opf", ("opf", "track", 1)),
+        ("book.nfo", ("nfo", "track", 1)),
+        ("book.cue", ("cue", "track", 1)),
+        ("Part Two.cue", ("cue", "track", 2)),
+        ("folder.nfo", ("nfo", "folder", None)),
         ("cover.jpg", None),
+        ("metadata.json.zip", None),
+        ("book.opf.gz", None),
         ("nested/metadata.json", None),
     ),
+    ids=(
+        "record_json",
+        "record_abs",
+        "libation_track",
+        "libation_other",
+        "opf_folder",
+        "opf_track",
+        "nfo_track",
+        "cue_track",
+        "cue_second_track",
+        "nfo_folder",
+        "image",
+        "zip",
+        "gzip",
+        "nested",
+    ),
 )
-def test_sidecar_surface_admits_exactly_the_named_grammars(
-    name: str, expected: AudioEvidenceSurface | None
+def test_sidecar_classification_admits_exactly_the_named_grammars(
+    name: str, expected: tuple[str, str, int | None] | None
 ) -> None:
-    assert sidecar_surface(name, "book.m4b") is expected
+    """T1, T2, T4 and S7: kind, binding and track from the name alone (#1481)."""
+    value = classify_sidecar(name, ("book.m4b", "part two.m4b"))
+    assert (
+        None if value is None else (value.kind.value, value.binding.value, value.track)
+    ) == expected
 
 
-def test_json_sidecar_reads_narrator_series_and_description() -> None:
-    document = json.dumps(
-        {
-            "asin": "B0CW1KL2QD",
-            "narrators": [{"name": "Recorded Narrator"}],
-            "series": [{"name": "Discworld", "sequence": "3"}],
-            "language": "english",
-            "isAbridged": False,
-            "publisherSummary": "A recorded summary.",
-        }
-    )
-    interpretation = _read(
+def _libation(document: object) -> audio_local.AudioInterpretation:
+    return _read(
         _probe(),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_LIBATION, "book.metadata.json", document
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps(document),
             ),
         ),
     )
 
+
+_LIBATION_PRODUCT = {
+    "asin": "B0SYNTH001",
+    "title": "Synthetic Example Title",
+    "authors": [{"asin": "B0SYNTHA01", "name": "Example Author"}],
+    "narrators": [{"name": "Example Narrator"}],
+    "series": [{"asin": "B0SYNTHS01", "sequence": "3", "title": "Example Series"}],
+    "language": "english",
+    "format_type": "unabridged",
+    "publisher_summary": "A synthetic summary.",
+}
+
+
+@pytest.mark.parametrize(
+    "document",
+    (_LIBATION_PRODUCT, {"product": _LIBATION_PRODUCT}),
+    ids=("bare", "wrapped"),
+)
+def test_a_libation_export_is_read_for_what_it_carries(document: object) -> None:
+    """T20: series titles and format type are shadow, never claims (#1481)."""
+    interpretation = _libation(document)
+    [reading] = interpretation.sidecars
+
     assert _values(interpretation, AudioInspectionField.ASIN) == {
-        ("sidecar_libation", "B0CW1KL2QD")
+        ("sidecar_libation", "B0SYNTH001")
     }
     assert _values(interpretation, AudioInspectionField.CONTRIBUTOR) == {
-        ("sidecar_libation", "Recorded Narrator")
-    }
-    assert _values(interpretation, AudioInspectionField.SERIES) == {
-        ("sidecar_libation", "Discworld")
+        ("sidecar_libation", "Example Narrator")
     }
     assert _values(interpretation, AudioInspectionField.SERIES_SEQUENCE) == {
         ("sidecar_libation", "3")
     }
     assert _values(interpretation, AudioInspectionField.DESCRIPTION) == {
-        ("sidecar_libation", "A recorded summary.")
+        ("sidecar_libation", "A synthetic summary.")
     }
-    assert _values(interpretation, AudioInspectionField.PERFORMANCE_TYPE) == {
-        ("sidecar_libation", "unabridged")
+    assert _values(interpretation, AudioInspectionField.LANGUAGE) == {
+        ("sidecar_libation", "english")
     }
+    assert _values(interpretation, AudioInspectionField.SERIES) == set()
+    assert _values(interpretation, AudioInspectionField.PERFORMANCE_TYPE) == set()
+    assert [value.to_data() for value in reading.shadow] == [
+        {"canonical": "unabridged", "field": "format_type", "observed": "unabridged"},
+        {
+            "canonical": "Example Series",
+            "field": "series_title",
+            "observed": "Example Series",
+        },
+    ]
+    assert (reading.title, reading.creators) == (
+        "Synthetic Example Title",
+        ("Example Author",),
+    )
+
+
+@pytest.mark.parametrize(
+    "document",
+    (
+        {"narrator": "Example Narrator"},
+        {"description": "A synthetic summary."},
+        {"seriesName": "Example Series"},
+        {"series": "Example Series #2"},
+        {"seriesPosition": "2"},
+        {"sequence": "2"},
+        {"abridged": True},
+        {"isAbridged": False},
+        {"narrators": ["Example Narrator"]},
+    ),
+    ids=(
+        "narrator",
+        "description",
+        "series_name",
+        "series_string",
+        "series_position",
+        "sequence",
+        "abridged",
+        "is_abridged",
+        "narrator_strings",
+    ),
+)
+def test_keys_a_libation_export_never_carries_yield_nothing(document: object) -> None:
+    """T21: the per-file JSON grammar is narrowed to Libation's keys (#1481)."""
+    [reading] = _libation(document).sidecars
+
+    assert reading.facts == ()
 
 
 def test_opf_sidecar_is_read_as_a_recognition_grammar() -> None:
@@ -583,7 +677,7 @@ def test_one_surface_never_repeats_the_same_observation() -> None:
 
     assert [
         value.surface.value
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.CONTRIBUTOR
     ] == ["mp4_freeform"]
 
@@ -691,7 +785,7 @@ def test_a_long_observation_keeps_its_fact_even_without_room_for_its_key(
 
     supports = [
         value.supporting_context
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.CONTRIBUTOR
     ]
     assert supports == [
@@ -706,7 +800,7 @@ def test_a_description_keeps_its_key_at_a_width_a_narrator_could_not() -> None:
 
     assert [
         value.supporting_context
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.DESCRIPTION
     ] == [f"description: {description}"]
 
@@ -725,7 +819,7 @@ def _asins(
 ) -> set[tuple[str, str, str | None, str]]:
     return {
         (value.surface.value, value.observed_value, value.canonical_value, value.state)
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.ASIN
     }
 
@@ -771,8 +865,8 @@ def test_every_asin_surface_passes_the_same_gate() -> None:
         _probe(format_name="mp3", tags={"asin": "B0CW1KL-QD"}),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                "metadata.json",
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
                 json.dumps({"asin": "B0CW1KL-QD"}),
             ),
             AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "metadata.opf", opf),
@@ -790,7 +884,7 @@ def test_every_asin_surface_passes_the_same_gate() -> None:
         for surface, _observed, _canonical, state in _asins(interpretation)
     } == {
         ("id3_user_text", "malformed"),
-        ("sidecar_audiobookshelf", "malformed"),
+        ("sidecar_libation", "malformed"),
         ("sidecar_opf", "malformed"),
         ("sidecar_nfo", "malformed"),
         ("sidecar_cue", "malformed"),
@@ -878,7 +972,7 @@ def test_naming_the_freeform_surface_changes_no_basis_and_no_claim() -> None:
             value.canonical_value,
             value.role,
         )
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.CONTRIBUTOR
     } == {
         ("contributor", "embedded_tag", "Apple Narrator", "Apple Narrator", "narrator"),
@@ -1032,7 +1126,7 @@ def _descriptions(
             value.state,
             value.supporting_context,
         )
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.DESCRIPTION
     ]
 
@@ -1106,9 +1200,9 @@ def test_a_value_is_validated_whole_before_it_is_cut(hidden: str) -> None:
         _probe(),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                "metadata.json",
-                json.dumps({"description": description}),
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"publisherSummary": description}),
             ),
         ),
     )
@@ -1123,9 +1217,9 @@ def test_folded_controls_past_the_bound_become_spaces_before_the_cut() -> None:
         _probe(),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                "metadata.json",
-                json.dumps({"description": description}),
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"publisherSummary": description}),
             ),
         ),
     )
@@ -1183,7 +1277,7 @@ def test_sidecar_descriptions_past_the_bound_are_oversized_too() -> None:
 
     assert {
         (value.surface.value, value.observed_value, value.state)
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.DESCRIPTION
     } == {
         ("sidecar_libation", "S" * 512, "oversized"),
@@ -1210,16 +1304,21 @@ def test_an_oversized_prefix_and_a_whole_value_are_two_observations() -> None:
         _probe(),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                "metadata.json",
-                json.dumps({"description": "D" * 512, "publisherSummary": "D" * 600}),
+                AudioEvidenceSurface.SIDECAR_OPF,
+                "book.opf",
+                f"<package><dc:description>{'D' * 512}</dc:description></package>",
+            ),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"publisherSummary": "D" * 600}),
             ),
         ),
     )
 
     assert sorted(
         (value.state, value.canonical_value is None)
-        for value in interpretation.facts
+        for value in _all_facts(interpretation)
         if value.field is AudioInspectionField.DESCRIPTION
     ) == [("oversized", True), ("valid", False)]
 
@@ -1242,9 +1341,9 @@ def test_a_description_tag_is_read_once_like_every_description(
         _probe(),
         sidecars=(
             AudioSidecar(
-                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                "metadata.json",
-                json.dumps({"description": stated}),
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"publisherSummary": stated}),
             ),
         ),
     )

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from mechanical_librarian.adapters.evidence_extractors.audio_local import (
-    sidecar_surface,
+    classify_sidecar,
 )
 from mechanical_librarian.adapters.evidence_extractors.local_media import (
     LocalMediaError,
@@ -30,20 +31,38 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.audio_composition import (
     InspectedTrack,
     attach_claim_references,
+    claim_reference_index,
     compose_audio_inspections,
+    fact_value_key,
 )
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
     MULTI_FILE_WALL_SECONDS,
+    PARENT_SIDECAR_REFUSALS,
+    SIDECAR_KIND_SURFACES,
+    TERMINAL_SIDECAR_REFUSALS,
+    AudioInspectionFact,
     AudioInspectionLimits,
     AudioInspectionOutcome,
+    AudioSidecarBinding,
     AudioSidecarDigest,
+    AudioSidecarKind,
+    AudioSidecarRefusal,
     AudioTrackDigest,
     project_track_name_detail,
 )
 from mechanical_librarian.domain.audio_inspection import MAX_FACTS as MAX_AUDIO_FACTS
 from mechanical_librarian.domain.audio_inspection import (
     MAX_PUBLIC_REPORT_BYTES as MAX_AUDIO_BYTES,
+)
+from mechanical_librarian.domain.audio_sidecar_association import (
+    AudioAssociationContext,
+    FileAssociationEvidence,
+    SidecarDocument,
+    SidecarOutcome,
+    associate_sidecars,
+    file_association_evidence,
+    shared_folder,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
@@ -81,7 +100,11 @@ class IsolatedAudioInspector:
         mount: MediaMountConfiguration,
         tracks: tuple[TargetFile, ...],
         maximum_bytes: int,
+        *,
+        association: AudioAssociationContext,
     ) -> AudioInspectionResult:
+        if type(association) is not AudioAssociationContext:
+            raise AudioItemInspectionError(AudioInspectionOutcome.INTERNAL_FAILURE)
         if not 1 <= len(tracks) <= MAX_AUDIO_TRACKS:
             raise AudioItemInspectionError(
                 AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
@@ -91,9 +114,13 @@ class IsolatedAudioInspector:
             # The folder is one surface for the whole item, so its documents
             # are derived once and interpreted once -- by the first track's
             # child.  Deriving them per track would multiply one sidecar's
-            # evidence by the number of files beside it.  An item whose tracks
+            # evidence by the number of files beside it.  A document named for
+            # a track goes to that track's child instead.  An item whose tracks
             # do not share one directory has no such surface, and is handed
             # none of it.
+            media_names = tuple(
+                value.relative_path.rsplit("/", 1)[-1] for value in tracks
+            )
             folder = _audio_item_folder(tuple(value.relative_path for value in tracks))
             sidecars = (
                 []
@@ -101,12 +128,16 @@ class IsolatedAudioInspector:
                 else open_audio_sidecars(
                     mount,
                     tracks[0].relative_path,
-                    tuple(value.relative_path.rsplit("/", 1)[-1] for value in tracks),
+                    media_names,
+                    association.own_file_names,
                 )
             )
-            inspected = self._inspect_tracks(
-                mount, tracks, maximum_bytes, sidecars, folder
+            read = self._inspect_tracks(mount, tracks, maximum_bytes, sidecars, folder)
+            documents = _documents(read, sidecars)
+            outcomes = associate_sidecars(
+                association, _file_evidence(read, media_names), documents
             )
+            inspected = _with_associated_facts(read, sidecars, outcomes)
             composed = compose_audio_inspections(inspected)
             if len(composed.facts) > MAX_AUDIO_FACTS:
                 raise AudioItemInspectionError(
@@ -132,7 +163,14 @@ class IsolatedAudioInspector:
                 composed.chapters,
                 composed.chapters_truncated,
                 composed.embedded_cover,
-                sidecar_manifest(sidecars),
+                _sidecar_manifest(
+                    sidecars,
+                    documents,
+                    outcomes,
+                    claim_reference_index(
+                        composed, tuple(claim.reference for claim in claims)
+                    ),
+                ),
                 composed.composition,
                 attach_claim_references(
                     composed, tuple(claim.reference for claim in claims)
@@ -153,9 +191,7 @@ class IsolatedAudioInspector:
                             ),
                             (
                                 "title_tag",
-                                inspected[0].inspection.title
-                                if len(inspected) == 1
-                                else None,
+                                read[0].inspection.title if len(read) == 1 else None,
                             ),
                         )
                         if text is not None
@@ -263,13 +299,21 @@ class IsolatedAudioInspector:
                     opened.descriptor,
                     Fingerprint("sha256", SchemaVersion("local-file-v1"), digest),
                     limits,
-                    sidecars=(
-                        tuple(
-                            (value.surface, value.name, value.descriptor)
-                            for value in sidecars
+                    # The track's own documents first, then, for the first
+                    # track, the folder's -- never one the parent refused.
+                    sidecars=tuple(
+                        (
+                            SIDECAR_KIND_SURFACES[value.kind].value,
+                            value.name,
+                            value.descriptor,
                         )
-                        if ordinal == 1
-                        else ()
+                        for value in sidecars
+                        if value.refusal is None
+                        and (
+                            value.track == ordinal
+                            if value.binding is AudioSidecarBinding.TRACK
+                            else ordinal == 1
+                        )
                     ),
                     path_file=components[-1],
                     path_folder=(
@@ -318,6 +362,8 @@ class IsolatedAudioInspector:
         maximum_bytes: int,
         expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
         expected_tracks: tuple[AudioTrackDigest, ...] = (),
+        *,
+        own_file_names: tuple[str, ...] | None = None,
     ) -> bool:
         """Re-prove every audio file *and* the sidecar set they were read with.
 
@@ -327,6 +373,11 @@ class IsolatedAudioInspector:
         or edited since publication is a change here rather than a silently
         stale report.  Every track is re-digested in manifest order under the
         same summed ceiling, so an edit to any one of them is a change too.
+
+        Each document's kind, binding and parent-side refusals are recomputed
+        from the current listing and the target's current own-file names, so
+        a foreign file added beside a folder-level sidecar is a change as well
+        (#1481).
 
         Re-digesting hundreds of files is the same unbounded work inspecting
         them was, so it runs under the same item wall: a revalidation that
@@ -381,8 +432,22 @@ class IsolatedAudioInspector:
                 mount,
                 relative_paths[0],
                 tuple(value.rsplit("/", 1)[-1] for value in relative_paths),
+                own_file_names,
             )
-            return sidecar_manifest(sidecars) == tuple(expected_sidecars)
+            return tuple(_parent_view(value) for value in sidecars) == tuple(
+                (
+                    value.name,
+                    value.digest,
+                    value.kind,
+                    value.binding,
+                    tuple(
+                        refusal
+                        for refusal in value.refusals
+                        if refusal in PARENT_SIDECAR_REFUSALS
+                    ),
+                )
+                for value in expected_sidecars
+            )
         except (LocalMediaError, OSError, ValueError, ReportValueError):
             return False
         finally:
@@ -391,21 +456,139 @@ class IsolatedAudioInspector:
 
 @dataclass(frozen=True)
 class _OpenedSidecar:
-    """One recognized sidecar, open and already digested by the parent."""
+    """One recognized document, open and already digested by the parent.
 
-    surface: str
+    ``track`` is the ordinal of the track a track-bound document is named for.
+    ``refusal`` is the parent's own, decided from the listing: such a document
+    is digested for currentness and never handed to a child.
+    """
+
     name: str
+    kind: AudioSidecarKind
+    binding: AudioSidecarBinding
+    track: int | None
     descriptor: int
     digest: str
+    refusal: AudioSidecarRefusal | None
 
 
-def sidecar_manifest(
-    sidecars: list[_OpenedSidecar],
-) -> tuple[AudioSidecarDigest, ...]:
-    return tuple(
-        AudioSidecarDigest(value.name, value.digest)
-        for value in sorted(sidecars, key=lambda value: value.name)
+def _parent_view(
+    value: _OpenedSidecar,
+) -> tuple[
+    str,
+    str,
+    AudioSidecarKind,
+    AudioSidecarBinding,
+    tuple[AudioSidecarRefusal, ...],
+]:
+    return (
+        value.name,
+        value.digest,
+        value.kind,
+        value.binding,
+        () if value.refusal is None else (value.refusal,),
     )
+
+
+def _documents(
+    read: tuple[InspectedTrack, ...], sidecars: list[_OpenedSidecar]
+) -> tuple[SidecarDocument, ...]:
+    """Pair each opened document with what its child read from it, if any."""
+    readings = {
+        (track.ordinal, reading.name): reading
+        for track in read
+        for reading in track.inspection.sidecars
+    }
+    return tuple(
+        SidecarDocument(
+            value.name,
+            value.kind,
+            value.binding,
+            value.refusal,
+            readings.get((value.track or 1, value.name)),
+        )
+        for value in sidecars
+    )
+
+
+def _file_evidence(
+    read: tuple[InspectedTrack, ...], media_names: tuple[str, ...]
+) -> FileAssociationEvidence:
+    return file_association_evidence(
+        tuple(track.inspection.album for track in read),
+        read[0].inspection.title if len(read) == 1 else None,
+        tuple(person for track in read for person in track.inspection.creators),
+        tuple(fact for track in read for fact in track.inspection.facts),
+        media_names,
+    )
+
+
+def _with_associated_facts(
+    read: tuple[InspectedTrack, ...],
+    sidecars: list[_OpenedSidecar],
+    outcomes: tuple[SidecarOutcome, ...],
+) -> tuple[InspectedTrack, ...]:
+    """Hand composition each track's own facts and its associated sidecars'.
+
+    Association text and readings stop here: the inspections composition sees
+    carry none of them.
+    """
+    own: dict[int, list[AudioInspectionFact]] = {track.ordinal: [] for track in read}
+    folder: list[AudioInspectionFact] = []
+    for value, outcome in zip(sidecars, outcomes, strict=True):
+        if value.binding is AudioSidecarBinding.TRACK and value.track is not None:
+            own[value.track].extend(outcome.facts)
+        else:
+            folder.extend(outcome.facts)
+    return tuple(
+        dataclasses.replace(
+            track,
+            inspection=dataclasses.replace(
+                track.inspection,
+                facts=(*track.inspection.facts, *own[track.ordinal]),
+                album=None,
+                creators=(),
+                sidecars=(),
+            ),
+            folder_facts=tuple(folder) if track.ordinal == 1 else (),
+        )
+        for track in read
+    )
+
+
+def _sidecar_manifest(
+    sidecars: list[_OpenedSidecar],
+    documents: tuple[SidecarDocument, ...],
+    outcomes: tuple[SidecarOutcome, ...],
+    references: dict[tuple[str, str, str, str | None, str, str | None], str],
+) -> tuple[AudioSidecarDigest, ...]:
+    """Record every document's classification, and the claims it contributed."""
+    entries: list[AudioSidecarDigest] = []
+    for value, document, outcome in zip(sidecars, documents, outcomes, strict=True):
+        claims: list[str] = []
+        for fact in outcome.facts:
+            reference = references.get(fact_value_key(fact))
+            if reference is not None and reference not in claims:
+                claims.append(reference)
+        entries.append(
+            AudioSidecarDigest(
+                value.name,
+                value.digest,
+                value.kind,
+                value.binding,
+                outcome.refusals,
+                tuple(claims),
+                outcome.disputed,
+                outcome.echoed,
+                # Shadow evidence is recorded only for a document that was
+                # read and not set aside whole.
+                ()
+                if document.reading is None
+                or set(outcome.refusals) & TERMINAL_SIDECAR_REFUSALS
+                else document.reading.shadow,
+            )
+        )
+    return tuple(sorted(entries, key=lambda entry: entry.name))
 
 
 def _close_sidecars(sidecars: list[_OpenedSidecar]) -> None:
@@ -461,13 +644,22 @@ def open_audio_sidecars(
     mount: MediaMountConfiguration,
     relative_path: str,
     media_names: tuple[str, ...],
+    own_file_names: tuple[str, ...] | None,
 ) -> list[_OpenedSidecar]:
-    """Derive, open, and digest the supported sidecars beside one item.
+    """Derive, open, digest and classify the recognized documents beside an item.
 
     This is the single candidate-set derivation: inspection passes the
-    descriptors to the isolated child, and revalidation compares the digests.
-    Two derivations would be two answers to "which documents is this evidence
-    made of", and only one of them could be right.
+    descriptors to the isolated children, and revalidation compares the
+    digests and classifications.  Two derivations would be two answers to
+    "which documents is this evidence made of", and only one of them could be
+    right.
+
+    Documents named for a track are opened first, then the target's own
+    record, then folder-level documents, each group in sorted order, so other
+    items' documents in a shared folder cannot crowd out the item's own
+    (#1481).  The target's record is refused `target_record`; a folder-level
+    document beside another item's audio or ebook file is refused
+    `shared_folder`.  Both are digested for currentness and never read.
 
     A sidecar that cannot be opened, read, or projected is simply absent
     evidence: the audiobook's own container is the primary surface, and one
@@ -480,39 +672,70 @@ def open_audio_sidecars(
         names = list_local_media_siblings(mount.container_path, relative_path)
     except LocalMediaError:
         return []
+    shared = shared_folder(names, own_file_names)
+    classified = [
+        (name, value)
+        for name in names
+        if (value := classify_sidecar(name, media_names)) is not None
+    ]
+    groups = (
+        [
+            entry
+            for entry in classified
+            if entry[1].binding is AudioSidecarBinding.TRACK
+        ],
+        [
+            entry
+            for entry in classified
+            if entry[1].kind is AudioSidecarKind.AUDIOBOOKSHELF_RECORD
+        ],
+        [
+            entry
+            for entry in classified
+            if entry[1].binding is AudioSidecarBinding.FOLDER
+            and entry[1].kind is not AudioSidecarKind.AUDIOBOOKSHELF_RECORD
+        ],
+    )
     opened: list[_OpenedSidecar] = []
-    for name in names:
+    for name, value in (entry for group in groups for entry in group):
         if len(opened) >= limits.sidecar_documents:
             break
-        # Libation names its document after the track it exported, so a set is
-        # matched against every track's name rather than against the first
-        # one's; every other grammar is folder-scoped and answers the same for
-        # all of them.
-        surface = next(
-            (
-                value
-                for media_name in media_names
-                if (value := sidecar_surface(name, media_name)) is not None
-            ),
-            None,
-        )
-        if surface is None:
-            continue
         reference = f"{directory}/{name}" if directory else name
         try:
             sibling = open_local_media(mount.container_path, reference)
         except LocalMediaError:
             continue
+        refusal = (
+            AudioSidecarRefusal.TARGET_RECORD
+            if value.kind is AudioSidecarKind.AUDIOBOOKSHELF_RECORD
+            else AudioSidecarRefusal.SHARED_FOLDER
+            if value.binding is AudioSidecarBinding.FOLDER and shared
+            else None
+        )
         try:
             digest = sha256_descriptor(
                 sibling.descriptor, sibling.length, maximum=limits.sidecar_bytes
             )
-            entry = _OpenedSidecar(surface.value, name, sibling.descriptor, digest)
+            entry = _OpenedSidecar(
+                name,
+                value.kind,
+                value.binding,
+                value.track,
+                sibling.descriptor,
+                digest,
+                refusal,
+            )
         except (LocalMediaError, OSError, ValueError):
             os.close(sibling.descriptor)
             continue
         try:
-            AudioSidecarDigest(entry.name, entry.digest)
+            AudioSidecarDigest(
+                entry.name,
+                entry.digest,
+                entry.kind,
+                entry.binding,
+                () if refusal is None else (refusal,),
+            )
         except ValueError:
             # A name the retained report cannot project is a name the manifest
             # cannot carry, so the document is not part of the candidate set on
