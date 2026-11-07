@@ -85,6 +85,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_EBOOK_CLAIM_KINDS,
     COMPANION_ISBN_AUTHORITIES,
+    COMPANION_TITLE_BASIS,
     CORROBORATED_RULE_AUTHORITY,
     LANE_TITLE_BASES,
     MAX_AUDIO_EDITIONS,
@@ -2519,18 +2520,26 @@ def _identifier_lane_candidates(
     # title and creators (#1468), so a product it promoted is looked up again
     # against that same identity. Like an alternative title's, it is kept only
     # as the recording the tight band corroborates.
+    # With a target work, the alternative lane may instead have asked with the
+    # companion's title and the target's authors, so a product it promoted is
+    # looked up again against those too.
     fallback = (
         companion_work_payload(lookup.companion)
         if lookup.work_title is None or not lookup.work_authors
         else None
     )
-    if fallback is not None:
+    companion_identity = (
+        (fallback.title, fallback.authors)
+        if fallback is not None
+        else _companion_title_identity(lookup)
+    )
+    if companion_identity is not None:
         alternative_admitted |= {
             c.identity
             for c in observation.candidates
             if c.identity not in work_admitted
             and provider_candidate_exact_work_identity_admission(
-                c, fallback.title, fallback.authors, audiobook=True
+                c, *companion_identity, audiobook=True
             ).admitted
         }
     # A product whose ASIN the companion ISBN's own book lists as an audio
@@ -2626,6 +2635,26 @@ def _candidate_valid_asins(candidate: ProviderCandidate) -> frozenset[str]:
         and claim.state is FieldState.VALID
         and (value := canonical_asin(claim.value)) is not None
     )
+
+
+def _companion_title_identity(
+    lookup: MetadataLookup,
+) -> tuple[str, tuple[str, ...]] | None:
+    """The work the alternative lane asked when it asked the companion title.
+
+    The plan's first surviving discovery title is the one the alternative WORK
+    lane asks (#1255); when it is the companion EPUB's (#1468), that lane
+    asked it with the target's authors.
+    """
+    titles = _carried_alternative_titles(lookup)
+    if (
+        not titles
+        or lookup.audio is None
+        or lookup.audio.discovery_titles[0].basis != COMPANION_TITLE_BASIS
+        or not lookup.work_authors
+    ):
+        return None
+    return titles[0], lookup.work_authors
 
 
 def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:

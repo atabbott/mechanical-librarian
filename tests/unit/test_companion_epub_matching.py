@@ -33,6 +33,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
 from mechanical_librarian.domain.metadata_report import (
     COMPANION_TITLE_BASIS,
     COMPANION_WORK_BASIS,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     CompanionEbook,
@@ -807,6 +808,7 @@ def _asin_answer(
     local: tuple[LocalClaim, ...] = (),
     work_title: str | None = "Asserted Title",
     work_authors: tuple[str, ...] = ("Ada Author",),
+    audio: AudioFacts | None = None,
 ) -> ProviderObservation:
     observation = ProviderObservation(
         "audible",
@@ -821,7 +823,7 @@ def _asin_answer(
         MetadataLookup(
             ProviderQueryKind.ASIN,
             (_duration_claim(), *local),
-            audio=single_track_audio_facts(),
+            audio=single_track_audio_facts() if audio is None else audio,
             work_title=work_title,
             work_authors=work_authors,
             requested_asin=_ASIN,
@@ -894,6 +896,32 @@ def test_the_companion_work_requalifies_a_fed_product_with_no_target() -> None:
         companion=_companion(isbns=()),
     )
     assert MetadataReport.from_json(report.to_json()) == report
+
+
+def test_the_companion_title_requalifies_a_fed_product() -> None:
+    """A companion-title recording keeps its enrichment when fed (#1468).
+
+    The alternative lane asked the companion's title with the target's
+    authors, so its promoted product is looked up again against that work,
+    and is kept only as the tight-band recording.
+    """
+    title = dom.companion_discovery_title(_companion())
+    assert title is not None
+    asked = replace(single_track_audio_facts(), discovery_titles=(title,))
+
+    def answer(minutes: int, audio: AudioFacts) -> ProviderObservation:
+        return _asin_answer(
+            _product(
+                minutes, "Nia Narrator", title="Companion Title", creator="Ada Author"
+            ),
+            linked=(),
+            audio=audio,
+        )
+
+    assert _kept(answer(_LOCAL_SECONDS // 60, asked))
+    assert not _kept(answer(_LOCAL_SECONDS // 60 + 30, asked))
+    # Without the companion-title lane the product names another work.
+    assert not _kept(answer(_LOCAL_SECONDS // 60, single_track_audio_facts()))
 
 
 def test_an_unlinked_product_is_only_its_identifier() -> None:
