@@ -5518,6 +5518,10 @@ describe('answer types of read and mutate (#1730)', () => {
       RequestAnswer<'GET', `/api/v1/review-cases/${string}/x/evidence`>
     >().toEqualTypeOf<Unrouted>()
     expectTypeOf<RequestAnswer<'GET', '/api/v1/review-cases/'>>().toEqualTypeOf<Unrouted>()
+    // A hole fills only a parameter, never a named segment such as `device`.
+    expectTypeOf<
+      RequestAnswer<'GET', `/api/v1/reviewer-access/codex/${string}`>
+    >().toEqualTypeOf<Unrouted>()
     expectTypeOf<Unrouted>().not.toExtend<Answer<'_CaseDetailResponse'>>()
     expectTypeOf<'/api/v1/settings'>().toExtend<RoutablePath<'GET'>>()
     expectTypeOf<'/api/v1/nothing'>().not.toExtend<RoutablePath<'GET'>>()
