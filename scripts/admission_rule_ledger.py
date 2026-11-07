@@ -56,6 +56,13 @@ and the closed relaxations, replayed under each source. With ``--format
 markdown`` it prints that analysis's tables instead of the ledger's, so each
 page is one run's output.
 
+The ``--a3-combination`` flag adds the bibliographic-combination analysis of
+#1746 (``scripts/admission_rule_a3.py``) under ``a3_combination``: each A3
+field's outcome before the gate overwrote it, the containment clause that
+vetoed each combination, a re-check under main's same-name series rule and
+three closed relaxations, replayed under each source. With ``--format
+markdown`` it prints that analysis's tables instead of the ledger's.
+
 Usage:
     git archive --format=tar --prefix=src-REV/ REV src scripts | tar -x -C SCRATCH
     uv run python scripts/admission_rule_ledger.py \
@@ -63,7 +70,8 @@ Usage:
         --source-root LABEL SCRATCH/src-REV \
         [--source-report LABEL /copy/cold-start-report.json] \
         [--snapshot ...] [--repository CHECKOUT] [--format json|markdown] \
-        [--follow-on GATE=ISSUE ...] [--breakdown GATE]
+        [--follow-on GATE=ISSUE ...] [--breakdown GATE] \
+        [--a6-abstention | --a3-combination]
 """
 
 from __future__ import annotations
@@ -86,8 +94,10 @@ from urllib.parse import quote
 from mechanical_librarian.domain import shadow_decision, shadow_outcome
 from mechanical_librarian.domain.metadata_report import TargetDestination, isbn_family
 from mechanical_librarian.domain.proposal_set import _OUTCOME_REASON_SETS
+from mechanical_librarian.domain.validation import exact_type
 
 if TYPE_CHECKING:
+    from scripts.admission_rule_a3 import A3Reader
     from scripts.admission_rule_a6 import A6Reader
     from scripts.admission_rule_series import SeriesProbe, SeriesReader
 
@@ -186,6 +196,13 @@ def _dicts(value: object) -> list[dict[str, object]]:
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _exact[T](kind: type[T], value: object) -> T:
+    """Return a decoded field of exactly `kind`; raise ValueError otherwise."""
+    if not exact_type(kind)(value):
+        raise ValueError
+    return cast("T", value)
 
 
 def _document(value: object) -> dict[str, object]:
@@ -1265,13 +1282,16 @@ CATALOGUE: tuple[Gate, ...] = (
         "Applicability and abstention",
         "Coherent bibliographic combination",
         "domain/proposal_set.py",
-        "#429 (cef7644a); ADR-0021",
+        "#429 (cef7644a); ADR-0021; same-name series #1099 (79dbbf4c); "
+        "withheld titles #1497 (ce3a172d)",
         _NOT_RECORDED,
         "cef7644a89bc98ac1d9dca037dfb6d535fb28dd8",
-        "bibliographic destinations",
-        "admit the lowest-identifier alternative without a coherent combination",
+        "title, subtitle and series",
+        "none: the lowest-identifier rule is rejected; closed relaxations in the "
+        "A3 analysis",
         "alternative",
         _reason({"no_safe_bibliographic_combination"}),
+        disposition="kept (ADR-0097)",
     ),
     Gate(
         "A4",
@@ -2864,6 +2884,16 @@ def _a6_module() -> ModuleType:
     return module
 
 
+def _a3_module() -> ModuleType:
+    """Import the A3 analysis, which imports this module back (#1746)."""
+    try:
+        from scripts import admission_rule_a3 as module
+    except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+        sys.modules.setdefault("admission_rule_ledger", sys.modules[__name__])
+        import admission_rule_a3 as module  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+    return module
+
+
 def _series_module() -> ModuleType:
     """Import the series replay, which imports this module back (#1748)."""
     try:
@@ -2881,6 +2911,7 @@ def build_ledger(
     attention: AttentionReader,
     series_replay: SeriesReader | None = None,
     a6_replay: A6Reader | None = None,
+    a3_replay: A3Reader | None = None,
     follow_ons: Mapping[str, int] | None = None,
     breakdown: str | None = None,
 ) -> dict[str, object]:
@@ -2889,6 +2920,9 @@ def build_ledger(
     a6 = None if a6_replay is None else _a6_module()
     a6_entries: list[dict[str, object]] = []
     a6_tallies: list[object] = []
+    a3 = None if a3_replay is None else _a3_module()
+    a3_entries: list[dict[str, object]] = []
+    a3_tallies: list[object] = []
     for item in inputs:
         connection = _open_snapshot(item.database)
         try:
@@ -2926,6 +2960,26 @@ def build_ledger(
                 a6.snapshot_entry(item.label, replay, a6_tally, decisions)
             )
             a6_tallies.append(a6_tally)
+        if a3 is not None and a3_replay is not None:
+            combination = a3_replay(item.source_root, item.database)
+            connection = _open_snapshot(item.database)
+            try:
+                a3_tally = a3.measure_a3(
+                    connection, combination, _election_destinations(elections)
+                )
+                decisions = a3.human_decisions(connection)
+            finally:
+                connection.close()
+            a3_entries.append(
+                a3.snapshot_entry(
+                    item.label,
+                    combination,
+                    a3_tally,
+                    withheld_title_rule=ancestry(a3.WITHHELD_TITLE_RULE, item.revision),
+                    human_decisions=decisions,
+                )
+            )
+            a3_tallies.append(a3_tally)
         if len(probe.rows) != probe.report_rows_excluded:
             raise Refusal("attention probe disagrees with the source's report query")
         summary = summarise_attention(probe)
@@ -2969,6 +3023,13 @@ def build_ledger(
         }
         ledger[a6.KEY] = section
         vocabulary |= a6.vocabulary(section)
+    if a3 is not None:
+        combined: dict[str, object] = {
+            "snapshots": a3_entries,
+            "pooled_relaxations": a3.pooled_relaxations(a3_tallies),
+        }
+        ledger[a3.KEY] = combined
+        vocabulary |= a3.vocabulary(combined)
     _closed(ledger, vocabulary)
     return ledger
 
@@ -3197,6 +3258,9 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
     if "a6_abstention" in ledger:
         a6 = _a6_module()
         return "\n".join(a6.render(_dict(ledger[a6.KEY]))) + "\n"
+    if "a3_combination" in ledger:
+        a3 = _a3_module()
+        return "\n".join(a3.render(_dict(ledger[a3.KEY]))) + "\n"
     snapshots = cast("list[dict[str, object]]", ledger["snapshots"])
     labels = [cast("str", entry["label"]) for entry in snapshots]
     header = (
@@ -3328,6 +3392,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         "--repository", type=Path, default=Path(__file__).resolve().parents[1]
     )
     parser.add_argument("--a6-abstention", action="store_true")
+    parser.add_argument("--a3-combination", action="store_true")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument(
         "--follow-on", action="append", default=[], metavar="GATE=ISSUE"
@@ -3398,6 +3463,7 @@ def main(
     attention: AttentionReader | None = None,
     series_replay: SeriesReader | None = None,
     decision_replay: A6Reader | None = None,
+    combination_replay: A3Reader | None = None,
 ) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
@@ -3418,6 +3484,13 @@ def main(
                 if decision_replay is None
                 else decision_replay
             )
+        a3_replay: A3Reader | None = None
+        if arguments.a3_combination:
+            a3_replay = (
+                cast("A3Reader", _a3_module().child_a3)
+                if combination_replay is None
+                else combination_replay
+            )
         ledger = build_ledger(
             inputs,
             ancestry=git_ancestry(arguments.repository)
@@ -3426,6 +3499,7 @@ def main(
             attention=child_attention if attention is None else attention,
             series_replay=series_replay,
             a6_replay=a6_replay,
+            a3_replay=a3_replay,
             follow_ons=follow_ons,
             breakdown=breakdown,
         )
