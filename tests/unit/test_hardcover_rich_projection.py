@@ -165,6 +165,67 @@ def test_edition_overflow_rejects_hostile_creator_identity_bindings(
         )
 
 
+def _overflow_with(contributions: list[dict[str, object]]) -> bytes:
+    book = {"id": 10, "title": "Anchored work", "contributions": contributions}
+    return json.dumps(
+        hardcover_envelope(
+            [{"id": index, "book_id": 10} for index in range(1, 7)], [book]
+        )
+    ).encode()
+
+
+def test_edition_overflow_skips_an_illustrator_and_keeps_the_author() -> None:
+    value = hardcover_metadata._parse_edition_enrichment_overflow(
+        _overflow_with(
+            [
+                {
+                    "id": 1,
+                    "contribution": "Illustrator",
+                    "author": {"id": 8, "name": "Bea Example"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 7, "name": "Ada Example"},
+                },
+            ]
+        ),
+        "catalogue",
+    )
+
+    assert value is not None
+    assert ("Ada Example",) == tuple(claim.value for claim in value.authors)
+    assert 1 == len(value.identity_bindings)
+
+
+def test_edition_overflow_still_refuses_a_duplicate_author_beside_a_skipped_role() -> (
+    None
+):
+    with pytest.raises(ValueError):
+        hardcover_metadata._parse_edition_enrichment_overflow(
+            _overflow_with(
+                [
+                    {
+                        "id": 1,
+                        "contribution": "Illustrator",
+                        "author": {"id": 8, "name": "Bea Example"},
+                    },
+                    {
+                        "id": 2,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                    {
+                        "id": 3,
+                        "contribution": None,
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                ]
+            ),
+            "catalogue",
+        )
+
+
 @pytest.mark.parametrize("count", (5, 6, 7), ids=("five", "six", "seven"))
 def test_edition_overflow_probe_has_exact_five_six_seven_boundary(count: int) -> None:
     book = [

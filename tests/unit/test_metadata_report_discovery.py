@@ -9,6 +9,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -4315,3 +4316,102 @@ def test_a_fed_asin_naming_another_work_keeps_only_its_identifier(
     assert {ClaimKind.ASIN} == {claim.kind for claim in refused.claims}
     assert () == refused.evidence
     assert refused.runtime_short_of_local is False
+
+
+def _package_creator(value: str, role: str | None = None, occurrence: int = 1):
+    return LocalClaim.create(
+        kind=ClaimKind.CREATOR,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        applicability="not_applicable",
+        basis="package_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role=role,
+        occurrence=occurrence,
+    )
+
+
+def _authorless_ebook() -> TargetSnapshot:
+    return TargetSnapshot(
+        "ebook", "Current title", (), fields=default_target_fields("Current title")
+    )
+
+
+def test_an_authorless_ebook_plans_one_epub_creators_work_lane() -> None:
+    creators = (
+        _package_creator("Ada Example"),
+        _package_creator("Cy Example", "trl", 2),
+        _package_creator("Bea Example", "aut", 3),
+    )
+    plan = metadata_discovery_plan(
+        _authorless_ebook(),
+        (_target_title_claim("Current title"), *creators),
+        library_languages=("en",),
+    )
+
+    (lane,) = plan.lanes
+    assert ProviderQueryKind.WORK is lane.kind
+    assert ("Ada Example", "Bea Example") == lane.authors
+    assert "epub_creators" == lane.author_basis
+    assert ("en",) == plan.library_languages
+    (payload,) = work_discovery_lane_payloads(
+        _authorless_ebook().fields,
+        (_target_title_claim("Current title"), *creators),
+    )
+    assert lane.identity == payload.identity
+    # The basis is part of the identity: the same names stored as the
+    # target's authors are another lane.
+    assert replace(payload, author_basis=None).identity != lane.identity
+
+
+def test_five_epub_authors_plan_no_lane() -> None:
+    creators = tuple(
+        _package_creator(f"Author {index}", occurrence=index) for index in range(1, 6)
+    )
+    plan = metadata_discovery_plan(
+        _authorless_ebook(), (_target_title_claim("Current title"), *creators)
+    )
+
+    assert () == plan.lanes
+
+
+def test_the_epub_creators_basis_is_refused_outside_an_ebook_work_lane() -> None:
+    lane_identity = "lane_" + "0" * 64
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryLane(
+            lane_identity,
+            ProviderQueryKind.ISBN,
+            (),
+            matched_family="9780306406157",
+            canonical_isbns=("9780306406157",),
+            author_basis="epub_creators",
+        )
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryLane(
+            lane_identity,
+            ProviderQueryKind.WORK,
+            (),
+            title="Current title",
+            authors=("Ada Example",),
+            author_basis="target_authors",
+        )
+    lane = MetadataDiscoveryLane(
+        lane_identity,
+        ProviderQueryKind.WORK,
+        (),
+        title="Current title",
+        authors=("Ada Example",),
+        author_basis="epub_creators",
+    )
+    audio_plan = partial(
+        MetadataDiscoveryPlan,
+        (),
+        audio=single_track_audio_facts(),
+        work_title="Current title",
+        work_authors=("Ada Example",),
+    )
+    assert audio_plan((replace(lane, author_basis=None),)).lanes
+    with pytest.raises(MetadataReportError):
+        audio_plan((lane,))

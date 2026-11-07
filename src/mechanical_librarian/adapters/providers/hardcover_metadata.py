@@ -1315,7 +1315,7 @@ def _parse_candidates(
         _cover_url(book["image"], rejected)
         if books_query:
             book["canonical_id"] = _canonical_book(book["canonical_id"], rejected)
-            if book["compilation"] not in {None, True, False}:
+            if book["compilation"] is not None and type(book["compilation"]) is not bool:
                 rejected.reject()
         indexed[book_id] = book
     if len(indexed) != len(books):
