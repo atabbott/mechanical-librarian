@@ -68,20 +68,20 @@ class ActivityResult(StrEnum):
     WITHDRAWN = "Withdrawn"
     COVER_ADVICE_COMPLETED = "Cover advice completed"
     COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
-    COVER_ADVICE_FAILED_SAFELY = "Cover advice failed safely"
+    COVER_ADVICE_FAILED = "Cover advice failed"
     OWNER_COVER_CHOICE_RECORDED = "Owner cover choice recorded"
     MANUAL_COVER_RETRY = "Manual cover retry"
-    NO_CHANGE_REQUIRED = "No change required"
+    NO_CHANGE_NEEDED = "No change needed"
     APPLYING = "Applying"
     PREPARING = "Preparing"
     PLANNED = "Planned"
     CHECKING = "Checking"
-    WAITING_SAFELY = "Waiting safely"
+    WAITING_TO_RETRY = "Waiting to retry"
     VERIFIED = "Verified"
-    CLOSED_SAFELY = "Closed safely"
-    ITEM_CHANGED = "Item changed; closed safely"
-    SUPERSEDED = "Superseded"
-    STOPPED_SAFELY = "Stopped safely"
+    CLOSED = "Closed"
+    ITEM_CHANGED = "Closed because the item changed"
+    REPLACED = "Replaced"
+    STOPPED = "Stopped"
     RECORDED = "Recorded"
 
 
@@ -110,19 +110,19 @@ _RESULT_LABELS = {
     "withdraw": ActivityResult.WITHDRAWN,
     "completed": ActivityResult.COVER_ADVICE_COMPLETED,
     "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
-    "failed": ActivityResult.COVER_ADVICE_FAILED_SAFELY,
+    "failed": ActivityResult.COVER_ADVICE_FAILED,
     "selected": ActivityResult.OWNER_COVER_CHOICE_RECORDED,
     "retry": ActivityResult.MANUAL_COVER_RETRY,
-    "no_change_required": ActivityResult.NO_CHANGE_REQUIRED,
+    "no_change_required": ActivityResult.NO_CHANGE_NEEDED,
     "applying": ActivityResult.APPLYING,
     "claimed": ActivityResult.PREPARING,
     "planned": ActivityResult.PLANNED,
     "reconciling": ActivityResult.CHECKING,
-    "retryable": ActivityResult.WAITING_SAFELY,
+    "retryable": ActivityResult.WAITING_TO_RETRY,
     "verified": ActivityResult.VERIFIED,
-    "stale": ActivityResult.CLOSED_SAFELY,
-    "superseded": ActivityResult.SUPERSEDED,
-    "abandoned": ActivityResult.STOPPED_SAFELY,
+    "stale": ActivityResult.CLOSED,
+    "superseded": ActivityResult.REPLACED,
+    "abandoned": ActivityResult.STOPPED,
 }
 
 
@@ -197,7 +197,7 @@ def activity_result_label(state: str, failure: object = None) -> ActivityResult:
     written: an earlier attempt may have landed (#1542).
     """
     if (state, failure) == ("stale", "connection"):
-        return ActivityResult.WAITING_SAFELY
+        return ActivityResult.WAITING_TO_RETRY
     if (state, failure) == ("stale", "target_changed"):
         return ActivityResult.ITEM_CHANGED
     return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
@@ -477,7 +477,7 @@ def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
             "No cover advice could be produced",
         ),
         "failed": (
-            "Cover advice stopped safely",
+            "Cover advice failed",
             "Mechanical Librarian",
             "No cover was changed",
         ),

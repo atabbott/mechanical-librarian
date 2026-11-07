@@ -192,10 +192,10 @@ def _waiting_reasons(
     suspensions: list[dict[str, object]],
     provider_recovery: list[dict[str, int | str | list[str] | None]],
 ) -> dict[str, int]:
-    """Split "waiting safely" into the reasons an owner can act on.
+    """Split "waiting to retry" into the reasons an owner can act on.
 
     One number for everything that is not moving cannot be acted on: an owner
-    who reads `46 Waiting safely` cannot tell consent they can give from a retry
+    who reads `46 Waiting to retry` cannot tell consent they can give from a retry
     they must wait out from a recovery they must repair. Each of these four is a
     different next step, and naming them is the whole of #639's second
     acceptance.

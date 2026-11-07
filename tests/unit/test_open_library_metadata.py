@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryPacer,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -3662,7 +3663,8 @@ def test_malformed_optional_cover_ids_do_not_erase_metadata() -> None:
     assert 1 == len(observation.candidates)
     assert 2 == len(provider_result.cover_descriptors)
     assert all(value.url is None for value in provider_result.cover_descriptors)
-    assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(
+    # The work's `-1` is the "no cover" marker, so it reads as absent (#1753).
+    assert (CoverSourceState.REJECTED, None) == tuple(
         value.terminal_state for value in provider_result.cover_descriptors
     )
     assert not (
@@ -3685,6 +3687,23 @@ def test_malformed_optional_cover_ids_do_not_erase_metadata() -> None:
             f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/1-L.jpg?default=false",
             None,
         ),
+        # `-1` is Open Library's "no cover" marker (#1753).
+        ({"covers": [-1]}, None, None),
+        ({"covers": [-1, -1]}, None, None),
+        (
+            {"covers": [-1, 7, 3]},
+            f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/3-L.jpg?default=false",
+            None,
+        ),
+    ),
+    ids=(
+        "missing",
+        "null",
+        "empty",
+        "valid",
+        "only_marker",
+        "repeated_marker",
+        "marker_beside_ids",
     ),
 )
 def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(
@@ -3716,16 +3735,103 @@ def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(
     assert expected_state == descriptor.terminal_state
 
 
+def test_both_open_library_cover_descriptors_follow_only_the_archive_route() -> None:
+    values = {
+        "/search.json": _search("/books/OL1M"),
+        "/books/OL1M.json": {**_edition("/books/OL1M"), "covers": [7]},
+        "/works/OL5W.json": {**_work(), "covers": [3]},
+    }
+    provider = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=values[request.url.path],
+                )
+            )
+        ),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    )
+    descriptors = provider.observe(_isbn_lookup((_isbn(),))).cover_descriptors
+    assert [
+        (value.url, value.redirects, value.user_agent is not None)
+        for value in descriptors
+    ] == [
+        (
+            f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/7-L.jpg?default=false",
+            CoverRedirects.OPEN_LIBRARY_ARCHIVE,
+            True,
+        ),
+        (
+            f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/3-L.jpg?default=false",
+            CoverRedirects.OPEN_LIBRARY_ARCHIVE,
+            True,
+        ),
+    ]
+
+
+def test_a_no_cover_marker_keeps_the_real_cover_ids_as_evidence() -> None:
+    values = {
+        "/search.json": _search("/books/OL1M"),
+        "/books/OL1M.json": {**_edition("/books/OL1M"), "covers": [-1, 7, 3]},
+        "/works/OL5W.json": {**_work(), "covers": [9, -1]},
+    }
+    provider = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=values[request.url.path],
+                )
+            )
+        ),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    )
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    assert {
+        (value.kind, value.value)
+        for value in provider_result.observation.candidates[0].evidence
+        if value.kind
+        in {ProviderEvidenceKind.EDITION_COVER_ID, ProviderEvidenceKind.WORK_COVER_ID}
+    } == {
+        (ProviderEvidenceKind.EDITION_COVER_ID, "3"),
+        (ProviderEvidenceKind.WORK_COVER_ID, "9"),
+    }
+    assert [value.url for value in provider_result.cover_descriptors] == [
+        f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/3-L.jpg?default=false",
+        f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/9-L.jpg?default=false",
+    ]
+
+
 @pytest.mark.parametrize(
     "covers",
     (
         ["not-an-id"],
         [True],
         [0],
-        [-1],
+        [-2],
+        [-1, 0],
+        [-1, "1"],
         [2_147_483_648],
         [1, "not-an-id"],
         {"not": "a list"},
+    ),
+    ids=(
+        "string",
+        "bool",
+        "zero",
+        "minus_two",
+        "marker_and_zero",
+        "marker_and_string",
+        "above_int32",
+        "valid_and_string",
+        "non_list",
     ),
 )
 def test_invalid_present_cover_ids_are_rejected(covers) -> None:
@@ -4198,6 +4304,9 @@ def test_optional_projection_shapes_are_exact_and_local() -> None:
         schema="edition_detail",
     )
     assert 1 == diagnostic({"key": "/works/OL1W", "covers": [0]})
+    assert 1 == diagnostic({"key": "/works/OL1W", "covers": [-2]})
+    assert 0 == diagnostic({"key": "/works/OL1W", "covers": [-1]})
+    assert 0 == diagnostic({"key": "/works/OL1W", "covers": [-1, 3]})
     assert 1 == diagnostic(
         {"key": "/books/OL1M", "number_of_pages": 0},
         schema="edition_detail",

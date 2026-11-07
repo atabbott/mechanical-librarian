@@ -61,77 +61,75 @@ export const destinationPhrase = (destination: TargetDestination) =>
 // whole set: a notice outside it is not a comparison condition and is never
 // shown as one.
 const materialReasonLabels = {
-  isbn_creator_supported_title: 'ISBN and author evidence support this title',
+  isbn_creator_supported_title: 'The ISBN and author support this title',
   isbn_title_material_conflict:
-    'The sources disagree about the work or title; choose the title yourself',
+    'The sources disagree about the work or title. Choose the title yourself',
   bibliographic_combination_unresolved:
-    'The sources do not settle one combination of these details; choose them yourself',
-  competing_evidence: 'The sources disagree; choose the value yourself',
+    'The sources do not settle one combination of these details. Choose them yourself',
+  competing_evidence: 'The sources disagree. Choose the value yourself',
   date_refinement_requires_corroboration:
     'A more exact date needs a second source before it can replace this one',
   date_year_conflict: 'The sources disagree about the year',
   language_display_name:
-    'The current value names the same language; accepting only changes how it is written',
+    'The current value names the same language. Accepting only changes how it is written',
   field_policy_conflict:
-    'Your policy for this field and the evidence point different ways; choose the value yourself',
+    'Your policy for this field and the sources point different ways. Choose the value yourself',
   insufficient_independent_corroboration: 'Not enough independent sources agree on this value',
   no_safe_bibliographic_combination:
     'No combination of these details is safe to apply automatically',
   populated_subjective_field: 'This field already has a value of yours, so a change needs you',
   provider_consensus_title_bracket_source_tag:
-    'Independent providers agree after removing the bracketed source tag',
+    'Independent sources agree once the tag in square brackets is removed',
   provider_consensus_title_explicit_identifier:
-    'Independent providers agree after removing the labelled ISBN',
+    'Independent sources agree once the labelled ISBN is removed',
   provider_consensus_title_parenthesized_bare_number:
-    'Independent providers agree after removing the parenthesized number',
+    'Independent sources agree once the number in brackets is removed',
   provider_consensus_title_parenthesized_series_name:
-    'Independent providers agree after preserving the structured series name',
+    'Independent sources agree once the series name in brackets is kept as the series',
   provider_consensus_title_parenthesized_year:
-    'Independent providers agree after removing the parenthesized year',
+    'Independent sources agree once the year in brackets is removed',
   provider_consensus_title_subtitle_segment:
-    'Independent providers agree after preserving the colon subtitle',
+    'Independent sources agree once the part after the colon is kept as the subtitle',
   provider_consensus_title_colon_unused:
-    'The colon subtitle is local corroboration only; choose the title yourself',
+    'Only this book’s own details give the part after the colon as a subtitle. Choose the title yourself',
   provider_consensus_title_series_unpreserved:
-    'The parenthesized series name is not preserved as structured series evidence',
+    'No source gives the series name in brackets as the series',
   decoration_equivalent_bracket_source_tag:
-    'Providers agree once the bracketed source tag is removed; the current title is kept',
+    'Sources agree once the tag in square brackets is removed. The current title is kept',
   decoration_equivalent_explicit_identifier:
-    'Providers agree once the labelled ISBN is removed; the current title is kept',
+    'Sources agree once the labelled ISBN is removed. The current title is kept',
   decoration_equivalent_parenthesized_bare_number:
-    'Providers agree once the parenthesized number is removed; the current title is kept',
+    'Sources agree once the number in brackets is removed. The current title is kept',
   decoration_equivalent_parenthesized_series_name:
-    'Providers agree once the parenthesized series name is removed; the current title is kept',
+    'Sources agree once the series name in brackets is removed. The current title is kept',
   decoration_equivalent_parenthesized_year:
-    'Providers agree once the parenthesized year is removed; the current title is kept',
+    'Sources agree once the year in brackets is removed. The current title is kept',
   decoration_equivalent_subtitle_segment:
-    'Providers agree once the colon subtitle is removed; the current title is kept',
+    'Sources agree once the part after the colon is removed. The current title is kept',
   decoration_tidy_bracket_source_tag:
-    'Providers agree once the bracketed source tag is removed; the current title is tidied to the plain form',
+    'Sources agree once the tag in square brackets is removed. The current title is tidied to match',
   decoration_tidy_explicit_identifier:
-    'Providers agree once the labelled ISBN is removed; the current title is tidied to the plain form',
+    'Sources agree once the labelled ISBN is removed. The current title is tidied to match',
   decoration_tidy_parenthesized_bare_number:
-    'Providers agree once the parenthesized number is removed; the current title is tidied to the plain form',
+    'Sources agree once the number in brackets is removed. The current title is tidied to match',
   decoration_tidy_parenthesized_series_name:
-    'Providers agree once the parenthesized series name is removed after preserving the structured series name; the current title is tidied to the plain form',
+    'Sources agree once the series name in brackets is kept as the series. The current title is tidied to match',
   decoration_tidy_parenthesized_year:
-    'Providers agree once the parenthesized year is removed; the current title is tidied to the plain form',
+    'Sources agree once the year in brackets is removed. The current title is tidied to match',
   decoration_tidy_subtitle_segment:
-    'Providers agree once the colon subtitle is removed; the current title is tidied to the plain form',
+    'Sources agree once the part after the colon is removed. The current title is tidied to match',
   decoration_tidy_series_unpreserved:
-    'The parenthesized series name is not preserved as structured series evidence; choose the title yourself',
+    'No source gives the series name in brackets as the series. Choose the title yourself',
   decoration_equivalence_provider_dissent:
-    'Another provider states a different work title; choose the title yourself',
+    'Another source gives a different work title. Choose the title yourself',
   decoration_equivalence_decorated_consensus:
-    'More providers state the decorated title than the plain one; choose the title yourself',
-  subtitle_segment_uncorroborated:
-    'A colon segment in a title matches no independent subtitle evidence',
+    'More sources give the title with the extra text than without it. Choose the title yourself',
+  subtitle_segment_uncorroborated: 'No other source gives the part after the colon as a subtitle',
   subtitle_segment_provider_dissent:
-    'Another provider states a different subtitle; choose the subtitle yourself',
+    'Another source gives a different subtitle. Choose the subtitle yourself',
   subtitle_segment_decorated_consensus:
-    'The colon segment reads as title text: no provider carries it, or no more providers state the plain title than carry the decorated form',
-  provider_consensus_contributor_display:
-    'Independent providers agree on the contributor display form',
+    'The part after the colon reads as part of the title: no source has it, or at least as many sources include it as leave it out',
+  provider_consensus_contributor_display: 'Independent sources agree on how the names are written',
 }
 export type MaterialComparisonReason = keyof typeof materialReasonLabels
 export const materialReasonLabel = (code: string) =>
@@ -206,19 +204,19 @@ export const sourceLookupLabel = (source: {
 // opposite things. The consequence beside it is the server's own owner-facing
 // sentence; this names the outcome the owner is looking for.
 export const sourceStatusLabels = {
-  candidates: 'Candidates found',
+  candidates: 'Matches found',
   no_match: 'No match',
   disabled: 'Not enabled',
   insufficient_input: 'Too little to search with',
-  authentication: 'Authentication failed',
+  authentication: 'Credentials refused',
   authorization: 'Access denied',
   rate_limited: 'Rate limited',
   unavailable: 'Unavailable',
-  incomplete: 'Incomplete evidence',
-  malformed: 'Malformed evidence',
-  oversized: 'Response too large',
-  candidate_limit_exceeded: 'Too many candidates',
-  query_limit_exceeded: 'Query allowance reached',
+  incomplete: 'Incomplete answer',
+  malformed: 'Unreadable answer',
+  oversized: 'Answer too large',
+  candidate_limit_exceeded: 'Too many matches',
+  query_limit_exceeded: 'Lookup limit reached',
   not_needed: 'Not needed',
   adapter_fault: 'Failed in Mechanical Librarian',
 } satisfies Record<ProviderStatus, string>
@@ -297,7 +295,7 @@ export const preparationStatusLabels = {
   persistence: 'Progress could not be saved',
   unsupported_media: 'Unsupported media',
   unreadable_media: 'Unreadable media',
-  parser_refused: 'Media too complex to read safely',
+  parser_refused: 'Media too complex to read',
   multi_file_budget_exceeded: 'Too many audio files',
   missing_required_input: 'Required input missing',
   malformed_retained_data: 'Saved preparation data unreadable',
@@ -336,31 +334,31 @@ export const writeStateLabels = {
   requested: 'Requested',
   running: 'Running',
   succeeded: 'Succeeded',
-  failed: 'Failed safely',
+  failed: 'Failed',
   interrupted: 'Interrupted',
   planned: 'Planned',
   claimed: 'Preparing',
   applying: 'Applying',
   reconciling: 'Checking',
-  retryable: 'Waiting safely',
+  retryable: 'Waiting to retry',
   verified: 'Verified',
   // A guarded write that closed for one of several reasons; Activity names the
   // reason beside it, work history does not yet. "stale" is the store's word,
   // not the owner's (#1542).
-  stale: 'Closed safely',
-  superseded: 'Superseded',
-  abandoned: 'Stopped safely',
-  no_change_required: 'No change required',
+  stale: 'Closed',
+  superseded: 'Replaced',
+  abandoned: 'Stopped',
+  no_change_required: 'No change needed',
 } satisfies Record<DescriptionState, string>
 
 export const previewDispositionLabels = {
   abstention: 'No automatic choice',
   candidate: 'Automatic choice',
-  conflict: 'Conflicting evidence',
+  conflict: 'Sources disagree',
   ignore: 'Ignored by policy',
   keep_current: 'Keep current',
-  manual: 'Owner review',
-  unsupported: 'Unsupported',
+  manual: 'Needs you',
+  unsupported: 'Not supported',
 } satisfies Record<PreviewDisposition, string>
 
 export const transitionLabels = {
@@ -419,7 +417,7 @@ const coverNoteLabels: Readonly<Record<string, string>> = {
   source_truncated: 'The image arrived incomplete',
 }
 export const coverNoteLabel = (code: string) =>
-  coverNoteLabels[code] ?? 'Another cover safeguard applies'
+  coverNoteLabels[code] ?? 'Another cover rule applies'
 
 // Server identifiers with no meaning for a reader; never shown as a label.
 export const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
@@ -493,55 +491,64 @@ export const preparationOutcomes = (
     .filter(([count], index) => index === 0 || count !== 0)
     .map(([count, words]) => `${count === undefined ? '…' : String(count)} ${words}`)
 
+// Why Automatic chose nothing, in the same sentence the review case reads
+// (`_AUTOMATIC_REFUSAL_TEXT` in `application/review_web.py`), so a reason is
+// worded once wherever it appears.
 export const automaticRefusalReasons: Readonly<Record<string, string>> = {
-  no_candidate: 'No eligible value was found in the retained evidence.',
-  ambiguous_evidence: 'The retained evidence does not select one value for automatic handling.',
-  target_work_contradicted: 'The retained evidence contradicts applicability to this work.',
+  isbn_title_material_conflict:
+    'The sources disagree about the work or title. Choose the title yourself.',
+  no_candidate: 'No source offered a value that can be used here.',
+  ambiguous_evidence: 'The sources do not agree on one value.',
+  target_work_contradicted: 'The sources suggest this value belongs to a different work.',
   target_work_applicability_unproved:
-    'The retained evidence does not establish that this value describes this work.',
-  target_state_unusable:
-    'The current field value cannot be used safely for this automatic operation.',
-  automatic_unqualified: 'This policy option is not qualified for automatic handling.',
-  manifestation_verification_required:
-    'The retained evidence does not verify the ISBN for this edition.',
+    'The sources do not show that this value describes this work.',
+  target_state_unusable: 'The current value cannot be changed for you.',
+  automatic_unqualified: 'Automatic is not offered for this kind of change, so it is left to you.',
+  manifestation_verification_required: 'The sources do not confirm this ISBN for this edition.',
   description_quality_floor_not_met:
-    'Retained source text does not meet the automatic synopsis rules.',
+    'No source description meets the rules for choosing one for you.',
   candidate_language_differs:
-    'The retained value comes from a source in another language than this item.',
-  series_membership_incomplete:
-    'Series membership or position evidence is incomplete or malformed.',
-  series_conflicting_membership:
-    'The retained evidence does not resolve series membership for automatic handling.',
-  series_provider_evidence_required: 'Provider evidence supporting this series value is required.',
-  subtitle_local_corroboration_required: 'Independent evidence does not corroborate this subtitle.',
-  subtitle_restates_series: 'The proposed subtitle only repeats the series.',
-  subtitle_segment_provider_dissent:
-    'Provider subtitle evidence disagrees with the proposed title split.',
+    'The value comes from a source in a different language from this book.',
+  candidate_credit_prefixed:
+    'The proposed value starts with a credit label such as "Narrated by", so it is never written for you.',
+  candidate_strips_marks:
+    'The proposed value drops accents from a name you already have, so it is never written for you.',
+  candidate_promotional_title:
+    'The proposed title carries an announcement such as "Now a Major Motion Picture", so it is never written for you.',
+  insufficient_support: 'Not enough sources agree to choose a value for you.',
+  series_membership_incomplete: 'The sources give an incomplete or unreadable series or position.',
+  series_conflicting_membership: 'The sources disagree about the series.',
+  series_provider_evidence_required: 'No source confirms this series.',
+  subtitle_local_corroboration_required: 'No other source confirms this subtitle.',
+  subtitle_restates_series:
+    'The proposed subtitle only repeats the series, so it is never written for you.',
+  subtitle_segment_provider_dissent: 'The sources disagree with splitting the title this way.',
   subtitle_segment_decorated_consensus:
-    'The retained title evidence does not support separating this text into a subtitle.',
-  atomic_bundle_unavailable: 'The required linked field selection is unavailable.',
+    'The sources do not support splitting this text into a subtitle.',
+  atomic_bundle_unavailable: 'A linked field this choice depends on is unavailable.',
   corroborated_split_unavailable:
-    'The corroborated title and subtitle do not match the current combined title.',
-  option_evidence_unavailable: 'Evidence required by the selected representation is unavailable.',
-  policy_option_unavailable: 'The selected policy option is unavailable for this projection.',
-  target_projection_oversized: 'The resulting field would exceed the supported size limit.',
+    'The confirmed title and subtitle do not match the current combined title.',
+  option_evidence_unavailable: 'The source details your chosen setting needs are unavailable.',
+  policy_option_unavailable: 'The setting you chose does not apply to this field.',
+  target_projection_oversized: 'The result would be longer than the library accepts.',
   policy_off: 'Tag handling is off.',
-  explicit_unsupported: 'Automatic explicit-content handling is unavailable for this option.',
-  source_value_malformed_or_incomplete: 'ISBN evidence is malformed or incomplete.',
-  source_values_conflict: 'Conflicting ISBN values remain.',
-  source_value_insufficient_association: 'Association with this recording is insufficient.',
-  source_unavailable: 'Source evidence is unavailable.',
-  source_value_absent: 'No ISBN value was supplied.',
-  series_provider_failure_isbn: 'A contributing ISBN lookup did not supply usable evidence.',
-  series_provider_failure_work: 'A contributing work lookup did not supply usable evidence.',
-  series_provider_failure_asin: 'A contributing ASIN lookup did not supply usable evidence.',
+  explicit_unsupported: 'Explicit content is never marked for you with this setting.',
+  source_value_malformed_or_incomplete: 'The sources give an unreadable or incomplete ISBN.',
+  source_values_conflict: 'The sources give different ISBNs.',
+  source_value_insufficient_association:
+    'The sources do not tie this ISBN closely enough to this recording.',
+  source_unavailable: 'The sources could not be read.',
+  source_value_absent: 'No source supplied an ISBN.',
+  series_provider_failure_isbn: 'An ISBN lookup did not return a usable answer.',
+  series_provider_failure_work: 'A title and author lookup did not return a usable answer.',
+  series_provider_failure_asin: 'An ASIN lookup did not return a usable answer.',
 }
 
 export const evidenceRoleLabel = (role: EvidenceRole) =>
   ({
-    local_presence: 'Local presence',
-    external_corroboration: 'External corroboration',
-    external_observation: 'External observation',
+    local_presence: 'Already in the library',
+    external_corroboration: 'Confirms this value',
+    external_observation: 'Reports this value',
   })[role]
 
 const coverReviewerNames: Record<string, string> = {
@@ -587,21 +594,21 @@ export const reviewerStateLabels = {
 // What a configured reviewer's failure asks the owner to change, wherever the
 // failure is shown: reviewer access in Settings and a failed cover review.
 export const reviewerFailureCopy = {
-  invalid_key:
-    'The configured reviewer credential is invalid. Replace it in Settings → Reviewer, then retry.',
-  quota_exhausted: 'The configured reviewer has no remaining quota. Restore quota and retry.',
-  rate_limited: 'The configured reviewer is rate limited. Wait, then retry.',
+  invalid_key: 'The reviewer’s API key was refused. Replace it in Settings → Reviewer, then retry.',
+  quota_exhausted: 'The reviewer has no quota left. Add quota, then retry.',
+  rate_limited: 'The reviewer is rate limited. Wait, then retry.',
   model_unavailable:
-    'The configured reviewer model is unavailable. Choose another model in Settings → Reviewer.',
-  model_text_only: 'The configured reviewer model cannot inspect cover images.',
-  malformed_response: 'The configured reviewer returned an invalid response. Retry later.',
-  unreachable: 'The configured reviewer could not be reached. Check network access and retry.',
+    'The reviewer model is unavailable. Choose another model in Settings → Reviewer.',
+  model_text_only:
+    'The reviewer model cannot read images. Choose a vision model in Settings → Reviewer.',
+  malformed_response: 'The reviewer’s answer could not be read. Retry later.',
+  unreachable: 'The reviewer could not be reached. Check network access, then retry.',
   response_too_large:
-    'The configured reviewer returned an answer too large to read. Retry later, or choose another model in Settings → Reviewer.',
+    'The reviewer’s answer was too large to read. Retry later, or choose another model in Settings → Reviewer.',
   timed_out:
-    'The configured reviewer did not answer in time. Retry, or choose a faster model in Settings → Reviewer.',
+    'The reviewer did not answer in time. Retry, or choose a faster model in Settings → Reviewer.',
   data_policy_refused:
-    'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose a model with a compliant provider in Settings → Reviewer.',
+    'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose another model in Settings → Reviewer.',
   image_limit_exceeded:
-    'The configured reviewer model accepts fewer images than this review sends. Choose another vision model in Settings → Reviewer.',
+    'The reviewer model accepts fewer images than this review sends. Choose another vision model in Settings → Reviewer.',
 } satisfies Record<ReviewerFailureCode, string>
