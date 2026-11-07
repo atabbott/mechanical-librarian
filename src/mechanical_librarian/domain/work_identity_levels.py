@@ -26,6 +26,7 @@ creator form is the caller's to exclude before building the reference.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -161,6 +162,51 @@ def admitting_level(
     return None
 
 
+# The closed words and number range that mark a title as a collection of
+# volumes rather than one of them: an omnibus, a box set, a trilogy, "Books 1-3".
+_COLLECTION_WORDS = frozenset(
+    {
+        "anthology",
+        "books",
+        "box",
+        "boxed",
+        "collected",
+        "collection",
+        "complete",
+        "duology",
+        "omnibus",
+        "quartet",
+        "tetralogy",
+        "trilogy",
+        "volumes",
+    }
+)
+_COLLECTION_RANGE = re.compile(
+    r"[0-9]{1,3}[\t\n\r\f\v ]*[-\u2013\u2014][\t\n\r\f\v ]*[0-9]{1,3}"
+)
+_TITLE_WORD = re.compile(r"\w+")
+
+
+def _collection_marked(title: str) -> bool:
+    return (
+        any(word in _COLLECTION_WORDS for word in _TITLE_WORD.findall(title.casefold()))
+        or _COLLECTION_RANGE.search(title) is not None
+    )
+
+
+def omnibus_against_volume(collection_title: str, volume_title: str) -> bool:
+    """Whether one title names a collection and the other one of its volumes.
+
+    The closed classifier behind ADR-0096's omnibus-against-volume refusal: a
+    title marked as a collection (an omnibus, a box set, a trilogy, a book
+    range) against a title that carries no such mark.  Directional, so a caller
+    can tell a collection beside one of its volumes from the reverse.
+    """
+    if type(collection_title) is not str or type(volume_title) is not str:
+        raise ValueError("omnibus classifier input is invalid")
+    return _collection_marked(collection_title) and not _collection_marked(volume_title)
+
+
 def level_admission(
     level: WorkIdentityLevel,
     target_title: str | None,
@@ -196,6 +242,7 @@ __all__ = [
     "WorkIdentityLevel",
     "admitting_level",
     "level_admission",
+    "omnibus_against_volume",
     "title_and_creator",
     "title_and_creator_exact",
 ]

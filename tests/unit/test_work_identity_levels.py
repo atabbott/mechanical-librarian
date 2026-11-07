@@ -12,6 +12,7 @@ from mechanical_librarian.domain.work_identity_levels import (
     WorkIdentityLevel,
     admitting_level,
     level_admission,
+    omnibus_against_volume,
     title_and_creator,
     title_and_creator_exact,
 )
@@ -339,3 +340,40 @@ def test_entry_points_reject_a_level_or_flag_outside_the_closed_set() -> None:
             omnibus_against_volume=0,  # type: ignore[arg-type]
             contradicted=False,
         )
+
+
+@pytest.mark.parametrize(
+    ("collection", "volume", "expected"),
+    (
+        ("The Synthetic Saga: Books 1-3", "The Synthetic Saga", True),
+        ("The Synthetic Saga Omnibus", "The Synthetic Saga", True),
+        ("The Complete Synthetic Trilogy", "The First Voyage", True),
+        ("Synthetic Tales Box Set", "Synthetic Tales", True),
+        ("The Synthetic Saga 1\u20133", "The Synthetic Saga", True),
+        ("The Synthetic Saga", "The Synthetic Saga: Books 1-3", False),
+        ("The Synthetic Saga", "The Synthetic Saga", False),
+        ("The Synthetic Saga: Books 1-3", "The Synthetic Saga: Books 4-6", False),
+        ("The Synthetic Saga, Book 1", "The Synthetic Saga", False),
+    ),
+    ids=(
+        "books_range",
+        "omnibus",
+        "complete_trilogy",
+        "box_set",
+        "en_dash_range",
+        "reverse",
+        "neither",
+        "both",
+        "one_book",
+    ),
+)
+def test_omnibus_against_volume_is_closed_and_directional(
+    collection: str, volume: str, expected: bool
+) -> None:
+    """#1481: a collection beside one of its volumes, never the reverse."""
+    assert omnibus_against_volume(collection, volume) is expected
+
+
+def test_omnibus_against_volume_refuses_a_non_text_input() -> None:
+    with pytest.raises(ValueError):
+        omnibus_against_volume(None, "The Synthetic Saga")  # type: ignore[arg-type]
