@@ -281,6 +281,60 @@ describe('reviewer access transport vocabulary', () => {
     ).rejects.toMatchObject(unnamed('invalid_reviewer_access_response'))
   })
 
+  // Each answer is schema-valid and fails one named slot check only
+  // (ADR-0091 X40-X42 and the description slot) (#1690).
+  const codexReady = reviewerAccessPayload().codex
+  const openRouterIdle = reviewerAccessPayload().openrouter
+  it.each([
+    [
+      'X40: a codex slot carrying an openrouter status',
+      { codex: { ...codexReady, engine: 'openrouter' } },
+      'invalid_reviewer_access_response',
+    ],
+    [
+      'X41: a codex slot in an openrouter-only state',
+      { codex: { ...codexReady, state: 'unconfigured' } },
+      'invalid_reviewer_access_response',
+    ],
+    [
+      'X42: a codex slot with a tier',
+      { codex: { ...codexReady, tier: 'free' } },
+      'invalid_reviewer_access_response',
+    ],
+    [
+      'X42: an openrouter slot with host headroom',
+      { openrouter: { ...openRouterIdle, host_headroom_bytes: 1 } },
+      'invalid_reviewer_access_response',
+    ],
+    [
+      'the description slot: a codex status in an openrouter-only state',
+      { description: { ...codexReady, state: 'unconfigured' } },
+      'invalid_description_reviewer',
+    ],
+  ])('refuses %s with its named check', async (_label, overrides, code) => {
+    await expect(readReviewerAccess(reviewerAccessPayload(overrides))).rejects.toMatchObject(
+      unnamed(code),
+    )
+  })
+
+  it('reports a committed answer whose description slot fails its check as uncertain', async () => {
+    const refusal = await new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () =>
+        Response.json(
+          reviewerAccessPayload({ description: { ...codexReady, state: 'unconfigured' } }),
+        ),
+      ),
+    })
+      .selectReviewer(null, 3, undefined, 'description_rewrite')
+      .catch((error: unknown) => error)
+    expect(refusal).toMatchObject({
+      ...uncertain('invariant@invalid_description_reviewer'),
+      operation: 'PUT /api/v1/reviewer-access/selection',
+    })
+  })
+
   const candidate = {
     model: 'provider/model',
     tier: 'free',
