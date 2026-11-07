@@ -16,7 +16,6 @@ import {
   mapActivity,
   mapActivityConsent,
   mapActivityPermissionReadiness,
-  mapReviewerAccess,
 } from '../src/api/http'
 import type { DecisionCommand } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
@@ -906,42 +905,48 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     codexCleared,
     '/codex/reason',
     'profile_not_provisioned',
-    'reviewerStatus http.ts:2038-2047: the codex state fixes which reasons it may carry; cross-field',
+    'reviewerStatus http.ts:2193-2199: the codex state fixes which reasons it may carry; cross-field',
+    'reject:mutation_outcome_unknown:invariant@invalid_reviewer_access_response',
   ],
   [
     'check:reviewerStatus.codex-model-presence',
     codexCleared,
     '/codex/model',
     null,
-    'reviewerStatus http.ts:2031-2034: the codex model is null exactly when not_provisioned; cross-field',
+    'reviewerStatus http.ts:2191: the codex model is null exactly when not_provisioned; cross-field',
+    'reject:mutation_outcome_unknown:invariant@invalid_reviewer_access_response',
   ],
   [
     'check:reviewerStatus.codex-model',
     codexCleared,
     '/codex/model',
     'provider/model',
-    'reviewerStatus http.ts:2032-2034: a codex model matches ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$; ReviewerEngineStatus.model is shared with the openrouter statuses, whose provider/model values are valid, so only a codex-specific status type could carry this pattern',
+    'reviewerStatus http.ts:2191 (codexModel :2184): a codex model matches ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$; ReviewerEngineStatus.model is shared with the openrouter statuses, whose provider/model values are valid, so only a codex-specific status type could carry this pattern',
+    'reject:mutation_outcome_unknown:invariant@invalid_reviewer_access_response',
   ],
   [
     'check:mapReviewerAccess.cover-model',
     openRouterRefresh,
     '/cover_metadata/model',
     'example/other',
-    'mapReviewerAccess http.ts:2264-2266: cover_metadata prices the saved openrouter mapping model; cross-field',
+    'mapReviewerAccess http.ts:2266-2267: cover_metadata prices the saved openrouter mapping model; cross-field',
+    'reject:mutation_outcome_unknown:invariant@invalid_cover_metadata',
   ],
   [
     'check:mapReviewerAccess.cover-price',
     openRouterRefresh,
     '/cover_metadata/image_price',
     'NaN',
-    'mapReviewerAccess http.ts:2269-2270 (costPrice :2099): a price is a decimal string in [0, 1000000]. Single-field, but its only owner, domain/reviewer_access.py CoverModelMetadata, is persisted in ReviewerAccessDocument (adapters/persistence/reviewer_access.py:120, :203), so X by B3',
+    'mapReviewerAccess http.ts:2268-2273 (boundedPrice :2218): a price is a decimal string in [0, 1000000]. Single-field, but its only owner, domain/reviewer_access.py CoverModelMetadata, is persisted in ReviewerAccessDocument (adapters/persistence/reviewer_access.py:120, :203), so X by B3',
+    'reject:mutation_outcome_unknown:invariant@invalid_cover_metadata',
   ],
   [
     'check:mapDescriptionMetadata.price',
     modelTest,
     '/request_price',
     '-1',
-    'mapDescriptionMetadata http.ts:2085-2093: a price is a decimal string in [0, 1000000]. Single-field, but its only owner, domain/reviewer_access.py DescriptionModelMetadata, is persisted in ReviewerAccessDocument (adapters/persistence/reviewer_access.py:120, :203), so X by B3',
+    'mapDescriptionMetadata http.ts:2226-2227 (boundedPrice :2218): a price is a decimal string in [0, 1000000]. Single-field, but its only owner, domain/reviewer_access.py DescriptionModelMetadata, is persisted in ReviewerAccessDocument (adapters/persistence/reviewer_access.py:120, :203), so X by B3',
+    'reject:mutation_outcome_unknown:invariant@invalid_description_metadata',
   ],
   [
     'check:mapCoverConsideration.manual-eligibility',
@@ -1124,7 +1129,7 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
   'capture:post-reviewer-access-codex-device': {
     class: 'mapper_cross_field',
     check:
-      'mapCodexDevice http.ts:2332-2339: issued and waiting require verification_url, user_code and expires_in_seconds 900, every other state requires all three null. The capture is the bare waiting of the test double _Auth.start(); #1652 makes it realistic and removes this row.',
+      'mapCodexDevice http.ts:2283-2289: issued and waiting require verification_url, user_code and expires_in_seconds 900, every other state requires all three null. The capture is the bare waiting of the test double _Auth.start(); #1652 makes it realistic and removes this row.',
   },
   ...Object.fromEntries(
     TOLERANCES.map(([row, , , check]): [string, Expected] => [
@@ -1176,16 +1181,16 @@ const decision: DecisionCommand = {
 type Binding = NonNullable<DecisionCommand['authoredDescription']>['binding']
 const authored = { ...decision, authoredDescription: { candidateId: 'c', binding: {} as Binding } }
 const policy = (c: Case) => client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length))
-const reviewerAccess = (c: Case) => mapReviewerAccess(c.doc())
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
   'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
   'GET /api/v1/settings': (c) => client(c).getSettings(),
-  'PUT /api/v1/reviewer-access/openrouter': reviewerAccess,
-  'DELETE /api/v1/reviewer-access/openrouter': reviewerAccess,
-  'POST /api/v1/reviewer-access/openrouter/refresh': reviewerAccess,
-  'PUT /api/v1/reviewer-access/selection': reviewerAccess,
-  'DELETE /api/v1/reviewer-access/codex': reviewerAccess,
+  'PUT /api/v1/reviewer-access/openrouter': (c) =>
+    client(c).configureOpenRouter({ expected_revision: 1, api_key: '', model: 'example/vision' }),
+  'DELETE /api/v1/reviewer-access/openrouter': (c) => client(c).clearOpenRouter(1),
+  'POST /api/v1/reviewer-access/openrouter/refresh': (c) => client(c).refreshOpenRouter(),
+  'PUT /api/v1/reviewer-access/selection': (c) => client(c).selectReviewer(null, 1),
+  'DELETE /api/v1/reviewer-access/codex': (c) => client(c).clearCodex(1),
   'POST /api/v1/reviewer-access/codex/device': (c) => client(c).startCodexDevice(1),
   'POST /api/v1/reviewer-access/description-model/test': (c) =>
     client(c).testDescriptionModel({ expected_revision: 1, api_key: '', model: 'example/text' }),

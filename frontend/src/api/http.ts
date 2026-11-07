@@ -62,96 +62,17 @@ const reviewerFailureCodes = [
   'image_limit_exceeded',
 ] as const
 export type ReviewerFailureCode = (typeof reviewerFailureCodes)[number]
-export type ReviewerState =
-  | 'ready'
-  | 'configured'
-  | 'starting'
-  | 'issued'
-  | 'waiting'
-  | 'validating'
-  | 'usable'
-  | 'expired'
-  | 'cancelled'
-  | 'failed'
-  | 'interrupted'
-  | 'host_unsupported'
-  | 'not_provisioned'
-  | 'unconfigured'
-  | ReviewerFailureCode
-export type ReviewerReason =
-  | 'profile_not_provisioned'
-  | 'profile_unreadable'
-  | 'profile_contract_mismatch'
-  | 'host_evidence_unavailable'
-  | 'cgroup_limit_below_1_gib'
-  | 'headroom_below_1_gib'
-  | 'permission_or_profile'
-  | 'permission_or_process'
-  | 'protocol_or_process'
-  | 'restart_interrupted'
-  | 'not_selected'
-  | ReviewerFailureCode
-export interface ReviewerEngineStatus {
-  engine: 'codex' | 'openrouter'
-  state: ReviewerState
-  reason: ReviewerReason | null
-  model: string | null
-  tier: 'free' | 'paid' | null
-  host_headroom_bytes: number | null
-}
-export type DescriptionModelMetadata = Schema<'DescriptionModelMetadata'>
+// The reviewer-access answers are decoded whole (#1690); these are their
+// response-truth types, and the mappers below keep only the named checks.
+export type ReviewerEngineStatus = ResponseSchema<'ReviewerEngineStatus'>
+export type ReviewerState = ReviewerEngineStatus['state']
+export type ReviewerReason = NonNullable<ReviewerEngineStatus['reason']>
+export type DescriptionModelMetadata = ResponseSchema<'DescriptionModelMetadata'>
 export type ReviewerTask = 'cover_observation' | 'description_rewrite'
-export interface ReviewerAccessView {
-  schema_version: 'reviewer-access-view-v2'
-  revision: number
-  mapping: { engine: 'codex' } | { engine: 'openrouter'; model: string } | null
-  description_mapping: ReviewerAccessView['mapping']
-  description_metadata: DescriptionModelMetadata | null
-  cover_metadata: Schema<'CoverModelMetadata'> | null
-  cost_evidence: Schema<'ReviewerCostEvidence'>
-  description: ReviewerEngineStatus | null
-  openrouter_key_configured: boolean
-  codex: ReviewerEngineStatus
-  openrouter: ReviewerEngineStatus
-  recommendations: readonly string[]
-  candidates: readonly {
-    model: string
-    tier: 'free' | 'paid'
-    qualified: false
-    evidence: 'catalogue_capability_only'
-    requests_per_minute: number | null
-    requests_per_day: string | null
-  }[]
-  free_tier_caveat: string
-  data_use_caveat: string
-}
-export interface CodexDeviceAuthState {
-  state:
-    | 'ready'
-    | 'configured'
-    | 'starting'
-    | 'issued'
-    | 'waiting'
-    | 'validating'
-    | 'usable'
-    | 'expired'
-    | 'cancelled'
-    | 'failed'
-    | 'interrupted'
-  verification_url: string | null
-  user_code: string | null
-  expires_in_seconds: number | null
-  failure:
-    | 'permission_or_profile'
-    | 'permission_or_process'
-    | 'protocol_or_process'
-    | 'restart_interrupted'
-    | null
-}
-export interface CodexDeviceStartResult {
-  access: ReviewerAccessView
-  device: CodexDeviceAuthState
-}
+export type ReviewerAccessView = ResponseSchema<'ReviewerAccessView'>
+export type CodexDeviceAuthState = ResponseSchema<'_CodexDeviceAuthResponse'>
+export type CodexDeviceStartResult = ResponseSchema<'_CodexDeviceStartResponse'>
+export type ContainedDescriptionDisclosure = ResponseSchema<'CodexDescriptionDisclosure'>
 
 // These validators live at the DTO mapping boundary so the editor cannot
 // silently become stricter than the generated API contract. Their names make
@@ -1207,7 +1128,7 @@ export interface ReviewHttp {
     value: { expected_revision: number; api_key: string; model: string; task?: ReviewerTask },
     signal?: AbortSignal,
   ): Promise<ReviewerAccessView>
-  describeContainedDescription(): Promise<{ model: string; profile_sha256: string }>
+  describeContainedDescription(): Promise<ContainedDescriptionDisclosure>
   testDescriptionModel(
     value: { expected_revision: number; api_key: string; model: string },
     signal?: AbortSignal,
@@ -1426,6 +1347,18 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'PATCH /api/v1/settings',
   'POST /api/v1/provider-recovery/retry',
   'GET /api/v1/appearance',
+  'GET /api/v1/reviewer-access',
+  'PUT /api/v1/reviewer-access/openrouter',
+  'DELETE /api/v1/reviewer-access/openrouter',
+  'POST /api/v1/reviewer-access/openrouter/refresh',
+  'PUT /api/v1/reviewer-access/selection',
+  'DELETE /api/v1/reviewer-access/codex',
+  'GET /api/v1/reviewer-access/codex/device',
+  'POST /api/v1/reviewer-access/codex/device',
+  'POST /api/v1/reviewer-access/codex/device/cancel',
+  'POST /api/v1/reviewer-access/codex/recheck',
+  'POST /api/v1/reviewer-access/description-model/test',
+  'POST /api/v1/reviewer-access/description-model/contained',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1552,56 +1485,80 @@ export class ReviewApiClient implements ReviewHttp {
       settingsView,
     )
   }
+  // Reviewer access is decoded whole (#1690). Every command, including the
+  // model test and the contained disclosure, maps its answer inside `mutate`:
+  // an answer that fails decoding or a named check is uncertain, never a
+  // refusal. The test and the disclosure write nothing, so that is the
+  // conservative direction (ADR-0091).
   async getReviewerAccess(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal, workClass))
+    return mapReviewerAccess(
+      (await this.read('/api/v1/reviewer-access', signal, workClass)) as ReviewerAccessView,
+    )
   }
   async refreshOpenRouter(signal?: AbortSignal, task?: ReviewerTask) {
-    return mapReviewerAccess(
-      await this.mutate(
-        `/api/v1/reviewer-access/openrouter/refresh?task=${task ?? 'cover_observation'}`,
-        {},
-        signal,
-      ),
+    return this.mutate(
+      `/api/v1/reviewer-access/openrouter/refresh?task=${task ?? 'cover_observation'}`,
+      {},
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      reviewerAccess,
     )
   }
   async configureOpenRouter(
     value: { expected_revision: number; api_key: string; model: string; task?: ReviewerTask },
     signal?: AbortSignal,
   ) {
-    return mapReviewerAccess(
-      await this.mutate('/api/v1/reviewer-access/openrouter', value, signal, undefined, 'PUT'),
+    return this.mutate(
+      '/api/v1/reviewer-access/openrouter',
+      value,
+      signal,
+      undefined,
+      'PUT',
+      false,
+      false,
+      reviewerAccess,
     )
   }
   async describeContainedDescription() {
-    const value = await this.mutate('/api/v1/reviewer-access/description-model/contained', {})
-    if (
-      !record(value) ||
-      typeof value.model !== 'string' ||
-      !value.model ||
-      typeof value.profile_sha256 !== 'string' ||
-      !/^[0-9a-f]{64}$/.test(value.profile_sha256)
-    ) {
-      throw new Error('Invalid contained description disclosure')
-    }
-    return { model: value.model, profile_sha256: value.profile_sha256 }
+    return this.mutate(
+      '/api/v1/reviewer-access/description-model/contained',
+      {},
+      undefined,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value) => value as ContainedDescriptionDisclosure,
+    )
   }
   async testDescriptionModel(
     value: { expected_revision: number; api_key: string; model: string },
     signal?: AbortSignal,
   ) {
-    return mapDescriptionMetadata(
-      await this.mutate('/api/v1/reviewer-access/description-model/test', value, signal),
+    return this.mutate(
+      '/api/v1/reviewer-access/description-model/test',
+      value,
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (answer) => mapDescriptionMetadata(answer as DescriptionModelMetadata),
     )
   }
   async clearOpenRouter(expectedRevision: number, signal?: AbortSignal) {
-    return mapReviewerAccess(
-      await this.mutate(
-        '/api/v1/reviewer-access/openrouter',
-        { expected_revision: expectedRevision },
-        signal,
-        undefined,
-        'DELETE',
-      ),
+    return this.mutate(
+      '/api/v1/reviewer-access/openrouter',
+      { expected_revision: expectedRevision },
+      signal,
+      undefined,
+      'DELETE',
+      false,
+      false,
+      reviewerAccess,
     )
   }
   async selectReviewer(
@@ -1610,48 +1567,75 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     task?: ReviewerTask,
   ) {
-    return mapReviewerAccess(
-      await this.mutate(
-        '/api/v1/reviewer-access/selection',
-        { engine, expected_revision: expectedRevision, ...(task ? { task } : {}) },
-        signal,
-        undefined,
-        'PUT',
-      ),
+    return this.mutate(
+      '/api/v1/reviewer-access/selection',
+      { engine, expected_revision: expectedRevision, ...(task ? { task } : {}) },
+      signal,
+      undefined,
+      'PUT',
+      false,
+      false,
+      reviewerAccess,
     )
   }
   async startCodexDevice(expectedRevision: number, signal?: AbortSignal) {
-    const value: unknown = await this.mutate(
+    return this.mutate(
       '/api/v1/reviewer-access/codex/device',
       { expected_revision: expectedRevision },
       signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value): CodexDeviceStartResult => {
+        const { access, device } = value as CodexDeviceStartResult
+        return { access: mapReviewerAccess(access), device: mapCodexDevice(device) }
+      },
     )
-    if (!record(value) || !exactKeys(value, ['access', 'device']))
-      throw new ApiError(502, 'invalid_reviewer_access_response')
-    return { access: mapReviewerAccess(value.access), device: mapCodexDevice(value.device) }
   }
   async getCodexDevice(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapCodexDevice(
-      await this.read('/api/v1/reviewer-access/codex/device', signal, workClass),
+      (await this.read(
+        '/api/v1/reviewer-access/codex/device',
+        signal,
+        workClass,
+      )) as CodexDeviceAuthState,
     )
   }
   async recheckCodex(signal?: AbortSignal) {
-    return mapCodexDevice(await this.mutate('/api/v1/reviewer-access/codex/recheck', {}, signal))
+    return this.mutate(
+      '/api/v1/reviewer-access/codex/recheck',
+      {},
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      codexDevice,
+    )
   }
   async cancelCodexDevice(signal?: AbortSignal) {
-    return mapCodexDevice(
-      await this.mutate('/api/v1/reviewer-access/codex/device/cancel', {}, signal),
+    return this.mutate(
+      '/api/v1/reviewer-access/codex/device/cancel',
+      {},
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      codexDevice,
     )
   }
   async clearCodex(expectedRevision: number, signal?: AbortSignal) {
-    return mapReviewerAccess(
-      await this.mutate(
-        '/api/v1/reviewer-access/codex',
-        { expected_revision: expectedRevision },
-        signal,
-        undefined,
-        'DELETE',
-      ),
+    return this.mutate(
+      '/api/v1/reviewer-access/codex',
+      { expected_revision: expectedRevision },
+      signal,
+      undefined,
+      'DELETE',
+      false,
+      false,
+      reviewerAccess,
     )
   }
   async getAttention(
@@ -2158,23 +2142,9 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
   Object.keys(value).length === keys.length && keys.every((key) => key in value)
 
-const reviewerStates = new Set<ReviewerState>([
-  'ready',
-  'configured',
-  'starting',
-  'issued',
-  'waiting',
-  'validating',
-  'usable',
-  'expired',
-  'cancelled',
-  'failed',
-  'interrupted',
-  'host_unsupported',
-  'not_provisioned',
-  'unconfigured',
-  ...reviewerFailureCodes,
-])
+// The checks the reviewer-access schema cannot state (ADR-0091); the decoder
+// has already enforced every field (#1690). A status must fit the slot that
+// carries it (X40-X43 and the three `reviewerStatus` rows).
 const codexStates = new Set<ReviewerState>([
   'ready',
   'configured',
@@ -2196,19 +2166,10 @@ const openRouterStates = new Set<ReviewerState>([
   'usable',
   ...reviewerFailureCodes,
 ])
-const reviewerReasons = new Set<ReviewerReason>([
+const codexProvisioningReasons = new Set<ReviewerReason>([
   'profile_not_provisioned',
   'profile_unreadable',
   'profile_contract_mismatch',
-  'host_evidence_unavailable',
-  'cgroup_limit_below_1_gib',
-  'headroom_below_1_gib',
-  'permission_or_profile',
-  'permission_or_process',
-  'protocol_or_process',
-  'restart_interrupted',
-  'not_selected',
-  ...reviewerFailureCodes,
 ])
 const codexHostReasons = new Set<ReviewerReason>([
   'host_evidence_unavailable',
@@ -2222,157 +2183,72 @@ const codexFailureReasons = new Set<ReviewerReason>([
   'restart_interrupted',
 ])
 const openRouterFailures = new Set<ReviewerState>(reviewerFailureCodes)
+// The OpenRouter model grammar on the status model, which the schema shares
+// with the codex slot, so it cannot carry either pattern (X43).
 const openRouterModel =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$/u
-const reviewerStatus = (value: unknown, engine: 'codex' | 'openrouter') => {
-  if (
-    !record(value) ||
-    !exactKeys(value, ['engine', 'state', 'reason', 'model', 'tier', 'host_headroom_bytes']) ||
-    value.engine !== engine ||
-    !reviewerStates.has(value.state as ReviewerState) ||
-    !(value.reason === null || reviewerReasons.has(value.reason as ReviewerReason))
-  )
-    return false
-  const state = value.state as ReviewerState
-  const reason = value.reason as ReviewerReason | null
+const codexModel = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
+const reviewerStatus = (value: ReviewerEngineStatus, engine: 'codex' | 'openrouter') => {
+  const { state, reason, model, tier } = value
+  if (value.engine !== engine) return false
   if (engine === 'codex')
     return (
       codexStates.has(state) &&
+      (state === 'not_provisioned' ? model === null : model !== null && codexModel.test(model)) &&
+      tier === null &&
       (state === 'not_provisioned'
-        ? value.model === null
-        : typeof value.model === 'string' &&
-          /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.model)) &&
-      value.tier === null &&
-      (value.host_headroom_bytes === null ||
-        (Number.isInteger(value.host_headroom_bytes) && Number(value.host_headroom_bytes) >= 0)) &&
-      (state === 'not_provisioned'
-        ? reason !== null &&
-          ['profile_not_provisioned', 'profile_unreadable', 'profile_contract_mismatch'].includes(
-            reason,
-          )
+        ? reason !== null && codexProvisioningReasons.has(reason)
         : state === 'host_unsupported'
           ? reason !== null && codexHostReasons.has(reason)
           : state === 'failed' || state === 'interrupted'
             ? reason !== null && codexFailureReasons.has(reason)
             : reason === null)
     )
-  const model = typeof value.model === 'string' && openRouterModel.test(value.model)
+  const named = model !== null && openRouterModel.test(model)
   return (
     openRouterStates.has(state) &&
     value.host_headroom_bytes === null &&
     (state === 'unconfigured'
-      ? value.model === null && value.tier === null && reason === null
+      ? model === null && tier === null && reason === null
       : state === 'configured'
-        ? value.tier === null &&
-          ((model && reason === null) || (value.model === null && reason === 'not_selected'))
+        ? tier === null &&
+          ((named && reason === null) || (model === null && reason === 'not_selected'))
         : state === 'usable'
-          ? model && (value.tier === 'free' || value.tier === 'paid') && reason === null
-          : openRouterFailures.has(state) && model && value.tier === null && reason === state)
+          ? named && tier !== null && reason === null
+          : openRouterFailures.has(state) && named && tier === null && reason === state)
   )
 }
 
-const mapDescriptionMetadata = (value: unknown): DescriptionModelMetadata => {
+// A catalogue price is a decimal in [0, 1000000]: the persisted `bounded_price`
+// grammar, which no schema keyword states (X45 and the two price rows).
+const boundedPrice = (price: string) =>
+  price.trim() !== '' &&
+  Number.isFinite(Number(price)) &&
+  Number(price) >= 0 &&
+  Number(price) <= 1000000
+
+const mapDescriptionMetadata = (value: DescriptionModelMetadata): DescriptionModelMetadata => {
   if (
-    !record(value) ||
-    !exactKeys(value, [
-      'model',
-      'observed_at',
-      'prompt_price',
-      'completion_price',
-      'request_price',
-      'text_input',
-      'text_output',
-      'structured_outputs',
-    ]) ||
-    typeof value.model !== 'string' ||
-    !openRouterModel.test(value.model) ||
-    value.text_input !== true ||
-    value.text_output !== true ||
-    value.structured_outputs !== true ||
-    !Number.isSafeInteger(value.observed_at) ||
-    Number(value.observed_at) < 0 ||
-    !['prompt_price', 'completion_price', 'request_price'].every(
-      (key) =>
-        (key === 'request_price' && value[key] === null) ||
-        (typeof value[key] === 'string' &&
-          value[key].length <= 40 &&
-          value[key].trim() !== '' &&
-          Number.isFinite(Number(value[key])) &&
-          Number(value[key]) >= 0 &&
-          Number(value[key]) <= 1000000),
+    ![value.prompt_price, value.completion_price, value.request_price].every(
+      (price) => price === null || boundedPrice(price),
     )
   )
     throw new ApiError(502, 'invalid_description_metadata')
-  return value as unknown as DescriptionModelMetadata
+  return value
 }
 
-const costPrice = (value: unknown): value is string =>
-  typeof value === 'string' &&
-  value.length > 0 &&
-  value.length <= 40 &&
-  value.trim() !== '' &&
-  Number.isFinite(Number(value)) &&
-  Number(value) >= 0 &&
-  Number(value) <= 1000000
-
-const mapCostEvidence = (value: unknown): void => {
-  if (
-    !record(value) ||
-    !exactKeys(value, ['schema_version', 'models']) ||
-    value.schema_version !== 'reviewer-cost-evidence-v2' ||
-    !Array.isArray(value.models) ||
-    value.models.length > 100
-  )
-    throw new ApiError(502, 'invalid_cost_evidence')
+// The measured-cost accounting (X44), its prices (X45) and one row per model
+// and task (X46).
+const mapCostEvidence = ({ models }: ReviewerAccessView['cost_evidence']): void => {
   const seen = new Set<string>()
-  for (const row of value.models) {
-    const run = record(row) ? row.measured_run : undefined
+  for (const row of models) {
     if (
-      !record(row) ||
-      !record(run) ||
-      !exactKeys(run, ['source_head', 'cohort_sha256', 'observed_at']) ||
-      typeof run.source_head !== 'string' ||
-      !/^[0-9a-f]{40}$/.test(run.source_head) ||
-      typeof run.cohort_sha256 !== 'string' ||
-      !/^[0-9a-f]{64}$/.test(run.cohort_sha256) ||
-      !Number.isSafeInteger(run.observed_at) ||
-      Number(run.observed_at) < 0 ||
-      !exactKeys(row, [
-        'model',
-        'task',
-        'requests_selected',
-        'requests_attempted',
-        'requests_completed',
-        'requests_failed',
-        'works',
-        'distinct_images',
-        'total_cost_usd',
-        'per_1000_usd',
-        'measured_run',
-      ]) ||
-      typeof row.model !== 'string' ||
-      !openRouterModel.test(row.model) ||
-      typeof row.task !== 'string' ||
-      !['cover', 'description'].includes(row.task) ||
-      ![
-        'requests_selected',
-        'requests_attempted',
-        'requests_completed',
-        'requests_failed',
-        'works',
-        'distinct_images',
-      ].every(
-        (key) =>
-          Number.isSafeInteger(row[key]) && Number(row[key]) >= 0 && Number(row[key]) <= 100000,
-      ) ||
-      Number(row.requests_attempted) < 1 ||
       row.requests_attempted !== row.requests_selected ||
-      Number(row.requests_completed) + Number(row.requests_failed) !== row.requests_attempted ||
-      Number(row.works) < 1 ||
-      Number(row.works) > Number(row.requests_selected) ||
+      row.requests_completed + row.requests_failed !== row.requests_attempted ||
+      row.works > row.requests_selected ||
       (row.task === 'description' && row.distinct_images !== 0) ||
-      !costPrice(row.total_cost_usd) ||
-      !costPrice(row.per_1000_usd) ||
+      !boundedPrice(row.total_cost_usd) ||
+      !boundedPrice(row.per_1000_usd) ||
       Math.abs(
         Number(row.per_1000_usd) - (Number(row.total_cost_usd) / row.requests_attempted) * 1000,
       ) > 1e-9 ||
@@ -2383,173 +2259,43 @@ const mapCostEvidence = (value: unknown): void => {
   }
 }
 
-export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
-  if (
-    !record(value) ||
-    !exactKeys(value, [
-      'schema_version',
-      'revision',
-      'mapping',
-      'description_mapping',
-      'description_metadata',
-      'cover_metadata',
-      'cost_evidence',
-      'description',
-      'openrouter_key_configured',
-      'codex',
-      'openrouter',
-      'recommendations',
-      'candidates',
-      'free_tier_caveat',
-      'data_use_caveat',
-    ]) ||
-    value.schema_version !== 'reviewer-access-view-v2' ||
-    !Number.isInteger(value.revision) ||
-    typeof value.openrouter_key_configured !== 'boolean' ||
-    !reviewerStatus(value.codex, 'codex') ||
-    !reviewerStatus(value.openrouter, 'openrouter') ||
-    !Array.isArray(value.recommendations) ||
-    value.recommendations.some((item) => typeof item !== 'string' || !openRouterModel.test(item)) ||
-    !Array.isArray(value.candidates) ||
-    value.candidates.some(
-      (item) =>
-        !record(item) ||
-        !exactKeys(item, [
-          'model',
-          'tier',
-          'qualified',
-          'evidence',
-          'requests_per_minute',
-          'requests_per_day',
-        ]) ||
-        typeof item.model !== 'string' ||
-        !openRouterModel.test(item.model) ||
-        typeof item.tier !== 'string' ||
-        !['free', 'paid'].includes(item.tier) ||
-        item.qualified !== false ||
-        item.evidence !== 'catalogue_capability_only' ||
-        !(
-          item.requests_per_minute === null ||
-          (Number.isInteger(item.requests_per_minute) && Number(item.requests_per_minute) > 0)
-        ) ||
-        !(item.requests_per_day === null || typeof item.requests_per_day === 'string'),
-    ) ||
-    !(
-      value.mapping === null ||
-      (record(value.mapping) &&
-        value.mapping.engine === 'codex' &&
-        Object.keys(value.mapping).length === 1) ||
-      (record(value.mapping) &&
-        exactKeys(value.mapping, ['engine', 'model']) &&
-        value.mapping.engine === 'openrouter' &&
-        typeof value.mapping.model === 'string' &&
-        openRouterModel.test(value.mapping.model))
-    ) ||
-    typeof value.free_tier_caveat !== 'string' ||
-    typeof value.data_use_caveat !== 'string'
-  )
+const mapReviewerAccess = (value: ReviewerAccessView): ReviewerAccessView => {
+  if (!reviewerStatus(value.codex, 'codex') || !reviewerStatus(value.openrouter, 'openrouter'))
     throw new ApiError(502, 'invalid_reviewer_access_response')
-  if (
-    value.description !== null &&
-    (!record(value.description) ||
-      !reviewerStatus(
-        value.description,
-        value.description.engine === 'codex' ? 'codex' : 'openrouter',
-      ))
-  )
+  if (value.description !== null && !reviewerStatus(value.description, value.description.engine))
     throw new ApiError(502, 'invalid_description_reviewer')
   mapCostEvidence(value.cost_evidence)
+  // Cover prices are observed for exactly the saved OpenRouter cover model.
   const prices = value.cover_metadata
   if (
     prices !== null &&
-    (!record(prices) ||
-      !exactKeys(prices, [
-        'model',
-        'observed_at',
-        'prompt_price',
-        'completion_price',
-        'image_price',
-        'request_price',
-      ]) ||
-      !record(value.mapping) ||
-      value.mapping.engine !== 'openrouter' ||
+    (value.mapping?.engine !== 'openrouter' ||
       prices.model !== value.mapping.model ||
-      !Number.isSafeInteger(prices.observed_at) ||
-      Number(prices.observed_at) < 0 ||
-      !['prompt_price', 'completion_price', 'image_price', 'request_price'].every(
-        (key) => prices[key] === null || costPrice(prices[key]),
-      ))
+      ![
+        prices.prompt_price,
+        prices.completion_price,
+        prices.image_price,
+        prices.request_price,
+      ].every((price) => price === null || boundedPrice(price)))
   )
     throw new ApiError(502, 'invalid_cover_metadata')
   if (value.description_metadata !== null) mapDescriptionMetadata(value.description_metadata)
-  const mapping = value.description_mapping
-  if (!(
-    mapping === null ||
-    (record(mapping) &&
-      ((mapping.engine === 'codex' && exactKeys(mapping, ['engine'])) ||
-        (mapping.engine === 'openrouter' &&
-          exactKeys(mapping, ['engine', 'model']) &&
-          typeof mapping.model === 'string' &&
-          openRouterModel.test(mapping.model))))
-  ))
-    throw new ApiError(502, 'invalid_description_mapping')
-  return value as unknown as ReviewerAccessView
+  return value
 }
+const reviewerAccess = (value: unknown) => mapReviewerAccess(value as ReviewerAccessView)
 
-export const mapCodexDevice = (value: unknown): CodexDeviceAuthState => {
+// Issued and waiting carry the sign-in prompt, and no other state does (X47).
+const mapCodexDevice = (value: CodexDeviceAuthState): CodexDeviceAuthState => {
+  const prompt = [value.verification_url, value.user_code, value.expires_in_seconds]
   if (
-    !record(value) ||
-    !exactKeys(value, [
-      'state',
-      'verification_url',
-      'user_code',
-      'expires_in_seconds',
-      'failure',
-    ]) ||
-    ![
-      'ready',
-      'configured',
-      'starting',
-      'issued',
-      'waiting',
-      'validating',
-      'usable',
-      'expired',
-      'cancelled',
-      'failed',
-      'interrupted',
-    ].includes(String(value.state)) ||
-    !(
-      value.verification_url === null ||
-      value.verification_url === 'https://auth.openai.com/codex/device'
-    ) ||
-    !(
-      value.user_code === null ||
-      (typeof value.user_code === 'string' &&
-        /^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/u.test(value.user_code))
-    ) ||
-    !(value.expires_in_seconds === null || value.expires_in_seconds === 900) ||
-    !(
-      value.failure === null ||
-      (typeof value.failure === 'string' &&
-        [
-          'permission_or_profile',
-          'permission_or_process',
-          'protocol_or_process',
-          'restart_interrupted',
-        ].includes(value.failure))
-    ) ||
-    (['issued', 'waiting'].includes(String(value.state))
-      ? value.verification_url !== 'https://auth.openai.com/codex/device' ||
-        typeof value.user_code !== 'string' ||
-        value.expires_in_seconds !== 900
-      : value.verification_url !== null ||
-        value.user_code !== null ||
-        value.expires_in_seconds !== null)
+    value.state === 'issued' || value.state === 'waiting'
+      ? prompt.includes(null)
+      : prompt.some((part) => part !== null)
   )
     throw new ApiError(502, 'invalid_codex_device_response')
-  return value as unknown as CodexDeviceAuthState
+  return value
 }
+const codexDevice = (value: unknown) => mapCodexDevice(value as CodexDeviceAuthState)
 const stringValue = (value: unknown, field: string) => {
   if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
   return value
@@ -2641,9 +2387,9 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
 // docs/reference/review-openapi-v1.json would become a second contract and
 // would fail closed on responses the server is entitled to send. The families
 // that are decoded (`DECODED`: preparation, library, attention, the case
-// detail and settings) are checked field by field by their generated decoders
-// instead, and their mappers keep only the checks the schema cannot state
-// (ADR-0091). This
+// detail, settings and reviewer access) are checked field by field by their
+// generated decoders instead, and their mappers keep only the checks the
+// schema cannot state (ADR-0091). This
 // is the one place in the file allowed to widen an unchecked document to a DTO
 // type, which is why the call sites carry no cast of their own.
 // The lint rule below objects that a type parameter used once is an assertion in
