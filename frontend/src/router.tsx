@@ -1358,6 +1358,7 @@ const LibraryRouteComponent = () => {
       onRailRetaining={setRailRetaining}
       pending={query.isPending}
       failed={query.isError}
+      error={query.error}
       retry={() => void query.refetch()}
     />
   )
