@@ -1,0 +1,2133 @@
+"""Aggregate-only replay of the early admission and exclusion gates (#1350).
+
+A workbench instrument, deliberately not part of the installed product: a
+maintainer runs it by hand from a checkout, offline, against COPIES of (or
+read-only access to) a retained snapshot's ``application.sqlite3``. It writes
+nothing and prints one ``admission-rule-ledger-v1`` JSON document, or the
+ledger's Markdown tables, to stdout.
+
+For every gate in the committed catalogue it decides, per snapshot, whether the
+gate can be measured there. A gate whose introducing commit is not an ancestor
+of the snapshot's source revision is ``gate_postdates_source``; one whose
+refused input that source never persisted is ``block_not_retained``. For every
+measurable gate it counts the fields and works the gate's persisted signal
+blocked (per gate and non-exclusive, so each count is a ceiling), and the
+identity precision of loosening the gate, from natural controls: provider
+records the report itself bound to the work (positives) or to another work
+(negatives). Each precision carries the lower limit of a two-sided 95% Wilson
+interval. Rows rank by fields unblocked times that lower limit.
+
+Attention per case (#1310) is read under each snapshot's own source: a child
+``python -I`` process imports only that revision's tree and composes the
+per-case query from its own ``review_sql`` fragments, so no attention
+predicate is copied here.
+
+The output is aggregate-only by construction: every string in it is a
+validated snapshot label, a source revision, a catalogue string written in this
+file, or a member of the product's closed destination and reason vocabularies;
+anything else raises before a byte is written. No title, creator, identifier,
+path, configured connection, library or provider name is ever emitted.
+
+Usage:
+    git archive --format=tar --prefix=src-REV/ REV src scripts | tar -x -C SCRATCH
+    uv run python scripts/admission_rule_ledger.py \
+        --snapshot LABEL /copy/application.sqlite3 REV \
+        --source-root LABEL SCRATCH/src-REV \
+        [--source-report LABEL /copy/cold-start-report.json] \
+        [--snapshot ...] [--repository CHECKOUT] [--format json|markdown] \
+        [--follow-on GATE=ISSUE ...]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import sqlite3
+import subprocess
+import sys
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal, TextIO, cast
+from urllib.parse import quote
+
+from mechanical_librarian.domain import shadow_decision, shadow_outcome
+from mechanical_librarian.domain.metadata_report import TargetDestination, isbn_family
+from mechanical_librarian.domain.proposal_set import _OUTCOME_REASON_SETS
+
+LEDGER_SCHEMA = "admission-rule-ledger-v1"
+WILSON_Z = 1.959964
+# Mirrors of product bounds the replay compares against; a unit test pins each
+# to the product constant so neither can drift silently.
+MAX_ISBN_DISCOVERY_LANES = 8
+
+_LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+_REVISION = re.compile(r"^[0-9a-f]{40}$")
+_GATE_ID = re.compile(r"^[A-Z][0-9]{1,2}$")
+
+Status = Literal["measurable", "gate_postdates_source", "block_not_retained"]
+Control = Literal["alternative", "cover_candidates", "not_identity", "not_retained"]
+Ancestry = Callable[[str, str], bool]
+
+_UNBLOCKED_OUTCOMES = frozenset({"propose_change", "acceptable_choice", "keep"})
+_POSITIVE_RELATIONS = frozenset({"accepted", "associated", "recording_associated"})
+_CONTRADICTION_EVIDENCE = "edition_work_relation_contradiction"
+_REFUSING_DISPOSITIONS = frozenset({"abstention", "manual", "conflict", "unsupported"})
+_EPUB_INAPPLICABLE = frozenset({"narrators", "explicit"})
+_DESTINATIONS = tuple(value.value for value in TargetDestination)
+_ALL = frozenset(_DESTINATIONS)
+_SAFETY_CAUSE = "automatic_safety_suspended"
+_OTHER_REASON = "other_reason"
+_MEDIA = ("audiobook", "ebook")
+_REQUIRED_TABLES = frozenset(
+    {
+        "current_review_packages",
+        "review_cases",
+        "metadata_reports",
+        "shadow_decision_outcomes",
+        "cover_considerations",
+        "current_cover_considerations",
+    }
+)
+_CLAIM_DESTINATIONS: dict[str, frozenset[str]] = {
+    "title": frozenset({"title"}),
+    "subtitle": frozenset({"subtitle"}),
+    "creator": frozenset({"authors"}),
+    "contributor": frozenset({"narrators"}),
+    "series": frozenset({"series"}),
+    "series_sequence": frozenset({"series"}),
+    "description": frozenset({"description"}),
+    "publisher": frozenset({"publisher"}),
+    "imprint": frozenset({"publisher"}),
+    "publication_date": frozenset({"publishedDate", "publishedYear"}),
+    "date_event": frozenset({"publishedDate", "publishedYear"}),
+    "isbn": frozenset({"isbn"}),
+    "asin": frozenset({"asin"}),
+    "language": frozenset({"language"}),
+    "subject": frozenset({"genres", "tags"}),
+    "genre": frozenset({"genres"}),
+    "tag": frozenset({"tags"}),
+}
+_BOUNDED_STATES = frozenset({"oversized", "unsupported"})
+_COVER_SOURCE_REFUSALS = frozenset(
+    {"rejected", "truncated", "oversized", "unsupported_format", "invalid_declaration"}
+)
+_PREVIEW_CAP_OMISSIONS = frozenset({"shortlist_limit", "aggregate_byte_limit"})
+
+
+class Refusal(Exception):
+    """A fixed refusal; the message never carries a path, value or exception text."""
+
+    def __init__(self, message: str, code: int = 2) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+# ---------------------------------------------------------------------------
+# JSON accessors: report documents are read as untyped JSON, in memory only.
+
+
+def _dict(value: object) -> dict[str, object]:
+    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
+
+
+def _list(value: object) -> list[object]:
+    return cast("list[object]", value) if isinstance(value, list) else []
+
+
+def _dicts(value: object) -> list[dict[str, object]]:
+    return [_dict(item) for item in _list(value) if isinstance(item, dict)]
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _document(value: object) -> dict[str, object]:
+    if isinstance(value, str):
+        try:
+            return _dict(json.loads(value))
+        except ValueError:
+            return {}
+    return _dict(value)
+
+
+# ---------------------------------------------------------------------------
+# One current review case, as the signals read it.
+
+
+@dataclass(slots=True)
+class Case:
+    medium: str
+    epub: bool
+    report: dict[str, object]
+    results: dict[str, dict[str, object]]
+    shadow: dict[str, set[tuple[str, str]]]
+    cover_candidates: list[dict[str, object]]
+    cover_omissions: set[str]
+    # cover identity candidate reference -> the provider records it pictures
+    cover_records: dict[str, frozenset[str]] = field(default_factory=dict)
+    # provider record identity -> (provider ordinal, work identity, contradicted)
+    records: dict[str, tuple[int, str, bool]] = field(default_factory=dict)
+    references: dict[str, str] = field(default_factory=dict)
+    lane_kinds: dict[str, set[str]] = field(default_factory=dict)
+    labels: dict[str, str] = field(default_factory=dict)
+
+    def applicable(self, destinations: frozenset[str]) -> frozenset[str]:
+        present = destinations & frozenset(self.results)
+        return present - _EPUB_INAPPLICABLE if self.epub else present
+
+    def reasons(self, destination: str) -> frozenset[str]:
+        result = self.results.get(destination, {})
+        stated = {
+            value for value in _list(result.get("reasons")) if isinstance(value, str)
+        }
+        refused = {
+            code
+            for disposition, code in self.shadow.get(destination, set())
+            if disposition in _REFUSING_DISPOSITIONS
+        }
+        return frozenset(stated | refused)
+
+    def blocked(self, destination: str) -> bool:
+        outcome = _text(self.results.get(destination, {}).get("outcome"))
+        return outcome is not None and outcome not in _UNBLOCKED_OUTCOMES
+
+    def providers(self) -> list[dict[str, object]]:
+        return _dicts(self.report.get("providers"))
+
+    def lanes(self) -> list[dict[str, object]]:
+        return [
+            lane
+            for provider in self.providers()
+            for lane in _dicts(provider.get("lanes"))
+        ]
+
+    def diagnostics(self) -> list[dict[str, object]]:
+        return [
+            diagnostic
+            for owner in (*self.providers(), *self.lanes())
+            for diagnostic in _dicts(owner.get("diagnostics"))
+        ]
+
+    def local_claims(self) -> list[dict[str, object]]:
+        return _dicts(_dict(self.report.get("local")).get("claims"))
+
+    def identifier_evidence(self) -> list[dict[str, object]]:
+        return _dicts(self.report.get("identifier_evidence"))
+
+    def resolve(self, references: Iterable[object]) -> frozenset[str]:
+        found: set[str] = set()
+        for reference in references:
+            if not isinstance(reference, str):
+                continue
+            if reference in self.records:
+                found.add(reference)
+            elif reference in self.references:
+                found.add(self.references[reference])
+        return frozenset(found)
+
+
+def _build_case(
+    case_document: dict[str, object],
+    report: dict[str, object],
+    shadow_document: dict[str, object],
+    consideration: dict[str, object],
+) -> Case:
+    results: dict[str, dict[str, object]] = {}
+    for result in _dicts(case_document.get("results")):
+        destination = _text(result.get("destination"))
+        if destination is not None:
+            results[destination] = result
+    shadow: dict[str, set[tuple[str, str]]] = {}
+    for outcome in _dicts(shadow_document.get("outcomes")):
+        destination = _text(outcome.get("destination"))
+        disposition = _text(outcome.get("disposition"))
+        code = _text(outcome.get("reason_code"))
+        if destination and disposition and code:
+            shadow.setdefault(destination, set()).add((disposition, code))
+    identity = _document(consideration.get("identity_document"))
+    packet = _document(consideration.get("packet_document"))
+    omissions = {
+        reason
+        for owner in (consideration, packet)
+        for omission in _dicts(owner.get("omissions"))
+        if (reason := _text(omission.get("reason"))) is not None
+    }
+    file_facts = _dict(report.get("file"))
+    case = Case(
+        medium="ebook" if report.get("audio") is None else "audiobook",
+        epub=file_facts.get("format") == "epub",
+        report=report,
+        results=results,
+        shadow=shadow,
+        cover_candidates=_dicts(identity.get("candidates")),
+        cover_omissions=omissions,
+    )
+    _index_records(case)
+    _index_cover_records(case, consideration)
+    return case
+
+
+def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
+    """Bind each cover candidate to the provider records whose covers it shows."""
+    editions: dict[str, set[str]] = {}
+    for cover in _dicts(case.report.get("covers")):
+        artifact = _text(_dict(cover.get("artifact")).get("artifact_id"))
+        edition = _text(_dict(cover.get("provenance")).get("edition_identity"))
+        if artifact is not None and edition is not None and edition in case.records:
+            editions.setdefault(artifact, set()).add(edition)
+    for candidate in _dicts(consideration.get("candidates")):
+        reference = _text(candidate.get("reference"))
+        artifact = _text(candidate.get("artifact_id"))
+        if reference is not None and artifact is not None:
+            case.cover_records[reference] = frozenset(editions.get(artifact, set()))
+
+
+def _index_records(case: Case) -> None:
+    """Index provider records and label each one from the report's own bindings."""
+    names: dict[str, int] = {}
+    for ordinal, provider in enumerate(case.providers()):
+        name = _text(provider.get("provider"))
+        if name is not None:
+            names.setdefault(name, ordinal)
+        for candidate in _dicts(provider.get("candidates")):
+            identity = _text(candidate.get("identity"))
+            if identity is None:
+                continue
+            contradicted = any(
+                evidence.get("kind") == _CONTRADICTION_EVIDENCE
+                for evidence in _dicts(candidate.get("evidence"))
+            )
+            case.records[identity] = (
+                ordinal,
+                _text(candidate.get("work_identity")) or "",
+                contradicted,
+            )
+            for claim in _dicts(candidate.get("claims")):
+                reference = _text(claim.get("reference"))
+                if reference is not None:
+                    case.references[reference] = identity
+        for lane in _dicts(provider.get("lanes")):
+            kind = _text(lane.get("kind")) or ""
+            for candidate in _dicts(lane.get("candidates")):
+                edition = _text(candidate.get("edition_identity"))
+                if edition is not None:
+                    case.lane_kinds.setdefault(edition, set()).add(kind)
+    positive: set[str] = set()
+    unrelated: set[str] = set()
+    positive_works: dict[int, set[str]] = {}
+    for evidence in case.identifier_evidence():
+        bound = _text(evidence.get("candidate_identity"))
+        bound = bound if bound is not None and bound in case.records else None
+        reference = _text(evidence.get("reference"))
+        if reference is not None and bound is not None:
+            case.references[reference] = bound
+        relation = _text(evidence.get("relation"))
+        if relation in _POSITIVE_RELATIONS:
+            if bound is not None:
+                positive.add(bound)
+            owner = names.get(_text(evidence.get("provider")) or "")
+            work = _text(evidence.get("work_identity"))
+            if owner is not None and work:
+                positive_works.setdefault(owner, set()).add(work)
+        elif relation == "unrelated" and bound is not None:
+            unrelated.add(bound)
+    for identity in positive:
+        ordinal, work, _ = case.records[identity]
+        if work:
+            positive_works.setdefault(ordinal, set()).add(work)
+    for identity, (ordinal, work, contradicted) in case.records.items():
+        works = positive_works.get(ordinal, set())
+        if identity in unrelated or contradicted:
+            label = "negative"
+        elif identity in positive or (work and work in works):
+            label = "positive"
+        elif works:
+            label = "negative"
+        else:
+            label = "unlabelled"
+        case.labels[identity] = label
+
+
+# ---------------------------------------------------------------------------
+# Signals. Each returns the destinations its persisted signal is on; the
+# blocked test (outcome) and medium applicability are applied by the counter.
+
+Signal = Callable[[Case], frozenset[str]]
+CoverPredicate = Callable[[Case, dict[str, object]], bool]
+
+
+def _reason(codes: Iterable[str], destinations: frozenset[str] = _ALL) -> Signal:
+    wanted = frozenset(codes)
+
+    def signal(case: Case) -> frozenset[str]:
+        return frozenset(
+            destination
+            for destination in case.applicable(destinations)
+            if case.reasons(destination) & wanted
+        )
+
+    return signal
+
+
+def _shadow_disposition(disposition: str, codes: Iterable[str]) -> Signal:
+    wanted = frozenset(codes)
+
+    def signal(case: Case) -> frozenset[str]:
+        return frozenset(
+            destination
+            for destination in case.applicable(_ALL)
+            if any(
+                held == disposition and code in wanted
+                for held, code in case.shadow.get(destination, set())
+            )
+        )
+
+    return signal
+
+
+def _report(predicate: Callable[[Case], bool], destinations: frozenset[str]) -> Signal:
+    def signal(case: Case) -> frozenset[str]:
+        return case.applicable(destinations) if predicate(case) else frozenset()
+
+    return signal
+
+
+def _either(*signals: Signal) -> Signal:
+    def signal(case: Case) -> frozenset[str]:
+        return frozenset().union(*(each(case) for each in signals))
+
+    return signal
+
+
+def _cover(predicate: CoverPredicate) -> Signal:
+    def signal(case: Case) -> frozenset[str]:
+        if any(predicate(case, candidate) for candidate in case.cover_candidates):
+            return case.applicable(frozenset({"cover"}))
+        return frozenset()
+
+    return signal
+
+
+def _never(_case: Case) -> frozenset[str]:
+    return frozenset()
+
+
+def _isbn_claims(case: Case) -> list[dict[str, object]]:
+    return [claim for claim in case.local_claims() if claim.get("kind") == "isbn"]
+
+
+def _valid_families(case: Case) -> set[str]:
+    families: set[str] = set()
+    for claim in _isbn_claims(case):
+        canonical = _text(claim.get("canonical"))
+        if claim.get("state") == "valid" and canonical is not None:
+            family = isbn_family(canonical)
+            if family is not None:
+                families.add(family)
+    return families
+
+
+def _usable_families(case: Case) -> set[str]:
+    """The ISBN-first eligibility rule (#959) replayed on the stored claims."""
+    families: set[str] = set()
+    for claim in _isbn_claims(case):
+        canonical = _text(claim.get("canonical"))
+        if (
+            canonical is not None
+            and claim.get("applicability") in {"ebook", "unknown"}
+            and claim.get("basis") == "opening_matter"
+            and not claim.get("rear_provenance")
+        ):
+            family = isbn_family(canonical)
+            if family is not None:
+                families.add(family)
+    return families
+
+
+def _malformed_isbn(case: Case) -> bool:
+    return any(
+        claim.get("state") == "malformed" for claim in _isbn_claims(case)
+    ) or any(
+        evidence.get("relation") == "invalid" for evidence in case.identifier_evidence()
+    )
+
+
+def _unresolved_isbn(case: Case) -> bool:
+    return any(
+        evidence.get("relation") == "unresolved"
+        for evidence in case.identifier_evidence()
+    )
+
+
+def _unscoped_isbn(case: Case) -> bool:
+    return not any(
+        evidence.get("relation") == "accepted"
+        for evidence in case.identifier_evidence()
+    ) and any(
+        claim.get("state") == "valid"
+        and claim.get("applicability") in {"print", "ambiguous", "unknown"}
+        for claim in _isbn_claims(case)
+    )
+
+
+def _isbn_first_ineligible(case: Case) -> bool:
+    return (
+        case.epub and bool(_valid_families(case)) and len(_usable_families(case)) != 1
+    )
+
+
+def _diagnostic(stage: str, category: str) -> Callable[[Case], bool]:
+    def predicate(case: Case) -> bool:
+        return any(
+            diagnostic.get("stage") == stage and diagnostic.get("category") == category
+            for diagnostic in case.diagnostics()
+        )
+
+    return predicate
+
+
+def _lane_status(status: str) -> Callable[[Case], bool]:
+    def predicate(case: Case) -> bool:
+        return any(lane.get("status") == status for lane in case.lanes()) or any(
+            provider.get("status") == status for provider in case.providers()
+        )
+
+    return predicate
+
+
+def _enrichment_overflow(case: Case) -> bool:
+    return any(
+        bool(provider.get("edition_enrichment_overflow"))
+        for provider in case.providers()
+    )
+
+
+def _recording_refused(case: Case) -> bool:
+    return any(
+        _dict(lane.get("dispatch")).get("outcome") in {"refused", "empty_or_refused"}
+        for lane in case.lanes()
+    )
+
+
+def _deadline_starved(case: Case) -> bool:
+    accounted = any(
+        isinstance(
+            count := _dict(provider.get("request_accounting")).get(
+                "undispatched_incomplete"
+            ),
+            int,
+        )
+        and count > 0
+        for provider in case.providers()
+    )
+    return accounted or _diagnostic("request", "timeout")(case)
+
+
+def _rear_budget(case: Case) -> bool:
+    return "rear_resource_limit" in _list(
+        _dict(case.report.get("local")).get("reasons")
+    )
+
+
+def _chapters_capped(case: Case) -> bool:
+    audio = _dict(case.report.get("audio"))
+    omitted = audio.get("chapter_rows_omitted")
+    return audio.get("chapters_truncated") is True or (
+        isinstance(omitted, int) and not isinstance(omitted, bool) and omitted > 0
+    )
+
+
+def _isbn_fan_out(case: Case) -> bool:
+    return len(_valid_families(case)) > MAX_ISBN_DISCOVERY_LANES
+
+
+def _bounded_text(case: Case) -> frozenset[str]:
+    kinds = {
+        kind
+        for owner in (*_dicts(case.report.get("field_results")), *case.local_claims())
+        if owner.get("state") in _BOUNDED_STATES
+        and (kind := _text(owner.get("kind"))) is not None
+    }
+    destinations = frozenset().union(
+        *(_CLAIM_DESTINATIONS.get(kind, frozenset()) for kind in kinds)
+    )
+    return case.applicable(destinations)
+
+
+def _cover_source_refused(case: Case) -> frozenset[str]:
+    refused = any(
+        cover.get("state") in _COVER_SOURCE_REFUSALS
+        for cover in _dicts(case.report.get("covers"))
+    ) or any(
+        reason.removeprefix("source_") in _COVER_SOURCE_REFUSALS
+        for reason in case.cover_omissions
+    )
+    return case.applicable(frozenset({"cover"})) if refused else frozenset()
+
+
+def _preview_capped(case: Case) -> frozenset[str]:
+    capped = bool(case.cover_omissions & _PREVIEW_CAP_OMISSIONS)
+    return case.applicable(frozenset({"cover"})) if capped else frozenset()
+
+
+def _candidate_outcome(*outcomes: str) -> CoverPredicate:
+    wanted = frozenset(outcomes)
+
+    def predicate(_case: Case, candidate: dict[str, object]) -> bool:
+        return candidate.get("outcome") in wanted
+
+    return predicate
+
+
+def _pictured(case: Case, candidate: dict[str, object]) -> frozenset[str]:
+    return case.cover_records.get(
+        _text(candidate.get("candidate_reference")) or "", frozenset()
+    )
+
+
+def _work_search_unknown(case: Case, candidate: dict[str, object]) -> bool:
+    if candidate.get("outcome") != "unknown":
+        return False
+    records = _pictured(case, candidate)
+    return bool(records) and all(
+        case.lane_kinds.get(record, set()) == {"work"} for record in records
+    )
+
+
+def _audiobook_unknown(case: Case, candidate: dict[str, object]) -> bool:
+    return case.medium == "audiobook" and candidate.get("outcome") == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# The gate catalogue. Every string here is a closed output string.
+
+
+@dataclass(frozen=True, slots=True)
+class Gate:
+    gate_id: str
+    family: str
+    gate: str
+    location: str
+    origin: str
+    corpus: str
+    introduced_in: str
+    destinations: str
+    loosened: str
+    control: Control
+    signal: Signal = _never
+    retained: bool = True
+    cover_predicate: CoverPredicate | None = None
+    medium: str | None = None
+    disposition: str = "kept"
+    ranked: bool = True
+
+
+_NOT_RECORDED = "not recorded"
+_LANE = "every destination its provider lanes feed"
+_ISBN = frozenset({"isbn"})
+_COVER = frozenset({"cover"})
+
+CATALOGUE: tuple[Gate, ...] = (
+    Gate(
+        "I1",
+        "ISBN acceptance",
+        "ISBN form and checksum",
+        "domain/metadata_report.py _valid_isbn, isbn_family; epub_opening.py",
+        "#291 (b48aae94); identifier_validity_invalid #816 (e3df6c21)",
+        _NOT_RECORDED,
+        "b48aae94fef6a603f106c49e13ca16f6cf536102",
+        "isbn",
+        "admit an ISBN whose form or checksum fails",
+        "not_identity",
+        _either(
+            _report(_malformed_isbn, _ISBN),
+            _reason({"identifier_validity_invalid"}, _ISBN),
+        ),
+    ),
+    Gate(
+        "I2",
+        "ISBN acceptance",
+        "ISBN occurrence scoping (label-only, owned by another identifier)",
+        "adapters/evidence_extractors/epub_opening.py",
+        "#385 (a70791af)",
+        _NOT_RECORDED,
+        "a70791afefcd7362a8f9fd4d5becaf9fe67fe08e",
+        "isbn",
+        "admit an ISBN occurrence another identifier owns",
+        "not_retained",
+        retained=False,
+    ),
+    Gate(
+        "I3",
+        "ISBN acceptance",
+        "Local ISBN acceptance classes; anything else stays unresolved",
+        "domain/metadata_report.py derive_identifier_evidence; domain/proposal_set.py",
+        "#333 (f1dd28f5)",
+        "accepted-evidence precision 38/40 (95%), recall 41/46",
+        "f1dd28f5055df774c3127a0b56b313aae80a1387",
+        "isbn",
+        "admit the first-ranked alternative of an unresolved local ISBN",
+        "alternative",
+        _either(
+            _reason({"identifier_applicability_unresolved"}, _ISBN),
+            _report(_unresolved_isbn, _ISBN),
+        ),
+        disposition="already filed as #1356 (closed)",
+    ),
+    Gate(
+        "I4",
+        "ISBN acceptance",
+        "Provider ISBN family applicability (print, ambiguous, unknown scope)",
+        "application/metadata_report.py provider_isbn_applicability",
+        "#388 (999edaf0)",
+        _NOT_RECORDED,
+        "999edaf0169ddf2734473423a3a5d5ce31a8a15a",
+        "isbn",
+        "admit the first-ranked alternative where only a print, ambiguous or unknown-scope "
+        "local ISBN exists",
+        "alternative",
+        _report(_unscoped_isbn, _ISBN),
+    ),
+    Gate(
+        "I5",
+        "ISBN acceptance",
+        "ISBN-first lane eligibility (opening-matter, ebook or unknown, no rear provenance, "
+        "exactly one family)",
+        "application/metadata_report.py usable_isbn_families, metadata_lookup",
+        "#959 (9640228b)",
+        _NOT_RECORDED,
+        "9640228b8c369f0b6e2e0dc2839bb2aac883abee",
+        _LANE,
+        "query by any valid local ISBN family",
+        "not_retained",
+        _report(_isbn_first_ineligible, _ALL),
+    ),
+    Gate(
+        "I6",
+        "ISBN acceptance",
+        "Competing ISBNs need a verified manifestation",
+        "domain/proposal_set.py",
+        "#979 (8056f4d3); ADR-0080",
+        "development 42/42, sealed holdout 30/30",
+        "8056f4d34500e1fab196be29dda290aba7a563cd",
+        "isbn",
+        "admit the first-ranked competing ISBN",
+        "alternative",
+        _reason({"manifestation_verification_required"}, _ISBN),
+    ),
+    Gate(
+        "I7",
+        "ISBN acceptance",
+        "Audiobook ISBN refusal",
+        "domain/rich_metadata_preview.py _audiobook_isbn_refusal",
+        "#1059 (ed997a7f)",
+        _NOT_RECORDED,
+        "ed997a7f5606e9e58f790d3be291d790513fcb79",
+        "isbn",
+        "admit the first-ranked audiobook ISBN without a recording association",
+        "alternative",
+        _reason(
+            {
+                "source_value_malformed_or_incomplete",
+                "source_values_conflict",
+                "source_value_insufficient_association",
+                "source_unavailable",
+                "source_value_absent",
+            },
+            _ISBN,
+        ),
+        medium="audiobook",
+    ),
+    Gate(
+        "W1",
+        "Work and edition binding",
+        "Exact work-identity admission (title and creators, transformation rules, "
+        "decoration fail-closed)",
+        "domain/work_identity.py; domain/metadata_report.py",
+        "#870/#916 (a0958ac2); diagnostic #1268 (a4315d6a); ADR-0018, ADR-0067, ADR-0068",
+        "89-case adjudicated corpus, zero false admissions",
+        "a0958ac23e49b3c77377b1db030aa2c588e519fb",
+        _LANE,
+        "admit the refused work candidates",
+        "not_retained",
+        _report(_diagnostic("identity", "work_identity_refused"), _ALL),
+        disposition="already filed as #1355",
+    ),
+    Gate(
+        "W2",
+        "Work and edition binding",
+        "Work-identity contradiction (edition against work, ISBN against target work)",
+        "domain/metadata_report.py",
+        "#1014 (caba7b6e)",
+        _NOT_RECORDED,
+        "caba7b6ee4f3da93e6edb65f836bfdc45bed89a0",
+        _LANE,
+        "admit a contradicted work candidate",
+        "not_retained",
+        retained=False,
+    ),
+    Gate(
+        "W3",
+        "Work and edition binding",
+        "Variant veto",
+        "domain/metadata_report.py",
+        "#916 (a0958ac2)",
+        "as W1",
+        "a0958ac23e49b3c77377b1db030aa2c588e519fb",
+        _LANE,
+        "admit a vetoed variant",
+        "not_retained",
+        retained=False,
+    ),
+    Gate(
+        "W4",
+        "Work and edition binding",
+        "Adapter work and edition candidate admission",
+        "adapters/providers/open_library_metadata.py; adapters/providers/hardcover_metadata.py",
+        "#348 (65a884c9), #570 (e7862167)",
+        _NOT_RECORDED,
+        "65a884c9b5c178229b8da9906abc6414a02e91be",
+        _LANE,
+        "admit the rows an adapter refuses",
+        "not_retained",
+        retained=False,
+    ),
+    Gate(
+        "W5",
+        "Work and edition binding",
+        "Target-work representation for work-scope fields",
+        "domain/proposal_set.py provider_candidate_represents_target_work",
+        "#972 (da35e6df)",
+        "7 correct decisions per tag option, 100%, 49 works",
+        "da35e6df4d56c975d496efffeb20df3a76e82289",
+        "work-scope destinations",
+        "admit the first-ranked alternative without target-work proof",
+        "alternative",
+        _reason({"target_work_applicability_unproved", "target_work_contradicted"}),
+        disposition="already filed as #1355",
+    ),
+    Gate(
+        "W6",
+        "Work and edition binding",
+        "Recording binding: runtime veto, tight band, target-recording representation",
+        "domain/audiobook_corroboration.py; domain/proposal_set.py",
+        "#1045 (0a2a193a), #1059 (ed997a7f); ADR-0064",
+        "12 books, 4/4/4 development, confirmation, holdout",
+        "0a2a193a6645e3f7529f626ddf9abd957ae01251",
+        _LANE,
+        "admit the products a recording ladder refused",
+        "not_retained",
+        _report(_recording_refused, _ALL),
+        medium="audiobook",
+    ),
+    Gate(
+        "W7",
+        "Work and edition binding",
+        "Corroborated band-agreeing rule and its permission",
+        "domain/audiobook_corroboration.py; application/metadata_report.py",
+        "#1463 (cca9067c), #1465 (120e60a4)",
+        "14 of 42 probe items rescued; 0 different-work admissions in 57,570 cross-item pairs",
+        "cca9067cb9f94b9ef4899eda59fd724d7df3d988",
+        _LANE,
+        "admit a band-agreeing product before every exact path refused",
+        "not_retained",
+        retained=False,
+        medium="audiobook",
+    ),
+    Gate(
+        "W8",
+        "Work and edition binding",
+        "Alternative WORK lane permission",
+        "application/metadata_report.py alternative_work_lane_permitted",
+        "#1269 (906e9a2a)",
+        _NOT_RECORDED,
+        "906e9a2a3bd5324e81b57cf27336fb7d6c20dbab",
+        _LANE,
+        "run the alternative WORK lane after any asserted outcome",
+        "not_retained",
+        retained=False,
+        medium="audiobook",
+    ),
+    Gate(
+        "W9",
+        "Work and edition binding",
+        "Series identity match for series fill",
+        "domain/metadata_report.py; domain/rich_metadata_preview.py",
+        "#998 (dc8de6f5); ADR-0070",
+        _NOT_RECORDED,
+        "dc8de6f51417c209aa95941864273a9fe8ebbac9",
+        "series",
+        "admit the first-ranked series alternative",
+        "alternative",
+        _reason(
+            {"series_conflicting_membership", "series_membership_incomplete"},
+            frozenset({"series"}),
+        ),
+    ),
+    Gate(
+        "C1",
+        "Cover identity classifier",
+        "Classifier outcomes (unknown, conflict block election)",
+        "application/cover_identity.py classify_cover_identity",
+        "#577 (f7e974d0), #588 (40a97a54); ADR-0046, ADR-0047, ADR-0059",
+        "96/99 exact agreement; plausible 18/21, none falsely plausible",
+        "40a97a54af7810b0efb052f6d2eb7bdb2dcdb143",
+        "cover",
+        "admit unknown and conflict cover candidates",
+        "cover_candidates",
+        _cover(_candidate_outcome("unknown", "conflict")),
+        cover_predicate=_candidate_outcome("unknown", "conflict"),
+        disposition="already filed as #1355",
+    ),
+    Gate(
+        "C2",
+        "Cover identity classifier",
+        "Plausible only for ISBN-search records",
+        "application/cover_identity.py",
+        "#577 (f7e974d0), #588 (40a97a54)",
+        "not measured at origin",
+        "40a97a54af7810b0efb052f6d2eb7bdb2dcdb143",
+        "cover",
+        "admit unknown cover candidates reached only by work search",
+        "cover_candidates",
+        _cover(_work_search_unknown),
+        cover_predicate=_work_search_unknown,
+        disposition="already filed as #1380",
+    ),
+    Gate(
+        "C3",
+        "Cover identity classifier",
+        "Audiobook cross-authority perceptual-hash corroboration",
+        "application/cover_identity.py _cover_corroboration_reasons",
+        "#948 (6423552f); ADR-0064",
+        _NOT_RECORDED,
+        "6423552fa6315ebae8fb632c437f56b8eaaa43ad",
+        "cover",
+        "admit an audiobook cover candidate one authority pictures",
+        "cover_candidates",
+        _cover(_audiobook_unknown),
+        cover_predicate=_audiobook_unknown,
+        medium="audiobook",
+    ),
+    Gate(
+        "C4",
+        "Cover identity classifier",
+        "Cover source admission (media type, byte bound, declaration validity)",
+        "adapters/providers/remote_cover.py; adapters/evidence_extractors/epub_cover.py",
+        "#298 (cbd2a835)",
+        _NOT_RECORDED,
+        "cbd2a835b59321ff0536367f7ef8ec9361673648",
+        "cover",
+        "admit a refused, truncated, oversized or undeclared cover source",
+        "not_identity",
+        _cover_source_refused,
+        disposition="already filed as #1357 (closed)",
+    ),
+    Gate(
+        "C5",
+        "Cover identity classifier",
+        "Audiobook cover withheld",
+        "domain/proposal_set.py",
+        "#985 (0ce358e9)",
+        _NOT_RECORDED,
+        "0ce358e9d4796fbab26aab771850d2e76ade05d6",
+        "cover",
+        "admit the first-ranked withheld audiobook cover",
+        "alternative",
+        _reason({"audiobook_cover_withheld"}, _COVER),
+        medium="audiobook",
+    ),
+    Gate(
+        "X1",
+        "Candidate exclusions",
+        "Candidate limit (an over-limit lane keeps no candidate)",
+        "domain/metadata_report.py MAX_CANDIDATES",
+        "#297 (f564e598)",
+        _NOT_RECORDED,
+        "f564e5987ed68f7f978f62e4d852ba5f8181d941",
+        _LANE,
+        "keep the first five candidates of an over-limit lane",
+        "not_retained",
+        _report(_lane_status("candidate_limit_exceeded"), _ALL),
+    ),
+    Gate(
+        "X2",
+        "Candidate exclusions",
+        "Edition-enrichment overflow keeps a work-only witness",
+        "domain/metadata_report.py",
+        "#621 (254ed08f); ADR-0056",
+        _NOT_RECORDED,
+        "254ed08fe83d3f8375b1f2729919093ecddfa241",
+        _LANE,
+        "keep the overflowing editions",
+        "not_retained",
+        _report(_enrichment_overflow, _ALL),
+    ),
+    Gate(
+        "X3",
+        "Candidate exclusions",
+        "Wrong-language, control-number and untidy-author value exclusion",
+        "domain/provider_value_language.py; domain/proposal_set.py",
+        "#1497/#1560 (ce3a172d)",
+        _NOT_RECORDED,
+        "ce3a172d7aff06feacd604e98770422fb39a67a8",
+        "language-bearing and creator destinations",
+        "admit the excluded values",
+        "not_retained",
+        retained=False,
+    ),
+    Gate(
+        "X4",
+        "Candidate exclusions",
+        "Generic provider subtitle",
+        "domain/proposal_set.py",
+        "#817 (660fac2f)",
+        "not recorded (corpus private)",
+        "660fac2f11f01028f3a9b8ca407efc799209951a",
+        "subtitle",
+        "admit the first-ranked generic subtitle",
+        "alternative",
+        _reason({"generic_provider_subtitle"}),
+    ),
+    Gate(
+        "X5",
+        "Candidate exclusions",
+        "Redundant publication context",
+        "domain/proposal_set.py",
+        "#818 (e28584e6)",
+        _NOT_RECORDED,
+        "e28584e6fa36fd280e7321452646fa824e7a761b",
+        "publication destinations",
+        "admit the first-ranked redundant publication value",
+        "alternative",
+        _reason({"redundant_publication_context"}),
+    ),
+    Gate(
+        "T1",
+        "Title and creator comparison",
+        "Closed title and complete-creator agreement",
+        "domain/field_value_comparison.py canonical_text, values_match",
+        "#414 (3586e1be), #815 (ce76c7fd); ADR-0018",
+        _NOT_RECORDED,
+        "3586e1be7beb8bb413d4eabcec7e15c389c8645c",
+        "title, subtitle, authors and other compared destinations",
+        "admit the first-ranked of competing values",
+        "alternative",
+        _reason({"competing_evidence"}),
+    ),
+    Gate(
+        "T2",
+        "Title and creator comparison",
+        "Evidence-led title identity key and ISBN-title material conflict",
+        "domain/field_value_comparison.py; domain/proposal_set.py",
+        "#1040 (c1963d97); ADR-0075",
+        "constructor controls 50/50 and 75/75",
+        "c1963d9714cc04d9e22db0c137e4685d2e55ecf6",
+        "title",
+        "admit the first-ranked title despite a material ISBN-title conflict",
+        "alternative",
+        _reason({"isbn_title_material_conflict"}),
+    ),
+    Gate(
+        "T3",
+        "Title and creator comparison",
+        "Decoration-equivalence election and its dissent reasons",
+        "domain/proposal_set.py",
+        "#981 (c843ea7f); ADR-0067",
+        "sealed 89-case admission corpus, 0 false admissions; 1,988-report archived replay",
+        "c843ea7fb8be5a97dd6414410d4a30089ee7fc57",
+        "title, subtitle",
+        "admit the first-ranked title despite decoration dissent",
+        "alternative",
+        _reason(
+            {
+                "decoration_tidy_series_unpreserved",
+                "decoration_equivalence_provider_dissent",
+                "decoration_equivalence_decorated_consensus",
+            }
+        ),
+    ),
+    Gate(
+        "T4",
+        "Title and creator comparison",
+        "Latin combining-mark work identity",
+        "domain/work_identity.py",
+        "#982 (f9be2ca2); ADR-0068",
+        _NOT_RECORDED,
+        "f9be2ca2be113ef5e6172b63985baf397783a517",
+        _LANE,
+        "admit a combining-mark variant work",
+        "not_retained",
+        retained=False,
+    ),
+    Gate(
+        "A1",
+        "Applicability and abstention",
+        "Replace only with positive preservation evidence",
+        "domain/proposal_set.py",
+        "#351 (d35215e8)",
+        "54 exact replays, zero measured systemic false positives",
+        "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
+        "every proposable destination",
+        "admit the first-ranked alternative without preservation evidence",
+        "alternative",
+        _reason({"no_positive_preservation_evidence"}),
+    ),
+    Gate(
+        "A2",
+        "Applicability and abstention",
+        "Independent corroboration required",
+        "domain/proposal_set.py",
+        "#351 (d35215e8)",
+        "as A1",
+        "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
+        "every proposable destination",
+        "admit the first-ranked single-source alternative",
+        "alternative",
+        _reason({"insufficient_independent_corroboration"}),
+    ),
+    Gate(
+        "A3",
+        "Applicability and abstention",
+        "Coherent bibliographic combination",
+        "domain/proposal_set.py",
+        "#429 (cef7644a); ADR-0021",
+        _NOT_RECORDED,
+        "cef7644a89bc98ac1d9dca037dfb6d535fb28dd8",
+        "bibliographic destinations",
+        "admit the first-ranked alternative without a coherent combination",
+        "alternative",
+        _reason({"no_safe_bibliographic_combination"}),
+    ),
+    Gate(
+        "A4",
+        "Applicability and abstention",
+        "Date refinement and year conflict need corroboration",
+        "domain/proposal_set.py",
+        "#351 (d35215e8), #415 (0d0021d1); ADR-0019",
+        _NOT_RECORDED,
+        "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
+        "publishedDate, publishedYear",
+        "admit the first-ranked uncorroborated date",
+        "alternative",
+        _reason({"date_refinement_requires_corroboration", "date_year_conflict"}),
+    ),
+    Gate(
+        "A5",
+        "Applicability and abstention",
+        "Cover gallery incomplete",
+        "domain/proposal_set.py",
+        "#351 (d35215e8)",
+        _NOT_RECORDED,
+        "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
+        "cover",
+        "admit the first-ranked cover of an incomplete gallery",
+        "alternative",
+        _reason({"cover_gallery_incomplete"}, _COVER),
+    ),
+    Gate(
+        "A6",
+        "Applicability and abstention",
+        "Automatic-decision abstention",
+        "domain/shadow_decision.py _REASON_CODES",
+        "#442 (593e6198); ADR-0036",
+        "development 159/172 correct at 100% precision; sealed 12/12 and 43/43",
+        "593e619821175655dd15c24e4717104eca0d722f",
+        "every automatic destination",
+        "admit the first-ranked alternative an automatic decision abstained on",
+        "alternative",
+        _shadow_disposition(
+            "abstention",
+            {
+                "insufficient_support",
+                "evidence_sufficiency_manual",
+                "no_eligible_action",
+            },
+        ),
+    ),
+    Gate(
+        "A7",
+        "Applicability and abstention",
+        "Owner-reserved and write-safety holds",
+        "domain/proposal_set.py",
+        "#351 (d35215e8)",
+        "not applicable",
+        "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
+        "subjective and unusable-target destinations",
+        "none: listed for completeness",
+        "alternative",
+        _reason({"populated_subjective_field", "target_state_unusable"}),
+        disposition="kept (out of scope)",
+        ranked=False,
+    ),
+    Gate(
+        "B1",
+        "Evidence-dropping bounds",
+        "Local text bounds and unsafe-text sentinels",
+        "adapters/evidence_extractors/epub_local.py _bounded; domain/evidence_bounds.py",
+        "#296 (ef49d6c2), 102548c0",
+        _NOT_RECORDED,
+        "ef49d6c2956a6975595bef971807d85aefd76f0b",
+        "the destinations the bounded local claim feeds",
+        "admit oversized or unsafe local text",
+        "not_identity",
+        _bounded_text,
+    ),
+    Gate(
+        "B2",
+        "Evidence-dropping bounds",
+        "Discovery fan-out caps (8 ISBN lanes, 9 queries, 4 ASIN lanes)",
+        "application/metadata_report.py",
+        "#388 (999edaf0), #916, #948",
+        _NOT_RECORDED,
+        "999edaf0169ddf2734473423a3a5d5ce31a8a15a",
+        _LANE,
+        "query every distinct local ISBN family",
+        "not_retained",
+        _report(_isbn_fan_out, _ALL),
+    ),
+    Gate(
+        "B3",
+        "Evidence-dropping bounds",
+        "EPUB rear-resource budget",
+        "domain/epub_opening.py",
+        "#329 (21506f7f)",
+        _NOT_RECORDED,
+        "21506f7f2cdb220bf2e5c881a085e7002b8e0bea",
+        "isbn",
+        "read every rear resource",
+        "not_retained",
+        _report(_rear_budget, _ISBN),
+    ),
+    Gate(
+        "B4",
+        "Evidence-dropping bounds",
+        "Audio chapter cap",
+        "domain/audio_inspection.py",
+        "#931/#934 (c3214949)",
+        _NOT_RECORDED,
+        "c3214949f40c1081116a64a1f3e71063c56531d7",
+        _LANE,
+        "keep every chapter row",
+        "not_retained",
+        _report(_chapters_capped, _ALL),
+        medium="audiobook",
+    ),
+    Gate(
+        "B5",
+        "Evidence-dropping bounds",
+        "Cover packet preview cap",
+        "application/cover_packet_semantics.py MAX_COVER_PREVIEWS",
+        "#588 (40a97a54)",
+        _NOT_RECORDED,
+        "40a97a54af7810b0efb052f6d2eb7bdb2dcdb143",
+        "cover",
+        "keep every preview",
+        "not_retained",
+        _preview_capped,
+    ),
+    Gate(
+        "B6",
+        "Evidence-dropping bounds",
+        "Provider deadline share (20 s)",
+        "application/metadata_report.py _PROVIDER_DEADLINE_SHARE_SECONDS",
+        "#1273 (bcdee458)",
+        _NOT_RECORDED,
+        "bcdee458e533ee131b0422aad82548da2aeb4bbd",
+        _LANE,
+        "let a provider run past its share",
+        "not_retained",
+        _report(_deadline_starved, _ALL),
+    ),
+)
+
+_CONTROL_TEXT: dict[str, str] = {
+    "not_identity": "not estimable from natural controls",
+    "not_retained": "not estimable: the refused records were not retained",
+}
+_STATUS_TEXT: dict[str, str] = {
+    "gate_postdates_source": "not measurable on that snapshot: gate postdates source",
+    "block_not_retained": "not measurable on that snapshot: block not retained",
+}
+
+
+# ---------------------------------------------------------------------------
+# Counting and controls.
+
+
+@dataclass(slots=True)
+class Tally:
+    fields: int = 0
+    works: int = 0
+    by_destination: Counter[str] = field(default_factory=Counter)
+    by_medium: Counter[str] = field(default_factory=Counter)
+    true_positive: int = 0
+    false_positive: int = 0
+    unlabelled: int = 0
+    # blocked fields whose loosened rule reaches no provider record at all
+    unreached: int = 0
+
+
+def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
+    if gate.control == "alternative":
+        result = case.results.get(destination, {})
+        alternatives = _dicts(result.get("alternatives"))
+        selected = _text(result.get("selected_alternative_id"))
+        first = next(
+            (item for item in alternatives if item.get("alternative_id") == selected),
+            alternatives[0] if alternatives else {},
+        )
+        return case.resolve(_list(first.get("evidence_references")))
+    if gate.control == "cover_candidates" and gate.cover_predicate is not None:
+        predicate = gate.cover_predicate
+        return frozenset().union(
+            *(
+                _pictured(case, candidate)
+                for candidate in case.cover_candidates
+                if predicate(case, candidate)
+            )
+        )
+    return frozenset()
+
+
+def _tally_case(gate: Gate, case: Case, tally: Tally) -> None:
+    if gate.medium is not None and case.medium != gate.medium:
+        return
+    blocked = sorted(
+        destination for destination in gate.signal(case) if case.blocked(destination)
+    )
+    if not blocked:
+        return
+    tally.works += 1
+    for destination in blocked:
+        tally.fields += 1
+        tally.by_destination[destination] += 1
+        tally.by_medium[case.medium] += 1
+        reached = _reached(gate, case, destination)
+        if not reached and gate.control in ("alternative", "cover_candidates"):
+            tally.unreached += 1
+        for record in reached:
+            label = case.labels.get(record, "unlabelled")
+            if label == "positive":
+                tally.true_positive += 1
+            elif label == "negative":
+                tally.false_positive += 1
+            else:
+                tally.unlabelled += 1
+
+
+def wilson_lower_bound(successes: int, total: int, z: float = WILSON_Z) -> float | None:
+    """The lower limit of the two-sided Wilson score interval, or None at n = 0."""
+    if total <= 0:
+        return None
+    phat = successes / total
+    denominator = 1 + z * z / total
+    centre = phat + z * z / (2 * total)
+    margin = z * math.sqrt(phat * (1 - phat) / total + z * z / (4 * total * total))
+    return max(0.0, (centre - margin) / denominator)
+
+
+_CASES_SQL = (
+    "SELECT rc.document,mr.document,"
+    "(SELECT shadow.document FROM shadow_decision_outcomes shadow "
+    "WHERE shadow.review_case_id=rc.review_case_id "
+    "ORDER BY shadow.evaluated_at DESC LIMIT 1),"
+    "(SELECT consideration.document FROM current_cover_considerations current_cover "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current_cover.consideration_id "
+    "WHERE current_cover.review_case_id=rc.review_case_id LIMIT 1) "
+    "FROM review_cases rc JOIN metadata_reports mr ON mr.report_id=rc.report_id "
+    "WHERE rc.review_case_id IN (SELECT review_case_id FROM current_review_packages "
+    "WHERE review_case_id IS NOT NULL) ORDER BY rc.review_case_id"
+)
+
+
+def _open_snapshot(path: Path) -> sqlite3.Connection:
+    if not path.is_file():
+        raise Refusal("database unreadable")
+    wal = path.with_name(path.name + "-wal")
+    if wal.exists() and wal.stat().st_size > 0:
+        raise Refusal(
+            "database has a non-empty write-ahead log; checkpoint a copy first"
+        )
+    absolute = quote(str(path.absolute()), safe="/")
+    try:
+        connection = sqlite3.connect(f"file:{absolute}?mode=ro&immutable=1", uri=True)
+        connection.execute("PRAGMA query_only=ON")
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    except sqlite3.Error:
+        raise Refusal("database unreadable") from None
+    if not _REQUIRED_TABLES <= tables:
+        connection.close()
+        raise Refusal("snapshot schema unrecognised")
+    return connection
+
+
+def measure_snapshot(
+    connection: sqlite3.Connection, statuses: Mapping[str, Status]
+) -> tuple[dict[str, Tally], Counter[str]]:
+    """Stream current cases once, tallying every measurable gate."""
+    measurable = [gate for gate in CATALOGUE if statuses[gate.gate_id] == "measurable"]
+    tallies = {gate.gate_id: Tally() for gate in measurable}
+    media: Counter[str] = Counter()
+    try:
+        rows = connection.execute(_CASES_SQL)
+        for case_text, report_text, shadow_text, consideration_text in rows:
+            case = _build_case(
+                _document(case_text),
+                _document(report_text),
+                _document(shadow_text),
+                _document(consideration_text),
+            )
+            media[case.medium] += 1
+            for gate in measurable:
+                _tally_case(gate, case, tallies[gate.gate_id])
+    except sqlite3.Error:
+        raise Refusal("snapshot schema unrecognised") from None
+    return tallies, media
+
+
+# ---------------------------------------------------------------------------
+# Ancestry.
+
+
+def git_ancestry(repository: Path) -> Ancestry:
+    """Decide ancestry with git, refusing on a shallow or unknown history."""
+
+    def run(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    shallow = run("rev-parse", "--is-shallow-repository")
+    if shallow.returncode != 0 or shallow.stdout.strip() != "false":
+        raise Refusal("repository history is shallow or unreadable")
+    known: set[str] = set()
+
+    def ancestry(commit: str, revision: str) -> bool:
+        for value in (commit, revision):
+            if value not in known:
+                if run("cat-file", "-e", f"{value}^{{commit}}").returncode != 0:
+                    raise Refusal("unknown revision")
+                known.add(value)
+        result = run("merge-base", "--is-ancestor", commit, revision)
+        if result.returncode not in (0, 1):
+            raise Refusal("ancestry undecidable")
+        return result.returncode == 0
+
+    return ancestry
+
+
+def gate_statuses(revision: str, ancestry: Ancestry) -> dict[str, Status]:
+    statuses: dict[str, Status] = {}
+    for gate in CATALOGUE:
+        if not ancestry(gate.introduced_in, revision):
+            statuses[gate.gate_id] = "gate_postdates_source"
+        elif not gate.retained:
+            statuses[gate.gate_id] = "block_not_retained"
+        else:
+            statuses[gate.gate_id] = "measurable"
+    return statuses
+
+
+# ---------------------------------------------------------------------------
+# Attention per case, read by the snapshot's own source in a child process.
+
+_ATTENTION_CHILD = r"""
+import json, os, sqlite3, sys
+from urllib.parse import quote
+root = os.path.realpath(sys.argv[1])
+sys.path[:0] = [os.path.join(root, "src"), root]
+import mechanical_librarian
+from mechanical_librarian.adapters.persistence import review_sql
+import scripts.cold_start_report as report_module
+for module in (mechanical_librarian, review_sql, report_module):
+    if not os.path.realpath(module.__file__).startswith(root + os.sep):
+        raise SystemExit(3)
+R = review_sql
+if hasattr(R, "_STORED_COVER_ATTENTION_AUTHORITY_SQL"):
+    predicate = (R._REVIEW_FIELD_ATTENTION_REASON_SQL + " AND "
+                 + R._STORED_COVER_ATTENTION_AUTHORITY_SQL
+                 + R._REVIEW_FIELD_ATTENTION_CLEAR_SQL)
+else:
+    predicate = R._REVIEW_FIELD_ATTENTION_SQL
+shadow = ("(SELECT json_extract(outcome.value,'$.reason_code') "
+          "FROM shadow_decision_outcomes shadow,"
+          "json_each(shadow.document,'$.outcomes') outcome "
+          "WHERE shadow.review_case_id=rc.review_case_id "
+          "AND json_extract(outcome.value,'$.destination')=result.destination "
+          "AND json_extract(outcome.value,'$.disposition')='abstention' LIMIT 1)")
+per_case = ("SELECT rc.review_case_id,result.destination,"
+            "json_extract(canonical_result.value,'$.reasons')," + shadow + ","
+            "CASE WHEN json_extract(mr.document,'$.audio') IS NULL "
+            "THEN 'ebook' ELSE 'audiobook' END "
+            + R._CURRENT_REVIEW_FROM_SQL
+            + " JOIN review_case_field_facts result "
+            "ON result.review_case_id=rc.review_case_id,"
+            "json_each(rc.document,'$.results') canonical_result WHERE "
+            "json_extract(canonical_result.value,'$.destination')=result.destination AND "
+            + predicate + R._EPUB_INAPPLICABLE_ATTENTION_SQL)
+constant = getattr(report_module, "_STORED_ATTENTION_FIELD_ROWS_SQL", None)
+if constant is None:
+    constant = report_module._ATTENTION_FIELD_ROWS_SQL
+excluded = constant
+if R._EPUB_INAPPLICABLE_ATTENTION_SQL not in constant:
+    excluded = constant + R._EPUB_INAPPLICABLE_ATTENTION_SQL
+path = quote(os.path.abspath(sys.argv[2]), safe="/")
+connection = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+connection.execute("PRAGMA query_only=ON")
+connection.create_function("ml_cover_consideration_current", 2, lambda _d, _r: 0)
+ordinals = {}
+rows = []
+for case, destination, reasons, shadow_code, medium in connection.execute(per_case):
+    ordinal = ordinals.setdefault(case, len(ordinals))
+    if isinstance(shadow_code, str) and shadow_code:
+        causes = [shadow_code]
+    else:
+        loaded = json.loads(reasons) if isinstance(reasons, str) and reasons else []
+        causes = sorted({item for item in loaded if isinstance(item, str)})
+    rows.append([ordinal, destination, causes, medium])
+report_rows = len(connection.execute(constant).fetchall())
+excluded_rows = len(connection.execute(excluded).fetchall())
+sys.stdout.write(json.dumps({"rows": rows, "report_rows": report_rows,
+                             "report_rows_excluded": excluded_rows}))
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionProbe:
+    rows: tuple[tuple[int, str, tuple[str, ...], str], ...]
+    report_rows: int
+    report_rows_excluded: int
+
+
+AttentionReader = Callable[[Path, Path], AttentionProbe]
+
+
+def child_attention(source_root: Path, database: Path) -> AttentionProbe:
+    """Run the source revision's own attention query in an isolated child."""
+    if not (source_root / "src" / "mechanical_librarian").is_dir():
+        raise Refusal("source root is not an exported source tree")
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                _ATTENTION_CHILD,
+                str(source_root),
+                str(database),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3600,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise Refusal("attention probe failed") from None
+    if completed.returncode != 0:
+        raise Refusal("attention probe failed")
+    try:
+        loaded = _dict(json.loads(completed.stdout))
+        rows = tuple(
+            (
+                cast("int", row[0]),
+                cast("str", row[1]),
+                tuple(cast("list[str]", row[2])),
+                cast("str", row[3]),
+            )
+            for row in cast("list[list[object]]", loaded["rows"])
+        )
+        return AttentionProbe(
+            rows,
+            cast("int", loaded["report_rows"]),
+            cast("int", loaded["report_rows_excluded"]),
+        )
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise Refusal("attention probe failed") from None
+
+
+def _reason_vocabulary() -> frozenset[str]:
+    reasons = {
+        reason
+        for sets in _OUTCOME_REASON_SETS.values()
+        for tuple_ in sets
+        for reason in tuple_
+    }
+    reasons |= set(shadow_outcome._REASON_CODES)
+    reasons |= set(shadow_decision._REASON_CODES)
+    reasons |= {_SAFETY_CAUSE}
+    return frozenset(reasons)
+
+
+REASONS = _reason_vocabulary()
+
+
+def summarise_attention(probe: AttentionProbe) -> dict[str, object]:
+    """Fields and cases per medium, with and without covers, by destination and reason."""
+    cases: dict[str, dict[str, Counter[int]]] = {
+        medium: {"with_covers": Counter(), "without_covers": Counter()}
+        for medium in _MEDIA
+    }
+    by_destination: Counter[str] = Counter()
+    by_reason: Counter[str] = Counter()
+    for ordinal, destination, causes, medium in probe.rows:
+        if destination not in _ALL or medium not in _MEDIA:
+            raise Refusal("attention probe returned an unknown vocabulary")
+        cases[medium]["with_covers"][ordinal] += 1
+        if destination != "cover":
+            cases[medium]["without_covers"][ordinal] += 1
+        by_destination[destination] += 1
+        for cause in causes or (_SAFETY_CAUSE,):
+            by_reason[cause if cause in REASONS else _OTHER_REASON] += 1
+    every_case = {ordinal for ordinal, *_ in probe.rows}
+    return {
+        "fields": len(probe.rows),
+        "cases": len(every_case),
+        "report_query_fields": probe.report_rows,
+        "epub_inapplicable_fields": probe.report_rows - probe.report_rows_excluded,
+        "media": {
+            medium: {
+                basis: {"fields": sum(counter.values()), "cases": len(counter)}
+                for basis, counter in bases.items()
+            }
+            for medium, bases in cases.items()
+        },
+        "by_destination": dict(sorted(by_destination.items())),
+        "by_reason": dict(sorted(by_reason.items())),
+    }
+
+
+def reconcile_report(
+    attention: Mapping[str, object], report: Mapping[str, object]
+) -> bool:
+    """Compare attention totals with the cold-start report its source produced."""
+    libraries = _dicts(report.get("libraries"))
+    stored = [_dict(library.get("attention_stored_basis")) for library in libraries]
+    if libraries and all(stored):
+        fields = sum(
+            cast("int", basis.get("cover_fields_with_owner_actions", 0))
+            + cast("int", _dict(basis.get("non_cover_fields")).get("total", 0))
+            for basis in stored
+        )
+        works = sum(cast("int", basis.get("works", 0)) for basis in stored)
+    else:
+        fields = sum(
+            cast("int", _dict(library.get("attention_fields")).get("total", 0))
+            for library in libraries
+        )
+        works = cast("int", _dict(report.get("totals")).get("attention_works", 0))
+    return fields == attention["report_query_fields"] and works == attention["cases"]
+
+
+# ---------------------------------------------------------------------------
+# Assembly, ranking and closed output.
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotInput:
+    label: str
+    database: Path
+    revision: str
+    source_root: Path
+    source_report: Path | None
+
+
+def _row(
+    gate: Gate,
+    snapshots: Sequence[tuple[str, Mapping[str, Status], Mapping[str, Tally]]],
+    follow_ons: Mapping[str, int],
+) -> dict[str, object]:
+    per_snapshot: list[dict[str, object]] = []
+    pooled_tp = pooled_fp = pooled_unlabelled = 0
+    fields_unblocked = 0
+    measurable_anywhere = False
+    for label, statuses, tallies in snapshots:
+        status = statuses[gate.gate_id]
+        entry: dict[str, object] = {"label": label, "status": status}
+        if status == "measurable":
+            measurable_anywhere = True
+            tally = tallies[gate.gate_id]
+            fields_unblocked += tally.fields
+            pooled_tp += tally.true_positive
+            pooled_fp += tally.false_positive
+            pooled_unlabelled += tally.unlabelled
+            entry.update(
+                {
+                    "fields": tally.fields,
+                    "works": tally.works,
+                    "by_destination": dict(sorted(tally.by_destination.items())),
+                    "by_medium": dict(sorted(tally.by_medium.items())),
+                    "true_positive": tally.true_positive,
+                    "false_positive": tally.false_positive,
+                    "unlabelled": tally.unlabelled,
+                    "unreached_fields": tally.unreached,
+                }
+            )
+        per_snapshot.append(entry)
+    estimable_control = gate.control in ("alternative", "cover_candidates")
+    total = pooled_tp + pooled_fp
+    precision = pooled_tp / total if estimable_control and total else None
+    lower = wilson_lower_bound(pooled_tp, total) if estimable_control else None
+    score = (
+        round(fields_unblocked * lower, 1)
+        if gate.ranked and measurable_anywhere and lower is not None
+        else 0.0
+    )
+    disposition = gate.disposition
+    if gate.gate_id in follow_ons:
+        disposition = f"filed as #{follow_ons[gate.gate_id]}"
+    return {
+        "gate_id": gate.gate_id,
+        "family": gate.family,
+        "gate": gate.gate,
+        "location": gate.location,
+        "origin": gate.origin,
+        "origin_corpus": gate.corpus,
+        "introduced_in": gate.introduced_in,
+        "destinations": gate.destinations,
+        "medium": gate.medium,
+        "loosened_rule": gate.loosened,
+        "control": gate.control,
+        "snapshots": per_snapshot,
+        "pooled": {
+            "true_positive": pooled_tp,
+            "false_positive": pooled_fp,
+            "unlabelled": pooled_unlabelled,
+            "n": total,
+            "precision": None if precision is None else round(precision, 4),
+            "wilson_lower_bound": None if lower is None else round(lower, 4),
+        },
+        "ceiling": fields_unblocked,
+        "score": score,
+        "ranked": gate.ranked,
+        "disposition": disposition,
+        "proposed_follow_on": False,
+    }
+
+
+def rank_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Scored rows by score; unscored by ceiling then ID; unranked rows last."""
+
+    def score(row: Mapping[str, object]) -> float:
+        return cast("float", row["score"])
+
+    scored = sorted(
+        (row for row in rows if row["ranked"] and score(row) > 0),
+        key=lambda row: (-score(row), cast("str", row["gate_id"])),
+    )
+    unscored = sorted(
+        (row for row in rows if row["ranked"] and score(row) <= 0),
+        key=lambda row: (-cast("int", row["ceiling"]), cast("str", row["gate_id"])),
+    )
+    unranked = sorted(
+        (row for row in rows if not row["ranked"]),
+        key=lambda row: cast("str", row["gate_id"]),
+    )
+    ordered = [*scored, *unscored, *unranked]
+    proposed = 0
+    for rank, row in enumerate(ordered, start=1):
+        row["rank"] = rank if row["ranked"] else None
+        disposition = cast("str", row["disposition"])
+        eligible = disposition == "kept" or disposition.startswith("filed as #")
+        if proposed < 5 and eligible and score(row) > 0 and row["ranked"]:
+            row["proposed_follow_on"] = True
+            proposed += 1
+    return ordered
+
+
+_STRUCTURAL_KEYS = frozenset(
+    {
+        "schema",
+        "snapshots",
+        "rows",
+        "label",
+        "source_revision",
+        "status",
+        "fields",
+        "works",
+        "cases",
+        "by_destination",
+        "by_medium",
+        "by_reason",
+        "true_positive",
+        "false_positive",
+        "unlabelled",
+        "unreached_fields",
+        "gate_id",
+        "family",
+        "gate",
+        "location",
+        "origin",
+        "origin_corpus",
+        "introduced_in",
+        "destinations",
+        "medium",
+        "loosened_rule",
+        "control",
+        "pooled",
+        "n",
+        "precision",
+        "wilson_lower_bound",
+        "ceiling",
+        "score",
+        "ranked",
+        "rank",
+        "disposition",
+        "proposed_follow_on",
+        "attention",
+        "media",
+        "with_covers",
+        "without_covers",
+        "report_query_fields",
+        "epub_inapplicable_fields",
+        "source_report_reconciled",
+        "current_cases",
+        "wilson_z",
+    }
+)
+
+
+def closed_vocabulary(labels: Iterable[str]) -> frozenset[str]:
+    """Every string the output may contain besides validated revisions."""
+    strings: set[str] = set(_STRUCTURAL_KEYS) | set(_ALL) | set(REASONS)
+    strings |= {_OTHER_REASON, LEDGER_SCHEMA, *_MEDIA}
+    strings |= {"measurable", "gate_postdates_source", "block_not_retained"}
+    strings |= {"alternative", "cover_candidates", "not_identity", "not_retained"}
+    for gate in CATALOGUE:
+        strings |= {
+            gate.gate_id,
+            gate.family,
+            gate.gate,
+            gate.location,
+            gate.origin,
+            gate.corpus,
+            gate.introduced_in,
+            gate.destinations,
+            gate.loosened,
+            gate.disposition,
+        }
+    strings |= set(labels)
+    return frozenset(strings)
+
+
+def _closed(value: object, vocabulary: frozenset[str]) -> None:
+    if value is None or isinstance(value, bool | int | float):
+        return
+    if isinstance(value, str):
+        if value in vocabulary or _REVISION.match(value):
+            return
+        if re.fullmatch(r"filed as #[1-9][0-9]{0,5}", value):
+            return
+        raise Refusal("output refused: unclosed string")
+    if isinstance(value, dict):
+        for key, item in cast("dict[object, object]", value).items():
+            if not isinstance(key, str) or key not in vocabulary:
+                raise Refusal("output refused: unclosed key")
+            _closed(item, vocabulary)
+        return
+    if isinstance(value, list | tuple):
+        for item in cast("Sequence[object]", value):
+            _closed(item, vocabulary)
+        return
+    raise Refusal("output refused: unclosed value")
+
+
+def build_ledger(
+    inputs: Sequence[SnapshotInput],
+    *,
+    ancestry: Ancestry,
+    attention: AttentionReader,
+    follow_ons: Mapping[str, int] | None = None,
+) -> dict[str, object]:
+    measured: list[tuple[str, Mapping[str, Status], Mapping[str, Tally]]] = []
+    snapshot_entries: list[dict[str, object]] = []
+    for item in inputs:
+        statuses = gate_statuses(item.revision, ancestry)
+        connection = _open_snapshot(item.database)
+        try:
+            tallies, media = measure_snapshot(connection, statuses)
+        finally:
+            connection.close()
+        probe = attention(item.source_root, item.database)
+        if len(probe.rows) != probe.report_rows_excluded:
+            raise Refusal("attention probe disagrees with the source's report query")
+        summary = summarise_attention(probe)
+        reconciled: bool | None = None
+        if item.source_report is not None:
+            try:
+                report = _dict(
+                    json.loads(item.source_report.read_text(encoding="utf-8"))
+                )
+            except (OSError, ValueError):
+                raise Refusal("source report unreadable") from None
+            reconciled = reconcile_report(summary, report)
+            if not reconciled:
+                raise Refusal(
+                    "attention does not reconcile with the source report", code=1
+                )
+        snapshot_entries.append(
+            {
+                "label": item.label,
+                "source_revision": item.revision,
+                "current_cases": dict(sorted(media.items())),
+                "attention": summary,
+                "source_report_reconciled": reconciled,
+            }
+        )
+        measured.append((item.label, statuses, tallies))
+    rows = rank_rows([_row(gate, measured, follow_ons or {}) for gate in CATALOGUE])
+    ledger: dict[str, object] = {
+        "schema": LEDGER_SCHEMA,
+        "wilson_z": WILSON_Z,
+        "snapshots": snapshot_entries,
+        "rows": rows,
+    }
+    _closed(ledger, closed_vocabulary(item.label for item in inputs))
+    return ledger
+
+
+# ---------------------------------------------------------------------------
+# Markdown rendering of the validated ledger.
+
+
+def _number(value: object) -> str:
+    return f"{cast('int', value):,}"
+
+
+def _cell(entry: Mapping[str, object]) -> str:
+    status = cast("str", entry["status"])
+    if status != "measurable":
+        return _STATUS_TEXT[status]
+    return f"{_number(entry['fields'])} / {_number(entry['works'])}"
+
+
+def _controls(row: Mapping[str, object]) -> str:
+    control = cast("str", row["control"])
+    if control in _CONTROL_TEXT:
+        return _CONTROL_TEXT[control]
+    parts = [
+        f"{entry['label']} {entry['true_positive']}/{entry['false_positive']}/"
+        f"{entry['unlabelled']} ({_number(entry['unreached_fields'])} fields reach no record)"
+        for entry in cast("list[dict[str, object]]", row["snapshots"])
+        if entry["status"] == "measurable"
+    ]
+    if not parts:
+        return "not estimable: not measurable on either snapshot"
+    pooled = _dict(row["pooled"])
+    return "; ".join(parts) + f"; n = {pooled['n']}"
+
+
+def _precision(row: Mapping[str, object]) -> str:
+    pooled = _dict(row["pooled"])
+    if pooled["precision"] is None or pooled["wilson_lower_bound"] is None:
+        return "not estimable"
+    return f"{cast('float', pooled['precision']):.3f} ({cast('float', pooled['wilson_lower_bound']):.3f})"
+
+
+def render_markdown(ledger: Mapping[str, object]) -> str:
+    snapshots = cast("list[dict[str, object]]", ledger["snapshots"])
+    labels = [cast("str", entry["label"]) for entry in snapshots]
+    header = (
+        "| Rank | ID | Gate | Fields | Origin | Origin corpus / precision | "
+        + " | ".join(f"{label} fields / works" for label in labels)
+        + " | Loosened rule | Controls TP/FP/unlabelled | Precision (Wilson 95% lower) "
+        "| Score | Disposition |"
+    )
+    lines = [
+        "### Ranked gates",
+        "",
+        header,
+        "|" + "---|" * (11 + len(labels)),
+    ]
+    for row in cast("list[dict[str, object]]", ledger["rows"]):
+        rank = row.get("rank")
+        disposition = cast("str", row["disposition"])
+        if row["proposed_follow_on"] and not disposition.startswith("filed as #"):
+            disposition = "proposed follow-on"
+        cells = [
+            "out of scope" if rank is None else str(rank),
+            cast("str", row["gate_id"]),
+            cast("str", row["gate"]),
+            cast("str", row["destinations"])
+            + ("" if row["medium"] is None else f" ({row['medium']} only)"),
+            cast("str", row["origin"]),
+            cast("str", row["origin_corpus"]),
+            *(
+                _cell(entry)
+                for entry in cast("list[dict[str, object]]", row["snapshots"])
+            ),
+            cast("str", row["loosened_rule"]),
+            _controls(row),
+            _precision(row),
+            f"{cast('float', row['score']):,.1f}",
+            disposition,
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines += [
+        "",
+        "### Attention per case",
+        "",
+        "| Snapshot | Medium | Fields with covers | Cases with covers | "
+        "Fields without covers | Cases without covers |",
+        "|---|---|---|---|---|---|",
+    ]
+    for entry in snapshots:
+        attention = _dict(entry["attention"])
+        for medium in _MEDIA:
+            bases = _dict(_dict(attention["media"])[medium])
+            with_covers, without = (
+                _dict(bases["with_covers"]),
+                _dict(bases["without_covers"]),
+            )
+            lines.append(
+                f"| {entry['label']} | {medium} | {_number(with_covers['fields'])} | "
+                f"{_number(with_covers['cases'])} | {_number(without['fields'])} | "
+                f"{_number(without['cases'])} |"
+            )
+    lines += ["", "| Snapshot | Destination | Attention fields |", "|---|---|---|"]
+    for entry in snapshots:
+        for destination, count in _dict(
+            _dict(entry["attention"])["by_destination"]
+        ).items():
+            lines.append(f"| {entry['label']} | {destination} | {_number(count)} |")
+    lines += ["", "| Snapshot | Reason | Attention fields |", "|---|---|---|"]
+    for entry in snapshots:
+        for reason, count in _dict(_dict(entry["attention"])["by_reason"]).items():
+            lines.append(f"| {entry['label']} | {reason} | {_number(count)} |")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Command line.
+
+
+def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--snapshot",
+        action="append",
+        nargs=3,
+        required=True,
+        metavar=("LABEL", "DATABASE", "SOURCE_REVISION"),
+    )
+    parser.add_argument(
+        "--source-root",
+        action="append",
+        nargs=2,
+        default=[],
+        metavar=("LABEL", "DIRECTORY"),
+    )
+    parser.add_argument(
+        "--source-report",
+        action="append",
+        nargs=2,
+        default=[],
+        metavar=("LABEL", "FILE"),
+    )
+    parser.add_argument(
+        "--repository", type=Path, default=Path(__file__).resolve().parents[1]
+    )
+    parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    parser.add_argument(
+        "--follow-on", action="append", default=[], metavar="GATE=ISSUE"
+    )
+    return parser.parse_args(argv)
+
+
+def _inputs(arguments: argparse.Namespace) -> list[SnapshotInput]:
+    snapshots = cast("list[list[str]]", arguments.snapshot)
+    roots = cast("list[list[str]]", arguments.source_root)
+    reports = cast("list[list[str]]", arguments.source_report)
+    every_label = [entry[0] for entry in (*snapshots, *roots, *reports)]
+    if any(not _LABEL.match(label) for label in every_label):
+        raise Refusal("invalid label")
+    labels = [entry[0] for entry in snapshots]
+    if len(set(labels)) != len(labels):
+        raise Refusal("duplicate label")
+    root_by_label = dict((entry[0], entry[1]) for entry in roots)
+    report_by_label = dict((entry[0], entry[1]) for entry in reports)
+    if set(root_by_label) != set(labels) or not set(report_by_label) <= set(labels):
+        raise Refusal("every snapshot needs exactly one source root")
+    inputs: list[SnapshotInput] = []
+    for label, database, revision in snapshots:
+        if not _REVISION.match(revision):
+            raise Refusal("source revision must be a full commit")
+        report = report_by_label.get(label)
+        inputs.append(
+            SnapshotInput(
+                label,
+                Path(database),
+                revision,
+                Path(root_by_label[label]),
+                None if report is None else Path(report),
+            )
+        )
+    return inputs
+
+
+def _follow_ons(values: Sequence[str]) -> dict[str, int]:
+    parsed: dict[str, int] = {}
+    for value in values:
+        gate_id, _, issue = value.partition("=")
+        if (
+            not _GATE_ID.match(gate_id)
+            or gate_id not in {gate.gate_id for gate in CATALOGUE}
+            or not re.fullmatch(r"[1-9][0-9]{0,5}", issue)
+        ):
+            raise Refusal("invalid follow-on")
+        parsed[gate_id] = int(issue)
+    return parsed
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+    ancestry: Ancestry | None = None,
+    attention: AttentionReader | None = None,
+) -> int:
+    output = sys.stdout if stdout is None else stdout
+    errors = sys.stderr if stderr is None else stderr
+    arguments = _parse(argv)
+    try:
+        inputs = _inputs(arguments)
+        follow_ons = _follow_ons(cast("list[str]", arguments.follow_on))
+        for item in inputs:
+            if not item.database.is_file():
+                raise Refusal("database unreadable")
+        ledger = build_ledger(
+            inputs,
+            ancestry=git_ancestry(arguments.repository)
+            if ancestry is None
+            else ancestry,
+            attention=child_attention if attention is None else attention,
+            follow_ons=follow_ons,
+        )
+    except Refusal as refusal:
+        errors.write(f"admission-rule-ledger: {refusal.message}\n")
+        return refusal.code
+    if arguments.format == "markdown":
+        output.write(render_markdown(ledger))
+    else:
+        output.write(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
