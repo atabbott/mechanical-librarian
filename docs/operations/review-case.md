@@ -200,9 +200,13 @@ retires every current unapplied old-policy case, fixes the transition total and
 switches the active generation. Successors return through ordinary preparation
 from retained evidence, with no new provider lookup, decision transfer or
 write. Once an automatic decision has been recorded, leaving Automatic
-reactivates the unchanged policy. Each work then returns as its same case,
-which continues its episode: the owner's answers, holds and queued writes on
-it stay current, since no decision moves to a successor case. A work still
+reactivates the unchanged policy. A current automatic cover selection or a
+current automatic description decision counts as one; a description counts
+even under a policy with no automatic destination, since its admission
+depends on the description advice setting, not on the policy. Each work
+then returns as its same case, which continues its episode: the owner's
+answers, holds and queued writes on it stay current, since no decision moves
+to a successor case. A work still
 retired by an earlier change of policy when that happens starts a new episode
 on return, as any case does after a policy change. An automatic
 decision writes only in the Automatic posture, and one from an earlier policy

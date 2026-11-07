@@ -865,6 +865,55 @@ def test_an_automatic_description_plan_from_before_leaving_automatic_is_stale(
     repository.close()
 
 
+@pytest.mark.parametrize("ask_only_policy", [False, True])
+def test_leaving_automatic_reconciles_a_store_whose_only_automatic_record_is_a_description(
+    tmp_path: Path, ask_only_policy: bool
+) -> None:
+    """An automatic description alone reactivates the unchanged policy on
+    leaving Automatic, even under a policy with no automatic destination,
+    since its admission does not depend on one (#1574)."""
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic_policy=("cover_order", "fixed_source_order"),
+        ask_only_policy=ask_only_policy,
+    )
+    decision = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    connection = repository._connection
+    assert connection.execute(
+        "SELECT count(*) FROM automatic_decisions"
+    ).fetchone() == (0,)
+    assert connection.execute(
+        "SELECT count(*) FROM current_cover_selection_authorities"
+    ).fetchone() == (0,)
+    assert decision.to_json() in repository.pending_field_effect_decision_documents(100)
+    policy_id, generation, posture = connection.execute(
+        "SELECT active_policy_id,generation,posture FROM metadata_policy_state"
+    ).fetchone()
+    assert posture == "automatic"
+    assert repository.enter_shadow_preview(20, ("ebooks",)) == "preview"
+    assert connection.execute(
+        "SELECT active_policy_id,generation FROM metadata_policy_state"
+    ).fetchone() == (policy_id, generation + 1)
+    assert connection.execute(
+        "SELECT count(*) FROM current_review_case_lineages "
+        "WHERE review_case_id IS NOT NULL"
+    ).fetchone() == (0,)
+    transition = repository.metadata_policy_transition()
+    assert transition is not None
+    assert (
+        transition.from_policy_id,
+        transition.to_policy_id,
+        transition.generation,
+    ) == (policy_id, policy_id, generation + 1)
+    # Its binding names the earlier generation, so it no longer authorizes.
+    assert decision.to_json() not in repository.pending_field_effect_decision_documents(
+        100
+    )
+    repository.close()
+
+
 def test_advice_automatic_off_retains_qualified_deterministic_description_fill(
     tmp_path,
 ):

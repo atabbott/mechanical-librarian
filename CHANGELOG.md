@@ -340,6 +340,10 @@ brackets are GitHub issues.
   of Attention, so pausing automation after leaving Automatic lists every field
   the work page asks for. Library's preparation card says the pass was
   "Started when Automatic was turned on" (#1573, #1601).
+- Switching from Automatic to Preview now re-prepares every work when the
+  only automatic decisions are covers or descriptions, as it already did for
+  other fields, and Turn on Automatic waits until that finishes. An automatic
+  description counts even when the policy makes nothing automatic (#1574).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
