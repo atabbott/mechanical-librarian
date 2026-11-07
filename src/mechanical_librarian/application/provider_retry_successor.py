@@ -353,6 +353,9 @@ class GenerateProviderRetrySuccessor:
                 audio=source.audio,
                 library_languages=source.library_languages,
                 cover_recovery=source.cover_recovery,
+                # The companion EPUB is evidence the source read, and its
+                # lanes replay against it (#1319, #1468).
+                companion=source.companion,
             )
 
             def currentness() -> bool:
@@ -486,20 +489,21 @@ class GenerateProviderRetrySuccessor:
             or snapshot.fields != source.target.fields
         ):
             raise CurrentnessError("target or media changed")
-        plan = (
-            companion_binding_plan(
-                audiobook_discovery_plan(
-                    snapshot,
-                    source.local_claims,
-                    audio=source.audio,
-                    library_languages=source.library_languages,
-                    companion=source.companion,
-                ),
-                original.authority,
+        # The feed is rebuilt from the whole plan, as preparation built it: a
+        # plan whose only lane is the companion ISBN lane feeds its leads on
+        # that lane's references, which the binding's own plan drops (#1468).
+        full = (
+            audiobook_discovery_plan(
+                snapshot,
+                source.local_claims,
+                audio=source.audio,
+                library_languages=source.library_languages,
+                companion=source.companion,
             )
             if audio
             else metadata_discovery_plan(snapshot, source.local_claims)
         )
+        plan = companion_binding_plan(full, original.authority) if audio else full
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
         if audio and original.authority == "audible_catalog":
@@ -512,7 +516,7 @@ class GenerateProviderRetrySuccessor:
             and all(lane.kind is ProviderQueryKind.ASIN for lane in original.lanes)
             and not any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes)
         ):
-            feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
+            feed = audiobook_asin_feed_plan(snapshot, full, source.providers)
             if feed is None:
                 raise ProviderRetrySuccessorError("provider retry source is invalid")
             return feed
