@@ -348,71 +348,56 @@ sys.stdout.write(json.dumps({"engine": engine, "cases": cases, "failed": failed}
 """
 
 
-def _bool(value: object) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError
-    return value
-
-
-def _int(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError
-    return value
-
-
-def _str(value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError
-    return value
-
-
 def _optional_str(value: object) -> str | None:
-    return None if value is None else _str(value)
+    return None if value is None else ledger._exact(str, value)
 
 
 def _candidate(data: Mapping[str, object]) -> Candidate:
     eligible = data["eligible"]
     return Candidate(
-        candidate_id=_str(data["candidate_id"]),
+        candidate_id=ledger._exact(str, data["candidate_id"]),
         value=data["value"],
-        scope=_str(data["scope"]),
+        scope=ledger._exact(str, data["scope"]),
         date_event=_optional_str(data["date_event"]),
         date_precision=_optional_str(data["date_precision"]),
-        assessment=_str(data["assessment"]),
+        assessment=ledger._exact(str, data["assessment"]),
         evidence_references=tuple(
-            _str(item) for item in cast("list[object]", data["evidence_references"])
+            ledger._exact(str, item)
+            for item in cast("list[object]", data["evidence_references"])
         ),
-        evidence_scope=_str(data["evidence_scope"]),
-        binding=_str(data["binding"]),
-        recording=_bool(data["recording"]),
-        narrator_agreement=_bool(data["narrator_agreement"]),
-        independent_title=_bool(data["independent_title"]),
-        has_publication=_bool(data["has_publication"]),
+        evidence_scope=ledger._exact(str, data["evidence_scope"]),
+        binding=ledger._exact(str, data["binding"]),
+        recording=ledger._exact(bool, data["recording"]),
+        narrator_agreement=ledger._exact(bool, data["narrator_agreement"]),
+        independent_title=ledger._exact(bool, data["independent_title"]),
+        has_publication=ledger._exact(bool, data["has_publication"]),
         publication_event=_optional_str(data["publication_event"]),
         publication_consistency=_optional_str(data["publication_consistency"]),
-        local=_int(data["local"]),
-        correlations=_int(data["correlations"]),
-        preservation=_int(data["preservation"]),
-        action=_bool(data["action"]),
-        citations_present=_bool(data["citations_present"]),
-        citations_known=_bool(data["citations_known"]),
-        combinations_known=_bool(data["combinations_known"]),
-        eligible=None if eligible is None else _bool(eligible),
+        local=ledger._exact(int, data["local"]),
+        correlations=ledger._exact(int, data["correlations"]),
+        preservation=ledger._exact(int, data["preservation"]),
+        action=ledger._exact(bool, data["action"]),
+        citations_present=ledger._exact(bool, data["citations_present"]),
+        citations_known=ledger._exact(bool, data["citations_known"]),
+        combinations_known=ledger._exact(bool, data["combinations_known"]),
+        eligible=None if eligible is None else ledger._exact(bool, eligible),
     )
 
 
 def _proposal(data: Mapping[str, object]) -> Proposal:
     return Proposal(
-        destination=_str(data["destination"]),
-        outcome=_str(data["outcome"]),
-        reasons=tuple(_str(item) for item in cast("list[object]", data["reasons"])),
+        destination=ledger._exact(str, data["destination"]),
+        outcome=ledger._exact(str, data["outcome"]),
+        reasons=tuple(
+            ledger._exact(str, item) for item in cast("list[object]", data["reasons"])
+        ),
         current=data["current"],
-        sufficiency=_str(data["sufficiency"]),
-        preservation=_int(data["preservation"]),
-        report_only=_bool(data["report_only"]),
-        consensus_title=_bool(data["consensus_title"]),
-        tidy_title=_bool(data["tidy_title"]),
-        evidence_led=_bool(data["evidence_led"]),
+        sufficiency=ledger._exact(str, data["sufficiency"]),
+        preservation=ledger._exact(int, data["preservation"]),
+        report_only=ledger._exact(bool, data["report_only"]),
+        consensus_title=ledger._exact(bool, data["consensus_title"]),
+        tidy_title=ledger._exact(bool, data["tidy_title"]),
+        evidence_led=ledger._exact(bool, data["evidence_led"]),
         reason=_optional_str(data["reason"]),
         candidates=tuple(
             _candidate(cast("dict[str, object]", item))
@@ -426,12 +411,12 @@ def parse_probe(text: str) -> A6Probe:
     try:
         loaded = cast("dict[str, object]", json.loads(text))
         engine = cast("dict[str, object]", loaded["engine"])
-        version = _str(engine["version"])
+        version = ledger._exact(str, engine["version"])
         scalar = frozenset(
-            _str(item) for item in cast("list[object]", engine["scalar"])
+            ledger._exact(str, item) for item in cast("list[object]", engine["scalar"])
         )
         cases = {
-            _str(case_id): tuple(
+            ledger._exact(str, case_id): tuple(
                 _proposal(cast("dict[str, object]", item))
                 for item in cast("list[object]", proposals)
             )
@@ -440,7 +425,11 @@ def parse_probe(text: str) -> A6Probe:
             ).items()
         }
         probe = A6Probe(
-            version, scalar, _bool(engine["rich_split"]), cases, _int(loaded["failed"])
+            version,
+            scalar,
+            ledger._exact(bool, engine["rich_split"]),
+            cases,
+            ledger._exact(int, loaded["failed"]),
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         raise ledger.Refusal("decision replay failed") from None
