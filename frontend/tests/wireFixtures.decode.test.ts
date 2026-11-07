@@ -20,7 +20,7 @@ import {
   d__DescriptionAdviceResponse,
   d__HistoryCoverItem,
   d__HistoryDecisionItem,
-  d__HistoryShadowItem,
+  d__HistoryPreviewItem,
   d__LibraryWork,
   d__PreparationPresentation,
   d__ReviewField,
@@ -127,7 +127,7 @@ const components: readonly (readonly [Builder, D<unknown>])[] = [
   ['coverAutomaticDecision', d__CoverAutomaticDecisionProjection],
   ['historyDecisionItem', d__HistoryDecisionItem],
   ['historyCoverItem', d__HistoryCoverItem],
-  ['historyShadowItem', d__HistoryShadowItem],
+  ['historyShadowItem', d__HistoryPreviewItem],
   ['preparationPresentation', d__PreparationPresentation],
   ['libraryWork', d__LibraryWork],
   ['activityEvent', d__ActivityEvent],
@@ -180,8 +180,8 @@ describe('decode negative controls', () => {
   })
 
   it('refuses a captured body with a key the server never sends', () => {
-    const decode = decoderFor('GET', '/api/v1/metadata-policy/shadow', 200)
-    const wire = captures['./wire/get-metadata-policy-shadow.200.json']
+    const decode = decoderFor('GET', '/api/v1/metadata-policy/preview-mode', 200)
+    const wire = captures['./wire/get-metadata-policy-preview-mode.200.json']
     expect(failure(() => decode({ ...(wire?.body as object), unexpected: true }, ''))).toBe(
       'unknown_key@/unexpected',
     )

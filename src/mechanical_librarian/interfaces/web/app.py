@@ -846,7 +846,7 @@ class _HistoryDecisionItem(_ClosedModel):
     selected_value: _ProposedValue | None
 
 
-class _HistoryShadowItem(_ClosedModel):
+class _HistoryPreviewItem(_ClosedModel):
     authority: Literal["none"]
     dispositions: dict[
         Literal[
@@ -860,12 +860,12 @@ class _HistoryShadowItem(_ClosedModel):
         ],
         _Count,
     ] = Field(max_length=32)
-    kind: Literal["shadow_preview_recorded"]
+    kind: Literal["preview_recorded"]
     occurred_at: _Instant
     origin: Literal["policy_preview"]
     outcome_set_id: str
     review_case_id: str
-    schema_version: Literal["shadow-preview-history-event-v1"]
+    schema_version: Literal["preview-history-event-v1"]
 
 
 class _HistoryAutomaticItem(_ClosedModel):
@@ -934,7 +934,7 @@ class _HistoryResponse(_ClosedModel):
     items: list[
         _HistoryTransitionItem
         | _HistoryDecisionItem
-        | _HistoryShadowItem
+        | _HistoryPreviewItem
         | _HistoryAutomaticItem
         | _HistoryCoverItem
         | _HistoryDescriptionItem
@@ -2099,11 +2099,11 @@ class _PolicyActivationResponse(_ClosedModel):
     )
 
 
-class _ShadowPostureResponse(_ClosedModel):
+class _PreviewPostureResponse(_ClosedModel):
     authority: Literal["none", "decision_only"]
     can_leave_preview: Literal[False]
     posture: Literal["review", "preview", "automatic"]
-    schema_version: Literal["shadow-posture-v1"]
+    schema_version: Literal["preview-posture-v1"]
 
 
 class _AutomaticSafetyResponse(_ClosedModel):
@@ -2173,23 +2173,23 @@ class _SupportPreviewResponse(_ClosedModel):
     schema_version: str
 
 
-class _ShadowLeaveImpact(_ClosedModel):
+class _PreviewLeaveImpact(_ClosedModel):
     affected_categories: list[str]
     current_unapplied_count: int
     library: str
 
 
-class _ShadowLeaveResponse(_ClosedModel):
+class _PreviewLeaveResponse(_ClosedModel):
     authority: Literal["none"]
     can_confirm: Literal[False]
     confirmation_required: Literal[True]
-    libraries: list[_ShadowLeaveImpact]
+    libraries: list[_PreviewLeaveImpact]
     posture: Literal["review", "preview"]
     requested_posture: Literal["qualified_decision_only_unavailable"]
-    schema_version: Literal["shadow-posture-leave-preview-v1"]
+    schema_version: Literal["preview-posture-leave-preview-v1"]
 
 
-class _ShadowFieldOutcomeResponse(_ClosedModel):
+class _PreviewFieldOutcomeResponse(_ClosedModel):
     action_id: str
     candidate_id: str | None
     citation_ids: list[str]
@@ -2214,14 +2214,14 @@ class _ShadowFieldOutcomeResponse(_ClosedModel):
     rule_id: str
 
 
-class _ShadowOutcomeSetResponse(_ClosedModel):
+class _PreviewOutcomeSetResponse(_ClosedModel):
     authority: Literal["none"]
     catalogue_sha256: str
     decision_policy_sha256: str
     decision_policy_version: str
     evaluated_at: int
     outcome_set_id: str
-    outcomes: list[_ShadowFieldOutcomeResponse]
+    outcomes: list[_PreviewFieldOutcomeResponse]
     policy_generation: int
     policy_profile_id: str
     posture: Literal["preview"]
@@ -2234,11 +2234,11 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     target_fingerprint: str
 
 
-class _ShadowSampleResponse(_ClosedModel):
+class _PreviewSampleResponse(_ClosedModel):
     authority: Literal["none"]
-    items: list[_ShadowOutcomeSetResponse]
+    items: list[_PreviewOutcomeSetResponse]
     next_cursor: None
-    schema_version: Literal["shadow-outcome-sample-v1"]
+    schema_version: Literal["preview-outcome-sample-v1"]
 
 
 class _PolicyTransitionFields(TypedDict):
@@ -3275,41 +3275,41 @@ def _register_policy_routes(
         )
 
     @app.get(
-        "/api/v1/metadata-policy/shadow",
-        response_model=_ShadowPostureResponse,
+        "/api/v1/metadata-policy/preview-mode",
+        response_model=_PreviewPostureResponse,
         responses={status: {"model": _ErrorResponse} for status in (401, 503)},
     )
-    def shadow_posture(
+    def preview_posture(
         ml_session: str = Depends(authenticated_session_cookie),
-    ) -> _ShadowPostureResponse:
+    ) -> _PreviewPostureResponse:
         _require_session(sessions, ml_session)
         try:
-            return _ShadowPostureResponse.model_validate(notebook.shadow_state())
+            return _PreviewPostureResponse.model_validate(notebook.shadow_state())
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.post(
-        "/api/v1/metadata-policy/shadow/enter",
-        response_model=_ShadowPostureResponse,
+        "/api/v1/metadata-policy/preview-mode/enter",
+        response_model=_PreviewPostureResponse,
         responses={
             status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
         },
     )
-    def enter_shadow_preview(
+    def enter_preview_mode(
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> _ShadowPostureResponse:
+    ) -> _PreviewPostureResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _ShadowPostureResponse.model_validate(
+            return _PreviewPostureResponse.model_validate(
                 notebook.enter_preview(application.now())
             )
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.post(
-        "/api/v1/metadata-policy/shadow/confirm-automatic",
-        response_model=_ShadowPostureResponse,
+        "/api/v1/metadata-policy/preview-mode/confirm-automatic",
+        response_model=_PreviewPostureResponse,
         responses={
             status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
         },
@@ -3317,10 +3317,10 @@ def _register_policy_routes(
     def confirm_automatic(
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> _ShadowPostureResponse:
+    ) -> _PreviewPostureResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _ShadowPostureResponse.model_validate(
+            return _PreviewPostureResponse.model_validate(
                 notebook.confirm_automatic(application.now())
             )
         except MetadataPolicyApplicationError as error:
@@ -3431,31 +3431,31 @@ def _register_policy_routes(
         return _committed_automatic_safety_response()
 
     @app.get(
-        "/api/v1/metadata-policy/shadow/leave-preview",
-        response_model=_ShadowLeaveResponse,
+        "/api/v1/metadata-policy/preview-mode/leave-preview",
+        response_model=_PreviewLeaveResponse,
         responses={status: {"model": _ErrorResponse} for status in (401, 503)},
     )
-    def preview_leave_shadow(
+    def preview_leave_preview_mode(
         ml_session: str = Depends(authenticated_session_cookie),
-    ) -> _ShadowLeaveResponse:
+    ) -> _PreviewLeaveResponse:
         _require_session(sessions, ml_session)
         try:
-            return _ShadowLeaveResponse.model_validate(notebook.preview_leave())
+            return _PreviewLeaveResponse.model_validate(notebook.preview_leave())
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.get(
-        "/api/v1/metadata-policy/shadow/outcomes",
-        response_model=_ShadowSampleResponse,
+        "/api/v1/metadata-policy/preview-mode/outcomes",
+        response_model=_PreviewSampleResponse,
         responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)},
     )
-    def shadow_outcome_sample(
+    def preview_outcome_sample(
         limit: int = Query(default=20, ge=1, le=50),
         ml_session: str = Depends(authenticated_session_cookie),
-    ) -> _ShadowSampleResponse:
+    ) -> _PreviewSampleResponse:
         _require_session(sessions, ml_session)
         try:
-            return _ShadowSampleResponse.model_validate(notebook.shadow_sample(limit))
+            return _PreviewSampleResponse.model_validate(notebook.shadow_sample(limit))
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 

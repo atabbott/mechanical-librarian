@@ -59,13 +59,13 @@ export const PolicySafety = ({
         <div className="cm-policy-safety-actions">
           <button
             disabled={pending || shadow.posture === 'preview'}
-            onClick={() => void run('shadow/enter')}
+            onClick={() => void run('preview-mode/enter')}
           >
             Enter Preview mode
           </button>
           <button
             disabled={pending || shadow.posture !== 'preview'}
-            onClick={() => void run('shadow/confirm-automatic')}
+            onClick={() => void run('preview-mode/confirm-automatic')}
           >
             Turn on Automatic
           </button>

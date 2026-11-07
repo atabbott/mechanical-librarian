@@ -447,7 +447,7 @@ def test_policy_documents_and_automatic_confirmation(tmp_path) -> None:
                 **profile["destinations"],
                 "cover_order": "automatic",
             }
-            live.call("POST", "/api/v1/metadata-policy/shadow/enter")
+            live.call("POST", "/api/v1/metadata-policy/preview-mode/enter")
             draft = live.call("POST", "/api/v1/metadata-policy/drafts", profile)
             preview = live.call("POST", "/api/v1/metadata-policy/preview", profile)
             captures = {
@@ -466,17 +466,17 @@ def test_policy_documents_and_automatic_confirmation(tmp_path) -> None:
                 "get-metadata-policy-transition": live.call(
                     "GET", "/api/v1/metadata-policy/transition"
                 ),
-                "get-metadata-policy-shadow": live.call(
-                    "GET", "/api/v1/metadata-policy/shadow"
+                "get-metadata-policy-preview-mode": live.call(
+                    "GET", "/api/v1/metadata-policy/preview-mode"
                 ),
-                "get-metadata-policy-shadow-outcomes": live.call(
-                    "GET", "/api/v1/metadata-policy/shadow/outcomes"
+                "get-metadata-policy-preview-mode-outcomes": live.call(
+                    "GET", "/api/v1/metadata-policy/preview-mode/outcomes"
                 ),
                 "get-metadata-policy-automatic-safety": live.call(
                     "GET", "/api/v1/metadata-policy/automatic-safety"
                 ),
-                "post-metadata-policy-shadow-confirm-automatic": live.call(
-                    "POST", "/api/v1/metadata-policy/shadow/confirm-automatic"
+                "post-metadata-policy-preview-mode-confirm-automatic": live.call(
+                    "POST", "/api/v1/metadata-policy/preview-mode/confirm-automatic"
                 ),
                 "post-metadata-policy-automatic-safety-suspend": live.call(
                     "POST",
