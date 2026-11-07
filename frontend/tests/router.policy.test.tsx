@@ -574,10 +574,10 @@ describe('Policy route', () => {
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
+      'Ebooks: Ask me. Owner choice required. Automatic eligibility if selected: No automatic effect. Owner review required',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me — owner choice required. Automatic eligibility if selected: ASIN: fill empty',
+      'Audiobooks: Ask me. Owner choice required. Automatic eligibility if selected: ASIN: fill empty',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
@@ -592,7 +592,7 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
+      'Ebooks: Ask me. Owner choice required. Automatic eligibility if selected: No automatic effect. Owner review required',
     )
   })
 
@@ -854,9 +854,10 @@ describe('Policy route', () => {
     expect(screen.queryByText('opaque-policy-identity')).toBeNull()
     expect(screen.queryByRole('textbox', { name: /Policy name/i })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull()
+    // #1760: the heading needs no intro line.
     expect(
-      screen.getByText('Choose how metadata is stored and when you want to review it.'),
-    ).toBeVisible()
+      screen.queryByText('Choose how metadata is stored and when you want to review it.'),
+    ).toBeNull()
     expect(
       screen.getByRole('button', {
         name: 'Identity How a work names itself and its contributors.',
@@ -1115,7 +1116,7 @@ describe('Policy route', () => {
     expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
     expect(
       screen.getByText(
-        /draft saved; activate to keep it — reloading starts from the active policy\.$/u,
+        /draft saved; activate to keep it\. Reloading starts from the active policy\.$/u,
       ),
     ).toBeVisible()
     expect(screen.queryByText(/snapshot saved automatically/u)).toBeNull()
@@ -2578,9 +2579,9 @@ it.each([
 )
 
 it.each([
-  ['ignore', 'Ignored — no metadata action'],
-  ['ask', 'Ask me — owner choice required'],
-  ['automatic', 'Automatic —'],
+  ['ignore', 'Ignored. No metadata action'],
+  ['ask', 'Ask me. Owner choice required'],
+  ['automatic', 'Automatic:'],
 ])(
   'states selected %s behavior before eligibility in cards and activation',
   async (mode, label) => {

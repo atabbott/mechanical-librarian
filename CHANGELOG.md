@@ -47,6 +47,8 @@ brackets are GitHub issues.
   reloaded work shows it and that requesting again is safe (#1755).
 - A page that cannot load now says what went wrong and what to do, instead of
   an API status and code, which are under Technical detail (#1756).
+- Policy's impact and preview lines read as plain sentences instead of phrases
+  joined by a dash, and the Policy heading has no intro line (#1760).
 - The policy preview-mode API now says preview instead of shadow:
   `/api/v1/metadata-policy/shadow`, `…/shadow/enter`,
   `…/shadow/confirm-automatic`, `…/shadow/leave-preview` and

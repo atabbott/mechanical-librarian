@@ -446,10 +446,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       media === 'ebook' ? data.state.rich_qualification : data.state.audiobook_qualification
     ).filter((entry) => entry.field === field.key && entry.option === option)
     const available = entries.filter((entry) => entry.automatic_available)
-    if (!available.length) return 'No automatic effect — owner review required'
+    if (!available.length) return 'No automatic effect. Owner review required'
     if (media === 'ebook' && field.key === 'cover_order')
       return option === 'replace_if_strictly_better'
-        ? 'Fill empty only — confirmed covers are preserved'
+        ? 'Fill empty only: confirmed covers are preserved'
         : 'Fill empty or replace only with a confirmed strict-rank upgrade'
     if (media === 'audiobook' && field.key === 'cover_order')
       return 'Replace a small incumbent only with a materially larger confirmed cover'
@@ -476,13 +476,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     const destination =
       draft.destinations[field.key] ?? fieldDefaults[field.key]?.destination ?? 'ask'
     const eligibility = mediaQualification(field, option, media)
-    if (destination === 'automatic') return `Automatic — ${eligibility}`
+    if (destination === 'automatic') return `Automatic: ${eligibility}`
     const selected =
       destination === 'ignore'
-        ? 'Ignored — no metadata action'
+        ? 'Ignored. No metadata action'
         : destination === 'ask'
-          ? 'Ask me — owner choice required'
-          : 'Unavailable — no metadata action'
+          ? 'Ask me. Owner choice required'
+          : 'Unavailable. No metadata action'
     return `${selected}. Automatic eligibility if selected: ${eligibility}`
   }
 
@@ -638,19 +638,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Review the unchanged preview before making this draft active.'
         : stage === 'preview'
-          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved; activate to keep it — reloading starts from the active policy.`
+          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved; activate to keep it. Reloading starts from the active policy.`
           : stage === 'validating'
             ? 'Checking every chapter, where Automatic may decide, and which libraries the policy covers.'
             : draftDisplay.changed
               ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.`
-              : 'Change any field to create a new draft — validation always covers the whole policy.'
+              : 'Change any field to create a new draft.'
 
   return (
     <div className="cm-policy-route" data-route-focus tabIndex={-1}>
       <header className="cm-page-heading">
         <div>
           <h1>Library policy</h1>
-          <p>Choose how metadata is stored and when you want to review it.</p>
         </div>
       </header>
       <div className="cm-policy-editor" ref={editorRef}>

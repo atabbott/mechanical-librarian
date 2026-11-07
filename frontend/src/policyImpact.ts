@@ -131,7 +131,7 @@ export const policyImpactDisplay = (
     return {
       changed: false,
       title: 'Needs review',
-      detail: 'Current value is unavailable or unreadable — inspect the source before deciding',
+      detail: 'Current value is unavailable or unreadable. Inspect the source before deciding',
       technicalDetail,
     }
   if (field.outcome === 'abstain')
@@ -140,7 +140,7 @@ export const policyImpactDisplay = (
       title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
       detail:
         field.reason === 'policy_ignored'
-          ? `remains ${current} — ${humanReason(field.reason)}`
+          ? `remains ${current}: ${humanReason(field.reason)}`
           : (automaticRefusalReasons[field.reason ?? ''] ??
             'The preview did not select an automatic action; no more specific reason is available.'),
       technicalDetail,
@@ -149,20 +149,20 @@ export const policyImpactDisplay = (
     return {
       changed: false,
       title: 'No change',
-      detail: `remains ${current} — ${field.reason ? humanReason(field.reason) : 'the exact current value is preserved'}`,
+      detail: `remains ${current}: ${field.reason ? humanReason(field.reason) : 'the exact current value is preserved'}`,
       technicalDetail,
     }
   if (!currentIsDisplayable && !desiredIsDisplayable)
     return {
       changed: false,
       title: 'No change',
-      detail: 'remains empty — no supported value found',
+      detail: 'remains empty: no supported value found',
       technicalDetail,
     }
   return {
     changed: false,
     title: 'No supported value found',
-    detail: `${current} remains — ${humanReason(field.reason)}`,
+    detail: `${current} remains: ${humanReason(field.reason)}`,
     technicalDetail,
   }
 }

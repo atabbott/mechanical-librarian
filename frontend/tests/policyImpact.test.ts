@@ -133,7 +133,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains empty — no supported value found',
+      detail: 'remains empty: no supported value found',
     })
     expect(
       policyImpactDisplay({
@@ -147,7 +147,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title — the exact current value is preserved',
+      detail: 'remains Current title: the exact current value is preserved',
     })
     expect(
       policyImpactDisplay({
@@ -176,7 +176,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'Needs review',
-      detail: 'Current value is unavailable or unreadable — inspect the source before deciding',
+      detail: 'Current value is unavailable or unreadable. Inspect the source before deciding',
     })
     expect(
       policyImpactDisplay({
@@ -190,7 +190,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains empty — this policy leaves the field unchanged',
+      detail: 'remains empty: this policy leaves the field unchanged',
     })
     expect(
       policyImpactDisplay({
@@ -218,7 +218,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title — the exact current value is preserved',
+      detail: 'remains Current title: the exact current value is preserved',
     })
     expect(
       policyImpactDisplay({
@@ -260,7 +260,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title — this policy leaves the field unchanged',
+      detail: 'remains Current title: this policy leaves the field unchanged',
     })
     expect(
       policyImpactDisplay({
