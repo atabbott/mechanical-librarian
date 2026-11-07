@@ -1,6 +1,5 @@
 import {
   invalidateBackgroundQueries,
-  invalidateForegroundQueries,
   prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
@@ -11,20 +10,13 @@ import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
 import { StaleBuildRead } from '../components/StaleBuildRead'
-import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentPropsWithRef, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import {
-  ApiError,
-  BuildMismatchError,
-  CsrfRenewedError,
-  displayValue,
-  sessionRefreshedCopy,
-  uncertainWriteOutcome,
-} from '../api/http'
+import { ApiError, BuildMismatchError, displayValue } from '../api/http'
 import type {
   DecisionCommand,
   LibraryLens,
@@ -98,6 +90,8 @@ import {
 } from '../libraryPreparation'
 import { WorkSources, WorkSummary } from './WorkSummary'
 import { AttentionRail } from './AttentionRail'
+import { AutomaticHandlingPanel } from './AutomaticHandling'
+import { useAutomaticHandling } from '../automaticHandling'
 import { BookMark } from '../components/BookMark'
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import {
@@ -372,9 +366,6 @@ export default function LibraryPage({
     if (typeof rail.scrollTo === 'function')
       rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
   }, [])
-  const automaticTrigger = useRef<HTMLButtonElement>(null)
-  const keepManualHandling = useRef<HTMLButtonElement>(null)
-  const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
   const attentionHeading = useRef<HTMLHeadingElement>(null)
   const attentionToggle = useRef<HTMLButtonElement>(null)
@@ -430,7 +421,6 @@ export default function LibraryPage({
     }
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
-  const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
   const [ownerCommand, setOwnerCommand] = useState<string | null>(null)
   // What the owner is told on the case they were moved to when theirs was
   // superseded under them, and the case whose field heading takes focus (M4).
@@ -453,9 +443,6 @@ export default function LibraryPage({
   // The case whose owner form was open, or whose owner control had focus,
   // when the Library said it changed; the refetch that follows can unmount it.
   const ownerEngaged = useRef<string | null>(null)
-  const [automaticResults, setAutomaticResults] = useState<
-    Readonly<Record<string, 'success' | 'error' | 'refreshed' | 'uncertain'>>
-  >({})
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -1092,42 +1079,6 @@ export default function LibraryPage({
     detailFailed: detail.isError,
   })
   const staleCoverNotice = staleCover.notice
-  const selectedAutomaticKey = selected
-    ? `${selectedReviewCaseId}:${selected.destination}:${selected.targetFingerprint}`
-    : null
-  const automaticPanelVisible = automaticPanel === selectedAutomaticKey && selected?.manualHold
-  const automaticResult = selectedAutomaticKey
-    ? (automaticResults[selectedAutomaticKey] ?? null)
-    : null
-  const automaticCompletedForSelected = automaticResult === 'success'
-  const returnAutomatic = useMutation({
-    mutationFn: ({ destination }: { destination: string; key: string }) =>
-      http.returnToAutomatic(selectedReviewCaseId, destination),
-    retry: false,
-    onSuccess: (_value, request) => {
-      setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
-    },
-    onError: (error, request) => {
-      const uncertain = uncertainWriteOutcome(error)
-      setAutomaticResults((current) => ({
-        ...current,
-        [request.key]: uncertain
-          ? 'uncertain'
-          : error instanceof CsrfRenewedError
-            ? 'refreshed'
-            : 'error',
-      }))
-      // The checks may have been requested: show the case as it now stands.
-      // Not awaited, so the panel's controls are enabled again (and Keep
-      // manual handling can take focus) while the case reloads.
-      if (uncertain)
-        void invalidateForegroundQueries(queryClient, {
-          queryKey: ['review-case', selectedReviewCaseId],
-          exact: true,
-        })
-    },
-  })
-
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
   useRouteReadyFocus(routeIdentity, true)
   useEffect(() => {
@@ -1318,14 +1269,7 @@ export default function LibraryPage({
     advanceScroll.current = null
     window.scrollTo({ top })
   }, [selected?.destination])
-  useEffect(() => {
-    if (automaticPanelVisible) keepManualHandling.current?.focus()
-  }, [automaticPanelVisible, automaticResult])
-  useEffect(() => {
-    if (automaticPanel !== null || !restoreAutomaticTrigger.current) return
-    restoreAutomaticTrigger.current = false
-    automaticTrigger.current?.focus()
-  }, [automaticPanel])
+  const automaticHandling = useAutomaticHandling(selected, selectedReviewCaseId)
   const attentionFocus = useAttentionRail(search.attention, {
     rail: attentionRail,
     heading: attentionHeading,
@@ -1577,18 +1521,6 @@ export default function LibraryPage({
       ...(authoredDescription ? { authoredDescription } : {}),
     })
     return idempotencyKey
-  }
-  const closeAutomaticPanel = () => {
-    const closingKey = automaticPanel
-    restoreAutomaticTrigger.current = true
-    setAutomaticPanel(null)
-    if (
-      closingKey &&
-      ['error', 'refreshed', 'uncertain'].includes(automaticResults[closingKey] ?? '')
-    )
-      setAutomaticResults((current) => {
-        return Object.fromEntries(Object.entries(current).filter(([key]) => key !== closingKey))
-      })
   }
   const clearSelection = () => {
     workSelectionGeneration.current += 1
@@ -2663,90 +2595,7 @@ export default function LibraryPage({
                     />
                   ) : null}
                   {selected.manualHold ? (
-                    <section
-                      className="automatic-handling-panel"
-                      aria-label="Automatic handling"
-                      onKeyDown={(event) => {
-                        if (event.key === 'Escape' && !returnAutomatic.isPending) {
-                          event.preventDefault()
-                          closeAutomaticPanel()
-                        }
-                      }}
-                    >
-                      {automaticPanelVisible ? (
-                        <>
-                          <h4>Automatic handling is paused for this field</h4>
-                          <p>
-                            The recorded value remains. Fresh checks are requested first; automatic
-                            policy may manage later qualified changes.
-                          </p>
-                          {automaticResult === 'success' ? (
-                            <p role="status">
-                              Fresh checks requested. Manual handling remains until they complete.
-                            </p>
-                          ) : automaticResult === 'error' ? (
-                            <p role="alert">
-                              Fresh checks could not be requested. Manual handling is unchanged.
-                            </p>
-                          ) : automaticResult === 'uncertain' ? (
-                            <p role="alert">
-                              Fresh checks could not be confirmed. They may have been requested; the
-                              current case was reloaded. Check it before trying again.
-                            </p>
-                          ) : automaticResult === 'refreshed' ? (
-                            <p role="alert">{sessionRefreshedCopy}</p>
-                          ) : null}
-                          <div className="automatic-handling-actions">
-                            <button
-                              ref={keepManualHandling}
-                              type="button"
-                              disabled={returnAutomatic.isPending}
-                              onClick={closeAutomaticPanel}
-                            >
-                              Keep manual handling
-                            </button>
-                            <button
-                              type="button"
-                              disabled={returnAutomatic.isPending || automaticCompletedForSelected}
-                              onClick={() => {
-                                if (!selectedAutomaticKey) return
-                                returnAutomatic.mutate({
-                                  destination: selected.destination,
-                                  key: selectedAutomaticKey,
-                                })
-                              }}
-                            >
-                              {returnAutomatic.isPending
-                                ? 'Requesting fresh checks…'
-                                : 'Resume after fresh checks'}
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          {selected.humanDecision === null ? (
-                            <p>
-                              An earlier owner decision is pausing automatic handling until you
-                              choose Resume automatic handling.
-                            </p>
-                          ) : null}
-                          <button
-                            ref={automaticTrigger}
-                            type="button"
-                            aria-disabled={automaticCompletedForSelected}
-                            onClick={
-                              automaticCompletedForSelected
-                                ? undefined
-                                : () => setAutomaticPanel(selectedAutomaticKey)
-                            }
-                          >
-                            {automaticCompletedForSelected
-                              ? 'Fresh checks requested'
-                              : 'Resume automatic handling'}
-                          </button>
-                        </>
-                      )}
-                    </section>
+                    <AutomaticHandlingPanel handling={automaticHandling} selected={selected} />
                   ) : null}
                   {comparisonNotices(selected).length ? (
                     <aside className="comparison-notice" aria-label="Comparison condition">

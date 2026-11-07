@@ -6,6 +6,7 @@ import {
   AmbiguousMutationError,
   ApiError,
   BuildMismatchError,
+  ResponseDecodeError,
   ReviewApiClient,
   UncertainMutationError,
 } from '../src/api/http'
@@ -42,6 +43,15 @@ const textClient = (status = 200) =>
       async () => new Response('Saved', { status, headers: { 'content-type': 'text/plain' } }),
     ),
   })
+// The same, losing every request on the network (#1754).
+const lostClient = () =>
+  new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn<typeof fetch>(async () => {
+      throw new TypeError('Failed to fetch')
+    }),
+  })
 
 // A scripted `policyCommand` mock receives the page's path and body untyped;
 // this hands both to the real client unchanged.
@@ -58,6 +68,37 @@ const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][num
   }))
 
 describe('Policy route', () => {
+  // #1756: a state read the client cannot decode names the page and says in
+  // plain words what happened; the status and code are Technical detail.
+  it('names Policy and explains an unreadable state read in plain words', async () => {
+    const user = userEvent.setup()
+    // The real client decodes the invented document and refuses it.
+    const transport = answeringClient({ invented: true })
+    const failure = await transport.getPolicyState().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ResponseDecodeError)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPolicyState: vi.fn(() => transport.getPolicyState()),
+    }
+    renderRoute('/policy?section=curation', http)
+
+    expect(await screen.findByRole('heading', { name: "Policy couldn't be loaded." })).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "The server sent an answer this page couldn't read. Try again.",
+    )
+    expect(screen.queryByText(/Review API request failed/u)).toBeNull()
+    expect(screen.queryByText(/workspace could not be loaded/u)).toBeNull()
+    // The heading names the page; no eyebrow label above it (#1756).
+    expect(screen.queryByText('Review unavailable')).toBeNull()
+    const technical = screen.getByText('Technical detail')
+    const details = technical.closest('details')
+    expect(details).not.toBeNull()
+    expect(details).not.toHaveAttribute('open')
+    await user.click(technical)
+    expect(within(details as HTMLElement).getByText('502 · invalid_response')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+  })
+
   it('explains empty-series filling, fill and explicit add/replace representations and provider numbering limits', async () => {
     renderRoute('/policy?section=publication')
     const series = await screen.findByRole('region', { name: 'Series memberships' })
@@ -292,9 +333,7 @@ describe('Policy route', () => {
       const { policyCommand } = await run('validate', new ApiError(503, 'persistence'))
 
       expect(
-        await screen.findByText(
-          'The complete draft could not be validated. Nothing was saved or activated; try again.',
-        ),
+        await screen.findByText("The draft couldn't be validated. Nothing was saved. Try again."),
       ).toBeVisible()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
     })
@@ -303,10 +342,18 @@ describe('Policy route', () => {
   // Validate and preview write nothing, so an answer the client cannot read is
   // that phase's failure; only the snapshot save may have written (#1692).
   describe('an undecodable answer', () => {
-    const run = async (failing: 'validate' | 'drafts' | 'preview', text = false) => {
+    const run = async (
+      failing: 'validate' | 'drafts' | 'preview',
+      answer: 'json' | 'text' | 'lost' = 'json',
+    ) => {
       const user = userEvent.setup()
       const status = failing === 'drafts' ? 201 : 200
-      const transport = text ? textClient(status) : answeringClient({ invented: true }, status)
+      const transport =
+        answer === 'lost'
+          ? lostClient()
+          : answer === 'text'
+            ? textClient(status)
+            : answeringClient({ invented: true }, status)
       const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
         // The page previews only through the typed method below.
         if (path === 'preview' || path === 'activate') throw new Error(`policyCommand ${path}`)
@@ -333,9 +380,7 @@ describe('Policy route', () => {
     it('to validation says nothing was saved', async () => {
       const { policyCommand } = await run('validate')
       expect(
-        await screen.findByText(
-          'The complete draft could not be validated. Nothing was saved or activated; try again.',
-        ),
+        await screen.findByText("The draft couldn't be validated. Nothing was saved. Try again."),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
@@ -358,7 +403,7 @@ describe('Policy route', () => {
       const { policyCommand, previewPolicy } = await run('preview')
       expect(
         await screen.findByText(
-          'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+          "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
         ),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
@@ -369,22 +414,56 @@ describe('Policy route', () => {
     // An answer that is not JSON at all is that phase's failure too, not an
     // uncertain write (#1731).
     it.each([
-      [
-        'validate',
-        'The complete draft could not be validated. Nothing was saved or activated; try again.',
-      ],
+      ['validate', "The draft couldn't be validated. Nothing was saved. Try again."],
       [
         'preview',
-        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+        "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
       ],
     ] as const)("that is not JSON, to %s, shows that phase's copy", async (failing, copy) => {
-      await run(failing, true)
+      await run(failing, 'text')
       expect(await screen.findByText(copy)).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
     })
 
+    // A lost answer to a command that writes nothing is that phase's failure
+    // too; only the snapshot save may have written (#1754).
+    it.each([
+      [
+        'validate',
+        "The draft couldn't be validated. Nothing was saved. Try again.",
+        ['validate'],
+        0,
+      ],
+      [
+        'preview',
+        "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
+        ['validate', 'drafts'],
+        1,
+      ],
+    ] as const)(
+      "that the network lost, to %s, shows that phase's copy",
+      async (failing, copy, commands, previews) => {
+        const { policyCommand, previewPolicy } = await run(failing, 'lost')
+        expect(await screen.findByText(copy)).toBeVisible()
+        expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
+        expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(commands)
+        expect(previewPolicy).toHaveBeenCalledTimes(previews)
+        expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeEnabled()
+      },
+    )
+
+    it('that the network lost, to the snapshot save, could not be confirmed', async () => {
+      const { policyCommand } = await run('drafts', 'lost')
+      expect(
+        await screen.findByText(
+          'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+        ),
+      ).toBeVisible()
+      expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
+    })
+
     it('that is not JSON, to the snapshot save, could not be confirmed', async () => {
-      await run('drafts', true)
+      await run('drafts', 'text')
       expect(
         await screen.findByText(
           'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
@@ -424,7 +503,7 @@ describe('Policy route', () => {
 
     expect(
       await screen.findByText(
-        'The immutable snapshot was saved, but its no-write impact preview is unavailable. Retry when the current state is visible.',
+        "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
       ),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
@@ -488,14 +567,14 @@ describe('Policy route', () => {
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
+      'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me — owner choice required. Automatic eligibility if selected: ASIN: fill empty',
+      'Audiobooks: Ask me. Your choice. If set to Automatic: Fill ASIN if empty.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
-    expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
-    expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
+    expect(within(asin).getByText(/Fill an empty field\. Automatic available\./u)).toBeVisible()
+    expect(within(asin).getByText(/Replace a valid ASIN\. Review required\./u)).toBeVisible()
 
     // The record qualified one option, so the other one this field offers is
     // still the owner's.
@@ -506,7 +585,7 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
+      'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
     )
   })
 
@@ -549,11 +628,81 @@ describe('Policy route', () => {
     const language = await screen.findByRole('region', { name: 'Language' })
     const scope = language.querySelector('.cm-policy-media-scope')
     expect(scope).not.toBeNull()
-    expect(scope).toHaveTextContent(
-      'Automatic eligibility if selected: Fill empty or respell the same language',
-    )
+    expect(scope).toHaveTextContent('If set to Automatic: Fill empty or respell the same language.')
     expect(scope?.textContent.match(/Fill empty or respell the same language/gu)).toHaveLength(2)
     expect(scope).not.toHaveTextContent('Fill empty only')
+  })
+
+  // #1760: one sentence per set of operations, the fields as its object, one
+  // comma list, British spelling.
+  it('lists audiobook contributor operations as one plain sentence', async () => {
+    renderRoute('/policy?section=identity', {
+      ...createHttp(),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+        schema_version: 'metadata-policy-notebook-v1',
+        policy_id: 'policy-1',
+        profile: {
+          schema_version: 'metadata-policy-profile-v3',
+          name: 'Default',
+          options: { contributor_names: 'canonical' },
+          destinations: {},
+        },
+        rich_qualification: [],
+        audiobook_qualification: [
+          ...(['authors', 'narrators'] as const).flatMap((destination) =>
+            (['fill', 'preserve', 'normalize', 'add', 'replace'] as const).map((operation) => ({
+              automatic_available: true,
+              destination,
+              field: 'contributor_names' as const,
+              identity: `contributor_names:canonical:audiobook_${destination}_${operation}`,
+              operation,
+              option: 'canonical' as const,
+              record_sha256: 'c'.repeat(64),
+            })),
+          ),
+          ...inertAudiobookQualification.filter((entry) => entry.field !== 'contributor_names'),
+        ],
+      })),
+    })
+    const contributors = await screen.findByRole('region', { name: 'Authors and narrators' })
+    const scope = contributors.querySelector('.cm-policy-media-scope')
+    expect(scope).toHaveTextContent(
+      'Fill empty, keep current, normalise, add or replace authors and narrators.',
+    )
+    expect(scope?.textContent).not.toMatch(/;| or keep| or normali[sz]e or/u)
+  })
+
+  it('reads a lone fill as right for a plural field', async () => {
+    renderRoute('/policy?section=curation', {
+      ...createHttp(),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+        schema_version: 'metadata-policy-notebook-v1',
+        policy_id: 'policy-1',
+        profile: {
+          schema_version: 'metadata-policy-profile-v3',
+          name: 'Default',
+          options: { tags: 'fill_empty' },
+          destinations: {},
+        },
+        rich_qualification: [],
+        audiobook_qualification: [
+          {
+            automatic_available: true,
+            destination: 'tags',
+            field: 'tags',
+            identity: 'tags:fill_empty:audiobook_tags_fill',
+            operation: 'fill',
+            option: 'fill_empty',
+            record_sha256: 'd'.repeat(64),
+          },
+          ...inertAudiobookQualification,
+        ],
+      })),
+    })
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    const scope = tags.querySelector('.cm-policy-media-scope')
+    expect(scope).toHaveTextContent('Fill tags if empty.')
+    expect(scope?.textContent).not.toMatch(/an empty/u)
   })
 
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
@@ -768,9 +917,10 @@ describe('Policy route', () => {
     expect(screen.queryByText('opaque-policy-identity')).toBeNull()
     expect(screen.queryByRole('textbox', { name: /Policy name/i })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull()
+    // #1760: the heading needs no intro line.
     expect(
-      screen.getByText('Choose how metadata is stored and when you want to review it.'),
-    ).toBeVisible()
+      screen.queryByText('Choose how metadata is stored and when you want to review it.'),
+    ).toBeNull()
     expect(
       screen.getByRole('button', {
         name: 'Identity How a work names itself and its contributors.',
@@ -1022,14 +1172,14 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText(
-        '· Ask me: would propose filling the empty field with Proposed cast → Automatic: fills the empty field with Complete recording cast',
+        '· Ask me now: would propose filling the empty field with Proposed cast. Automatic in the draft: fills the empty field with Complete recording cast.',
         { selector: '.cm-policy-impact small' },
       ),
     ).toBeVisible()
     expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
     expect(
       screen.getByText(
-        /draft saved; activate to keep it — reloading starts from the active policy\.$/u,
+        /draft saved\. Activate to keep it\. Reloading starts from the active policy\.$/u,
       ),
     ).toBeVisible()
     expect(screen.queryByText(/snapshot saved automatically/u)).toBeNull()
@@ -2492,9 +2642,9 @@ it.each([
 )
 
 it.each([
-  ['ignore', 'Ignored — no metadata action'],
-  ['ask', 'Ask me — owner choice required'],
-  ['automatic', 'Automatic —'],
+  ['ignore', 'Ignored. This field is left alone.'],
+  ['ask', 'Ask me. Your choice.'],
+  ['automatic', 'Automatic.'],
 ])(
   'states selected %s behavior before eligibility in cards and activation',
   async (mode, label) => {
@@ -2533,18 +2683,22 @@ it.each([
     expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Audiobooks: ${label}`)
     if (mode !== 'automatic')
       expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-        'Automatic eligibility if selected:',
+        'If set to Automatic: Fill empty only.',
+      )
+    // One label, then plain sentences: no stacked colons (#1760).
+    else
+      expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+        'Ebooks: Automatic. Fill empty only.',
       )
     await user.click(within(tags).getByRole('combobox', { name: 'Tags representation' }))
     await user.click(screen.getByRole('option', { name: 'Add missing values' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     await user.click(await screen.findByRole('button', { name: 'Review activation' }))
-    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
-      `Ebook libraries — ${label}`,
-    )
-    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
-      `Audiobook libraries — ${label}`,
-    )
+    const activation = screen.getByLabelText('Review policy activation')
+    expect(activation).toHaveTextContent(`Ebooks: ${label}`)
+    expect(activation).toHaveTextContent(`Audiobooks: ${label}`)
+    expect(activation).not.toHaveTextContent('—')
+    if (mode === 'automatic') expect(activation).toHaveTextContent('Ebooks: Automatic. Add only.')
   },
 )
 
