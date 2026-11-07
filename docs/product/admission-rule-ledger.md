@@ -103,14 +103,14 @@ The origin ADRs are
 
 | Rank | ID | Gate | Fields | Origin | Origin corpus / precision | ebook-744 fields / works | audiobook-1294 fields / works | Loosened rule | Controls TP/FP/unlabelled | Precision (Wilson 95% lower) | Score | Disposition |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | T1 | Closed title and complete-creator agreement | title, subtitle, authors and other compared destinations | #414 (3586e1be), #815 (ce76c7fd); ADR-0018 | not recorded | 1,343 / 977 (1,343 actionable) | 191 / 125 (191 actionable) | admit the first-ranked of competing values | ebook-744 802/80/471 (523 fields reach no record); audiobook-1294 47/0/160 (44 fields reach no record); n = 929 | 0.914 (0.894) | 1,371.5 | proposed follow-on |
-| 2 | A6 | Automatic-decision abstention | every automatic destination | #442 (593e6198); ADR-0036 | development 159/172 correct at 100% precision; sealed 12/12 and 43/43 | 5,481 / 1,745 (830 actionable) | 6 / 6 (6 actionable) | admit the first-ranked alternative an automatic decision abstained on | ebook-744 808/43/411 (4,786 fields reach no record); audiobook-1294 1/0/9 (2 fields reach no record); n = 852 | 0.950 (0.933) | 779.7 | proposed follow-on |
-| 3 | A3 | Coherent bibliographic combination | bibliographic destinations | #429 (cef7644a); ADR-0021 | not recorded | 327 / 162 (327 actionable) | 6 / 3 (6 actionable) | admit the first-ranked alternative without a coherent combination | ebook-744 399/13/236 (32 fields reach no record); audiobook-1294 2/0/14 (0 fields reach no record); n = 414 | 0.969 (0.947) | 315.4 | proposed follow-on |
+| 1 | T1 | Closed title and complete-creator agreement | title, subtitle, authors and other compared destinations | #414 (3586e1be), #815 (ce76c7fd); ADR-0018 | not recorded | 1,343 / 977 (1,343 actionable) | 191 / 125 (191 actionable) | admit the first-ranked of competing values | ebook-744 802/80/471 (523 fields reach no record); audiobook-1294 47/0/160 (44 fields reach no record); n = 929 | 0.914 (0.894) | 1,371.5 | filed as #1744 |
+| 2 | A6 | Automatic-decision abstention | every automatic destination | #442 (593e6198); ADR-0036 | development 159/172 correct at 100% precision; sealed 12/12 and 43/43 | 5,481 / 1,745 (830 actionable) | 6 / 6 (6 actionable) | admit the first-ranked alternative an automatic decision abstained on | ebook-744 808/43/411 (4,786 fields reach no record); audiobook-1294 1/0/9 (2 fields reach no record); n = 852 | 0.950 (0.933) | 779.7 | filed as #1745 |
+| 3 | A3 | Coherent bibliographic combination | bibliographic destinations | #429 (cef7644a); ADR-0021 | not recorded | 327 / 162 (327 actionable) | 6 / 3 (6 actionable) | admit the first-ranked alternative without a coherent combination | ebook-744 399/13/236 (32 fields reach no record); audiobook-1294 2/0/14 (0 fields reach no record); n = 414 | 0.969 (0.947) | 315.4 | filed as #1746 |
 | 4 | C1 | Classifier outcomes (unknown, conflict block election) | cover | #577 (f7e974d0), #588 (40a97a54); ADR-0046, ADR-0047, ADR-0059 | 96/99 exact agreement; plausible 18/21, none falsely plausible | 385 / 385 (385 actionable) | 97 / 97 (97 actionable) | admit unknown and conflict cover candidates | ebook-744 42/33/284 (73 fields reach no record); audiobook-1294 0/0/19 (80 fields reach no record); n = 75 | 0.560 (0.448) | 215.7 | already filed as #1355 |
-| 5 | A2 | Independent corroboration required | every proposable destination | #351 (d35215e8) | as A1 | 50 / 49 (50 actionable) | 85 / 62 (85 actionable) | admit the first-ranked single-source alternative | ebook-744 37/0/10 (20 fields reach no record); audiobook-1294 8/0/79 (0 fields reach no record); n = 45 | 1.000 (0.921) | 124.4 | proposed follow-on |
+| 5 | A2 | Independent corroboration required | every proposable destination | #351 (d35215e8) | as A1 | 50 / 49 (50 actionable) | 85 / 62 (85 actionable) | admit the first-ranked single-source alternative | ebook-744 37/0/10 (20 fields reach no record); audiobook-1294 8/0/79 (0 fields reach no record); n = 45 | 1.000 (0.921) | 124.4 | filed as #1747 |
 | 6 | C2 | Plausible only for ISBN-search records | cover | #577 (f7e974d0), #588 (40a97a54) | not measured at origin | 121 / 121 (121 actionable) | 15 / 15 (15 actionable) | admit unknown cover candidates reached only by work search | ebook-744 36/2/83 (0 fields reach no record); audiobook-1294 0/0/15 (0 fields reach no record); n = 38 | 0.947 (0.827) | 112.5 | already filed as #1380 |
 | 7 | I3 | Local ISBN acceptance classes; anything else stays unresolved | isbn | #333 (f1dd28f5) | accepted-evidence precision 38/40 (95%), recall 41/46 | 524 / 524 (25 actionable) | 36 / 36 (0 actionable) | admit the first-ranked alternative of an unresolved local ISBN | ebook-744 19/0/0 (511 fields reach no record); audiobook-1294 0/0/0 (36 fields reach no record); n = 19 | 1.000 (0.832) | 20.8 | already filed as #1356 (closed) |
-| 8 | W9 | Series identity match for series fill | series | #998 (dc8de6f5); ADR-0070 | not recorded | not measurable on that snapshot: gate postdates source | 5 / 5 (4 actionable) | admit the first-ranked series alternative | audiobook-1294 2/0/4 (1 fields reach no record); n = 2 | 1.000 (0.342) | 1.4 | proposed follow-on |
+| 8 | W9 | Series identity match for series fill | series | #998 (dc8de6f5); ADR-0070 | not recorded | not measurable on that snapshot: gate postdates source | 5 / 5 (4 actionable) | admit the first-ranked series alternative | audiobook-1294 2/0/4 (1 fields reach no record); n = 2 | 1.000 (0.342) | 1.4 | filed as #1748 |
 | 9 | X1 | Candidate limit (an over-limit lane keeps no candidate) | every destination its provider lanes feed | #297 (f564e598) | not recorded | 5,841 / 677 | 371 / 35 | keep the first five candidates of an over-limit lane | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
 | 10 | A1 | Replace only with positive preservation evidence | every proposable destination | #351 (d35215e8) | 54 exact replays, zero measured systemic false positives | 1,756 / 1,281 (0 actionable) | 310 / 142 (0 actionable) | admit the first-ranked alternative without preservation evidence | ebook-744 0/0/0 (1,756 fields reach no record); audiobook-1294 0/0/0 (310 fields reach no record); n = 0 | not estimable | 0.0 | kept |
 | 11 | X5 | Redundant publication context | publication destinations | #818 (e28584e6) | not recorded | 1,761 / 1,761 (0 actionable) | 138 / 138 (0 actionable) | admit the first-ranked redundant publication value | ebook-744 0/0/0 (1,761 fields reach no record); audiobook-1294 0/0/0 (138 fields reach no record); n = 0 | not estimable | 0.0 | kept |
@@ -207,20 +207,24 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Proposed follow-ons.** T1 (1,534 actionable fields), A6 (836), A3 (333),
-  A2 (135) and W9 (4). W9's bound rests on n = 2, so its follow-on is a
-  measurement task rather than a loosening.
+- **Follow-ons.** The five highest-ranked rows not already filed are filed:
+  T1 as [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744) (1,534 actionable fields),
+  A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745) (836),
+  A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333),
+  A2 as [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747) (135) and
+  W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
+  a measurement task rather than a loosening.
 - **Dispositions.** `kept` rows stay as they are. Rows already covered by an
   issue link it: W1, W5 and the cover-identity part of C1 (#1355), I3 (#1356,
   closed after measurement), C4's EPUB `invalid_declaration` part (#1357,
-  closed) and C2's work-search records (#1380). The five highest-ranked rows
-  not already filed are the proposed follow-ons; each gets its issue number by
-  re-running the script with `--follow-on ID=ISSUE`.
+  closed) and C2's work-search records (#1380). A filed follow-on's row gets
+  its issue number by re-running the script with `--follow-on ID=ISSUE`.
 - **Large ceilings that score 0.** There are two different reasons.
   - Some rows block many fields, but almost none of those fields kept an
     alternative, so loosening the gate as stated would unblock almost nothing: A1
-    (2,066 blocked), X5 (1,899), A5 (1,415, one actionable), I4 (502), I7
-    (103) and X4 (73). Promoting one needs a loosened rule that first
+    (2,066 blocked, none actionable), X5 (1,899, none), A5 (1,415, three
+    actionable, none reaching a provider record), I4 (502, none), I7 (103,
+    none) and X4 (73, none). Promoting one needs a loosened rule that first
     produces a candidate.
   - Other rows never persisted their refused records (X1 with 6,212 blocked,
     W6, W1, I5, B2, B3, B4, B5, B6, X2), or carry a risk that is not identity
@@ -253,6 +257,8 @@ uv run python scripts/admission_rule_ledger.py \
         32360e99c708ea2ac346a7bf4cb157711fd74049 \
     --source-root audiobook-1294 "$SCRATCH/src-32360e99" \
     --source-report audiobook-1294 "$AUDIO/final-report.json" \
+    --follow-on T1=1744 --follow-on A6=1745 --follow-on A3=1746 \
+    --follow-on A2=1747 --follow-on W9=1748 \
     --format markdown
 ```
 
