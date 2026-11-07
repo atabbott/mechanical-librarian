@@ -234,6 +234,65 @@ it('offers a reload for the selected work when only the Works read met a newer b
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
 
+it('moves focus to Reload when a selected-work retry meets a newer build (#1288)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getLibrary: vi.fn(async () => {
+      if (retried) throw new BuildMismatchError()
+      throw new ApiError(503, 'unavailable')
+    }),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      throw new ApiError(503, 'unavailable')
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  // The retry removes Try again; the failed read focuses the control that
+  // replaces it, which on a newer build is the reload.
+  await screen.findByText('Selected work was not loaded. This tab is running an earlier build.', {
+    exact: false,
+  })
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  await waitFor(() =>
+    expect(
+      within(workspace).getByRole('button', { name: 'Reload the current application' }),
+    ).toHaveFocus(),
+  )
+  expect(document.body).not.toHaveFocus()
+})
+
+it('moves focus to Reload when a selected detail retry meets a newer build (#1288)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      if (retried) throw new BuildMismatchError()
+      throw new ApiError(503, 'unavailable')
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  await screen.findByText('Selected work was not loaded. This tab is running an earlier build.', {
+    exact: false,
+  })
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  await waitFor(() =>
+    expect(
+      within(workspace).getByRole('button', { name: 'Reload the current application' }),
+    ).toHaveFocus(),
+  )
+  expect(document.body).not.toHaveFocus()
+})
+
 it('holds Library in its pending state until the handoff consent read settles', async () => {
   let release: (value: ReturnType<typeof consentOf>) => void = () => undefined
   const getActivityConsent = vi.fn(

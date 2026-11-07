@@ -1236,6 +1236,11 @@ export default function LibraryPage({
     !displayedIdentity &&
     (reading || attention.isPending || attention.isPlaceholderData || detail.isPending)
   const identityError = !displayedIdentity && (failed || attention.isError)
+  const identityStale =
+    identityError &&
+    (error instanceof BuildMismatchError ||
+      attention.error instanceof BuildMismatchError ||
+      detail.error instanceof BuildMismatchError)
   // While a command records, the Library asks for the successor, the owner is
   // moved to it, or its identity is still being read, the absence is the move.
   const leaving =
@@ -1245,6 +1250,9 @@ export default function LibraryPage({
     (reconciledSuccessorIdentity === search.preview && detail.isPending)
   const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
+  // A works retry that meets a newer build can leave the identity in error
+  // throughout, so the switch to the reload is what settles the retry.
+  const selectedReadStale = identityStale || detail.error instanceof BuildMismatchError
   const selectedDetailReady =
     !preparationSelected &&
     Boolean(search.preview) &&
@@ -1272,7 +1280,7 @@ export default function LibraryPage({
     }
     selectedDetailRetry.current = null
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
-  }, [selectedReadError, search.preview, selectedDetailReady])
+  }, [selectedReadError, selectedReadStale, search.preview, selectedDetailReady])
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
   // the masthead, so once it holds focus it is brought fully into view; the
@@ -2319,11 +2327,11 @@ export default function LibraryPage({
           ) : !displayedIdentity ? (
             identityPending || leaving || successorPending === search.preview ? (
               <p role="status">Loading selected work…</p>
-            ) : identityError &&
-              (error instanceof BuildMismatchError ||
-                attention.error instanceof BuildMismatchError ||
-                detail.error instanceof BuildMismatchError) ? (
-              <StaleBuildRead lead="Selected work was not loaded." />
+            ) : identityStale ? (
+              <StaleBuildRead
+                lead="Selected work was not loaded."
+                ref={selectedDetailRetryButton}
+              />
             ) : identityError ? (
               <p role="alert">
                 Selected work could not be loaded.{' '}
@@ -2362,7 +2370,7 @@ export default function LibraryPage({
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
           ) : detail.error instanceof BuildMismatchError ? (
-            <StaleBuildRead lead="Selected work was not loaded." />
+            <StaleBuildRead lead="Selected work was not loaded." ref={selectedDetailRetryButton} />
           ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
