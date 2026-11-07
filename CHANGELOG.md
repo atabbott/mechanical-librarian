@@ -104,6 +104,11 @@ brackets are GitHub issues.
   own sentence; source statuses, preview outcomes, evidence roles and reviewer
   errors drop internal words; and the policy preview gives each automatic
   refusal the same sentence the review case gives it (#1765).
+- A tab left on the previous build now offers to reload, instead of a retry
+  that cannot succeed, when description preferences, the current cover
+  comparison, write permission readiness or saved settings fail to load or
+  save, and focus moves to Reload, Try again or what loaded after every retry
+  instead of falling to the page (#1742).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

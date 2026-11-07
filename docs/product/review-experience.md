@@ -522,8 +522,10 @@ otherwise; future times are never relative.
 - Focus never falls to the page. A running command keeps focus, marked
   `aria-disabled`, then moves to its outcome. A failure message sits directly
   under the control it describes. A failed retry or an unreadable
-  detail focuses Try again. Opening Attention focuses its heading; closing
-  returns focus to the toggle. Tab closes a dropdown onto its trigger.
+  detail focuses Try again, or Reload when the tab is on an earlier build; a
+  retry that succeeds focuses what it loaded. Opening Attention focuses its
+  heading; closing returns focus to the toggle. Tab closes a dropdown onto its
+  trigger.
 - Native controls, one heading outline per page, visible focus and polite
   status announcements throughout. Colour is never the only sign of status.
 - Text meets 4.5:1, and boundaries and focus rings 3:1, in both themes. No
