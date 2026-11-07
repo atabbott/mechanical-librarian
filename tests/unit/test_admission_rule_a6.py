@@ -221,6 +221,9 @@ def test_the_checkout_engine_is_mirrored_by_the_v22_table() -> None:
     assert a6.table_for(shadow_decision.DECISION_POLICY_VERSION) == "v22"
     assert a6.table_for("deterministic-shadow-decision-policy-v9") == "v9"
     assert a6.table_for("deterministic-shadow-decision-policy-v12") is None
+    # Outside the mirrored range: a later engine is never read as v22.
+    assert a6.table_for("deterministic-shadow-decision-policy-v21") is None
+    assert a6.table_for("deterministic-shadow-decision-policy-v28") is None
 
 
 # --- Relaxations ------------------------------------------------------------
@@ -334,6 +337,41 @@ def test_each_relaxation_admits_its_one_step(
     assert a6.relax(_proposal(text, destination, [none]))[0] == "refused_none"
 
 
+@pytest.mark.parametrize(
+    ("destination", "candidate"),
+    [
+        ("title", {"scope": "edition", "local": 0, "correlations": 2}),
+        ("title", {"binding": "established", "local": 0, "correlations": 2}),
+        ("title", {"local": 2, "correlations": 2}),
+        (
+            "publishedDate",
+            {
+                "local": 1,
+                "correlations": 1,
+                "date_event": "manifestation_publication",
+                "date_precision": "month",
+                "has_publication": True,
+                "publication_event": "manifestation_publication",
+                "publication_consistency": "consistent",
+            },
+        ),
+    ],
+    ids=[
+        "also-fails-scope",
+        "also-fails-binding",
+        "title-with-local-evidence",
+        "date-at-month-precision",
+    ],
+)
+def test_a_relaxation_refuses_a_candidate_outside_its_one_step(
+    destination: str, candidate: dict[str, object]
+) -> None:
+    text = Sentinels()
+    make = _work if destination == "title" else _candidate
+    refused = make(text, eligible=False, **candidate)
+    assert a6.relax(_proposal(text, destination, [refused])) == ("refused_none", None)
+
+
 def test_relaxation_names_are_closed_and_one_per_scalar_destination() -> None:
     destinations = [rule.destination for rule in a6.RELAXATIONS]
     assert len(destinations) == len(set(destinations))
@@ -393,6 +431,130 @@ def test_value_agreement_never_counts_a_record_the_candidate_cites() -> None:
     assert a6.value_agreement(case, "title", agreeing) is True
     # Nothing to compare for a destination no accepted record states.
     assert a6.value_agreement(case, "publisher", agreeing) is None
+
+
+def _bare_case(
+    results: dict[str, dict[str, object]], labels: dict[str, str]
+) -> ledger.Case:
+    """A case whose provider records carry the given labels, nothing else."""
+    return ledger.Case(
+        medium="ebook",
+        epub=False,
+        report={},
+        results=results,
+        shadow={},
+        cover_candidates=[],
+        cover_omissions=set(),
+        records={record: (0, "work", False) for record in labels},
+        labels=dict(labels),
+    )
+
+
+def _alternative(identity: str, *records: str) -> dict[str, object]:
+    return {"alternative_id": identity, "evidence_references": list(records)}
+
+
+def test_the_screen_counts_false_positives_and_preserved_values() -> None:
+    text = Sentinels()
+    right, wrong = text(), text()
+    case = _bare_case(
+        {"title": {"alternatives": [_alternative("chosen", right)]}},
+        {right: "positive", wrong: "negative"},
+    )
+    current = {"kind": "text", "value": text()}
+    candidate = _work(
+        text, candidate_id="chosen", value=current, evidence_references=(right, wrong)
+    )
+    proposal = _proposal(text, "title", [candidate], current=current)
+    tally = a6.RelaxationTally()
+    a6._screen(case, proposal, candidate, tally)
+    assert (tally.true_positive, tally.false_positive, tally.unlabelled) == (1, 1, 0)
+    assert tally.preserves_current == 1
+    assert (dict(tally.classes), tally.agrees) == ({"discriminable": 1}, 1)
+    # A value the field does not hold already is not counted as preserving.
+    changed = dataclasses.replace(candidate, value={"kind": "text", "value": text()})
+    other = a6.RelaxationTally()
+    a6._screen(case, proposal, changed, other)
+    assert other.preserves_current == 0
+
+
+@pytest.mark.parametrize(
+    ("alternatives", "expected"),
+    [
+        ([("a", "pos"), ("b", "pos")], ("tied", False)),
+        ([("a", "pos"), ("b", "neg")], ("discriminable", True)),
+        ([("b", "pos"), ("a", "neg")], ("discriminable", False)),
+        ([("a", "neg"), ("b", "unlabelled")], ("no_right_work", False)),
+    ],
+    ids=["two-right-alternatives", "admitted-is-right", "admitted-is-wrong", "none"],
+)
+def test_field_class_reads_ao_classes_and_the_right_pick(
+    alternatives: list[tuple[str, str]], expected: tuple[str, bool]
+) -> None:
+    text = Sentinels()
+    labels = {"pos": "positive", "neg": "negative", "unlabelled": "unlabelled"}
+    records = {kind: text() for kind in labels}
+    case = _bare_case(
+        {
+            "title": {
+                "alternatives": [
+                    _alternative(identity, records[kind])
+                    for identity, kind in alternatives
+                ]
+            }
+        },
+        {records[kind]: label for kind, label in labels.items()},
+    )
+    candidate = _work(text, candidate_id="a")
+    assert a6.field_class(case, "title", candidate) == expected
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [(0, "none"), (1, "one"), (2, "more"), (3, "more")],
+    ids=["no-alternative", "one-alternative", "two-alternatives", "three"],
+)
+def test_alternatives_are_counted_none_one_or_more(count: int, expected: str) -> None:
+    alternatives = [_alternative(str(index)) for index in range(count)]
+    case = _bare_case({"title": {"alternatives": alternatives}}, {})
+    assert a6._alternatives(case, "title") == expected
+
+
+def test_the_echo_and_rich_residual_keep_to_their_own_fields() -> None:
+    results: dict[str, dict[str, object]] = {
+        # Scalar and blocked, no eligible action: A6a's blocked population.
+        "title": {"outcome": "defer"},
+        # Scalar, the upstream echo, but proposed: not an echo of a refusal.
+        "publisher": {"outcome": "propose_change"},
+        # Scalar, blocked, the upstream echo.
+        "authors": {"outcome": "defer"},
+        # Rich, no eligible action: the rich residual.
+        "series": {"outcome": "defer"},
+    }
+    shadow = {
+        "outcomes": [
+            {
+                "destination": destination,
+                "disposition": "abstention",
+                "reason_code": reason,
+                "policy_destination": "automatic",
+            }
+            for destination, reason in [
+                ("title", "no_eligible_action"),
+                ("publisher", "evidence_sufficiency_manual"),
+                ("authors", "evidence_sufficiency_manual"),
+                ("series", "no_eligible_action"),
+            ]
+        ]
+    }
+    probe = a6.A6Probe(V22, frozenset({"title", "publisher", "authors"}), True, {}, 0)
+    tally = a6.A6Tally()
+    a6._measure_case(tally, _bare_case(results, {}), shadow, probe, "v22", None)
+    assert dict(tally.rich_residual) == {"series": 1}
+    assert dict(tally.echo) == {("authors", "ebook"): 1}
+    assert set(tally.populations) == {
+        ("blocked", "title", "no_eligible_action", "ebook", "none")
+    }
 
 
 # --- The breakdown end to end -----------------------------------------------
@@ -619,6 +781,8 @@ def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) 
     probe = a6.child_a6(REPOSITORY, database)
     assert probe.version == shadow_decision.DECISION_POLICY_VERSION
     assert probe.scalar == shadow_decision._SUPPORTED_DESTINATIONS
+    # Main keeps rich refusals' own reasons, so A6b is separable on it.
+    assert probe.rich_split
     assert probe.failed == 0 and len(probe.cases) == 1
     (proposals,) = probe.cases.values()
     assert proposals and {item.destination for item in proposals} <= probe.scalar
