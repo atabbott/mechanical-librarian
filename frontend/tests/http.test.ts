@@ -17,7 +17,7 @@ import {
   decisionProjection,
   historyCoverItem,
   historyDecisionItem,
-  historyShadowItem,
+  historyPreviewItem,
   library,
   libraryWork,
   policyPreview,
@@ -68,7 +68,7 @@ import type {
   RoutablePath,
   SettingsView,
   SettingsWrite,
-  ShadowPostureView,
+  PreviewPostureView,
   Unrouted,
 } from '../src/api/http'
 import type { components } from '../src/generated/review-api'
@@ -1579,7 +1579,7 @@ describe('ReviewApiClient', () => {
       await expect(readHistory(invalid)).rejects.toThrow(ApiError)
     // Every closed history code is refused by name outside its set (#1286 C6).
     const [human, automatic, transition] = items
-    const preview = historyShadowItem({ occurred_at: 4, dispositions: { abstention: 1 } })
+    const preview = historyPreviewItem({ occurred_at: 4, dispositions: { abstention: 1 } })
     expect((await readHistory({ ...payload, items: [preview] })).items[0]).toMatchObject({
       category: 'preview',
       dispositions: [{ count: 1, outcome: 'abstention' }],
@@ -4363,15 +4363,15 @@ describe('central response decoding (#1685)', () => {
       '/policy_id',
     ],
     [
-      'GET /api/v1/metadata-policy/shadow',
-      (client: ReviewApiClient) => client.getShadowPosture(),
-      { schema_version: 'shadow-posture-v1' },
+      'GET /api/v1/metadata-policy/preview-mode',
+      (client: ReviewApiClient) => client.getPreviewPosture(),
+      { schema_version: 'preview-posture-v1' },
       '/authority',
     ],
     [
-      'GET /api/v1/metadata-policy/shadow/outcomes',
-      (client: ReviewApiClient) => client.getShadowSample(),
-      { schema_version: 'shadow-outcome-sample-v1' },
+      'GET /api/v1/metadata-policy/preview-mode/outcomes',
+      (client: ReviewApiClient) => client.getPreviewSample(),
+      { schema_version: 'preview-outcome-sample-v1' },
       '/authority',
     ],
     [
@@ -5427,10 +5427,10 @@ describe('policy command types (#1729)', () => {
         'automatic-safety/pause' | 'automatic-safety/recover' | 'automatic-safety/suspend'
       >
     >().toEqualTypeOf<AutomaticSafetyView>()
-    expectTypeOf<PolicyCommandAnswer<'shadow/enter'>>().toEqualTypeOf<ShadowPostureView>()
+    expectTypeOf<PolicyCommandAnswer<'preview-mode/enter'>>().toEqualTypeOf<PreviewPostureView>()
     expectTypeOf<
-      PolicyCommandAnswer<'shadow/confirm-automatic'>
-    >().toEqualTypeOf<ShadowPostureView>()
+      PolicyCommandAnswer<'preview-mode/confirm-automatic'>
+    >().toEqualTypeOf<PreviewPostureView>()
     expectTypeOf<
       PolicyCommandAnswer<'transitions/transition-1/acknowledge'>
     >().toEqualTypeOf<PolicyTransitionView>()
@@ -5438,8 +5438,8 @@ describe('policy command types (#1729)', () => {
       PolicyCommandAnswer<'transitions/transition-1/retry'>
     >().toEqualTypeOf<PolicyTransitionView>()
     // A union of paths answers the union of their answers.
-    expectTypeOf<PolicyCommandAnswer<'validate' | 'shadow/enter'>>().toEqualTypeOf<
-      PolicyStateView | ShadowPostureView
+    expectTypeOf<PolicyCommandAnswer<'validate' | 'preview-mode/enter'>>().toEqualTypeOf<
+      PolicyStateView | PreviewPostureView
     >()
   })
 
@@ -5456,8 +5456,8 @@ describe('policy command types (#1729)', () => {
     >()
     expectTypeOf<
       PolicyCommandBody<
-        | 'shadow/enter'
-        | 'shadow/confirm-automatic'
+        | 'preview-mode/enter'
+        | 'preview-mode/confirm-automatic'
         | 'transitions/transition-1/acknowledge'
         | 'transitions/transition-1/retry'
       >
@@ -5771,10 +5771,13 @@ describe('policy decoding (#1692)', () => {
       'POST /api/v1/metadata-policy/automatic-safety/suspend',
       (client) => client.policyCommand('automatic-safety/suspend', { reason: 'repeated_failure' }),
     ],
-    ['POST /api/v1/metadata-policy/shadow/enter', (client) => client.policyCommand('shadow/enter')],
     [
-      'POST /api/v1/metadata-policy/shadow/confirm-automatic',
-      (client) => client.policyCommand('shadow/confirm-automatic'),
+      'POST /api/v1/metadata-policy/preview-mode/enter',
+      (client) => client.policyCommand('preview-mode/enter'),
+    ],
+    [
+      'POST /api/v1/metadata-policy/preview-mode/confirm-automatic',
+      (client) => client.policyCommand('preview-mode/confirm-automatic'),
     ],
     [
       'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',

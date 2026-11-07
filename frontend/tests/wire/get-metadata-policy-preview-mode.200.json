@@ -3,9 +3,9 @@
     "authority": "none",
     "can_leave_preview": false,
     "posture": "preview",
-    "schema_version": "shadow-posture-v1"
+    "schema_version": "preview-posture-v1"
   },
   "method": "GET",
-  "path": "/api/v1/metadata-policy/shadow",
+  "path": "/api/v1/metadata-policy/preview-mode",
   "status": 200
 }

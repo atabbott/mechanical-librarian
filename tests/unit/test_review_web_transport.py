@@ -1151,6 +1151,35 @@ def test_build_identity_header_is_never_sent_without_an_authenticated_session(
     assert "x-ml-build-identity" not in response.headers
 
 
+def test_retired_shadow_paths_are_unmatched(
+    web: ReviewWebContext[FakeReviewRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Preview mode routes moved from /shadow to /preview-mode with no alias.
+    # A stale tab's read is an unmatched 404 that carries the build identity, so
+    # the reload notice shows, and its writes route nowhere and change nothing.
+    headers = _signed_in(web)
+    activate = Mock(return_value="automatic")
+    monkeypatch.setattr(web.repository, "activate_qualified_automatic", activate)
+    before = web.repository.shadow_mode
+    retired = "/api/v1/metadata-policy/shadow"
+
+    for path in (retired, f"{retired}/leave-preview", f"{retired}/outcomes"):
+        read = web.client.get(path, headers=web.origin)
+        assert read.status_code == 404, (path, read.text)
+        assert read.headers["x-ml-build-identity"] == TEST_REACT_BUILD_IDENTITY
+    for path in (f"{retired}/enter", f"{retired}/confirm-automatic"):
+        write = web.client.post(path, headers=headers)
+        assert write.status_code == 404, (path, write.text)
+
+    assert web.repository.shadow_mode == before == "review"
+    activate.assert_not_called()
+    paths = cast(
+        "dict[str, object]", web.client.get("/api/v1/openapi.json").json()["paths"]
+    )
+    assert not [path for path in paths if path.startswith(retired)]
+
+
 def test_build_identity_header_is_withheld_in_asset_recovery_mode(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -1895,7 +1924,7 @@ def test_confirm_automatic_read_back_failure_is_uncertain_not_refused(
     monkeypatch.setattr(web.repository, "shadow_posture", _locked_read)
 
     response = web.client.post(
-        "/api/v1/metadata-policy/shadow/confirm-automatic", headers=headers
+        "/api/v1/metadata-policy/preview-mode/confirm-automatic", headers=headers
     )
 
     assert response.status_code == status, response.text
@@ -2847,11 +2876,11 @@ def test_openapi_is_deterministic_and_secret_free(
         ("post", "/api/v1/metadata-policy/drafts"),
         ("get", "/api/v1/metadata-policy/drafts/{policy_id}"),
         ("post", "/api/v1/metadata-policy/preview"),
-        ("get", "/api/v1/metadata-policy/shadow"),
-        ("post", "/api/v1/metadata-policy/shadow/enter"),
-        ("post", "/api/v1/metadata-policy/shadow/confirm-automatic"),
-        ("get", "/api/v1/metadata-policy/shadow/leave-preview"),
-        ("get", "/api/v1/metadata-policy/shadow/outcomes"),
+        ("get", "/api/v1/metadata-policy/preview-mode"),
+        ("post", "/api/v1/metadata-policy/preview-mode/enter"),
+        ("post", "/api/v1/metadata-policy/preview-mode/confirm-automatic"),
+        ("get", "/api/v1/metadata-policy/preview-mode/leave-preview"),
+        ("get", "/api/v1/metadata-policy/preview-mode/outcomes"),
         ("get", "/api/v1/metadata-policy/automatic-safety"),
         ("post", "/api/v1/metadata-policy/automatic-safety/pause"),
         ("post", "/api/v1/metadata-policy/automatic-safety/recover"),
@@ -3022,6 +3051,37 @@ def test_openapi_is_deterministic_and_secret_free(
     )
     assert invalid.status_code == 422
     assert b"private-value" not in invalid.content
+
+
+def _shadow_mentions(value: object, pointer: str = "") -> Iterator[tuple[str, str]]:
+    # Every key or string value that says "shadow", with its JSON pointer.
+    if isinstance(value, dict):
+        for key, item in cast("dict[str, object]", value).items():
+            child = pointer + "/" + key.replace("~", "~0").replace("/", "~1")
+            if "shadow" in key.lower():
+                yield child, key
+            yield from _shadow_mentions(item, child)
+    elif isinstance(value, list):
+        for index, item in enumerate(cast("list[object]", value)):
+            yield from _shadow_mentions(item, f"{pointer}/{index}")
+    elif isinstance(value, str) and "shadow" in value.lower():
+        yield pointer, value
+
+
+def test_openapi_names_shadow_only_in_the_stored_outcome_set_version() -> None:
+    # The read-time API says "preview". The one "shadow" left is the stored,
+    # hashed outcome-set version, which the browser receives unchanged.
+    document = json.loads(
+        Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
+    )
+
+    assert set(_shadow_mentions(document)) == {
+        (
+            "/components/schemas/_PreviewOutcomeSetResponse/properties"
+            "/schema_version/const",
+            "shadow-outcome-set-v11",
+        )
+    }
 
 
 def test_openrouter_request_validation_redacts_the_write_only_key() -> None:
@@ -3594,10 +3654,10 @@ def test_current_audiobook_qualification_inventory_crosses_closed_api_contract()
             _AudiobookQualification.model_validate({**records[0], "identity": identity})
 
 
-def test_shadow_sample_response_refuses_genuine_predecessor_outcome():
+def test_preview_sample_response_refuses_genuine_predecessor_outcome():
     from pydantic import ValidationError
 
-    from mechanical_librarian.interfaces.web.app import _ShadowSampleResponse
+    from mechanical_librarian.interfaces.web.app import _PreviewSampleResponse
 
     document = Path("tests/support/audiobook_predecessors/outcome.json").read_bytes()
     outcome = json.loads(document)
@@ -3606,10 +3666,10 @@ def test_shadow_sample_response_refuses_genuine_predecessor_outcome():
         "authority": "none",
         "items": [{**outcome, "evaluated_at": 2000}],
         "next_cursor": None,
-        "schema_version": "shadow-outcome-sample-v1",
+        "schema_version": "preview-outcome-sample-v1",
     }
     with pytest.raises(ValidationError) as failure:
-        _ShadowSampleResponse.model_validate(sample)
+        _PreviewSampleResponse.model_validate(sample)
     assert any(
         error["loc"] == ("items", 0, "schema_version")
         and error["type"] == "literal_error"

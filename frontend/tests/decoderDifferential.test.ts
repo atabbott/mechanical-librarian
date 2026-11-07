@@ -31,7 +31,7 @@ import {
   decisionAcknowledgement,
   historyCoverItem,
   historyDecisionItem,
-  historyShadowItem,
+  historyPreviewItem,
   library,
   libraryWork,
   policyPreview,
@@ -164,15 +164,15 @@ const modelTest = server('ReviewerAccess', 'post-reviewer-access-description-mod
 const attentionCapture = server('Attention', 'get-attention')
 const policyState = server('Policy', 'get-metadata-policy-state')
 for (const name of [
-  'get-metadata-policy-shadow',
-  'get-metadata-policy-shadow-outcomes',
+  'get-metadata-policy-preview-mode',
+  'get-metadata-policy-preview-mode-outcomes',
   'get-metadata-policy-transition',
   'get-metadata-policy-automatic-safety',
   'post-metadata-policy-activate',
   'post-metadata-policy-automatic-safety-suspend',
   'post-metadata-policy-drafts',
   'post-metadata-policy-preview',
-  'post-metadata-policy-shadow-confirm-automatic',
+  'post-metadata-policy-preview-mode-confirm-automatic',
 ])
   server('Policy', name)
 const selection = server('CaseDetail', 'post-review-cases-description-advice-selection')
@@ -736,7 +736,7 @@ builder('CaseDetail', 'caseHistory.items', HISTORY, () =>
   caseHistory({
     items: [
       { checkpoint: 1, kind: 'admitted', reason: 'actionable', transition_id: 'transition-1' },
-      historyShadowItem({ dispositions: { candidate: 1 } }),
+      historyPreviewItem({ dispositions: { candidate: 1 } }),
       historyDecisionItem({
         destination: 'authors',
         previous_value: { kind: 'text', value: 'Old' },
@@ -1203,8 +1203,8 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/activity/consent-state': (c) => client(c).getActivityConsent(),
   'GET /api/v1/activity/permission-readiness': (c) => client(c).getActivityPermissionReadiness(),
   'GET /api/v1/metadata-policy/state': (c) => client(c).getPolicyState(),
-  'GET /api/v1/metadata-policy/shadow': (c) => client(c).getShadowPosture(),
-  'GET /api/v1/metadata-policy/shadow/outcomes': (c) => client(c).getShadowSample(),
+  'GET /api/v1/metadata-policy/preview-mode': (c) => client(c).getPreviewPosture(),
+  'GET /api/v1/metadata-policy/preview-mode/outcomes': (c) => client(c).getPreviewSample(),
   'GET /api/v1/metadata-policy/transition': (c) => client(c).getPolicyTransition(),
   'GET /api/v1/metadata-policy/automatic-safety': (c) => client(c).getAutomaticSafety(),
   'POST /api/v1/metadata-policy/activate': (c) =>
@@ -1216,7 +1216,7 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'POST /api/v1/metadata-policy/automatic-safety/suspend': policy,
   'POST /api/v1/metadata-policy/drafts': policy,
   'POST /api/v1/metadata-policy/preview': (c) => client(c).previewPolicy(draft),
-  'POST /api/v1/metadata-policy/shadow/confirm-automatic': policy,
+  'POST /api/v1/metadata-policy/preview-mode/confirm-automatic': policy,
   'POST /api/v1/metadata-policy/validate': policy,
 }
 const map = async (c: Case) => {

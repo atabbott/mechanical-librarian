@@ -47,7 +47,7 @@ import type {
   ProviderThrottleEntry,
   ReviewHttp,
   SettingsView,
-  ShadowPostureView,
+  PreviewPostureView,
 } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
 import { CountPhrases } from './components/CountPhrases'
@@ -236,11 +236,11 @@ const policyStateQuery = (http: ReviewHttp) =>
     staleTime: 15_000,
     retry: false,
   })
-const shadowQuery = (http: ReviewHttp) =>
+const previewPostureQuery = (http: ReviewHttp) =>
   queryOptions({
-    queryKey: ['policy', 'shadow'] as const,
+    queryKey: ['policy', 'preview-mode'] as const,
     queryFn: (queryContext) =>
-      http.getShadowPosture(queryContext.signal, queryWorkClass(queryContext)),
+      http.getPreviewPosture(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
@@ -1421,15 +1421,15 @@ export const detailRoute = createRoute({
 })
 export interface PolicyCritical {
   state: PolicyStateView
-  shadow: ShadowPostureView
+  posture: PreviewPostureView
   safety: AutomaticSafetyView
 }
 const PolicyRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const state = useQuery(policyStateQuery(http))
-  const shadow = useQuery(shadowQuery(http))
+  const posture = useQuery(previewPostureQuery(http))
   const safety = useQuery(safetyQuery(http))
-  const error = state.error ?? shadow.error ?? safety.error
+  const error = state.error ?? posture.error ?? safety.error
   if (error instanceof SessionExpiredError) return null
   if (error)
     return (
@@ -1437,13 +1437,13 @@ const PolicyRouteComponent = () => {
         error={error}
         reset={() => {
           void state.refetch()
-          void shadow.refetch()
+          void posture.refetch()
           void safety.refetch()
         }}
       />
     )
-  if (!state.data || !shadow.data || !safety.data) return <RoutePending title="Policy" />
-  return <PolicyPage data={{ state: state.data, shadow: shadow.data, safety: safety.data }} />
+  if (!state.data || !posture.data || !safety.data) return <RoutePending title="Policy" />
+  return <PolicyPage data={{ state: state.data, posture: posture.data, safety: safety.data }} />
 }
 export const policyRoute = createRoute({
   getParentRoute: () => rootRoute,

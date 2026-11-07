@@ -1159,19 +1159,19 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
     assert [] == web.repository.policy_count_calls
 
 
-def test_shadow_posture_and_sample_are_authenticated_non_authoritative(
+def test_preview_posture_and_sample_are_authenticated_non_authoritative(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
-    anonymous = web.client.get("/api/v1/metadata-policy/shadow")
+    anonymous = web.client.get("/api/v1/metadata-policy/preview-mode")
     assert 401 == anonymous.status_code
     login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
-    state = web.client.get("/api/v1/metadata-policy/shadow")
+    state = web.client.get("/api/v1/metadata-policy/preview-mode")
     assert {
         "authority": "none",
         "can_leave_preview": False,
         "posture": "review",
-        "schema_version": "shadow-posture-v1",
+        "schema_version": "preview-posture-v1",
     } == state.json()
     active = web.client.get("/api/v1/metadata-policy/state").json()
     automatic_payload = active["profile"]
@@ -1182,9 +1182,13 @@ def test_shadow_posture_and_sample_are_authenticated_non_authoritative(
         "/api/v1/metadata-policy/validate", headers=headers, json=automatic_payload
     )
     assert 200 == validated_before_preview.status_code
-    denied = web.client.post("/api/v1/metadata-policy/shadow/enter", headers=web.origin)
+    denied = web.client.post(
+        "/api/v1/metadata-policy/preview-mode/enter", headers=web.origin
+    )
     assert 403 == denied.status_code
-    entered = web.client.post("/api/v1/metadata-policy/shadow/enter", headers=headers)
+    entered = web.client.post(
+        "/api/v1/metadata-policy/preview-mode/enter", headers=headers
+    )
     assert "preview" == entered.json()["posture"]
     assert "none" == entered.json()["authority"]
     validated = web.client.post(
@@ -1222,10 +1226,10 @@ def test_shadow_posture_and_sample_are_authenticated_non_authoritative(
             "destinations"
         ]["title_layout"]
     )
-    sample = web.client.get("/api/v1/metadata-policy/shadow/outcomes?limit=10")
-    assert "shadow-outcome-sample-v1" == sample.json()["schema_version"]
+    sample = web.client.get("/api/v1/metadata-policy/preview-mode/outcomes?limit=10")
+    assert "preview-outcome-sample-v1" == sample.json()["schema_version"]
     assert [] == sample.json()["items"]
-    leaving = web.client.get("/api/v1/metadata-policy/shadow/leave-preview")
+    leaving = web.client.get("/api/v1/metadata-policy/preview-mode/leave-preview")
     assert leaving.json()["confirmation_required"]
     assert not leaving.json()["can_confirm"]
     assert "preview" == web.repository.shadow_mode

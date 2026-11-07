@@ -43,7 +43,6 @@ from mechanical_librarian.domain.audio_inspection import (
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
     _chapter_candidate_support,
-    _local_identifier_asins,
     admitted_recording_asin,
     candidate_narrator_disjoint,
     candidate_recording_runtime_veto,
@@ -88,9 +87,11 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_TITLE_BASIS,
     CORROBORATED_RULE_AUTHORITY,
     LANE_TITLE_BASES,
+    MAX_ASIN_DISCOVERY_LANES,
     MAX_AUDIO_EDITIONS,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
+    MAX_PROVIDER_DISCOVERY_QUERIES,
     MAX_RECORDING_LOOKUP_HINTS,
     PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     AudioFacts,
@@ -138,7 +139,9 @@ from mechanical_librarian.domain.metadata_report import (
     discovery_lane_identity,
     isbn_family,
     lane_dispatch_outcome,
+    local_identifier_asins,
     normalize_title,
+    planned_companion_isbn_lane,
     provider_candidate_exact_work_identity_admission,
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
@@ -410,11 +413,6 @@ class MetadataLookup:
 # of how many providers are configured.
 _PROVIDER_DEADLINE_SHARE_SECONDS = 20.0
 MAX_ISBN_DISCOVERY_LANES = 8
-MAX_PROVIDER_DISCOVERY_QUERIES = 9
-# An audiobook carries far fewer identifier surfaces than an EPUB does, and
-# each distinct ASIN costs one product lookup per marketplace tried, so the
-# ASIN fan-out is bounded tighter than the ISBN one.
-MAX_ASIN_DISCOVERY_LANES = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -1046,7 +1044,7 @@ def audiobook_discovery_plan(
                 target.fields,
             ),
         )
-    canonical_asins = sorted(_local_identifier_asins(local_claims))
+    canonical_asins = sorted(local_identifier_asins(local_claims))
     if len(canonical_asins) > MAX_ASIN_DISCOVERY_LANES:
         return MetadataDiscoveryPlan(
             local_claims,
@@ -1078,11 +1076,14 @@ def audiobook_discovery_plan(
     # ebook's identifier cannot stand in for a search for the recording, so
     # it is added only where the budget still has room, and never overflows
     # a plan that fits without it.
-    isbn = companion_isbn_lane(companion) if audio is not None else None
-    if isbn is not None and (
-        _metadata_discovery_query_count(tuple(lanes), audiobook=True) + 1
-        <= MAX_PROVIDER_DISCOVERY_QUERIES
-    ):
+    isbn = (
+        None
+        if audio is None
+        else planned_companion_isbn_lane(
+            target.fields, local_claims, audio.discovery_titles, companion
+        )
+    )
+    if isbn is not None:
         lanes.append(
             MetadataDiscoveryLane(
                 isbn.identity,
@@ -2419,9 +2420,9 @@ def _identifier_lane_candidates(
     ):
         return observation.candidates, ()
     independent = (
-        lookup.requested_asin in _local_identifier_asins(lookup.local_claims)
+        lookup.requested_asin in local_identifier_asins(lookup.local_claims)
         if lookup.requested_asin is not None
-        else bool(_local_identifier_asins(lookup.local_claims))
+        else bool(local_identifier_asins(lookup.local_claims))
     )
     if independent:
         return tuple(
@@ -3438,7 +3439,7 @@ def _prior_admission_claims(
     nothing: it looks its own product up. The claim is an assertion like the
     target's own ASIN, never one of the item's identifier surfaces (ADR-0088).
     """
-    if prior is None or _local_identifier_asins(extracted):
+    if prior is None or local_identifier_asins(extracted):
         return ()
     asin = admitted_recording_asin(prior)
     if asin is None:
@@ -4388,6 +4389,8 @@ def require_report_current(
 
 __all__ = [
     "refit_companion_books",
+    "MAX_ASIN_DISCOVERY_LANES",
+    "MAX_PROVIDER_DISCOVERY_QUERIES",
     "AudioInspectionResult",
     "AudioInspector",
     "AudioItemInspectionError",

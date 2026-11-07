@@ -39,6 +39,13 @@ brackets are GitHub issues.
   previewing its impact, neither of which changes anything, it now says the
   validation failed or the preview is unavailable, instead of a general
   uncertain message (#1731).
+- The policy preview-mode API now says preview instead of shadow:
+  `/api/v1/metadata-policy/shadow`, `…/shadow/enter`,
+  `…/shadow/confirm-automatic`, `…/shadow/leave-preview` and
+  `…/shadow/outcomes` are now under `/api/v1/metadata-policy/preview-mode`,
+  and their response versions start with `preview-`. A script that calls the
+  old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
+  rebuild is needed (#1739).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

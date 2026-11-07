@@ -7,20 +7,20 @@ import type {
   AutomaticSafetyView,
   PolicyCommandBody,
   PolicyCommandPath,
-  ShadowPostureView,
+  PreviewPostureView,
 } from '../api/http'
 import { readableCategory } from '../policyFields'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useReviewContext } from '../router'
 
 export const PolicySafety = ({
-  shadow,
+  posture,
   safety,
   pending,
   summaryRef,
   run,
 }: {
-  shadow: ShadowPostureView
+  posture: PreviewPostureView
   safety: AutomaticSafetyView
   /** A policy command is in flight, so none of these may start another. */
   pending: boolean
@@ -30,9 +30,9 @@ export const PolicySafety = ({
 }) => {
   const { http } = useReviewContext()
   const sample = useQuery({
-    queryKey: ['policy', 'shadow', 'sample'],
+    queryKey: ['policy', 'preview-mode', 'sample'],
     queryFn: (queryContext) =>
-      http.getShadowSample(queryContext.signal, queryWorkClass(queryContext)),
+      http.getPreviewSample(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 30_000,
     retry: false,
   })
@@ -40,9 +40,9 @@ export const PolicySafety = ({
     <details className="cm-policy-mode">
       <summary ref={summaryRef}>
         <strong>
-          {shadow.posture === 'preview'
+          {posture.posture === 'preview'
             ? 'Preview mode active'
-            : shadow.posture === 'automatic'
+            : posture.posture === 'automatic'
               ? 'Automatic active'
               : 'Human review active'}
         </strong>
@@ -50,22 +50,22 @@ export const PolicySafety = ({
       </summary>
       <div>
         <p>
-          {shadow.posture === 'preview'
+          {posture.posture === 'preview'
             ? 'Preview records what Automatic would do; nothing is decided or written.'
-            : shadow.posture === 'automatic'
+            : posture.posture === 'automatic'
               ? 'Automatic remains decision-only and separately controlled.'
               : 'Turn on Preview before enabling Automatic.'}
         </p>
         <div className="cm-policy-safety-actions">
           <button
-            disabled={pending || shadow.posture === 'preview'}
-            onClick={() => void run('shadow/enter')}
+            disabled={pending || posture.posture === 'preview'}
+            onClick={() => void run('preview-mode/enter')}
           >
             Enter Preview mode
           </button>
           <button
-            disabled={pending || shadow.posture !== 'preview'}
-            onClick={() => void run('shadow/confirm-automatic')}
+            disabled={pending || posture.posture !== 'preview'}
+            onClick={() => void run('preview-mode/confirm-automatic')}
           >
             Turn on Automatic
           </button>

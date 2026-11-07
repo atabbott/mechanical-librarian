@@ -272,16 +272,16 @@ export const historyCoverItem = (overrides: Overrides = {}) => ({
   ...overrides,
 })
 
-// `_HistoryShadowItem`.
-export const historyShadowItem = (overrides: Overrides = {}) => ({
+// `_HistoryPreviewItem`.
+export const historyPreviewItem = (overrides: Overrides = {}) => ({
   authority: 'none',
   dispositions: {},
-  kind: 'shadow_preview_recorded',
+  kind: 'preview_recorded',
   occurred_at: 4,
   origin: 'policy_preview',
   outcome_set_id: 'outcome-set-1',
   review_case_id: 'case-1',
-  schema_version: 'shadow-preview-history-event-v1',
+  schema_version: 'preview-history-event-v1',
   ...overrides,
 })
 

@@ -3673,3 +3673,90 @@ def test_a_failed_companion_isbn_lane_at_hardcover_is_retried() -> None:
     assert [lane.status for lane in successor.providers[0].lanes] == [
         ProviderStatus.NO_MATCH
     ]
+
+
+def test_a_retry_whose_merge_drops_a_companion_book_still_publishes() -> None:
+    """The service refits the companion books against its merge (#1468, #1724).
+
+    The search's book holds sixteen audio editions and the companion lookup
+    failed. The retried lookup finds a book linked only by one more edition,
+    so the merge reads seventeen, past the bound, and keeps none. Without the
+    refit the successor would carry a companion book no edition links, which
+    replay refuses, and the retry would be lost.
+    """
+    from tests.unit import test_hardcover_companion_isbn as hardcover_tests
+
+    def editions(book: int, offset: int) -> httpx.Response:
+        if offset:
+            return hardcover_tests._page()
+        if book == hardcover_tests._COMPANION_BOOK:
+            return hardcover_tests._page(
+                hardcover_tests._edition(
+                    3, hardcover_tests._LOCAL_SECONDS + 40, book_id=book
+                )
+            )
+        return hardcover_tests._page(
+            *(
+                hardcover_tests._edition(
+                    1_000 + index, hardcover_tests._LOCAL_SECONDS + index, book_id=book
+                )
+                for index in range(16)
+            )
+        )
+
+    plan = hardcover_tests._plan()
+    original, _sent = hardcover_tests._observe(
+        search_books=(hardcover_tests._SEARCH_BOOK,),
+        editions=editions,
+        isbn_fails=True,
+    )
+    report = hardcover_tests._report(original)
+    (isbn,) = (lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+    assert hardcover_tests._isbn_lane(report.providers[0]).status is not (
+        ProviderStatus.CANDIDATES
+    )
+    replacement, _sent = hardcover_tests._observe(
+        editions=editions, plan=replace(plan, lanes=(isbn,))
+    )
+    assert hardcover_tests._isbn_lane(replacement).status is ProviderStatus.CANDIDATES
+    provider = _Provider(replace(replacement, authority="hardcover"))
+    companion = hardcover_tests._companion()
+    snapshot = replace(
+        audio_target(hardcover_tests._TITLE, (hardcover_tests._AUTHOR,)),
+        files=(TargetFile("a" * 64, "book.m4b", "m4b"),),
+        companion=TargetFile(companion.identity, "book.epub", "epub"),
+    )
+    service = GenerateProviderRetrySuccessor(
+        target=_Target(snapshot),
+        inspector=_Inspector(),
+        repository_factory=lambda: cast(ReportRepository, _Repository(report)),
+        audio_inspector=cast("Any", _Inspector()),
+        provider_resolver=cast(
+            "ProviderRetryResolver",
+            lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("catalogue", True, lambda: provider, "hardcover"),
+                "hardcover",
+                2,
+            ),
+        ),
+        mount=MediaMountConfiguration("audiobooks", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=lambda *_args: None,
+    )
+    successor = MetadataReport.from_json(
+        service.run(
+            report.report_id,
+            (isbn.identity,),
+            provider_name="catalogue",
+            adapter="hardcover",
+            generation=2,
+        )
+    )
+
+    assert [value.lanes for value in provider.plans] == [(isbn,)]
+    (merged,) = successor.providers
+    assert hardcover_tests._isbn_lane(merged).status is ProviderStatus.NO_MATCH
+    assert {value.work_identity for value in merged.audio_editions} == {
+        "hardcover-work-0000000010"
+    }
+    assert len(merged.audio_editions) == 16
