@@ -23,6 +23,7 @@ from typing import Literal, cast
 
 import pytest
 import scripts.admission_rule_ledger as ledger
+import scripts.admission_rule_series as series_replay
 import scripts.cold_start_report as cold_start
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
@@ -109,7 +110,19 @@ class Fixture:
         self.results: list[dict[str, object]] = []
         self.shadow: list[dict[str, object]] = []
         self.consideration: dict[str, object] | None = None
+        # The library item the case is for, and the target values a rescan
+        # changes (#1748).
+        self.item = (text(), text(), text())
+        self.target_values = [text()]
+        self.current = True
+        self.decisions: list[tuple[int, str, str, object]] = []
         self.automatic: list[tuple[str, dict[str, object]]] = []
+
+    def decide(
+        self, ordinal: int, destination: str, outcome: str, value: object = None
+    ) -> None:
+        """Record an owner decision; ``value`` is the selected value document."""
+        self.decisions.append((ordinal, destination, outcome, value))
 
     def provider(self, *, status: str = "candidates") -> int:
         name = self.text()
@@ -209,7 +222,7 @@ class Fixture:
             }
         )
 
-    def decide(
+    def decide_automatically(
         self,
         destination: str,
         outcome: str,
@@ -297,11 +310,19 @@ def _database(
     profile: Profile,
     fixtures: Sequence[Fixture],
     *,
+    owner_tables: bool = False,
+    floors: Mapping[int, int] | None = None,
     automatic: bool = True,
     generation: int | None = 1,
 ) -> Path:
-    """A synthetic snapshot; ``automatic`` False omits the automatic-decision table,
-    and ``generation`` None the policy state naming the active generation."""
+    """Write the fixtures as cases ``case-{index}-...``, in index order.
+
+    Owner decisions get a ``human_decisions`` table where any fixture decides
+    or ``owner_tables`` asks; ``floors`` (fixture index -> decision floor)
+    adds ``review_case_episodes``. ``automatic`` False omits the
+    automatic-decision table, and ``generation`` None the policy state naming
+    the active generation.
+    """
     connection = sqlite3.connect(path)
     currentness = ",currentness_document TEXT" if profile == "v57-like" else ""
     connection.executescript(
@@ -322,6 +343,17 @@ def _database(
     )
     if profile == "v57-like":
         connection.execute("CREATE TABLE review_attention_facts (review_case_id TEXT)")
+    if owner_tables or any(fixture.decisions for fixture in fixtures):
+        connection.execute(
+            "CREATE TABLE human_decisions (ordinal INTEGER PRIMARY KEY,"
+            "decision_id TEXT,review_case_id TEXT,destination TEXT,outcome TEXT,"
+            "selected_value_document TEXT)"
+        )
+    if floors is not None:
+        connection.execute(
+            "CREATE TABLE review_case_episodes (review_case_id TEXT PRIMARY KEY,"
+            "decision_floor INTEGER,effect_floor INTEGER)"
+        )
     if automatic:
         connection.execute(
             "CREATE TABLE automatic_decisions (decision_id TEXT,review_case_id TEXT,"
@@ -341,14 +373,35 @@ def _database(
             "INSERT INTO metadata_reports VALUES (?,?)",
             (report_id, json.dumps(fixture.report)),
         )
+        connection_name, library, item = fixture.item
+        document = {
+            "results": fixture.results,
+            "target": {
+                "connection": connection_name,
+                "library": library,
+                "item": item,
+                "fields": [{"value": value} for value in fixture.target_values],
+            },
+        }
         connection.execute(
             "INSERT INTO review_cases VALUES (?,?,?,?)",
-            (case, text(), report_id, json.dumps({"results": fixture.results})),
+            (case, text(), report_id, json.dumps(document)),
         )
-        connection.execute(
-            "INSERT INTO current_review_packages VALUES (?,?,?,?,?,?,?,?)",
-            (text(), text(), text(), text(), report_id, case, text(), "review"),
-        )
+        if fixture.current:
+            connection.execute(
+                "INSERT INTO current_review_packages VALUES (?,?,?,?,?,?,?,?)",
+                (text(), text(), text(), text(), report_id, case, text(), "review"),
+            )
+        for number, destination, outcome, value in fixture.decisions:
+            connection.execute(
+                "INSERT INTO human_decisions VALUES (?,?,?,?,?,?)",
+                (number, text(), case, destination, outcome, json.dumps(value)),
+            )
+        if floors is not None and ordinal in floors:
+            connection.execute(
+                "INSERT INTO review_case_episodes VALUES (?,?,?)",
+                (case, floors[ordinal], 0),
+            )
         connection.execute(
             "INSERT INTO shadow_decision_outcomes VALUES (?,?,?,?,?,?,?,?)",
             (
@@ -385,10 +438,10 @@ def _database(
             )
         connection.execute("INSERT INTO catalogue_entries VALUES (?)", (text(),))
         assert automatic or not fixture.automatic
-        for destination, document in fixture.automatic:
+        for destination, decision in fixture.automatic:
             connection.execute(
                 "INSERT INTO automatic_decisions VALUES (?,?,?,?)",
-                (text(), case, destination, json.dumps(document)),
+                (text(), case, destination, json.dumps(decision)),
             )
     # A superseded case the replay must not read: it carries every signal.
     stale = Fixture(Sentinels(), profile)
@@ -414,11 +467,30 @@ def _no_attention(_root: Path, _database: Path) -> ledger.AttentionProbe:
     return ledger.AttentionProbe((), 0, 0)
 
 
+def _series_probe(
+    w9: Mapping[int, bool] | None = None,
+    a8: Sequence[int] = (),
+    a9: Sequence[int] = (),
+    **counts: int,
+) -> series_replay.SeriesProbe:
+    return series_replay.SeriesProbe(
+        {key: counts.get(key, 0) for key in series_replay.COUNTS},
+        dict(w9 or {}),
+        frozenset(a8),
+        frozenset(a9),
+    )
+
+
+def _no_series(_root: Path, _database: Path, _cases: str) -> series_replay.SeriesProbe:
+    return _series_probe()
+
+
 def _run(
     arguments: Sequence[str],
     *,
     ancestry: ledger.Ancestry = _always,
     attention: ledger.AttentionReader = _no_attention,
+    series: series_replay.SeriesReader = _no_series,
 ) -> tuple[int, str, str]:
     stdout, stderr = io.StringIO(), io.StringIO()
     code = ledger.main(
@@ -427,6 +499,7 @@ def _run(
         stderr=stderr,
         ancestry=ancestry,
         attention=attention,
+        series_replay=series,
     )
     return code, stdout.getvalue(), stderr.getvalue()
 
@@ -497,7 +570,7 @@ def _rich_fixture(text: Sentinels, profile: Profile) -> Fixture:
     )
     fixture.result("series", "keep", ["positive_preservation_evidence"])
     fixture.abstain("title", "insufficient_support")
-    fixture.decide("title", "candidate", text())
+    fixture.decide_automatically("title", "candidate", text())
     fixture.cover_candidate("unknown", first, other_work, other)
     if profile == "v57-like":
         lanes = cast("list[dict[str, object]]", fixture._providers()[first]["lanes"])
@@ -561,11 +634,16 @@ def _test_vocabulary(labels: Sequence[str]) -> set[str]:
 )
 def test_output_is_aggregate_only(tmp_path: Path, profile: Profile) -> None:
     text = Sentinels()
-    database = _database(
-        tmp_path / "application.sqlite3",
-        profile,
-        [_rich_fixture(text, profile), _rich_fixture(text, profile)],
-    )
+    fixtures = [_rich_fixture(text, profile), _rich_fixture(text, profile)]
+    # Owner selected values and correlation identifiers are sentinels (#1748).
+    for number, fixture in enumerate(fixtures):
+        title = next(item for item in fixture.results if item["destination"] == "title")
+        alternatives = cast("list[dict[str, object]]", title["alternatives"])
+        for alternative in alternatives:
+            alternative["correlations"] = [text(), text()]
+        fixture.decide(number + 1, "title", "accept", alternatives[0]["value"])
+        fixture.decide(number + 10, "series", "owner_entered", {"value": text()})
+    database = _database(tmp_path / "application.sqlite3", profile, fixtures)
     probe = ledger.AttentionProbe(
         ((0, "title", ("competing_evidence",), "ebook"),), 1, 1
     )
@@ -593,6 +671,9 @@ def test_output_is_aggregate_only(tmp_path: Path, profile: Profile) -> None:
     )
     assert json.loads(stdout)["breakdown"] == "T1"
     assert _rows(stdout)["T1"]["split"] is not None
+    # The decisions were read, so the check above covers their values.
+    owner = cast("dict[str, object]", _snapshot(_rows(stdout)["T1"], "snap-a")["owner"])
+    assert owner["labelled"] == 2
     # The automatic decisions were read, and only their effect is counted.
     assert _snapshot(_rows(stdout)["T1"], "snap-a")["automatic"] == {
         "takes_pick": 0,
@@ -864,33 +945,38 @@ def _competing(
     cited: Sequence[tuple[str, str | Sequence[str]]],
     *,
     preserves: str | None = None,
+    correlations: Mapping[str, Sequence[str]] | None = None,
     outcome: str = "unresolved_choice",
     reasons: Sequence[str] = ("competing_evidence",),
-) -> None:
+) -> dict[str, dict[str, object]]:
     """A competing result whose alternatives are (alternative_id, claims) pairs,
     stored in the given order; ``preserves`` names the alternative that keeps
-    the current value."""
+    the current value and ``correlations`` each alternative's sources. Returns
+    the alternatives by identifier."""
+    alternatives: list[dict[str, object]] = [
+        {
+            "alternative_id": alternative,
+            "value": {"kind": "text", "value": fixture.text()},
+            "evidence_references": [claims]
+            if isinstance(claims, str)
+            else list(claims),
+            "assessment": "preserves_target"
+            if alternative == preserves
+            else "replaces_target",
+            "correlations": list((correlations or {}).get(alternative, ())),
+        }
+        for alternative, claims in cited
+    ]
     fixture.results.append(
         {
             "destination": destination,
             "outcome": outcome,
             "reasons": list(reasons),
-            "alternatives": [
-                {
-                    "alternative_id": alternative,
-                    "value": fixture.text(),
-                    "evidence_references": [claims]
-                    if isinstance(claims, str)
-                    else list(claims),
-                    "assessment": "preserves_target"
-                    if alternative == preserves
-                    else "replaces_target",
-                }
-                for alternative, claims in cited
-            ],
+            "alternatives": alternatives,
             "selected_alternative_id": None,
         }
     )
+    return {cast("str", item["alternative_id"]): item for item in alternatives}
 
 
 def test_the_pick_is_the_lowest_identifier_and_is_judged_per_field(
@@ -1992,17 +2078,20 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
     assert pick["pick_preserves"] == 1
     markdown = _run([*arguments, "--format", "markdown", "--breakdown", "T1"])[1]
     lines = markdown.splitlines()
+    # The corroborated and owner columns (#1748): no correlations and no
+    # owner decisions table in this fixture.
+    unmeasured = "| not estimable | not recorded | not recorded |"
     assert lines[lines.index("### Breakdown: T1") + 4 :][:2] == [
         "| asin | 1 | 0 | 0/0/0 | 1 | not estimable | not estimable "
-        "| 0 | 0 | 0 | 0 | 0 | 0/0/0 |",
+        "| 0 | 0 | 0 | 0 | 0 | 0/0/0 | 0/0 " + unmeasured,
         "| authors | 1 | 1 | 1/1/0 | 0 | 0.500 (0.095) | not estimable "
-        "| 0 | 1 | 0 | 0 | 0 | 0/0/0 |",
+        "| 0 | 1 | 0 | 0 | 0 | 0/0/0 | 0/1 " + unmeasured,
     ]
     assert lines[-2:] == [
         "| medium: ebook | 8 | 7 | 4/2/1 | 2 | 0.667 (0.300) | 1/2 0.500 (0.095) "
-        "| 1 | 1 | 2 | 1 | 1 | 0/0/0 |",
+        "| 1 | 1 | 2 | 1 | 1 | 0/0/0 | 0/6 " + unmeasured,
         "| total | 8 | 7 | 4/2/1 | 2 | 0.667 (0.300) | 1/2 0.500 (0.095) "
-        "| 1 | 1 | 2 | 1 | 1 | 0/0/0 |",
+        "| 1 | 1 | 2 | 1 | 1 | 0/0/0 | 0/6 " + unmeasured,
     ]
     # T1's and A2's decisions are recorded: they are kept, not proposed again.
     ranked = next(line for line in lines if line.split(" | ")[1:2] == ["T1"])
@@ -2067,6 +2156,483 @@ def test_a_breakdown_needs_a_decision_level_gate(tmp_path: Path) -> None:
         assert stderr == "admission-rule-ledger: invalid breakdown\n"
 
 
+# --- Series rows, owner labels and the corroborated pick (#1748) -----------
+
+
+def _introduced(gate_id: str) -> str:
+    return next(
+        gate for gate in ledger.CATALOGUE if gate.gate_id == gate_id
+    ).introduced_in
+
+
+def _replay(
+    expected: Path | None = None,
+    **probe: object,
+) -> series_replay.SeriesReader:
+    """A replay double: the probe it returns, checking the shared case query."""
+
+    def reader(_root: Path, database: Path, cases: str) -> series_replay.SeriesProbe:
+        if expected is not None:
+            assert database == expected
+        connection = sqlite3.connect(database)
+        try:
+            assert cases == ledger.series_cases_sql(connection)
+        finally:
+            connection.close()
+        return _series_probe(**probe)  # type: ignore[arg-type]
+
+    return reader
+
+
+def _series(
+    fixture: Fixture, outcome: str, reasons: Sequence[str] = (), claim: str = ""
+) -> None:
+    fixture.result("series", outcome, reasons, [claim or fixture.text()])
+
+
+def test_w9_counts_a_series_value_the_replay_refuses(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixtures = [Fixture(text, "v26-like") for _ in range(4)]
+    _series(fixtures[0], "propose_change", ["unique_typed_candidate"])
+    _series(fixtures[1], "propose_change", ["unique_typed_candidate"])
+    # Flagged, but the outcome keeps the current value: nothing is blocked.
+    _series(fixtures[2], "keep", ["positive_preservation_evidence"])
+    # The stored outcome refused it with W9's own reason, and the decision step
+    # also abstained with the rich residual A6b reads (#1764).
+    _series(fixtures[3], "propose_change", ["unique_typed_candidate"])
+    fixtures[3].abstain("series", "target_work_applicability_unproved")
+    fixtures[3].abstain("series", "no_eligible_action")
+    database = _database(tmp_path / "w9.sqlite3", "v26-like", fixtures)
+    replay = _replay(
+        database,
+        w9={0: True, 1: False, 2: True, 3: False},
+        replayed=4,
+        reached=4,
+    )
+    arguments = _arguments([("snap-a", database, AUDIO_REVISION)], tmp_path)
+    code, stdout, stderr = _run(arguments, series=replay)
+    assert code == 0, stderr
+    rows = _rows(stdout)
+    entry = _snapshot(rows["W9"], "snap-a")
+    assert (entry["fields"], entry["works"], entry["actionable_fields"]) == (3, 3, 1)
+    assert entry["stored_refused"] == 1
+    # Only the actionable field is classed, so the classes still partition it.
+    pick = cast("dict[str, object]", rows["W9"]["pick"])
+    assert pick["single_alternative_fields"] == 1
+    replayed = cast("dict[str, int]", entry["replay"])
+    assert (replayed["replayed"], replayed["reached"]) == (4, 4)
+    assert rows["W9"]["disposition"] == "kept (#1748)"
+    # Overlap with A6b is allowed (ceilings are not exclusive): A6b's outcome
+    # rule leaves a proposed value alone, so only W9 counts this field.
+    assert _snapshot(rows["A6b"], "snap-a")["fields"] == 0
+    markdown = _run(
+        [*arguments, "--format", "markdown", "--breakdown", "W9"], series=replay
+    )[1]
+    assert (
+        "| Snapshot | Replayed | Reach the identity match | "
+        "Also refused in the stored outcome |" in markdown
+    )
+    assert "| snap-a | 4 | 4 | 1 |" in markdown
+
+
+def test_a_disagreeing_series_is_counted_upstream_not_by_w9(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    _competing(
+        fixture, "series", [("alternative_a", text()), ("alternative_b", text())]
+    )
+    fixture.abstain("series", "series_conflicting_membership")
+    database = _database(tmp_path / "t1.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(
+        _arguments([("snap-a", database, AUDIO_REVISION)], tmp_path),
+        series=_replay(database, replayed=1, unreached_no_candidate=1),
+    )
+    assert code == 0
+    rows = _rows(stdout)
+    assert _snapshot(rows["T1"], "snap-a")["by_destination"] == {"series": 1}
+    for gate_id in ("W9", "A8", "A9"):
+        assert _snapshot(rows[gate_id], "snap-a")["fields"] == 0
+
+
+def _refuse(_root: Path, _database: Path, _cases: str) -> series_replay.SeriesProbe:
+    raise AssertionError("the series replay ran on a source without W9")
+
+
+def test_w9_is_not_replayed_where_the_gate_postdates_the_source(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    _series(fixture, "propose_change", ["unique_typed_candidate"])
+    database = _database(tmp_path / "old.sqlite3", "v26-like", [fixture])
+
+    def ancestry(commit: str, _revision: str) -> bool:
+        return commit not in {_introduced("W9"), _introduced("A9")}
+
+    code, stdout, stderr = _run(
+        _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path),
+        ancestry=ancestry,
+        series=_refuse,
+    )
+    assert code == 0, stderr
+    rows = _rows(stdout)
+    assert _snapshot(rows["W9"], "snap-a") == {
+        "label": "snap-a",
+        "status": "gate_postdates_source",
+    }
+    assert _snapshot(rows["A9"], "snap-a")["status"] == "gate_postdates_source"
+    # A8 predates W9: without the replay it falls back to its stored reason.
+    assert _snapshot(rows["A8"], "snap-a")["status"] == "measurable"
+    assert _snapshot(rows["A8"], "snap-a")["replay"] is None
+
+
+def test_series_completeness_and_provider_evidence_rows(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixtures = [Fixture(text, "v26-like") for _ in range(4)]
+    _series(fixtures[0], "propose_change", ["unique_typed_candidate"])
+    _series(fixtures[1], "propose_change", ["unique_typed_candidate"])
+    # The no-candidate refusal restates the proposal set's: not A8's (R2).
+    fixtures[2].result("series", "ineligible", ["no_supported_evidence"])
+    fixtures[2].abstain("series", "series_membership_incomplete")
+    # A stored completeness refusal of a value the proposal set kept.
+    _series(fixtures[3], "defer", ["insufficient_support"])
+    fixtures[3].abstain("series", "series_membership_incomplete")
+    database = _database(tmp_path / "a8.sqlite3", "v26-like", fixtures)
+    replay = _replay(database, a8=[0], a9=[1], replayed=3, reached=2)
+    arguments = _arguments([("snap-a", database, AUDIO_REVISION)], tmp_path)
+    code, stdout, _ = _run(arguments, series=replay)
+    assert code == 0
+    rows = _rows(stdout)
+    assert _snapshot(rows["A8"], "snap-a")["fields"] == 1
+    assert _snapshot(rows["A8"], "snap-a")["stored_refused"] == 0
+    assert _snapshot(rows["A9"], "snap-a")["fields"] == 1
+    assert _snapshot(rows["W9"], "snap-a")["fields"] == 0
+    for gate_id in ("A8", "A9"):
+        assert rows[gate_id]["control"] == "not_identity"
+        assert _snapshot(rows[gate_id], "snap-a")["actionable_fields"] is None
+
+    # Without the replay, A8 falls back to the stored reason, still only on a
+    # field that kept an alternative.
+    def no_w9(commit: str, _revision: str) -> bool:
+        return commit != _introduced("W9")
+
+    code, stdout, _ = _run(arguments, ancestry=no_w9, series=_refuse)
+    assert code == 0
+    assert _snapshot(_rows(stdout)["A8"], "snap-a")["fields"] == 1
+    # ... and on a source that also collapsed rich refusals it is not separable.
+    code, stdout, _ = _run(
+        arguments,
+        ancestry=no_w9,
+        attention=_engine_probe(["title"], rich_split=False),
+        series=_refuse,
+    )
+    assert code == 0
+    assert (
+        _snapshot(_rows(stdout)["A8"], "snap-a")["status"] == "rich_refusals_collapsed"
+    )
+
+
+def test_w5_leaves_series_to_w9(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    fixture.result("series", "defer", ["target_work_applicability_unproved"], [text()])
+    fixture.result("genres", "defer", ["target_work_applicability_unproved"], [text()])
+    database = _database(tmp_path / "w5.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, AUDIO_REVISION)], tmp_path))
+    assert code == 0
+    assert _snapshot(_rows(stdout)["W5"], "snap-a")["by_destination"] == {"genres": 1}
+
+
+def _labelled(
+    tmp_path: Path,
+    fixtures: Sequence[Fixture],
+    *,
+    gate_id: str = "T1",
+    floors: Mapping[int, int] | None = None,
+    series: series_replay.SeriesReader = _no_series,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """The row's pooled owner entry and its total split."""
+    tmp_path.mkdir(exist_ok=True)
+    database = _database(
+        tmp_path / "owner.sqlite3", "v26-like", fixtures, floors=floors
+    )
+    code, stdout, stderr = _run(
+        _arguments([("snap-a", database, AUDIO_REVISION)], tmp_path), series=series
+    )
+    assert code == 0, stderr
+    total = cast(
+        "dict[str, object]",
+        cast("dict[str, object]", _rows(stdout)[gate_id]["split"])["total"],
+    )
+    return cast("dict[str, object]", total["owner"]), total
+
+
+def _choice(
+    text: Sentinels, *, preserves: str | None = None
+) -> tuple[Fixture, dict[str, dict[str, object]]]:
+    """A competing title whose pick, the lowest identifier, is alternative_a."""
+    fixture = Fixture(text, "v26-like")
+    alternatives = _competing(
+        fixture,
+        "title",
+        [("alternative_b", text()), ("alternative_a", text())],
+        preserves=preserves,
+    )
+    return fixture, alternatives
+
+
+@pytest.mark.parametrize(
+    ("decisions", "preserves", "floor", "expected"),
+    [
+        ([(1, "accept", "alternative_a")], None, None, (1, 1, "accept")),
+        ([(1, "accept", "alternative_b")], None, None, (1, 0, "accept")),
+        ([(1, "owner_entered", "alternative_a")], None, None, (1, 1, "owner_entered")),
+        ([(1, "keep_current", None)], None, None, (1, 0, "keep_current")),
+        ([(1, "keep_current", None)], "alternative_a", None, (1, 1, "keep_current")),
+        ([(1, "reject", None)], None, None, (1, 0, "reject")),
+        (
+            [(1, "accept", "alternative_a"), (2, "withdraw", None)],
+            None,
+            None,
+            (0, 0, None),
+        ),
+        ([(3, "accept", "alternative_a")], None, 3, (0, 0, None)),
+        ([(3, "accept", "alternative_a")], None, 2, (1, 1, "accept")),
+        (
+            [(1, "accept", "alternative_b"), (2, "accept", "alternative_a")],
+            None,
+            None,
+            (1, 1, "accept"),
+        ),
+    ],
+    ids=[
+        "accept-the-pick-agrees",
+        "accept-another-alternative-disagrees",
+        "owner-entered-pick-agrees",
+        "keep-current-on-an-empty-target-disagrees",
+        "keep-current-with-a-preserving-pick-agrees",
+        "reject-disagrees",
+        "withdraw-labels-nothing",
+        "decision-at-the-episode-floor-labels-nothing",
+        "decision-above-the-episode-floor-labels",
+        "the-latest-ordinal-wins",
+    ],
+)
+def test_owner_decisions_label_the_pick(
+    tmp_path: Path,
+    decisions: Sequence[tuple[int, str, str | None]],
+    preserves: str | None,
+    floor: int | None,
+    expected: tuple[int, int, str | None],
+) -> None:
+    text = Sentinels()
+    fixture, alternatives = _choice(text, preserves=preserves)
+    for ordinal, outcome, chosen in decisions:
+        value = None if chosen is None else alternatives[chosen]["value"]
+        fixture.decide(ordinal, "title", outcome, value)
+    owner, _total = _labelled(
+        tmp_path, [fixture], floors=None if floor is None else {0: floor}
+    )
+    labelled, agrees, named = expected
+    assert (owner["labelled"], owner["pick_agrees"]) == (labelled, agrees)
+    by_outcome = cast("dict[str, int]", owner["by_outcome"])
+    assert sum(by_outcome.values()) == labelled
+    if named is not None:
+        assert by_outcome[named] == 1
+
+
+def test_owner_labels_follow_the_item_across_rescans(tmp_path: Path) -> None:
+    text = Sentinels()
+    # An accept on a superseded case whose successor is current and undecided
+    # still labels the pick; a keep_current on another current case labels too.
+    superseded, alternatives = _choice(text)
+    superseded.current = False
+    superseded.decide(1, "title", "accept", alternatives["alternative_a"]["value"])
+    successor, _ = _choice(text)
+    successor.item = superseded.item
+    other, _ = _choice(text)
+    other.decide(2, "title", "keep_current")
+    owner, _total = _labelled(tmp_path / "one", [superseded, successor, other])
+    assert (owner["labelled"], owner["pick_agrees"], owner["rate"]) == (2, 1, 0.5)
+    assert owner["by_outcome"] == {
+        "accept": 1,
+        "owner_entered": 0,
+        "keep_current": 1,
+        "reject": 0,
+    }
+    # A written and rescanned item: different target values, the same item.
+    # Decisions on both cases count once, the latest; the replay's W9 verdict
+    # on the superseded case keeps its label (RRN2).
+    text = Sentinels()
+    old = Fixture(text, "v26-like")
+    old_values = _competing(
+        old,
+        "series",
+        [("alternative_a", text()), ("alternative_b", text())],
+        outcome="propose_change",
+        reasons=["unique_typed_candidate"],
+    )
+    old.current = False
+    old.decide(1, "series", "accept", old_values["alternative_b"]["value"])
+    new = Fixture(text, "v26-like")
+    new.item = old.item
+    assert new.target_values != old.target_values
+    new_values = _competing(
+        new,
+        "series",
+        [("alternative_a", text()), ("alternative_b", text())],
+        outcome="propose_change",
+        reasons=["unique_typed_candidate"],
+    )
+    new.decide(2, "series", "accept", new_values["alternative_a"]["value"])
+    owner, _total = _labelled(
+        tmp_path / "two",
+        [old, new],
+        gate_id="W9",
+        series=_replay(w9={0: True, 1: True}, replayed=1, reached=1),
+    )
+    assert (owner["labelled"], owner["pick_agrees"]) == (1, 1)
+    # Only the superseded case decided: its label stands, though it is no
+    # longer current, and it adds no blocked field to the row.
+    new.decisions.clear()
+    database = _database(tmp_path / "three.sqlite3", "v26-like", [old, new])
+    code, stdout, _ = _run(
+        _arguments([("snap-a", database, AUDIO_REVISION)], tmp_path),
+        series=_replay(w9={0: True, 1: True}, replayed=1, reached=1),
+    )
+    assert code == 0
+    row = _rows(stdout)["W9"]
+    assert _snapshot(row, "snap-a")["fields"] == 1
+    owner = cast("dict[str, object]", _snapshot(row, "snap-a")["owner"])
+    assert (owner["labelled"], owner["pick_agrees"]) == (1, 0)
+
+
+def _pick_line(markdown: str, gate_id: str) -> str:
+    return next(
+        line for line in markdown.splitlines() if line.split(" | ")[1:2] == [gate_id]
+    )
+
+
+def test_owner_labels_without_the_table(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture, _ = _choice(text)
+    without = _database(tmp_path / "without.sqlite3", "v26-like", [fixture])
+    empty = _database(
+        tmp_path / "empty.sqlite3", "v26-like", [fixture], owner_tables=True
+    )
+    code, stdout, _ = _run(_arguments([("snap-a", without, AUDIO_REVISION)], tmp_path))
+    assert code == 0
+    row = _rows(stdout)["T1"]
+    assert _snapshot(row, "snap-a")["owner"] is None
+    total = cast("dict[str, object]", cast("dict[str, object]", row["split"])["total"])
+    assert total["owner"] is None
+    cases = [
+        (
+            [("snap-a", without, AUDIO_REVISION)],
+            "; owner decisions not stored in every snapshot",
+        ),
+        ([("snap-a", empty, AUDIO_REVISION)], "; no owner decisions"),
+        (
+            [("snap-a", empty, AUDIO_REVISION), ("snap-b", without, AUDIO_REVISION)],
+            "; owner decisions not stored in every snapshot",
+        ),
+    ]
+    for snapshots, suffix in cases:
+        markdown = _run([*_arguments(snapshots, tmp_path), "--format", "markdown"])[1]
+        assert f"(0 decidable; 0 tied){suffix} |" in _pick_line(markdown, "T1")
+
+
+def test_markdown_names_the_series_rows_and_the_owner_suffix(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture, alternatives = _choice(text)
+    fixture.decide(1, "title", "accept", alternatives["alternative_a"]["value"])
+    database = _database(tmp_path / "md.sqlite3", "v26-like", [fixture])
+    markdown = _run(
+        [
+            *_arguments([("snap-a", database, AUDIO_REVISION)], tmp_path),
+            "--format",
+            "markdown",
+        ]
+    )[1]
+    w9 = _pick_line(markdown, "W9")
+    assert "Series identity match for automatic series values" in w9
+    assert w9.endswith("| kept (#1748) |")
+    assert "| admit a series value with incomplete membership claims |" in _pick_line(
+        markdown, "A8"
+    )
+    assert "Series provider evidence" in _pick_line(markdown, "A9")
+    assert "; owner 1/1 1.000 (0.206) |" in _pick_line(markdown, "T1")
+
+
+@pytest.mark.parametrize(
+    ("correlations", "picked"),
+    [
+        ({"alternative_a": ["c1"], "alternative_b": ["c2", "c3"]}, "alternative_b"),
+        ({"alternative_a": ["c1", "c2"], "alternative_b": ["c3", "c4"]}, None),
+        ({"alternative_a": ["c1"], "alternative_b": ["c2"]}, None),
+        ({"alternative_a": ["c1"], "alternative_b": ["c2", "c2"]}, None),
+    ],
+    ids=[
+        "two-sources-against-one",
+        "two-against-two",
+        "one-against-one",
+        "duplicates-count-once",
+    ],
+)
+def test_the_corroborated_pick_needs_a_unique_majority_of_two_sources(
+    tmp_path: Path, correlations: Mapping[str, Sequence[str]], picked: str | None
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, right = fixture.record(provider, work)
+    _other, wrong = fixture.record(provider, text())
+    fixture.bind(provider, accepted, work, "accepted")
+    stamped = {
+        key: [f"{_SENTINEL}{item}" for item in value]
+        for key, value in correlations.items()
+    }
+    alternatives = _competing(
+        fixture,
+        "title",
+        [("alternative_a", wrong), ("alternative_b", right)],
+        correlations=stamped,
+    )
+    fixture.decide(1, "title", "accept", alternatives["alternative_b"]["value"])
+    database = _database(tmp_path / "c.sqlite3", "v26-like", [fixture])
+    arguments = _arguments(
+        [("snap-a", database, AUDIO_REVISION)], tmp_path, "--breakdown", "T1"
+    )
+    code, stdout, _ = _run(arguments)
+    assert code == 0
+    total = cast(
+        "dict[str, object]",
+        cast("dict[str, object]", _rows(stdout)["T1"]["split"])["total"],
+    )
+    corroborated = cast("dict[str, object]", total["corroborated"])
+    chose = int(picked is not None)
+    assert (corroborated["fields"], corroborated["picks"]) == (1, chose)
+    # The picked alternative is the one right-work alternative and the owner's.
+    assert (corroborated["decidable"], corroborated["agrees"]) == (chose, chose)
+    assert (corroborated["owner_labelled"], corroborated["owner_agrees"]) == (
+        chose,
+        chose,
+    )
+    # The lowest-identifier pick is the wrong-work alternative.
+    owner = cast("dict[str, object]", total["owner"])
+    assert (owner["labelled"], owner["pick_agrees"]) == (1, 0)
+    markdown = _run([*arguments, "--format", "markdown"])[1]
+    for header in (
+        "| Corroborated picks |",
+        "| Corroborated pick agrees where controls decide (lower) |",
+        "| Pick agrees with the owner (lower) |",
+        "| Corroborated pick agrees with the owner (lower) |",
+    ):
+        assert header in markdown
+    assert _SENTINEL not in stdout + markdown
+
+
 # --- Fields automatic decisions already settled (#1747) --------------------
 
 
@@ -2084,22 +2650,22 @@ def _settled_snapshots(tmp_path: Path) -> list[tuple[str, Path, str]]:
     first = Fixture(text, "v26-like")
     # A2 on title: the decision takes the one alternative, which is the pick.
     _competing(first, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    first.decide("title", "candidate", "alternative_a")
+    first.decide_automatically("title", "candidate", "alternative_a")
     # A2 on series: the decision keeps the current value.
     _competing(first, "series", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    first.decide("series", "keep_current")
+    first.decide_automatically("series", "keep_current")
     # T1 on description: the decision takes the alternative that is not the pick.
     _competing(
         first, "description", [("alternative_a", text()), ("alternative_b", text())]
     )
-    first.decide("description", "candidate", "alternative_b")
+    first.decide_automatically("description", "candidate", "alternative_b")
     # A2 on asin: an ignore leaves the field as it is, so it counts as keep.
     _competing(first, "asin", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    first.decide("asin", "ignore")
+    first.decide_automatically("asin", "ignore")
     # A1 on language: blocked with no alternative, so not actionable, but a
     # stored decision still settled it.
     first.result("language", "unresolved_choice", ["no_positive_preservation_evidence"])
-    first.decide("language", "keep_current")
+    first.decide_automatically("language", "keep_current")
     # A2 on authors, blocked with no decision.
     _competing(first, "authors", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
     # A proposed field is not blocked, whatever was decided for it.
@@ -2110,20 +2676,20 @@ def _settled_snapshots(tmp_path: Path) -> list[tuple[str, Path, str]]:
         outcome="propose_change",
         reasons=[_SINGLE_SOURCE],
     )
-    first.decide("publisher", "candidate", "alternative_a")
+    first.decide_automatically("publisher", "candidate", "alternative_a")
     # A decision for a destination this case has no result on, but another
     # case blocks.
-    first.decide("subtitle", "keep_current")
+    first.decide_automatically("subtitle", "keep_current")
     second = Fixture(text, "v26-like")
     _competing(
         second, "subtitle", [("alternative_a", text())], reasons=[_SINGLE_SOURCE]
     )
     audio = Fixture(text, "v57-like")
     _competing(audio, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    audio.decide("title", "candidate", "alternative_a")
+    audio.decide_automatically("title", "candidate", "alternative_a")
     # An outcome that is neither a keep nor the pick counts as other.
     _competing(audio, "series", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    audio.decide("series", "unrecognised_outcome")
+    audio.decide_automatically("series", "unrecognised_outcome")
     return [
         (
             "ebook",
@@ -2191,8 +2757,13 @@ def test_markdown_notes_automatic_decisions_only_when_non_zero(tmp_path: Path) -
     assert "| 0 / 0 (0 actionable) |" in ranked("T1")
     assert "decided automatically" not in ranked("A3")
     breakdown = lines[lines.index("### Breakdown: A2") + 2 :]
-    assert breakdown[0].endswith("| Pick preserves | Automatic pick/keep/other |")
-    assert breakdown[-1].endswith("| 7 | 0 | 2/2/1 |")
+    # The automatic column follows Pick preserves; the corroborated and owner
+    # columns (#1748) follow it.
+    assert (
+        "| Pick preserves | Automatic pick/keep/other | Corroborated picks |"
+        in (breakdown[0])
+    )
+    assert "| 7 | 0 | 2/2/1 | " in breakdown[-1]
 
 
 def test_a_snapshot_without_automatic_decisions_reports_not_recorded(
@@ -2204,7 +2775,7 @@ def test_a_snapshot_without_automatic_decisions_reports_not_recorded(
         _competing(
             fixture, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE]
         )
-    stored.decide("title", "keep_current")
+    stored.decide_automatically("title", "keep_current")
     bare_snapshot = (
         "bare",
         _database(tmp_path / "b.sqlite3", "v26-like", [bare], automatic=False),
@@ -2221,7 +2792,9 @@ def test_a_snapshot_without_automatic_decisions_reports_not_recorded(
         + ["--breakdown", "A2"]
     )[1]
     assert "decided automatically" not in markdown
-    assert markdown.splitlines()[-1].endswith("| 1 | 0 | not recorded |")
+    assert markdown.splitlines()[-1].endswith(
+        "| 1 | 0 | not recorded | 0/0 | not estimable | not recorded | not recorded |"
+    )
     # Pooled with a snapshot that did record them, the split is still not
     # recorded: a partial pool would understate it.
     stored_snapshot = (
@@ -2243,8 +2816,8 @@ def test_only_the_active_policy_generation_settles_a_field(tmp_path: Path) -> No
     _competing(fixture, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
     # The active generation's decision takes the pick; the earlier
     # generation's keep, stored after it, is history and settles nothing.
-    fixture.decide("title", "candidate", "alternative_a", generation=2)
-    fixture.decide("title", "keep_current", generation=1)
+    fixture.decide_automatically("title", "candidate", "alternative_a", generation=2)
+    fixture.decide_automatically("title", "keep_current", generation=1)
     database = _database(tmp_path / "g.sqlite3", "v26-like", [fixture], generation=2)
     code, stdout, stderr = _run(
         _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
@@ -2255,7 +2828,7 @@ def test_only_the_active_policy_generation_settles_a_field(tmp_path: Path) -> No
     # generation's decision is not the newest active one: nothing is settled.
     stale = Fixture(text, "v26-like")
     _competing(stale, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    stale.decide("title", "keep_current", generation=1)
+    stale.decide_automatically("title", "keep_current", generation=1)
     database = _database(tmp_path / "s.sqlite3", "v26-like", [stale], generation=2)
     code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
     assert code == 0
@@ -2264,7 +2837,7 @@ def test_only_the_active_policy_generation_settles_a_field(tmp_path: Path) -> No
     # decision counts.
     single = Fixture(text, "v26-like")
     _competing(single, "title", [("alternative_a", text())], reasons=[_SINGLE_SOURCE])
-    single.decide("title", "keep_current", generation=3)
+    single.decide_automatically("title", "keep_current", generation=3)
     database = _database(tmp_path / "n.sqlite3", "v26-like", [single], generation=None)
     code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
     assert code == 0

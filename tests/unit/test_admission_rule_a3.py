@@ -31,6 +31,7 @@ from tests.unit.test_admission_rule_ledger import (
     Sentinels,
     _arguments,
     _database,
+    _no_series,
     _run,
     _strings,
     _test_vocabulary,
@@ -886,6 +887,7 @@ def _a3_run(
         stderr=stderr,
         ancestry=ancestry,
         attention=lambda _root, _db: ledger.AttentionProbe((), 0, 0, SCALAR, True),
+        series_replay=_no_series,
         combination_replay=_reader(database, identities, **replays),
     )
     return code, stdout.getvalue(), stderr.getvalue()
