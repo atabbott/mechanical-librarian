@@ -594,7 +594,7 @@ const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
   entry.state === 'checking'
     ? 'Retrying now.'
     : entry.state === 'dormant'
-      ? 'No automatic retry until the source is fixed.'
+      ? 'No automatic retry. Fix the source, then retry.'
       : entry.state === 'exhausted'
         ? 'No automatic retry remains.'
         : entry.next_retry_at === null || entry.next_retry_at * 1000 <= now.getTime()

@@ -3225,7 +3225,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         )
         expect(entries.nth(1)).to_contain_text(
             "Hardcover · Synthetic ebooks: It refused the API key. "
-            "1 lookup waiting. No automatic retry until the source is fixed."
+            "1 lookup waiting. No automatic retry. Fix the source, then retry."
         )
         expect(entries.nth(2)).to_contain_text(
             "Open Library · Synthetic audiobooks with a long library name: It did "

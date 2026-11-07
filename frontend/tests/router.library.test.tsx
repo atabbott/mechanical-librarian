@@ -13438,7 +13438,7 @@ describe('library provider throttling notice (#1282)', () => {
     }).format(tomorrow)
     expect(items.map((item) => item.querySelector('span')?.textContent)).toEqual([
       `Google Books · Synthetic ebooks: It is limiting requests. 214 lookups waiting. Next automatic retry ${clock(today)}.`,
-      'Hardcover · Synthetic ebooks: It refused the API key. 1 lookup waiting. No automatic retry until the source is fixed.',
+      'Hardcover · Synthetic ebooks: It refused the API key. 1 lookup waiting. No automatic retry. Fix the source, then retry.',
       `Open Library · Synthetic audiobooks with a long library name: It did not answer. ${(10_000).toLocaleString()} lookups waiting. No automatic retry remains.`,
       `Google Books · Second shelf: Its request quota is used up. 3 lookups waiting. Next automatic retry ${day}, ${clock(tomorrow)}.`,
       'iTunes · Synthetic ebooks: It is limiting requests. 214 lookups waiting. Retrying now.',

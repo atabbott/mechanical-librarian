@@ -152,9 +152,9 @@ no automatic retry ([provider recovery](../operations/provider-recovery.md)).
 
 Library and Settings share one provider notice. Each entry names a source, a
 library, the reason, how many lookups wait and when they retry. A refused key
-has no automatic retry until the source is fixed, and an exhausted lane says no
-retry remains. Each entry
-links to Settings › Metadata sources. Retry now's outcome is announced beside
+is not retried automatically: fix it, then use Retry now (or the file
+instruction). An exhausted lane says no retry remains. Each entry links to
+Settings › Metadata sources. Retry now's outcome is announced beside
 it; a file-managed deployment shows the file instruction instead. With nothing
 waiting the notice takes no space.
 
