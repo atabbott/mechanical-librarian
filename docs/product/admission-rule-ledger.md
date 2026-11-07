@@ -272,17 +272,16 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Follow-ons.** Three rows are filed:
-  A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745),
+- **Follow-ons.** Two rows are filed:
   A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333) and
   W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
-  a measurement task rather than a loosening. #1745 kept the A6 gate
-  (ADR-0092) and its rows are unranked, so A3 and W9 are the only scored
-  rows not filed under an earlier issue. T1 was measured under
+  a measurement task rather than a loosening. T1 was measured under
   [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744)
-  (1,332 actionable fields) and A2 under
+  (1,332 actionable fields), A6 under
+  [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745)
+  (ADR-0092; its rows are unranked) and A2 under
   [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747)
-  (135); both were kept.
+  (135); all three were kept.
 - **Identity precision is not a case for loosening.** Where the controls can
   decide, the lowest-identifier pick agrees with the one right-work
   alternative in about half the fields: T1 247 of 480 (0.515, lower limit

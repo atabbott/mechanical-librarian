@@ -835,10 +835,6 @@ class A6Tally:
     mirror_disagreements: int = 0
 
 
-# The ledger's case query (#1747) is the one this replay reads.
-_CASES_SQL = ledger._CASES_SQL
-
-
 def _alternatives(case: ledger.Case, destination: str) -> str:
     count = len(ledger._dicts(case.results.get(destination, {}).get("alternatives")))
     return ALTERNATIVE_CLASSES[min(count, 2)]
@@ -904,7 +900,7 @@ def measure_a6(
     media: Counter[str] = Counter()
     table = table_for(probe.version)
     try:
-        rows = connection.execute(_CASES_SQL)
+        rows = connection.execute(ledger._CASES_SQL)
         for case_id, case_text, report_text, shadow_text, consideration_text in rows:
             shadow = ledger._document(shadow_text)
             case = ledger._build_case(
