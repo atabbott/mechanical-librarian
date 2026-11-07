@@ -1127,12 +1127,23 @@ def companion_binding_plan(
     whose book lists audio editions to compare with the file
     (`COMPANION_ISBN_AUTHORITIES`). Every other binding is handed the plan
     without it, exactly as it was before the lane existed.
+
+    Such an authority has no product lookup, so beside the companion lane it
+    is handed no ASIN lane: the plan names exactly the lanes it serves, which
+    is the plan a retry of its observation rebuilds and reconciles against.
     """
-    if plan.audio is None or authority in COMPANION_ISBN_AUTHORITIES:
+    if plan.audio is None:
         return plan
-    lanes = tuple(
-        lane for lane in plan.lanes if lane.kind is not ProviderQueryKind.ISBN
-    )
+    if authority in COMPANION_ISBN_AUTHORITIES:
+        if not any(lane.kind is ProviderQueryKind.ISBN for lane in plan.lanes):
+            return plan
+        lanes = tuple(
+            lane for lane in plan.lanes if lane.kind is not ProviderQueryKind.ASIN
+        )
+    else:
+        lanes = tuple(
+            lane for lane in plan.lanes if lane.kind is not ProviderQueryKind.ISBN
+        )
     return plan if lanes == plan.lanes else replace(plan, lanes=lanes)
 
 
@@ -1301,13 +1312,23 @@ def audiobook_asin_feed_plan(
     """
     if plan.overflow or any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes):
         return None
+    # A plan with no search may still hold the companion ISBN lane, whose
+    # book's audio editions give leads (#1468); those leads then stand on the
+    # companion ISBN claims that found them.
     work_references = next(
         (
             lane.input_references
             for lane in plan.lanes
             if lane.kind is ProviderQueryKind.WORK
         ),
-        (),
+        next(
+            (
+                lane.input_references
+                for lane in plan.lanes
+                if lane.kind is ProviderQueryKind.ISBN
+            ),
+            (),
+        ),
     )
     asserted = _asserted_asin_references(target, plan.local_claims)
     ordered: dict[str, tuple[str, ...]] = dict(

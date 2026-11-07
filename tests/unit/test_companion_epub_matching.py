@@ -889,6 +889,64 @@ def test_a_linked_product_of_another_abridgement_is_refused() -> None:
     assert not _kept(answer("Abridged"))
 
 
+def test_a_plan_with_only_the_companion_isbn_feeds_its_edition_leads() -> None:
+    """No search, only the ISBN: its book's editions still lead (Codex R1)."""
+    target = _target(None, ())
+    companion = _companion(title=None)
+    plan = audiobook_discovery_plan(
+        target,
+        (_duration_claim(),),
+        audio=single_track_audio_facts(),
+        companion=companion,
+    )
+    assert [lane.kind for lane in plan.lanes] == [ProviderQueryKind.ISBN]
+    observation = _hardcover(companion, (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),))
+    feed = app.audiobook_asin_feed_plan(target, plan, (observation,))
+    assert feed is not None
+    (lane,) = feed.lanes
+    assert lane.canonical_asin == _ASIN
+    # The lead stands on the companion ISBN claims that found it.
+    assert lane.input_references == plan.lanes[0].input_references
+
+
+def test_hardcover_is_handed_exactly_the_lanes_it_serves() -> None:
+    """A product lane beside the companion lane is not Hardcover's (Codex R1).
+
+    A retry rebuilds this plan and reconciles it with the observation, which
+    records only the lanes Hardcover asked.
+    """
+    from tests.support.audiobook_providers import audio_claim
+
+    target = _target("Asserted Title", ("Ada Author",))
+    plan = audiobook_discovery_plan(
+        target,
+        (
+            _target_title_claim("Asserted Title"),
+            _duration_claim(),
+            audio_claim(ClaimKind.ASIN, "B0LOCAL001", 4),
+        ),
+        audio=single_track_audio_facts(),
+        companion=_companion(),
+    )
+    kinds = {lane.kind for lane in plan.lanes}
+    assert kinds == {ProviderQueryKind.ASIN, ProviderQueryKind.ISBN}
+    hardcover = companion_binding_plan(plan, "hardcover")
+    assert [lane.kind for lane in hardcover.lanes] == [ProviderQueryKind.ISBN]
+    audible = companion_binding_plan(plan, "audible_catalog")
+    assert {lane.kind for lane in audible.lanes} == {ProviderQueryKind.ASIN}
+    # Without a companion lane Hardcover's plan is untouched.
+    plain = audiobook_discovery_plan(
+        target,
+        (
+            _target_title_claim("Asserted Title"),
+            _duration_claim(),
+            audio_claim(ClaimKind.ASIN, "B0LOCAL001", 4),
+        ),
+        audio=single_track_audio_facts(),
+    )
+    assert companion_binding_plan(plain, "hardcover") is plain
+
+
 def test_editions_that_disagree_admit_nothing_through_the_gate() -> None:
     """From the report's editions to the gate: disagreeing casts link nothing."""
     companion = _companion()
