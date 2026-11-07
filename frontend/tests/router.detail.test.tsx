@@ -1648,6 +1648,28 @@ it.each(['evidence', 'history'])(
         {
           category: 'description' as const,
           occurredAt: 1786000000,
+          outcome: 'description_advice_recorded',
+          state: 'running' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate: null,
+          selected: false,
+          chosenBy: null,
+        },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
+          outcome: 'description_application',
+          state: 'reconciling' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: false,
+          chosenBy: null,
+        },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
           outcome: 'description_application',
           state: 'failed' as const,
           engine: candidate.engine,
@@ -1702,12 +1724,18 @@ it.each(['evidence', 'history'])(
       expect(screen.getByText('You chose this description.', { exact: false })).toBeVisible()
       expect(screen.getByText('Automatic chose this description.', { exact: false })).toBeVisible()
       expect(document.body.textContent).not.toMatch(/Write (closed|failed)\./u)
+      // Older steps read as done, not as still happening.
+      expect(screen.getByText('Checking the write started.', { exact: false })).toBeVisible()
+      expect(screen.getByText('Advice writing started.', { exact: false })).toBeVisible()
+      expect(document.body.textContent).not.toMatch(/\b(is being|is in progress|will be)\b/u)
+      // Advice still being written has no text yet, which is not news.
+      expect(screen.queryByText('No description was written.')).toBeNull()
       expect(
         screen.getByText('Replaced by a later choice.', {
           exact: false,
         }),
       ).toBeVisible()
-      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(7)
+      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(9)
     } else {
       await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
       expect(screen.queryByText(candidate.output.description)).toBeNull()

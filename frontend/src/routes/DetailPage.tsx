@@ -43,19 +43,19 @@ const reviewerStatusWords = {
   failed: 'failed on',
   unavailable: 'was unavailable for',
 } as const
-// A description write's state as a sentence. "verified" and
-// "no_change_required" have their own sentences below.
+// Each history event says what happened at that moment, in the past tense:
+// a finished write lists its earlier steps below it, newest first.
 const descriptionWriteSentences = {
   requested: 'The write was requested.',
-  running: 'The write is in progress.',
+  running: 'The write started.',
   succeeded: 'The write finished.',
   failed: 'The write failed.',
   interrupted: 'The write was interrupted.',
-  planned: 'The write is planned.',
-  claimed: 'The write is being prepared.',
-  applying: 'The write is in progress.',
-  reconciling: 'The write is being checked.',
-  retryable: 'The write will be tried again.',
+  planned: 'The write was planned.',
+  claimed: 'The write was prepared.',
+  applying: 'The write started.',
+  reconciling: 'Checking the write started.',
+  retryable: 'The write was set to try again.',
   verified: 'Written to the library and checked.',
   stale: 'The write was closed before it finished.',
   superseded: 'The write was replaced by a later choice.',
@@ -65,7 +65,7 @@ const descriptionWriteSentences = {
 // Advice events only ever carry the advice run's states.
 const descriptionAdviceSentences: Partial<Record<DescriptionState, string>> = {
   requested: 'Advice was requested.',
-  running: 'Advice is being written.',
+  running: 'Advice writing started.',
   succeeded: 'Advice was written.',
   failed: 'Advice could not be written.',
   interrupted: 'Advice was interrupted.',
@@ -99,12 +99,16 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         </p>
         {item.candidate ? (
           <p className="description-advice-text">{item.candidate.output.description}</p>
-        ) : (
+        ) : item.state === 'requested' || item.state === 'running' ? null : (
+          // Only once advice has stopped is "no text" news.
           <p>No description was written.</p>
         )}
       </article>
     )
   if (item.category === 'owner' || item.category === 'automatic') {
+    // A withdrawal selects nothing, so it has no value to change to; its
+    // sentence says what happened.
+    const withdrawn = item.category === 'owner' && item.outcome === 'withdraw'
     const action =
       item.category === 'owner'
         ? item.outcome === 'accept'
@@ -132,8 +136,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <p className="diagnostic-value">
             <span>Kept</span> {displayRetainedHistoryValue(item)}
           </p>
-        ) : item.category === 'owner' && item.outcome === 'withdraw' ? // sentence above says it. // A withdrawal selects nothing, so it has no value to change to; the
-        null : (
+        ) : withdrawn ? null : (
           <>
             <p className="diagnostic-value">
               <span>From</span> {historyValue(item.destination, item.previousValue)}
