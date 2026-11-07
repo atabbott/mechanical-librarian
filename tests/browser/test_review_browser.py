@@ -2738,8 +2738,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert "Draft is separate from the active policy" not in policy_body
                 assert page.locator(".policy-cutover").count() == 0
                 page.locator(".cm-finish-tray").get_by_text(
-                    "Change any field to create a new draft \u2014 validation always "
-                    "covers the whole policy.",
+                    "Change any field to create a new draft.",
                     exact=True,
                 ).wait_for()
                 policy_chapters = page.get_by_role("navigation", name="Policy chapters")
@@ -2758,10 +2757,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     ).get_attribute("aria-describedby")
                     is None
                 )
-                page.get_by_text(
-                    "Choose how metadata is stored and when you want to review it.",
-                    exact=True,
-                ).wait_for()
+                # #1760: the heading needs no intro line.
+                assert (
+                    page.get_by_text(
+                        "Choose how metadata is stored and when you want to review it.",
+                        exact=True,
+                    ).count()
+                    == 0
+                )
                 unsupported_description = policy_chapters.get_by_role(
                     "button", name="Additional fields"
                 ).get_by_text(
@@ -11640,9 +11643,9 @@ def test_a_prepared_work_route_cover_keeps_the_case_readable():
                 ).to_contain_text("The exact recording remains unresolved.")
                 page.reload()
             page.goto(f"{origin}/review/{case_id}")
-            expect(page.get_by_text("Work diagnostics are unavailable")).to_have_count(
-                0
-            )
+            expect(
+                page.get_by_text("The review case could not be opened")
+            ).to_have_count(0)
             expect(
                 page.get_by_text("First published (book): 1999-05-01").first
             ).to_be_visible()
@@ -12942,17 +12945,17 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 page.get_by_label("Password").fill("synthetic-owner")
                 page.get_by_role("button", name="Sign in").click()
                 notice = page.get_by_role(
-                    "region", name="Provider lookups waiting to retry"
+                    "region", name="Source lookups waiting to retry"
                 )
                 entry = notice.get_by_role("listitem")
                 expect(entry).to_have_count(1)
                 expect(entry).to_contain_text(
                     "Google Books · books: It is limiting requests. "
-                    "3 deferred lookups. Next automatic retry "
+                    "3 lookups waiting. Next automatic retry "
                 )
                 # File-managed settings: the instruction, never a command.
                 expect(notice).to_contain_text(
-                    "raise provider_recovery_generation by one there"
+                    "raise provider_recovery_generation by one in /data/config.json"
                 )
                 expect(notice.get_by_role("button")).to_have_count(0)
                 # The instruction keeps its 0.7rem separation from the list

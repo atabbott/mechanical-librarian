@@ -36,8 +36,8 @@ export class ChunkRecoveryError extends Error {
   constructor(readonly exhausted: boolean) {
     super(
       exhausted
-        ? 'The application update is still unavailable after one safe reload.'
-        : 'Reloading once to retrieve the current application update.',
+        ? 'Reloading did not help. Check that the Mechanical Librarian service is running, then reload.'
+        : 'Reloading to open the new version.',
     )
     this.name = 'ChunkRecoveryError'
   }
