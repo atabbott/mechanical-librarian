@@ -3068,7 +3068,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Return a current bounded page, retrying only this reader's busy lock."""
 
         def read() -> dict[str, object]:
-            return self._retry_activity_busy(
+            projection = self._retry_activity_busy(
                 lambda: self._field_effect_activity_page_once(
                     search=search,
                     event_type=event_type,
@@ -3077,11 +3077,68 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     page_size=page_size,
                 )
             )
+            # Notes read current state the cached projection never holds, so
+            # they are added to each returned page and never cached (#1711).
+            return {
+                **projection,
+                "notes": self._activity_page_notes(
+                    cast("list[object]", projection["events"])
+                ),
+            }
 
         with self._activity_page_cache_lock:
             # Inside an enclosing read snapshot this read cannot release its
             # lock between steps; that snapshot owns the catch-up instead.
             return read() if self._connection.in_transaction else self._caught_up(read)
+
+    def _activity_page_notes(self, events: list[object]) -> dict[str, str]:
+        """Note the page's rows that current state makes read differently (#1711).
+
+        An owner choice under its case's decision floor no longer counts, so
+        the field is asking again; a planned automatic write is held while
+        the posture is not Automatic. Neither changes the row's result.
+        """
+        decisions: list[str] = []
+        planned: list[str] = []
+        for value in events:
+            event = (
+                value.to_data()
+                if type(value) is ReadableActivityEvent
+                else cast("dict[str, object]", value)
+            )
+            event_id = event.get("event_id")
+            if type(event_id) is not str:
+                continue
+            if event_id.startswith("human_decision_event_"):
+                decisions.append(event_id)
+            elif (
+                event.get("event_type") == "metadata"
+                and event.get("origin") == "automatic_policy"
+                and event.get("state") == "planned"
+            ):
+                planned.append(event_id)
+        notes: dict[str, str] = {}
+        if decisions:
+            rows = self._connection.execute(
+                "SELECT event.event_id FROM human_decision_events event "
+                "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
+                "JOIN review_case_episodes episode "
+                "ON episode.review_case_id=decision.review_case_id "
+                "JOIN current_review_packages current "
+                "ON current.review_case_id=decision.review_case_id "
+                "WHERE decision.ordinal<=episode.decision_floor AND event.event_id IN ("
+                + ",".join("?" for _ in decisions)
+                + ")",
+                decisions,
+            ).fetchall()
+            notes.update((row[0], "asked_again") for row in rows)
+        if planned:
+            posture = self._connection.execute(
+                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if posture is not None and posture[0] != "automatic":
+                notes.update((event_id, "held_back") for event_id in planned)
+        return notes
 
     def initialize_activity_facts(self) -> None:
         with self._activity_page_cache_lock:

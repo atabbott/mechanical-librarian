@@ -1362,6 +1362,10 @@ class _ActivityEvent(_ClosedModel):
         default_factory=list, max_length=32
     )
     library: str = Field(max_length=512)
+    # What current state adds to a row without changing its result: an owner
+    # choice that no longer counts, so the field asks again, or a planned
+    # automatic write held while Automatic is off (#1711).
+    note: Literal["asked_again", "held_back"] | None = None
     occurred_at: int | None = Field(default=None, ge=0)
     origin: str = Field(max_length=512)
     state: str = Field(max_length=512)

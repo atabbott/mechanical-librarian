@@ -2176,6 +2176,21 @@
             "title": "Library",
             "type": "string"
           },
+          "note": {
+            "anyOf": [
+              {
+                "enum": [
+                  "asked_again",
+                  "held_back"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
           "occurred_at": {
             "anyOf": [
               {
