@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import openapi from '../../docs/reference/review-openapi-v1.json'
 import { ApiError, DECODED, ReviewApiClient, UncertainMutationError } from '../src/api/http'
-import type { DecisionCommand, PolicyCommandPath } from '../src/api/http'
+import type { DecisionCommand, PolicyCommandPath, PreparationActionPath } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
 import { DecodeFailure, matchOperation, responseDecoders } from '../src/generated/review-decoders'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
@@ -1194,8 +1194,11 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'POST /api/v1/review-cases/{review_case_id}/description-advice/retry': (c) =>
     client(c).retryDescriptionAdvice(caseId(c)),
   'GET /api/v1/review-preparation': (c) => client(c).getPreparation(),
+  // A captured scan path (`{connection}/{library_name}/scan`).
   'POST /api/v1/review-preparation/{connection}/{library_name}/scan': (c) =>
-    client(c).preparationAction(c.path.slice('/api/v1/review-preparation/'.length)),
+    client(c).preparationAction(
+      c.path.slice('/api/v1/review-preparation/'.length) as PreparationActionPath,
+    ),
   'GET /api/v1/activity': (c) => client(c).getActivity(),
   'GET /api/v1/activity/consent-state': (c) => client(c).getActivityConsent(),
   'GET /api/v1/activity/permission-readiness': (c) => client(c).getActivityPermissionReadiness(),
