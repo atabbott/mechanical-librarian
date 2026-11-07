@@ -36,7 +36,13 @@ Usage:
         --source-root LABEL SCRATCH/src-REV \
         [--source-report LABEL /copy/cold-start-report.json] \
         [--snapshot ...] [--repository CHECKOUT] [--format json|markdown] \
-        [--follow-on GATE=ISSUE ...]
+        [--follow-on GATE=ISSUE ...] [--breakdown A6]
+
+``--breakdown A6`` adds the automatic-decision abstention breakdown of #1745
+(``scripts/admission_rule_a6.py``) to the JSON document: its two populations,
+the first failing eligibility check and the closed relaxations, replayed
+under each source. With ``--format markdown`` it prints the breakdown's tables
+instead of the ledger's, so each page is one run's output.
 """
 
 from __future__ import annotations
@@ -52,12 +58,16 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, NoReturn, TextIO, cast
+from types import ModuleType
+from typing import TYPE_CHECKING, Literal, NoReturn, TextIO, cast
 from urllib.parse import quote
 
 from mechanical_librarian.domain import shadow_decision, shadow_outcome
 from mechanical_librarian.domain.metadata_report import TargetDestination, isbn_family
 from mechanical_librarian.domain.proposal_set import _OUTCOME_REASON_SETS
+
+if TYPE_CHECKING:
+    from scripts.admission_rule_a6 import A6Reader
 
 LEDGER_SCHEMA = "admission-rule-ledger-v2"
 WILSON_Z = 1.959964
@@ -67,10 +77,14 @@ MAX_ISBN_DISCOVERY_LANES = 8
 
 _LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
-_GATE_ID = re.compile(r"^[A-Z][0-9]{1,2}$")
+_GATE_ID = re.compile(r"^[A-Z][0-9]{1,2}[a-z]?$")
 
 Status = Literal[
-    "measurable", "gate_postdates_source", "block_not_retained", "cause_not_separable"
+    "measurable",
+    "gate_postdates_source",
+    "block_not_retained",
+    "cause_not_separable",
+    "rich_refusals_collapsed",
 ]
 Control = Literal[
     "alternative", "cover_candidates", "not_identity", "not_retained", "informational"
@@ -183,6 +197,9 @@ class Case:
     references: dict[str, str] = field(default_factory=dict)
     lane_kinds: dict[str, set[str]] = field(default_factory=dict)
     labels: dict[str, str] = field(default_factory=dict)
+    # The source revision's scalar decision destinations (#1745), as its own
+    # shadow_decision._SUPPORTED_DESTINATIONS states them.
+    scalar: frozenset[str] = frozenset()
 
     def applicable(self, destinations: frozenset[str]) -> frozenset[str]:
         present = destinations & frozenset(self.results)
@@ -470,6 +487,28 @@ def _never(_case: Case) -> frozenset[str]:
     return frozenset()
 
 
+# Automatic-decision abstention, split by engine (#1745). The scalar engine
+# decides the source's _SUPPORTED_DESTINATIONS; every other destination's
+# no_eligible_action is the rich-preview path's residual.
+_A6_REASONS = frozenset({"insufficient_support", "no_eligible_action"})
+_A6_ECHO = frozenset({"evidence_sufficiency_manual"})
+
+
+def _abstaining(codes: frozenset[str], *, scalar: bool) -> Signal:
+    def signal(case: Case) -> frozenset[str]:
+        destinations = case.scalar if scalar else _ALL - case.scalar
+        return frozenset(
+            destination
+            for destination in case.applicable(destinations)
+            if any(
+                held == "abstention" and code in codes
+                for held, code in case.shadow.get(destination, set())
+            )
+        )
+
+    return signal
+
+
 def _isbn_claims(case: Case) -> list[dict[str, object]]:
     return [claim for claim in case.local_claims() if claim.get("kind") == "isbn"]
 
@@ -658,6 +697,11 @@ class Gate:
     ranked: bool = True
     # Why a row that would score is kept out of the ranking.
     unranked_note: str | None = None
+    # Blocked fields whose refusal only repeats an upstream gate's: reported
+    # beside the row, never counted or scored (#1745).
+    echo: Signal | None = None
+    # Measurable only where the source keeps rich refusals' own reasons.
+    needs_rich_split: bool = False
 
 
 _NOT_RECORDED = "not recorded"
@@ -1172,30 +1216,43 @@ CATALOGUE: tuple[Gate, ...] = (
         _reason({"cover_gallery_incomplete"}, _COVER),
     ),
     Gate(
-        "A6",
+        "A6a",
         "Applicability and abstention",
-        "Automatic-decision abstention",
-        "domain/shadow_decision.py _REASON_CODES",
-        "#442 (593e6198); ADR-0036",
+        "Automatic-decision abstention, scalar engine (insufficient support, no "
+        "eligible action)",
+        "domain/shadow_decision.py _candidate_is_eligible, _base_reason",
+        "#442 (593e6198); ADR-0036; re-scoped #1745, ADR-0092",
         "development 159/172 correct at 100% precision; sealed 12/12 and 43/43",
         "593e619821175655dd15c24e4717104eca0d722f",
-        "every automatic destination",
-        "admit the lowest-identifier alternative an automatic decision abstained on",
+        "the source's scalar decision destinations",
+        "none: the lowest-identifier rule is rejected; closed relaxations in the "
+        "A6 breakdown",
         "alternative",
-        _shadow_disposition(
-            "abstention",
-            {
-                "insufficient_support",
-                "evidence_sufficiency_manual",
-                "no_eligible_action",
-            },
-        ),
-        # The signal catches the rich-preview path's collapsed refusals on
-        # 1203cf58 and fields the proposal set already refused, and misses
-        # proposed fields the decision abstained on (#1745 findings 1-2).
+        _abstaining(_A6_REASONS, scalar=True),
+        # Blocked fields count as A6a only where the decision abstained for its
+        # own reasons; evidence_sufficiency_manual repeats the proposal set's.
+        echo=_abstaining(_A6_ECHO, scalar=True),
+        disposition="kept (ADR-0092)",
         ranked=False,
-        unranked_note="mis-scoped: counts upstream refusals and pre-election rich "
-        "destinations; re-measured under #1745",
+        unranked_note="kept by ADR-0092; its own cost is the proposable population "
+        "in the A6 breakdown",
+    ),
+    Gate(
+        "A6b",
+        "Applicability and abstention",
+        "Rich-preview no-eligible-action residual",
+        "domain/shadow_outcome.py _rich_field_outcome",
+        "#442 (593e6198); #1745, ADR-0092",
+        _NOT_RECORDED,
+        "593e619821175655dd15c24e4717104eca0d722f",
+        "rich-preview destinations",
+        "none: refile under the rich reason's own row",
+        "not_identity",
+        _abstaining(frozenset({"no_eligible_action"}), scalar=False),
+        disposition="kept (ADR-0092)",
+        ranked=False,
+        unranked_note="residual of rich refusals outside their own reasons",
+        needs_rich_split=True,
     ),
     Gate(
         "A7",
@@ -1305,6 +1362,8 @@ _STATUS_TEXT: dict[str, str] = {
     "gate_postdates_source": "not measurable on that snapshot: gate postdates source",
     "block_not_retained": "not measurable on that snapshot: block not retained",
     "cause_not_separable": "not measurable on that snapshot: cause not separable",
+    "rich_refusals_collapsed": "not separable on that snapshot: rich refusals "
+    "collapsed",
 }
 
 
@@ -1334,6 +1393,8 @@ class Tally:
     tied: int = 0
     # blocked fields competing on a destination a later election decides
     election_fields: int = 0
+    # blocked fields whose refusal repeats an upstream gate's (#1745)
+    echo_fields: int = 0
 
 
 # Elections that decide competing values on these destinations on main. A
@@ -1448,6 +1509,10 @@ def _tally_case(
 ) -> None:
     if gate.medium is not None and case.medium != gate.medium:
         return
+    if gate.echo is not None:
+        tally.echo_fields += sum(
+            1 for destination in gate.echo(case) if case.blocked(destination)
+        )
     blocked = sorted(
         destination for destination in gate.signal(case) if case.blocked(destination)
     )
@@ -1534,6 +1599,7 @@ def measure_snapshot(
     connection: sqlite3.Connection,
     statuses: Mapping[str, Status],
     elections: Iterable[str] = (),
+    scalar: frozenset[str] = frozenset(shadow_decision._SUPPORTED_DESTINATIONS),
 ) -> tuple[dict[str, Tally], Counter[str]]:
     """Stream current cases once, tallying every measurable gate."""
     later = _election_destinations(elections)
@@ -1549,6 +1615,7 @@ def measure_snapshot(
                 _document(shadow_text),
                 _document(consideration_text),
             )
+            case.scalar = scalar
             media[case.medium] += 1
             for gate in measurable:
                 _tally_case(gate, case, tallies[gate.gate_id], later)
@@ -1591,11 +1658,15 @@ def git_ancestry(repository: Path) -> Ancestry:
     return ancestry
 
 
-def gate_statuses(revision: str, ancestry: Ancestry) -> dict[str, Status]:
+def gate_statuses(
+    revision: str, ancestry: Ancestry, rich_split: bool = True
+) -> dict[str, Status]:
     statuses: dict[str, Status] = {}
     for gate in CATALOGUE:
         if not ancestry(gate.introduced_in, revision):
             statuses[gate.gate_id] = "gate_postdates_source"
+        elif gate.needs_rich_split and not rich_split:
+            statuses[gate.gate_id] = "rich_refusals_collapsed"
         elif not gate.retained:
             statuses[gate.gate_id] = "block_not_retained"
         elif not gate.separable:
@@ -1616,7 +1687,8 @@ sys.path[:0] = [os.path.join(root, "src"), root]
 import mechanical_librarian
 from mechanical_librarian.adapters.persistence import review_sql
 import scripts.cold_start_report as report_module
-for module in (mechanical_librarian, review_sql, report_module):
+from mechanical_librarian.domain import shadow_decision, shadow_outcome
+for module in (mechanical_librarian, review_sql, report_module, shadow_decision):
     if not os.path.realpath(module.__file__).startswith(root + os.sep):
         raise SystemExit(3)
 R = review_sql
@@ -1665,7 +1737,10 @@ for case, destination, reasons, shadow_code, medium in connection.execute(per_ca
 report_rows = len(connection.execute(constant).fetchall())
 excluded_rows = len(connection.execute(excluded).fetchall())
 sys.stdout.write(json.dumps({"rows": rows, "report_rows": report_rows,
-                             "report_rows_excluded": excluded_rows}))
+                             "report_rows_excluded": excluded_rows,
+                             "scalar": sorted(shadow_decision._SUPPORTED_DESTINATIONS),
+                             "rich_split": hasattr(shadow_outcome,
+                                                   "_RICH_REFUSAL_REASONS")}))
 """
 
 
@@ -1674,6 +1749,11 @@ class AttentionProbe:
     rows: tuple[tuple[int, str, tuple[str, ...], str], ...]
     report_rows: int
     report_rows_excluded: int
+    # The source's scalar decision destinations and whether its outcomes keep
+    # rich refusals' own reasons (#1745). A probe that does not state them
+    # (a test double) reads the checkout's.
+    scalar: tuple[str, ...] | None = None
+    rich_split: bool | None = None
 
 
 AttentionReader = Callable[[Path, Path], AttentionProbe]
@@ -1718,6 +1798,8 @@ def child_attention(source_root: Path, database: Path) -> AttentionProbe:
             rows,
             cast("int", loaded["report_rows"]),
             cast("int", loaded["report_rows_excluded"]),
+            tuple(cast("list[str]", loaded["scalar"])),
+            cast("bool", loaded["rich_split"]),
         )
     except (KeyError, IndexError, TypeError, ValueError):
         raise Refusal("attention probe failed") from None
@@ -1853,6 +1935,7 @@ def _row(
                     "pick_agrees": tally.pick_agrees if picks else None,
                     "tied_fields": tally.tied if picks else None,
                     "election_fields": tally.election_fields,
+                    "echo_fields": tally.echo_fields if gate.echo is not None else None,
                 }
             )
         per_snapshot.append(entry)
@@ -1999,6 +2082,7 @@ _STRUCTURAL_KEYS = frozenset(
         "pick",
         "rate",
         "note",
+        "echo_fields",
     }
 )
 
@@ -2008,7 +2092,7 @@ def closed_vocabulary(labels: Iterable[str]) -> frozenset[str]:
     strings: set[str] = set(_STRUCTURAL_KEYS) | set(_ALL) | set(REASONS)
     strings |= {_OTHER_REASON, LEDGER_SCHEMA, *_MEDIA}
     strings |= {"measurable", "gate_postdates_source", "block_not_retained"}
-    strings |= {"cause_not_separable", "informational"}
+    strings |= {"cause_not_separable", "informational", "rich_refusals_collapsed"}
     strings |= {label for label, _commit, _destinations in LATER_ELECTIONS}
     strings |= {"alternative", "cover_candidates", "not_identity", "not_retained"}
     for gate in CATALOGUE:
@@ -2052,24 +2136,65 @@ def _closed(value: object, vocabulary: frozenset[str]) -> None:
     raise Refusal("output refused: unclosed value")
 
 
+def _engine(probe: AttentionProbe) -> tuple[frozenset[str], bool]:
+    """The source's scalar destinations and rich-reason split, as its probe states."""
+    if probe.scalar is None:
+        scalar = frozenset(shadow_decision._SUPPORTED_DESTINATIONS)
+    else:
+        scalar = frozenset(probe.scalar)
+    if not scalar <= _ALL:
+        raise Refusal("attention probe returned an unknown vocabulary")
+    return scalar, True if probe.rich_split is None else probe.rich_split
+
+
+def _breakdown_module() -> ModuleType:
+    """Import the A6 breakdown, which imports this module back (#1745)."""
+    try:
+        from scripts import admission_rule_a6 as module
+    except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+        sys.modules.setdefault("admission_rule_ledger", sys.modules[__name__])
+        import admission_rule_a6 as module  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+    return module
+
+
 def build_ledger(
     inputs: Sequence[SnapshotInput],
     *,
     ancestry: Ancestry,
     attention: AttentionReader,
     follow_ons: Mapping[str, int] | None = None,
+    breakdown: A6Reader | None = None,
 ) -> dict[str, object]:
     measured: list[tuple[str, Mapping[str, Status], Mapping[str, Tally]]] = []
     snapshot_entries: list[dict[str, object]] = []
+    a6 = None if breakdown is None else _breakdown_module()
+    a6_entries: list[dict[str, object]] = []
+    a6_tallies: list[object] = []
     for item in inputs:
-        statuses = gate_statuses(item.revision, ancestry)
-        elections = later_elections(item.revision, ancestry)
         connection = _open_snapshot(item.database)
         try:
-            tallies, media = measure_snapshot(connection, statuses, elections)
+            # The source probe states the engine split the A6 rows need.
+            probe = attention(item.source_root, item.database)
+            scalar, rich_split = _engine(probe)
+            statuses = gate_statuses(item.revision, ancestry, rich_split)
+            elections = later_elections(item.revision, ancestry)
+            tallies, media = measure_snapshot(connection, statuses, elections, scalar)
         finally:
             connection.close()
-        probe = attention(item.source_root, item.database)
+        if a6 is not None and breakdown is not None:
+            replay = breakdown(item.source_root, item.database)
+            if replay.scalar != scalar or replay.rich_split != rich_split:
+                raise Refusal("decision replay disagrees with the source probe")
+            connection = _open_snapshot(item.database)
+            try:
+                a6_tally, _media = a6.measure_a6(connection, replay)
+                decisions = a6.human_decisions(connection)
+            finally:
+                connection.close()
+            a6_entries.append(
+                a6.snapshot_entry(item.label, replay, a6_tally, decisions)
+            )
+            a6_tallies.append(a6_tally)
         if len(probe.rows) != probe.report_rows_excluded:
             raise Refusal("attention probe disagrees with the source's report query")
         summary = summarise_attention(probe)
@@ -2104,7 +2229,15 @@ def build_ledger(
         "snapshots": snapshot_entries,
         "rows": rows,
     }
-    _closed(ledger, closed_vocabulary(item.label for item in inputs))
+    vocabulary = closed_vocabulary(item.label for item in inputs)
+    if a6 is not None:
+        section: dict[str, object] = {
+            "snapshots": a6_entries,
+            "pooled_relaxations": a6.pooled_relaxations(a6_tallies),
+        }
+        ledger["breakdowns"] = {a6.BREAKDOWN: section}
+        vocabulary |= a6.vocabulary(section)
+    _closed(ledger, vocabulary)
     return ledger
 
 
@@ -2126,6 +2259,8 @@ def _cell(entry: Mapping[str, object]) -> str:
         notes.append(f"{_number(entry['actionable_fields'])} actionable")
     if entry.get("election_fields"):
         notes.append(f"{_number(entry['election_fields'])} stale: later election")
+    if entry.get("echo_fields") is not None:
+        notes.append(f"{_number(entry['echo_fields'])} upstream echo not counted")
     return f"{cell} ({'; '.join(notes)})" if notes else cell
 
 
@@ -2167,6 +2302,11 @@ def _pick_cell(row: Mapping[str, object]) -> str:
 
 
 def render_markdown(ledger: Mapping[str, object]) -> str:
+    """The ledger's tables, or with a breakdown, that breakdown's tables only."""
+    breakdowns = _dict(ledger.get("breakdowns"))
+    if breakdowns:
+        a6 = _breakdown_module()
+        return "\n".join(a6.render(_dict(breakdowns[a6.BREAKDOWN]))) + "\n"
     snapshots = cast("list[dict[str, object]]", ledger["snapshots"])
     labels = [cast("str", entry["label"]) for entry in snapshots]
     header = (
@@ -2293,6 +2433,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--follow-on", action="append", default=[], metavar="GATE=ISSUE"
     )
+    parser.add_argument("--breakdown", choices=("A6",), default=None)
     return parser.parse_args(argv)
 
 
@@ -2348,6 +2489,7 @@ def main(
     stderr: TextIO | None = None,
     ancestry: Ancestry | None = None,
     attention: AttentionReader | None = None,
+    decision_replay: A6Reader | None = None,
 ) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
@@ -2358,6 +2500,13 @@ def main(
         for item in inputs:
             if not item.database.is_file():
                 raise Refusal("database unreadable")
+        breakdown: A6Reader | None = None
+        if arguments.breakdown is not None:
+            breakdown = (
+                cast("A6Reader", _breakdown_module().child_a6)
+                if decision_replay is None
+                else decision_replay
+            )
         ledger = build_ledger(
             inputs,
             ancestry=git_ancestry(arguments.repository)
@@ -2365,6 +2514,7 @@ def main(
             else ancestry,
             attention=child_attention if attention is None else attention,
             follow_ons=follow_ons,
+            breakdown=breakdown,
         )
         if arguments.format == "markdown":
             rendered = render_markdown(ledger)
