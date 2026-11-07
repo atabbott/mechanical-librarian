@@ -141,6 +141,12 @@ placed in a support bundle or sent to a reviewer, and its private path appears
 nowhere. A field whose replaced cover cannot be retained is not switched
 automatically.
 
+Retention runs inside the guarded write path, so it also covers the automatic
+switches made before this decision is accepted, such as ADR-0073's audiobook
+switches: when the store is full, or the copy does not hash to the pre-value,
+the write stops as stale with the reason `cover_retention` and nothing is sent.
+No automatic switch happens without a copy to put back.
+
 A revert, shown as Put back, is an ordinary owner cover decision that chooses
 the retained cover through the owner-confirmed retained-cover path (#1078),
 with its `BEGIN IMMEDIATE` selection token and every effect guard. It is

@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
 from mechanical_librarian.adapters.field_effect_fakes import PrivateCoverRecoveryStore
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
@@ -20,6 +23,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.retained_covers import (
     RetainedCoverFull,
     RetainedCoverStore,
+)
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
@@ -335,6 +341,40 @@ def test_retention_failures_write_nothing_to_the_operational_streams(
 
     captured = capfd.readouterr()
     assert captured.out == captured.err == ""
+
+
+def test_a_switch_stopped_by_retention_says_why_in_activity(
+    effects: _EffectEnvironment,
+) -> None:
+    """The owner can see why a stopped automatic switch did not happen."""
+    store = RetainedCoverStore(_root(effects), maximum_entries=1)
+    older = b"an-older-original"
+    store.keep(hashlib.sha256(older).hexdigest(), older)
+    service = _service(effects, store)
+    planned = _automatic_plan(effects, service)
+    assert service.apply(planned.plan.plan_id).failure == "cover_retention"
+
+    activity = ContinuousGuardedApplication(
+        effects.repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(effects.repository),
+        (("primary", "books"),),
+        lambda: 2_000,
+        lambda *_: None,
+        activity_only=True,
+    ).activity()
+    events = activity["events"]
+    assert isinstance(events, list)
+    (event,) = [
+        event
+        for event in events
+        if event["destination"] == "cover" and event["state"] == "stale"
+    ]
+    facts = {str(item["label"]): str(item["value"]) for item in event["evidence"]}
+    assert facts["Why it stopped"] == (
+        "The current cover could not be kept to put back, so it was not replaced"
+    )
 
 
 def test_the_retention_failure_reads_as_a_plain_reason() -> None:
