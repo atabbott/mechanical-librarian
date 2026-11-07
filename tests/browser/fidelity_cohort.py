@@ -1440,9 +1440,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             },
         ],
         "consented_libraries": [
-            {"connection": "primary", "library": "Household ebooks"}
+            {"connection": "primary", "library": "Household ebooks", "prepared": None}
         ],
-        "enabled_libraries": [{"connection": "primary", "library": "Household ebooks"}],
+        "enabled_libraries": [
+            {"connection": "primary", "library": "Household ebooks", "prepared": None}
+        ],
         "capabilities": [
             {
                 "connection": "primary",
@@ -1505,6 +1507,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         "events": [
             {
                 "event_id": f"activity-event-{index}",
+                # The server always sends these; the old browser mapper read an
+                # absent change_id as the event id, so the cohort keeps that.
+                "change_id": f"activity-event-{index}",
+                "diagnostic": None,
                 "event_type": _cohort_event_type(destination, origin, failure),
                 "category": _cohort_category(destination, origin, failure),
                 "change": _cohort_change(work, destination)[0],
@@ -1545,12 +1551,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "occurred_at": 1_754_858_100
                 + index * 300
                 + (86_400 if work == CHECKED_WORK and destination == "genres" else 0),
-                **(
-                    {"transition_id": "effect_plan_" + "a" * 64}
-                    if work == "The Glass Orchard"
-                    else {}
-                ),
-                **({"failure": failure} if failure else {}),
+                "transition_id": "effect_plan_" + "a" * 64
+                if work == "The Glass Orchard"
+                else None,
+                "failure": failure or None,
             }
             for index, (
                 work,
@@ -1594,12 +1598,43 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                     "missing_corroboration",
                     "blanket_scan",
                 ],
+                "failure_reasons": [],
             },
-            {"state": "checking", "affected_count": 1, "next_eligible_at": None},
-            {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
-            {"state": "recovered", "affected_count": 1, "next_eligible_at": None},
-            {"state": "dormant", "affected_count": 2, "next_eligible_at": None},
-            {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
+            {
+                "state": "checking",
+                "affected_count": 1,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "fanout",
+                "affected_count": 3,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "recovered",
+                "affected_count": 1,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "dormant",
+                "affected_count": 2,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
+            {
+                "state": "exhausted",
+                "affected_count": 1,
+                "next_eligible_at": None,
+                "dispatch_reasons": [],
+                "failure_reasons": [],
+            },
         ],
         "suspensions": [
             {
@@ -1662,6 +1697,49 @@ def _throttling_entries() -> list[dict[str, object]]:
             "remedy": None,
         },
     ]
+
+
+def _shadow_outcome_set(
+    outcome_set_id: str, destinations: tuple[str, ...]
+) -> dict[str, object]:
+    """Return one preview outcome set with every member the server sends."""
+    return {
+        "schema_version": "shadow-outcome-set-v11",
+        "authority": "none",
+        "posture": "preview",
+        "outcome_set_id": outcome_set_id,
+        "review_case_id": "case-" + outcome_set_id,
+        "report_id": "report_" + "a" * 64,
+        "proposal_set_id": "proposal_set_" + "b" * 64,
+        "resolved_policy_id": "resolved_policy_" + "c" * 64,
+        "source_decision_set_id": "decision_set-" + outcome_set_id,
+        "policy_profile_id": "policy-active-1",
+        "policy_generation": 1,
+        "decision_policy_version": "synthetic",
+        "decision_policy_sha256": "e" * 64,
+        "catalogue_sha256": "f" * 64,
+        "target_fingerprint": "fingerprint-" + outcome_set_id,
+        "evaluated_at": 1,
+        "outcomes": [
+            {
+                "outcome_id": f"{outcome_set_id}-{destination}",
+                "action_id": f"action-{destination}",
+                "proposal_id": f"proposal-{destination}",
+                "candidate_id": None,
+                "qualification_candidate_id": f"qualification-{destination}",
+                "rule_id": "synthetic",
+                "reason_code": "synthetic",
+                "citation_ids": [],
+                "combination_ids": [],
+                "destination": destination,
+                "disposition": "manual",
+                "policy_category": None,
+                "policy_destination": "ask",
+                "policy_option": None,
+            }
+            for destination in destinations
+        ],
+    }
 
 
 def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
@@ -1936,14 +2014,10 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             },
         }
     if path == "/api/v1/metadata-policy/validate":
+        # Validation answers the validated notebook, as the state read does.
         state = rich_payload("/api/v1/metadata-policy/state")
         assert isinstance(state, dict)
-        return {
-            "schema_version": "metadata-policy-profile-v3",
-            "policy_id": "policy_" + "d" * 64,
-            "profile": state["profile"],
-            "rich_qualification": state["rich_qualification"],
-        }
+        return {**state, "policy_id": "policy_" + "d" * 64}
     if path == "/api/v1/metadata-policy/drafts":
         return {
             "policy_id": "policy_" + "d" * 64,
@@ -2059,27 +2133,21 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "schema_version": "shadow-posture-v1",
             "posture": "preview",
             "authority": "none",
-            "can_leave_preview": True,
+            "can_leave_preview": False,
         }
     if path == "/api/v1/metadata-policy/automatic-safety":
         return {
             "paused": False,
             "global_suspension": None,
-            "category_suspensions": {"title": {"reason": "target_changed", "count": 2}},
+            "category_suspensions": {"title": "target_changed"},
         }
     if path == "/api/v1/metadata-policy/shadow/outcomes":
         return {
             "schema_version": "shadow-outcome-sample-v1",
             "authority": "none",
             "items": [
-                {
-                    "outcome_set_id": "preview-1",
-                    "outcomes": [{"destination": "title"}, {"destination": "authors"}],
-                },
-                {
-                    "outcome_set_id": "preview-2",
-                    "outcomes": [{"destination": "series"}],
-                },
+                _shadow_outcome_set("preview-1", ("title", "authors")),
+                _shadow_outcome_set("preview-2", ("series",)),
             ],
             "next_cursor": None,
         }

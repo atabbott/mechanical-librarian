@@ -840,105 +840,48 @@ export type PreparationView = ResponseSchema<'_PreparationResponse'>
 export type PreparationProgress = ResponseSchema<'_PreparationProgress'>
 export type ProviderThrottlingView = ResponseSchema<'_PreparationThrottling'>
 export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
-export type PolicyStateView = Schema<'_PolicyProfileResponse'>
-export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
-export type AutomaticSafetyView = Schema<'_AutomaticSafetyResponse'>
-export type ShadowSampleView = Schema<'_ShadowSampleResponse'>
-export type PolicyTransitionView = Schema<'_PolicyTransitionResponse'>
+// The policy family is decoded centrally (#1692): its views are the
+// response-truth types. Request bodies stay on the request schema.
+export type PolicyStateView = ResponseSchema<'_PolicyProfileResponse'>
+export type ShadowPostureView = ResponseSchema<'_ShadowPostureResponse'>
+export type AutomaticSafetyView = ResponseSchema<'_AutomaticSafetyResponse'>
+export type ShadowSampleView = ResponseSchema<'_ShadowSampleResponse'>
+export type PolicyTransitionView = ResponseSchema<'_PolicyTransitionResponse'>
 export type PolicyDraft = Schema<'_PolicyDraftRequest'>
-export type PolicyPreviewView = Schema<'_PolicyPreviewResponse'>
-export type PolicyActivationView = Schema<'_PolicyActivationResponse'>
-export interface ActivityPreparedView {
-  automatic: number
-  human: number
-  total: number
-}
-export interface ActivityLibraryView {
-  connection: string
-  library: string
-  prepared?: ActivityPreparedView | null
-}
-export interface ActivityDestinationView {
-  consented: boolean
-  destination: TargetDestination
-  /** Prepared changes this destination's permission would carry, and no other. */
-  prepared: number
-  state: DestinationState
-}
+export type PolicyActivationRequest = Schema<'_PolicyActivationRequest'>
+export type PolicyPreviewView = ResponseSchema<'_PolicyPreviewResponse'>
+export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
+// The activity family is decoded centrally (#1691): its views are the
+// response-truth types, and only the example adds a label of its own.
+type ActivityDto = ResponseSchema<'_ActivityResponse'>
+export type ActivityPreparedView = ResponseSchema<'_ActivityPrepared'>
+export type ActivityLibraryView = ResponseSchema<'_ActivityLibrary'>
+/** `prepared`: prepared changes this destination's permission would carry, and no other. */
+export type ActivityDestinationView = ResponseSchema<'_ActivityDestination'>
 /**
  * Why prepared work is not moving, split into the four different next steps an
  * owner has, plus what is moving now. One "waiting safely" number could not
  * distinguish consent they can give from a retry they must wait out (#639).
  */
-export interface ActivityWaitingReasonsView {
-  applying: number
-  awaiting_permission: number
-  held_for_recovery: number
-  retrying: number
-  scheduled: number
-}
-export interface ActivityCapabilityView {
-  connection: string
-  destinations: readonly ActivityDestinationView[]
-  library: string
-  state: CapabilityState
-}
-export type ActivityEventType = 'review' | 'policy' | 'metadata' | 'safety' | 'unknown'
+export type ActivityWaitingReasonsView = ResponseSchema<'_ActivityWaitingReasons'>
+export type ActivityCapabilityView = ResponseSchema<'_ActivityCapability'>
+/**
+ * One ledger record. `change` is the exact change, compact enough for one row
+ * column; `change_detail` is the same change as a whole sentence, for a reader
+ * who hears the row; `change_id` is the stable grouped identity of a change
+ * whose latest transition may move; `check_group` is the preparation an
+ * automatic no-change check belongs to, and is never shown.
+ */
+export type ActivityEventView = ResponseSchema<'_ActivityEvent'>
+export type ActivityEventType = ActivityEventView['event_type']
 /** How a record reached the ledger, in the owner's terms rather than the event's. */
-export type ActivityCategory = 'owner' | 'automatic' | 'policy' | 'recovery'
-export interface ActivityEvidenceView {
-  label: string
-  value: string
-}
+export type ActivityCategory = ActivityEventView['category']
+export type ActivityEvidenceView = ResponseSchema<'_ActivityEvidence'>
 /** One exact policy setting a Policy record moved, and what it moved between. */
-export interface ActivityPolicyChangeView {
-  field: string
-  setting: string
-  previous: string
-  next: string
-}
-export interface ActivityDiagnosticView {
-  event_class: 'automatic_decision'
-  reason: 'automatic_authority_unavailable'
-}
-export interface ActivityEventView {
-  author_label?: string
-  category: ActivityCategory
-  /** The exact change, compact enough for one row column. */
-  change: string
-  /** The same change as a whole sentence, for a reader who hears the row. */
-  change_detail: string
-  /** Stable grouped identity for a change whose latest transition may move. */
-  change_id: string
-  /** The preparation an automatic no-change check belongs to; never shown. */
-  check_group: string | null
-  destination: string
-  diagnostic?: ActivityDiagnosticView | null
-  event_id: string
-  event_type: ActivityEventType
-  evidence: readonly ActivityEvidenceView[]
-  failure: string | null
-  field_label: string
-  library: string
-  occurred_at: number | null
-  origin: string
-  policy_changes: readonly ActivityPolicyChangeView[]
-  state: string
-  transition_id?: string
-  work_id: string
-  work_label: string
-}
-export interface ActivityTransitionView {
-  event_id: string
-  occurred_at: number
-  sequence: number
-  state: string
-  failure: string | null
-}
-export interface ActivityTransitionsView {
-  events: readonly ActivityTransitionView[]
-  has_more: boolean
-}
+export type ActivityPolicyChangeView = ResponseSchema<'_ActivityPolicyChange'>
+export type ActivityDiagnosticView = ResponseSchema<'_ActivityDiagnostic'>
+export type ActivityTransitionView = ResponseSchema<'_ActivityTransition'>
+export type ActivityTransitionsView = ResponseSchema<'_ActivityTransitions'>
 export interface ActivitySearch {
   q?: string
   eventType: 'all' | ActivityEventType
@@ -948,91 +891,28 @@ export interface ActivitySearch {
   /** The address asked for an event filter the ledger does not have. */
   filter?: 'unrecognised'
 }
-export interface ActivityLedgerView {
-  event_type: ActivitySearch['eventType']
-  page: number
-  page_count: number
-  page_size: ActivitySearch['pageSize']
-  query: string | null
-  range_days: ActivitySearch['rangeDays']
-  total: number
-}
-export interface ActivityWaitingView {
-  destination: TargetDestination
-  library: string
-  state: string
-  work_id: string
-  work_label: string
-}
-export interface ActivityExampleView {
-  after: unknown
-  before: unknown
-  destination: TargetDestination
-  library: string
-  work_id: string
-  work_label: string
-}
-export interface ActivitySuspensionView {
-  connection: string
-  destination: string | null
-  reason: SuspensionReason
-  scope: string
-  updated_at: number
-}
+export type ActivityLedgerView = ResponseSchema<'_ActivityLedger'>
+export type ActivityWaitingView = ResponseSchema<'_ActivityWaiting'>
+export type ActivityExampleView = ResponseSchema<'_ActivityExample'> & { work_label: string }
+export type ActivitySuspensionView = ResponseSchema<'_ActivitySuspension'>
+export type ProviderRecoveryActivityView = ResponseSchema<'_ProviderRecoveryActivity'>
 export type ProviderRecoveryDispatchReason =
-  'missing_corroboration' | 'zero_provider_evidence' | 'settleable_disagreement' | 'blanket_scan'
-export type ProviderRecoveryFailureReason =
-  | 'authentication'
-  | 'authorization'
-  | 'configuration'
-  | 'rate_limited'
-  | 'burst_throttled'
-  | 'quota_exhausted'
-  | 'transient'
-export interface ProviderRecoveryActivityView {
-  failure_reasons?: readonly ProviderRecoveryFailureReason[]
-  affected_count: number
-  dispatch_reasons?: readonly ProviderRecoveryDispatchReason[]
-  next_eligible_at: number | null
-  state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted'
-}
+  ProviderRecoveryActivityView['dispatch_reasons'][number]
+export type ProviderRecoveryFailureReason = ProviderRecoveryActivityView['failure_reasons'][number]
 /** A configured library whose write permission no longer applies, and why (#1370). */
-export type ActivityLapsedConsentView = Schema<'_ActivityLapsedConsent'>
-export interface ActivityDisplayView {
-  backup_ready: null
-  capabilities: readonly ActivityCapabilityView[]
-  configured_libraries: readonly ActivityLibraryView[]
-  consented_libraries: readonly ActivityLibraryView[]
-  counts: Readonly<Record<string, number>>
-  enabled_libraries: readonly ActivityLibraryView[]
-  events: readonly ActivityEventView[]
-  example: null
-  lapsed_consents: readonly ActivityLapsedConsentView[]
-  last_failure: string | null
-  ledger: ActivityLedgerView
-  current_waiting: ActivityWaitingView | null
-  owner_action_required: number
-  paused: boolean
-  prepared: ActivityPreparedView
-  provider_recovery?: readonly ProviderRecoveryActivityView[]
-  schema_version: 'continuous-field-activity-v3'
-  suspensions: readonly ActivitySuspensionView[]
-  waiting: ActivityWaitingReasonsView
-}
+export type ActivityLapsedConsentView = ResponseSchema<'_ActivityLapsedConsent'>
+export type ActivityDisplayView = ActivityDto
 
-export type ActivityPermissionReadinessView = Pick<
-  ActivityDisplayView,
-  'capabilities' | 'configured_libraries' | 'prepared'
-> & { backup_ready: boolean | null; example: ActivityExampleView | null }
+export type ActivityPermissionReadinessView = Omit<
+  ResponseSchema<'_ActivityPermissionReadiness'>,
+  'example'
+> & { example: ActivityExampleView | null }
 
 /**
  * The inputs Activity's consent section reads, and nothing else. Library's
  * write-ready notice reads this so it never waits for Activity history (#1236).
  */
-export type ActivityConsentView = Pick<
-  ActivityDisplayView,
-  'backup_ready' | 'capabilities' | 'configured_libraries' | 'lapsed_consents' | 'waiting'
->
+export type ActivityConsentView = ResponseSchema<'_ActivityConsentState'>
 
 export type ActivityView = ActivityDisplayView
 
@@ -1210,6 +1090,11 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<PolicyTransitionView | null>
+  previewPolicy(draft: PolicyDraft, signal?: AbortSignal): Promise<PolicyPreviewView>
+  activatePolicy(
+    request: PolicyActivationRequest,
+    signal?: AbortSignal,
+  ): Promise<PolicyActivationView>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
   getActivity(
     search?: ActivitySearch,
@@ -1362,6 +1247,28 @@ export const DECODED: ReadonlySet<OperationKey> = new Set<OperationKey>([
   'POST /api/v1/reviewer-access/codex/recheck',
   'POST /api/v1/reviewer-access/description-model/test',
   'POST /api/v1/reviewer-access/description-model/contained',
+  'GET /api/v1/activity',
+  'GET /api/v1/activity/consent-state',
+  'GET /api/v1/activity/permission-readiness',
+  'GET /api/v1/activity/{event_id}/transitions',
+  'POST /api/v1/activity/consent',
+  'POST /api/v1/activity/{connection}/{library}/revoke',
+  'GET /api/v1/metadata-policy/state',
+  'GET /api/v1/metadata-policy/shadow',
+  'GET /api/v1/metadata-policy/shadow/outcomes',
+  'GET /api/v1/metadata-policy/transition',
+  'GET /api/v1/metadata-policy/automatic-safety',
+  'POST /api/v1/metadata-policy/validate',
+  'POST /api/v1/metadata-policy/preview',
+  'POST /api/v1/metadata-policy/drafts',
+  'POST /api/v1/metadata-policy/activate',
+  'POST /api/v1/metadata-policy/automatic-safety/pause',
+  'POST /api/v1/metadata-policy/automatic-safety/recover',
+  'POST /api/v1/metadata-policy/automatic-safety/suspend',
+  'POST /api/v1/metadata-policy/shadow/enter',
+  'POST /api/v1/metadata-policy/shadow/confirm-automatic',
+  'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
+  'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
 ])
 const decoders = responseDecoders as Readonly<
   Record<OperationKey, Readonly<Record<string, D<unknown> | undefined>>>
@@ -1845,9 +1752,11 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    const value = await this.read('/api/v1/metadata-policy/automatic-safety', signal, workClass)
-    if (!record(value)) throw new ApiError(502, 'invalid_automatic_safety_response')
-    return value as AutomaticSafetyView
+    return (await this.read(
+      '/api/v1/metadata-policy/automatic-safety',
+      signal,
+      workClass,
+    )) as AutomaticSafetyView
   }
   async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return schemaVersionOnly<ShadowSampleView>(
@@ -1860,6 +1769,39 @@ export class ReviewApiClient implements ReviewHttp {
     return value === null
       ? null
       : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
+  }
+  // A preview writes nothing, so an answer that fails decoding or a named check
+  // is a 502, never an uncertain write (#1692).
+  async previewPolicy(draft: PolicyDraft, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/metadata-policy/preview',
+      draft,
+      signal,
+      undefined,
+      'POST',
+      true,
+      true,
+      (value) => mapPolicyPreview(value as PolicyPreviewView),
+    )
+  }
+  // The activation may have committed, so an answer for another policy is an
+  // uncertain write, not a refusal (ADR-0091 P-X3).
+  async activatePolicy(request: PolicyActivationRequest, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/metadata-policy/activate',
+      request,
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (value) => {
+        const activation = value as PolicyActivationView
+        if (activation.policy_id !== request.policy_id)
+          throw new ApiError(502, 'invalid_policy_activation_response')
+        return activation
+      },
+    )
   }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
     const writesNothing = path === 'validate' || path === 'preview'
@@ -1889,7 +1831,11 @@ export class ReviewApiClient implements ReviewHttp {
       p.set('page_size', String(search.pageSize))
     }
     return mapActivity(
-      await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal, workClass),
+      (await this.read(
+        `/api/v1/activity${p.size ? `?${p}` : ''}`,
+        signal,
+        workClass,
+      )) as ActivityDto,
     )
   }
 
@@ -1897,16 +1843,27 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityPermissionReadinessView> {
-    return mapActivityPermissionReadiness(
-      await this.read('/api/v1/activity/permission-readiness', signal, workClass),
-    )
+    const value = (await this.read(
+      '/api/v1/activity/permission-readiness',
+      signal,
+      workClass,
+    )) as ResponseSchema<'_ActivityPermissionReadiness'>
+    const { example } = value
+    return {
+      ...value,
+      example: example === null ? null : { ...example, work_label: 'Work details unavailable' },
+    }
   }
 
   async getActivityConsent(
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityConsentView> {
-    return mapActivityConsent(await this.read('/api/v1/activity/consent-state', signal, workClass))
+    return (await this.read(
+      '/api/v1/activity/consent-state',
+      signal,
+      workClass,
+    )) as ActivityConsentView
   }
 
   async getActivityTransitions(
@@ -1916,41 +1873,28 @@ export class ReviewApiClient implements ReviewHttp {
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityTransitionsView> {
     const query = afterSequence === undefined ? '' : `?after_sequence=${String(afterSequence)}`
-    const data = await this.read(
+    return (await this.read(
       `/api/v1/activity/${encodeURIComponent(eventId)}/transitions${query}`,
       signal,
       workClass,
-    )
-    if (
-      !record(data) ||
-      typeof data.has_more !== 'boolean' ||
-      !Array.isArray(data.events) ||
-      data.events.length > 20 ||
-      !data.events.every(
-        (event) =>
-          record(event) &&
-          typeof event.event_id === 'string' &&
-          Number.isSafeInteger(event.occurred_at) &&
-          typeof event.sequence === 'number' &&
-          Number.isSafeInteger(event.sequence) &&
-          event.sequence >= 1 &&
-          typeof event.state === 'string' &&
-          (event.failure === null || typeof event.failure === 'string'),
-      )
-    )
-      throw new ApiError(502, 'invalid_activity_response')
-    return {
-      events: data.events as ActivityTransitionView[],
-      has_more: data.has_more,
-    }
+    )) as ActivityTransitionsView
   }
+  // Consent and revoke answer the decoded Activity view, mapped inside `mutate`
+  // so a failed named check is uncertain. Field-effects pause and resume
+  // document only 204, which is not decoded; a body from either is not one
+  // this client can read, so that write is uncertain too, as before (#1691).
   async activityCommand(
     path: string,
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined> {
-    const value = await this.mutate(`/api/v1/${path}`, body, signal)
-    return value === undefined ? undefined : mapActivity(value)
+    const url = `/api/v1/${path}`
+    const operation = matchOperation('POST', url)
+    const decoded = operation !== undefined && DECODED.has(operation)
+    return this.mutate(url, body, signal, undefined, 'POST', false, false, (value) => {
+      if (!decoded) throw new ApiError(502, 'invalid_activity_response')
+      return mapActivity(value as ActivityDto)
+    })
   }
   async logout(signal?: AbortSignal) {
     this.signingOut = true
@@ -2142,9 +2086,6 @@ export class ReviewApiClient implements ReviewHttp {
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
-  Object.keys(value).length === keys.length && keys.every((key) => key in value)
-
 // The checks the reviewer-access schema cannot state (ADR-0091); the decoder
 // has already enforced every field (#1690). A status must fit the slot that
 // carries it (X40-X43 and the three `reviewerStatus` rows).
@@ -2299,36 +2240,6 @@ const mapCodexDevice = (value: CodexDeviceAuthState): CodexDeviceAuthState => {
   return value
 }
 const codexDevice = (value: unknown) => mapCodexDevice(value as CodexDeviceAuthState)
-const stringValue = (value: unknown, field: string) => {
-  if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
-  return value
-}
-const integerValue = (value: unknown, field: string) => {
-  if (!Number.isSafeInteger(value) || (value as number) < 0)
-    throw new ApiError(502, `invalid_${field}`)
-  return value as number
-}
-const optionalString = (value: unknown, field: string) =>
-  value === null || value === undefined ? undefined : stringValue(value, field)
-const stringArray = (value: unknown, field: string) => {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string'))
-    throw new ApiError(502, `invalid_${field}`)
-  return value
-}
-const nullValue = (value: unknown, field: string): null => {
-  if (value !== null) throw new ApiError(502, `invalid_${field}`)
-  return value
-}
-
-const coverObservationValue = <T extends string>(
-  value: unknown,
-  label: string,
-  allowed: readonly T[],
-): T => {
-  const result = stringValue(value, label)
-  if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
-  return result as T
-}
 // A settings answer is decoded before `mutate` hands it here; the decoder
 // fills a library's omitted language list with its default, the empty list.
 const settingsView = (value: unknown) => value as SettingsView
@@ -2353,7 +2264,7 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
   status: value.status,
 })
 // Formats any target or proposed value. It throws nothing: the Activity
-// example still reaches it undecoded until that family is decoded.
+// example's before and after values are decoded as unknown.
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -2383,24 +2294,35 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
   return value
 }
 // A deliberate, named exception to the rule that every field a view reads is
-// checked. These responses are handed back as their generated DTO unchanged
-// instead of being narrowed into a hand-written view model, and their
-// operations are not yet decoded centrally, so the only invariant this file
-// asserts for them is the version handshake: a hand-written copy of
-// docs/reference/review-openapi-v1.json would become a second contract and
-// would fail closed on responses the server is entitled to send. The families
-// that are decoded (`DECODED`: preparation, library, attention, the case
-// detail, settings and reviewer access) are checked field by field by their
-// generated decoders instead, and their mappers keep only the checks the
-// schema cannot state (ADR-0091). This
-// is the one place in the file allowed to widen an unchecked document to a DTO
-// type, which is why the call sites carry no cast of their own.
+// checked. It predates the decoders: the only invariant it asserts is the
+// version handshake, because a hand-written copy of
+// docs/reference/review-openapi-v1.json would become a second contract. Every
+// family is now decoded (`DECODED`), so the policy reads that still pass
+// through here have already been checked field by field by their generated
+// decoders; stage 4 deletes this with `validateObject` (#1684). This is the one
+// place in the file allowed to widen a document to a DTO type, which is why
+// the call sites carry no cast of their own.
 // The lint rule below objects that a type parameter used once is an assertion in
 // disguise. It is, deliberately: this is the file's single declared assertion seam,
 // and naming it here is what keeps the call sites free of casts of their own.
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 const schemaVersionOnly = <T>(value: unknown, name: string): T =>
   validateObject(value, name) as unknown as T
+// The checks the preview schema cannot state (ADR-0091): the decoder has
+// already enforced every field.
+const mapPolicyPreview = (value: PolicyPreviewView): PolicyPreviewView => {
+  for (const library of value.libraries) {
+    // P-X1: one comparison per sampled case.
+    if (library.comparisons.length !== library.cases.length)
+      throw new ApiError(502, 'invalid_policy_preview_comparisons')
+    // P-X2: both sides of a comparison describe the same field.
+    for (const comparison of library.comparisons)
+      for (const field of comparison.fields)
+        if (field.active.field !== field.draft.field)
+          throw new ApiError(502, 'invalid_policy_preview_field')
+  }
+  return value
+}
 // The decoder holds the acknowledgement's shape; the confirmed case must be the
 // one the decision was recorded on (ADR-0091).
 const mapDecisionAcknowledgement = (
@@ -2444,432 +2366,14 @@ export const mapPreparation = (value: PreparationDto): PreparationView => {
   if (value.presentation !== null) preparationPresentation(value.presentation)
   return value
 }
-const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
-  if (!record(value)) throw new ApiError(502, `invalid_${field}`)
-  return {
-    automatic: integerValue(value.automatic, `${field}_automatic`),
-    human: integerValue(value.human, `${field}_human`),
-    total: integerValue(value.total, `${field}_total`),
-  }
-}
-const activityExample = (value: unknown): ActivityExampleView | null => {
-  if (value === null) return null
-  if (!record(value)) throw new ApiError(502, 'invalid_activity_example')
-  return {
-    after: value.after,
-    before: value.before,
-    destination: coverObservationValue(
-      value.destination,
-      'activity_example_destination',
-      TARGET_DESTINATIONS,
-    ),
-    library: stringValue(value.library, 'activity_example_library'),
-    work_id: stringValue(value.work_id, 'activity_example_work_id'),
-    work_label: 'Work details unavailable',
-  }
-}
-const activitySuspensions = (value: unknown): ActivitySuspensionView[] => {
-  if (!Array.isArray(value)) throw new ApiError(502, 'invalid_activity_suspensions')
-  return value.map((item, index) => {
-    if (!record(item)) throw new ApiError(502, `invalid_activity_suspension_${String(index)}`)
-    return {
-      connection: stringValue(item.connection, 'activity_suspension_connection'),
-      destination:
-        item.destination === null
-          ? null
-          : stringValue(item.destination, 'activity_suspension_destination'),
-      reason: coverObservationValue(item.reason, 'activity_suspension_reason', SUSPENSION_REASONS),
-      scope: stringValue(item.scope, 'activity_suspension_scope'),
-      updated_at: integerValue(item.updated_at, 'activity_suspension_updated_at'),
-    }
-  })
-}
-const activityLibraries = (raw: unknown, field: string): ActivityLibraryView[] => {
-  if (!Array.isArray(raw)) throw new ApiError(502, `invalid_${field}`)
-  return raw.map((item, index) => {
-    if (!record(item)) throw new ApiError(502, `invalid_${field}_${String(index)}`)
-    return {
-      connection: stringValue(item.connection, `${field}_connection`),
-      library: stringValue(item.library, `${field}_library`),
-      ...(item.prepared === undefined
-        ? {}
-        : {
-            prepared:
-              item.prepared === null ? null : activityPrepared(item.prepared, `${field}_prepared`),
-          }),
-    }
-  })
-}
-
-const activityCapabilities = (raw: unknown): ActivityCapabilityView[] => {
-  if (!Array.isArray(raw)) throw new ApiError(502, 'invalid_activity_capabilities')
-  return raw.map((item, index) => {
-    if (!record(item) || !Array.isArray(item.destinations))
-      throw new ApiError(502, `invalid_activity_capability_${String(index)}`)
-    return {
-      connection: stringValue(item.connection, 'activity_connection'),
-      library: stringValue(item.library, 'activity_library'),
-      state: coverObservationValue(item.state, 'activity_state', CAPABILITY_STATES),
-      destinations: item.destinations.map((destination, destinationIndex) => {
-        if (!record(destination) || typeof destination.consented !== 'boolean')
-          throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`)
-        return {
-          destination: coverObservationValue(
-            destination.destination,
-            'activity_destination',
-            TARGET_DESTINATIONS,
-          ),
-          state: coverObservationValue(
-            destination.state,
-            'activity_destination_state',
-            DESTINATION_STATES,
-          ),
-          consented: destination.consented,
-          prepared: integerValue(destination.prepared, 'activity_destination_prepared'),
-        }
-      }),
-    }
-  })
-}
-
-const activityBackupReady = (value: unknown): boolean | null => {
-  if (value !== null && typeof value !== 'boolean')
-    throw new ApiError(502, 'invalid_activity_backup_ready')
-  return value
-}
-
-const activityWaiting = (raw: unknown): ActivityWaitingReasonsView => {
-  if (!record(raw)) throw new ApiError(502, 'invalid_activity_waiting')
-  return {
-    applying: integerValue(raw.applying, 'activity_waiting_applying'),
-    awaiting_permission: integerValue(
-      raw.awaiting_permission,
-      'activity_waiting_awaiting_permission',
-    ),
-    held_for_recovery: integerValue(raw.held_for_recovery, 'activity_waiting_held_for_recovery'),
-    retrying: integerValue(raw.retrying, 'activity_waiting_retrying'),
-    scheduled: integerValue(raw.scheduled, 'activity_waiting_scheduled'),
-  }
-}
-
-const lapseReasons: readonly ActivityLapsedConsentView['reason'][] = [
-  'destinations_changed',
-  'library_unresolved',
-  'policy_changed',
-]
-const activityLapses = (raw: unknown): ActivityLapsedConsentView[] => {
-  if (!Array.isArray(raw)) throw new ApiError(502, 'invalid_activity_lapsed_consents')
-  return raw.map((item, index) => {
-    if (!record(item) || !exactKeys(item, ['connection', 'library', 'reason']))
-      throw new ApiError(502, `invalid_activity_lapsed_consent_${String(index)}`)
-    const reason = stringValue(item.reason, 'activity_lapsed_consent_reason')
-    if (!lapseReasons.includes(reason as ActivityLapsedConsentView['reason']))
-      throw new ApiError(502, 'invalid_activity_lapsed_consent_reason')
-    return {
-      connection: stringValue(item.connection, 'activity_lapsed_consent_connection'),
-      library: stringValue(item.library, 'activity_lapsed_consent_library'),
-      reason: reason as ActivityLapsedConsentView['reason'],
-    }
-  })
-}
-
-export const mapActivityConsent = (value: unknown): ActivityConsentView => {
-  if (
-    !record(value) ||
-    !exactKeys(value, [
-      'backup_ready',
-      'capabilities',
-      'configured_libraries',
-      'lapsed_consents',
-      'waiting',
-    ])
-  )
-    throw new ApiError(502, 'invalid_activity_consent')
-  return {
-    backup_ready: nullValue(value.backup_ready, 'activity_backup_ready'),
-    capabilities: activityCapabilities(value.capabilities),
-    configured_libraries: activityLibraries(
-      value.configured_libraries,
-      'activity_configured_libraries',
-    ),
-    lapsed_consents: activityLapses(value.lapsed_consents),
-    waiting: activityWaiting(value.waiting),
-  }
-}
-
-export const mapActivityPermissionReadiness = (value: unknown): ActivityPermissionReadinessView => {
-  if (
-    !record(value) ||
-    !exactKeys(value, [
-      'backup_ready',
-      'capabilities',
-      'configured_libraries',
-      'prepared',
-      'example',
-    ])
-  )
-    throw new ApiError(502, 'invalid_activity_permission_readiness')
-  return {
-    backup_ready: activityBackupReady(value.backup_ready),
-    capabilities: activityCapabilities(value.capabilities),
-    configured_libraries: activityLibraries(
-      value.configured_libraries,
-      'activity_configured_libraries',
-    ),
-    prepared: activityPrepared(value.prepared, 'activity_prepared'),
-    example: activityExample(value.example),
-  }
-}
-
-export const mapActivity = (value: unknown): ActivityDisplayView => {
-  if (
-    !record(value) ||
-    value.schema_version !== 'continuous-field-activity-v3' ||
-    !record(value.ledger)
-  )
-    throw new ApiError(502, 'invalid_activity_response')
-  const capabilities = value.capabilities
-  const events = value.events
-  if (!Array.isArray(capabilities) || !Array.isArray(events) || !record(value.counts))
-    throw new ApiError(502, 'invalid_activity_response')
-  const counts: Record<string, number> = {}
-  for (const [key, count] of Object.entries(value.counts))
-    counts[stringValue(key, 'activity_count_name')] = integerValue(count, 'activity_count')
-  const waiting = activityWaiting(value.waiting)
-  const providerRecovery = value.provider_recovery === undefined ? [] : value.provider_recovery
-  if (!Array.isArray(providerRecovery)) throw new ApiError(502, 'invalid_provider_recovery')
-  const recovery = providerRecovery.map((item, index) => {
-    if (
-      !record(item) ||
-      !['waiting', 'checking', 'dormant', 'recovered', 'fanout', 'exhausted'].includes(
-        stringValue(item.state, `provider_recovery_state_${String(index)}`),
-      )
-    )
-      throw new ApiError(502, `invalid_provider_recovery_${String(index)}`)
-    const next =
-      item.next_eligible_at === null
-        ? null
-        : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at')
-    if (next !== null && (!Number.isSafeInteger(next) || next < 0 || next > 8640000000000))
-      throw new ApiError(502, 'invalid_provider_recovery_timestamp')
-    const failureReasons =
-      item.failure_reasons === undefined
-        ? []
-        : stringArray(item.failure_reasons, 'provider_recovery_failure_reasons')
-    if (
-      failureReasons.length > 7 ||
-      new Set(failureReasons).size !== failureReasons.length ||
-      failureReasons.some(
-        (reason, position) =>
-          ![
-            'authentication',
-            'authorization',
-            'configuration',
-            'rate_limited',
-            'burst_throttled',
-            'quota_exhausted',
-            'transient',
-          ].includes(reason) ||
-          (position > 0 && (failureReasons[position - 1] ?? '') > reason),
-      )
-    )
+// The check the activity schema cannot state (ADR-0091); the decoder has
+// already enforced every field (#1691). A recovery's failure reasons are in
+// ascending order (`mapActivity.failure-reasons-order`).
+export const mapActivity = (value: ActivityDto): ActivityDisplayView => {
+  for (const { failure_reasons: reasons } of value.provider_recovery)
+    if (reasons.some((reason, position) => position > 0 && (reasons[position - 1] ?? '') > reason))
       throw new ApiError(502, 'invalid_provider_recovery_failure_reasons')
-    const rawDispatchReasons = item.dispatch_reasons
-    const dispatchReasons =
-      rawDispatchReasons === undefined
-        ? undefined
-        : (() => {
-            if (
-              !Array.isArray(rawDispatchReasons) ||
-              rawDispatchReasons.length > 4 ||
-              new Set(rawDispatchReasons).size !== rawDispatchReasons.length ||
-              rawDispatchReasons.some(
-                (reason) =>
-                  ![
-                    'missing_corroboration',
-                    'zero_provider_evidence',
-                    'settleable_disagreement',
-                    'blanket_scan',
-                  ].includes(typeof reason === 'string' ? reason : ''),
-              )
-            )
-              throw new ApiError(502, `invalid_provider_recovery_dispatch_${String(index)}`)
-            return rawDispatchReasons as ProviderRecoveryDispatchReason[]
-          })()
-    return {
-      state: item.state as ProviderRecoveryActivityView['state'],
-      affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'),
-      ...(dispatchReasons === undefined ? {} : { dispatch_reasons: dispatchReasons }),
-      failure_reasons: failureReasons as ProviderRecoveryFailureReason[],
-      next_eligible_at: next,
-    }
-  })
-  return {
-    backup_ready: nullValue(value.backup_ready, 'activity_backup_ready'),
-    capabilities: activityCapabilities(value.capabilities),
-    waiting,
-    configured_libraries: activityLibraries(
-      value.configured_libraries,
-      'activity_configured_libraries',
-    ),
-    consented_libraries: activityLibraries(
-      value.consented_libraries,
-      'activity_consented_libraries',
-    ),
-    counts,
-    enabled_libraries: activityLibraries(value.enabled_libraries, 'activity_enabled_libraries'),
-    lapsed_consents: activityLapses(value.lapsed_consents),
-    provider_recovery: recovery,
-    events: events.map((event, index) => {
-      if (!record(event) || !Array.isArray(event.evidence))
-        throw new ApiError(502, `invalid_activity_event_${String(index)}`)
-      const occurred_at =
-        event.occurred_at === undefined || event.occurred_at === null
-          ? null
-          : integerValue(event.occurred_at, 'activity_occurred_at')
-      const failure =
-        event.failure === undefined || event.failure === null
-          ? null
-          : stringValue(event.failure, 'activity_failure')
-      const author_label =
-        event.author_label === undefined
-          ? undefined
-          : stringValue(event.author_label, 'activity_author_label')
-      const eventType = stringValue(event.event_type, 'activity_event_type')
-      const category = stringValue(event.category, 'activity_event_category')
-      const policyChanges = event.policy_changes === undefined ? [] : event.policy_changes
-      const diagnostic: ActivityDiagnosticView | null =
-        event.diagnostic === undefined || event.diagnostic === null
-          ? null
-          : (() => {
-              if (!record(event.diagnostic)) throw new ApiError(502, 'invalid_activity_diagnostic')
-              const eventClass = stringValue(
-                event.diagnostic.event_class,
-                'activity_diagnostic_event_class',
-              )
-              const reason = stringValue(event.diagnostic.reason, 'activity_diagnostic_reason')
-              if (
-                eventClass !== 'automatic_decision' ||
-                reason !== 'automatic_authority_unavailable'
-              )
-                throw new ApiError(502, 'invalid_activity_diagnostic')
-              return {
-                event_class: 'automatic_decision',
-                reason: 'automatic_authority_unavailable',
-              }
-            })()
-      if (
-        !['review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) ||
-        !['owner', 'automatic', 'policy', 'recovery'].includes(category) ||
-        !Array.isArray(policyChanges) ||
-        policyChanges.length > 32 ||
-        event.evidence.length > 8
-      )
-        throw new ApiError(502, 'invalid_activity_event')
-      return {
-        category: category as ActivityCategory,
-        change: stringValue(event.change, 'activity_event_change'),
-        change_detail: stringValue(event.change_detail, 'activity_event_change_detail'),
-        change_id:
-          event.change_id === undefined
-            ? stringValue(event.event_id, 'activity_event_id')
-            : stringValue(event.change_id, 'activity_change_id'),
-        check_group: optionalString(event.check_group, 'activity_check_group') ?? null,
-        field_label: stringValue(event.field_label, 'activity_event_field_label'),
-        policy_changes: policyChanges.map((item) => {
-          if (!record(item)) throw new ApiError(502, 'invalid_activity_policy_change')
-          return {
-            field: stringValue(item.field, 'activity_policy_change_field'),
-            setting: stringValue(item.setting, 'activity_policy_change_setting'),
-            previous: stringValue(item.previous, 'activity_policy_change_previous'),
-            next: stringValue(item.next, 'activity_policy_change_next'),
-          }
-        }),
-        destination: stringValue(event.destination, 'activity_event_destination'),
-        diagnostic,
-        event_id: stringValue(event.event_id, 'activity_event_id'),
-        event_type: eventType as ActivityEventType,
-        evidence: event.evidence.map((item) => {
-          if (!record(item)) throw new ApiError(502, 'invalid_activity_evidence')
-          return {
-            label: stringValue(item.label, 'activity_evidence_label'),
-            value: stringValue(item.value, 'activity_evidence_value'),
-          }
-        }),
-        library: stringValue(event.library, 'activity_event_library'),
-        origin: stringValue(event.origin, 'activity_event_origin'),
-        state: stringValue(event.state, 'activity_event_state'),
-        ...(event.transition_id === undefined || event.transition_id === null
-          ? {}
-          : { transition_id: stringValue(event.transition_id, 'activity_transition_id') }),
-        work_id: stringValue(event.work_id, 'activity_work_id'),
-        work_label:
-          event.work_label === undefined
-            ? 'Recorded work'
-            : stringValue(event.work_label, 'activity_work_label'),
-        ...(author_label === undefined ? {} : { author_label }),
-        occurred_at,
-        failure,
-      }
-    }),
-    example: nullValue(value.example, 'activity_example'),
-    last_failure:
-      value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'),
-    ledger: (() => {
-      const item = value.ledger
-      const eventType = stringValue(item.event_type, 'activity_ledger_type')
-      const pageSize = integerValue(item.page_size, 'activity_page_size')
-      const rangeDays = integerValue(item.range_days, 'activity_range_days')
-      if (
-        !['all', 'review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) ||
-        ![25, 50, 100].includes(pageSize) ||
-        ![7, 30, 90].includes(rangeDays)
-      )
-        throw new ApiError(502, 'invalid_activity_ledger')
-      return {
-        event_type: eventType as ActivitySearch['eventType'],
-        page: integerValue(item.page, 'activity_page'),
-        page_count: integerValue(item.page_count, 'activity_page_count'),
-        page_size: pageSize as ActivitySearch['pageSize'],
-        query: item.query === null ? null : stringValue(item.query, 'activity_query'),
-        range_days: rangeDays as ActivitySearch['rangeDays'],
-        total: integerValue(item.total, 'activity_total'),
-      }
-    })(),
-    current_waiting:
-      value.current_waiting === null
-        ? null
-        : (() => {
-            if (!record(value.current_waiting)) throw new ApiError(502, 'invalid_activity_waiting')
-            return {
-              destination: coverObservationValue(
-                value.current_waiting.destination,
-                'activity_waiting_destination',
-                TARGET_DESTINATIONS,
-              ),
-              library: stringValue(value.current_waiting.library, 'activity_waiting_library'),
-              state: stringValue(value.current_waiting.state, 'activity_waiting_state'),
-              work_id: stringValue(value.current_waiting.work_id, 'activity_waiting_work_id'),
-              work_label: stringValue(
-                value.current_waiting.work_label,
-                'activity_waiting_work_label',
-              ),
-            }
-          })(),
-    owner_action_required: integerValue(
-      value.owner_action_required,
-      'activity_owner_action_required',
-    ),
-    paused:
-      typeof value.paused === 'boolean'
-        ? value.paused
-        : (() => {
-            throw new ApiError(502, 'invalid_activity_paused')
-          })(),
-    prepared: activityPrepared(value.prepared, 'activity_prepared'),
-    schema_version: 'continuous-field-activity-v3',
-    suspensions: activitySuspensions(value.suspensions),
-  }
+  return value
 }
 
 // The decoder holds each member; a review scope must agree with the media kind
