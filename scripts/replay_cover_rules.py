@@ -48,6 +48,7 @@ from mechanical_librarian.domain.cover_rules import (
     CurrentCover,
     elect_measured_covers,
 )
+from mechanical_librarian.domain.validation import boolean, literal, one_of
 
 INPUT_SCHEMA = "cover-rules-replay-input-v1"
 OUTPUT_SCHEMA = "cover-rules-replay-v1"
@@ -86,6 +87,8 @@ class Refusal(Exception):
 def _object(
     value: object, required: set[str], optional: set[str] | frozenset[str] = frozenset()
 ) -> dict[str, object]:
+    # Local because these documents have optional keys, which the shared
+    # ``closed_document`` (an exact key set) does not express.
     if type(value) is not dict or not required <= value.keys() <= required | optional:
         raise Refusal("input shape is invalid")
     return value
@@ -100,9 +103,9 @@ def _declared(
 
 def _flag(value: dict[str, object], key: str) -> bool:
     flag = value.get(key, False)
-    if type(flag) is not bool:
+    if not boolean(flag):
         raise Refusal("input shape is invalid")
-    return flag
+    return flag is True
 
 
 def _measures(value: dict[str, object]) -> CoverMeasures | None:
@@ -181,9 +184,9 @@ def replay(document: object) -> dict[str, object]:
     root = _object(document, {"schema", "persisted", "fields"})
     persisted_list, fields = root["persisted"], root["fields"]
     if (
-        root["schema"] != INPUT_SCHEMA
+        not literal(INPUT_SCHEMA)(root["schema"])
         or type(persisted_list) is not list
-        or any(item not in OPTIONAL_INPUTS for item in persisted_list)
+        or not all(one_of(*OPTIONAL_INPUTS)(item) for item in persisted_list)
         or len(set(persisted_list)) != len(persisted_list)
         or type(fields) is not list
     ):

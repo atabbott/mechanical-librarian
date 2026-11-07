@@ -47,6 +47,15 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from mechanical_librarian.domain.validation import (
+    boolean,
+    bounded_integer,
+    matching,
+    non_negative_integer,
+    nonempty_text,
+    one_of,
+)
+
 # Near-duplicate study (2026-10-24), level L2.
 SAME_ART_MAX_PHASH_DISTANCE = 8
 """Largest pHash Hamming distance (of 64 bits) between two copies of one art."""
@@ -85,9 +94,14 @@ COVER_FLOOR_SHORT_EDGE = 300
 COLOUR_BINS = 64
 LAYOUT_VALUES = 48
 
-_HASH = re.compile(r"^[0-9a-f]{16}$")
 _IDENTITY_TIERS = {"verified_manifestation_match": 0, "verified_work_match": 1}
 MEDIA = ("ebook", "audiobook")
+
+_hash = matching(re.compile(r"[0-9a-f]{16}"))
+_identity = one_of(*_IDENTITY_TIERS)
+_medium = one_of(*MEDIA)
+_dimension = bounded_integer(1)
+_layout_value = bounded_integer(0, 255)
 
 
 class CoverProtection(Enum):
@@ -144,26 +158,24 @@ class CoverMeasures:
     layout: tuple[int, ...]
 
     def __post_init__(self) -> None:
+        # The tuple shapes and the non-empty histogram are cover-specific, so
+        # they stay local; each value goes through the shared vocabulary.
         if (
-            type(self.phash) is not str
-            or _HASH.fullmatch(self.phash) is None
-            or type(self.dhash) is not str
-            or _HASH.fullmatch(self.dhash) is None
+            not _hash(self.phash)
+            or not _hash(self.dhash)
             or type(self.colour) is not tuple
             or len(self.colour) != COLOUR_BINS
-            or any(type(value) is not int or value < 0 for value in self.colour)
+            or not all(non_negative_integer(value) for value in self.colour)
             or sum(self.colour) < 1
             or type(self.layout) is not tuple
             or len(self.layout) != LAYOUT_VALUES
-            or any(
-                type(value) is not int or not 0 <= value <= 255 for value in self.layout
-            )
+            or not all(_layout_value(value) for value in self.layout)
         ):
             raise ValueError("cover measures are invalid")
 
 
 def _valid_dimensions(width: object, height: object) -> bool:
-    return type(width) is int and type(height) is int and width >= 1 and height >= 1
+    return _dimension(width) and _dimension(height)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,17 +194,14 @@ class CoverRuleCandidate:
 
     def __post_init__(self) -> None:
         if (
-            type(self.reference) is not str
-            or not self.reference
-            or type(self.identity) is not str
-            or self.identity not in _IDENTITY_TIERS
+            not nonempty_text(self.reference)
+            or not _identity(self.identity)
             or not _valid_dimensions(self.width, self.height)
-            or type(self.packet_ordinal) is not int
-            or self.packet_ordinal < 0
+            or not non_negative_integer(self.packet_ordinal)
             or (self.measures is not None and type(self.measures) is not CoverMeasures)
-            or type(self.non_english_edition) is not bool
-            or type(self.omnibus_volume) is not bool
-            or type(self.title_differs) is not bool
+            or not boolean(self.non_english_edition)
+            or not boolean(self.omnibus_volume)
+            or not boolean(self.title_differs)
         ):
             raise ValueError("cover rule candidate is invalid")
 
@@ -223,18 +232,11 @@ class CurrentCover:
 
     def __post_init__(self) -> None:
         if (
-            type(self.reference) is not str
-            or not self.reference
-            or (
-                self.identity is not None
-                and (
-                    type(self.identity) is not str
-                    or self.identity not in _IDENTITY_TIERS
-                )
-            )
-            or type(self.readable) is not bool
+            not nonempty_text(self.reference)
+            or (self.identity is not None and not _identity(self.identity))
+            or not boolean(self.readable)
             or (self.measures is not None and type(self.measures) is not CoverMeasures)
-            or type(self.non_english_edition) is not bool
+            or not boolean(self.non_english_edition)
         ):
             raise ValueError("current cover is invalid")
         if self.readable:
@@ -447,12 +449,12 @@ def elect_measured_covers(
     if (
         type(candidates) is not tuple
         or any(type(candidate) is not CoverRuleCandidate for candidate in candidates)
-        or medium not in MEDIA
+        or not _medium(medium)
         or (current is not None and type(current) is not CurrentCover)
         or type(protection) is not CoverProtection
-        or type(prefer_edition) is not bool
-        or type(title_conflict) is not bool
-        or type(omnibus) is not bool
+        or not boolean(prefer_edition)
+        or not boolean(title_conflict)
+        or not boolean(omnibus)
     ):
         raise ValueError("cover rule input is invalid")
     references = [candidate.reference for candidate in candidates]
