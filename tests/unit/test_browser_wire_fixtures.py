@@ -462,6 +462,42 @@ def test_description_advice_retry_survives_a_refused_preparation_wake(
             updates.release(subscription)
 
 
+def test_description_advice_retry_wake_defect_stays_a_failure(tmp_path) -> None:
+    """A defect in the wake is not absorbed, and the case is still announced.
+
+    Only the supervisor's own refusals are settled as queued (#1784). Any
+    other exception after the commit stays a server failure, which ADR-0091
+    allows, and the saved retry and its case update survive it.
+    """
+    preparation = _StoppablePreparation()
+    with _description_case(
+        tmp_path, automatic=False, review_preparation=preparation
+    ) as (live, binding):
+        case_id = binding.review_case_id
+        updates = live.client.app.state.review_application.updates
+        subscription = updates.subscribe(updates.sequence)
+        try:
+            with (
+                patch.object(
+                    preparation, "request", side_effect=RuntimeError("defect")
+                ),
+                pytest.raises(RuntimeError, match="defect"),
+            ):
+                live.call(
+                    "POST", f"/api/v1/review-cases/{case_id}/description-advice/retry"
+                )
+            assert live.repository._connection.execute(
+                "SELECT retry FROM description_preparation_pending "
+                "WHERE review_case_id=?",
+                (case_id,),
+            ).fetchall() == [(1,)]
+            assert ("case", case_id) in {
+                (update.topic, update.subject) for update in subscription.take()
+            }
+        finally:
+            updates.release(subscription)
+
+
 def test_description_advice_activity(tmp_path) -> None:
     """Activity after one succeeded and one failed description attempt."""
     with _description_case(tmp_path, automatic=False) as (live, binding):
