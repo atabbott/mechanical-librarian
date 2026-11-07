@@ -95,7 +95,7 @@ export const WriteReadyNotice = () => {
           : `${inLibrary}Writes are enabled${enabledFor}.`
   const copy =
     consent.state === 'off'
-      ? `${lapse}Nothing is written until you give permission.${preparing ? ' Preparation continues meanwhile.' : ''}`
+      ? `${lapse}Nothing${held.length ? ' else' : ''} is written until you give permission.${preparing ? ' Preparation continues meanwhile.' : ''}`
       : consent.state === 'enabling'
         ? 'Confirming permission…'
         : consent.state === 'applying'

@@ -164,12 +164,14 @@ describe('the write consent offer', () => {
 
     expect(
       readWriteConsent(view({ configured_libraries: configured, capabilities, waiting })).blocked,
-    ).toBe('No selected field can be written yet.')
+    ).toBe('No field can be given permission yet.')
+    // A failed backup check is said once, by the permission review's status
+    // line, so the offer adds no second sentence for it (#1765).
     expect(
       readWriteConsent(
         view({ backup_ready: false, configured_libraries: configured, capabilities, waiting }),
       ).blocked,
-    ).toBe('Writes can be enabled once the backup is confirmed.')
+    ).toBeNull()
     // A connection an owner has to check first makes enabling writes the wrong
     // next step; preparation still running does not, and is not consulted here.
     expect(
@@ -379,7 +381,7 @@ describe('the consent basis a permission draft is kept against', () => {
 it('explains an exclusion after a lapse by what is prepared, not readiness (#1286)', () => {
   expect(destinationReason('not_ready')).toBe('it is not ready yet')
   expect(destinationReason('not_ready', true)).toBe(
-    'nothing is prepared for it yet, and permission can be given again once something is',
+    'nothing is prepared for it yet, and you can give permission again once a change is prepared',
   )
   // A held destination keeps its own reason whether or not permission lapsed.
   expect(destinationReason('insufficient_permission', true)).toBe(

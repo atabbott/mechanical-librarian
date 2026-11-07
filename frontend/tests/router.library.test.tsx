@@ -11688,7 +11688,8 @@ describe('Library route', () => {
     const notice = heading.closest('section')
     if (!notice) throw new Error('the handoff notice is a section')
     // What writes wait on is said once, in one sentence.
-    expect(notice).toHaveTextContent('Nothing is written until you give permission.')
+    // Beside a library that already writes, the line says nothing else is.
+    expect(notice).toHaveTextContent('Nothing else is written until you give permission.')
     expect(notice).not.toHaveTextContent('Review current write permissions')
     expect(notice).not.toHaveTextContent('Readiness is checked when you open the review.')
     expect(within(notice).getAllByText(/until you give permission/u)).toHaveLength(1)

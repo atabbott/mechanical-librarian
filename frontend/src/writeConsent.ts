@@ -169,7 +169,7 @@ const lapsedSentence = (
 export const destinationReason = (state: Exclude<DestinationState, 'allowed'>, lapsed = false) =>
   state === 'not_ready'
     ? lapsed
-      ? 'nothing is prepared for it yet, and permission can be given again once something is'
+      ? 'nothing is prepared for it yet, and you can give permission again once a change is prepared'
       : 'it is not ready yet'
     : writeHoldReasons[state]
 
@@ -226,17 +226,17 @@ export const readWriteConsent = (
             : 'complete'
   const excluded = scopes[0]?.excluded[0]
   // Unchecked readiness blocks nothing yet: each surface's own one sentence
-  // sends the owner to the review that checks it (#1286).
+  // sends the owner to the review that checks it (#1286). A failed backup check
+  // is said by the review's own status line, the one place it can show, so it
+  // adds no second sentence here (#1765).
   const blocked =
-    data.backup_ready === null
+    data.backup_ready !== true
       ? null
-      : !data.backup_ready
-        ? 'Writes can be enabled once the backup is confirmed.'
-        : grants.length === 0
-          ? scopes.length === 0
-            ? 'No selected field can be written yet.'
-            : `No field can be written yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
-          : null
+      : grants.length === 0
+        ? scopes.length === 0
+          ? 'No field can be given permission yet.'
+          : `No field can be written yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
+        : null
   return {
     state,
     scopes,

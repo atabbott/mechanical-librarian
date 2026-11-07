@@ -3345,7 +3345,7 @@ it.each([false, null, 'error'] as const)(
     expect(
       await screen.findByText(
         outcome === false
-          ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
+          ? 'The backup check did not pass. Check again before enabling writes.'
           : outcome === null
             ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
             : 'Permission readiness is unavailable. No permission was granted. Try again.',
@@ -3399,7 +3399,7 @@ it('keeps history usable during checking and discards a late result after close 
   await waitFor(() => expect(trigger).toHaveFocus())
   expect(signal?.aborted).toBe(true)
   await user.click(trigger)
-  await screen.findByText('Backup readiness could not be confirmed. Writes cannot be enabled.')
+  await screen.findByText('The backup check did not pass. Check again before enabling writes.')
   await act(async () => finish(permissionReadiness(permissionHistory)))
   expect(screen.getByRole('checkbox')).toBeDisabled()
   expect(http.getActivityPermissionReadiness).toHaveBeenCalledTimes(2)
@@ -4836,7 +4836,7 @@ describe('owner language in Activity (#1286)', () => {
       name: 'history included and excluded destinations',
     })
     expect(destinations).toHaveTextContent(
-      'Excluded — nothing is prepared for it yet, and permission can be given again once something is',
+      'Excluded — nothing is prepared for it yet, and you can give permission again once a change is prepared',
     )
     expect(destinations).not.toHaveTextContent('it is not ready yet')
   })
