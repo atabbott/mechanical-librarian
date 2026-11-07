@@ -23,7 +23,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
@@ -43,6 +45,7 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.description_advice import DescriptionAdviceService
+from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
@@ -58,6 +61,7 @@ from tests.support.description_advice import _prepared
 from tests.support.field_effects import _EffectEnvironment, _plan
 from tests.support.field_effects import effects as effects
 from tests.support.proposal_evidence import _report
+from tests.support.review_web_doubles import FakePreparation
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -206,7 +210,7 @@ def _access(repository: SQLiteMetadataReportRepository) -> ReviewerAccessOperati
 
 @contextmanager
 def _description_case(
-    root: Path, **prepared: Any
+    root: Path, *, review_preparation: Any = None, **prepared: Any
 ) -> Iterator[tuple[_Live, DescriptionAdviceBinding]]:
     """A case with succeeded description advice, served by the real app.
 
@@ -236,7 +240,11 @@ def _description_case(
     )
     try:
         with _signed_in(
-            root, repository, _access(repository), activity_projection=activity
+            root,
+            repository,
+            _access(repository),
+            activity_projection=activity,
+            review_preparation=review_preparation,
         ) as live:
             yield live, binding
     finally:
@@ -375,6 +383,83 @@ def test_description_advice_detail_retry_and_reviewer_access(tmp_path) -> None:
     _expect(FIXTURES / "descriptionAdviceRetryFixture.json", retries, placeholders)
     for slug, capture in captures.items():
         _expect_wire(slug, capture, placeholders)
+
+
+class _StoppablePreparation(FakePreparation):
+    """The shared preparation fake, able to take part in app shutdown."""
+
+    def begin_drain(self) -> None:
+        return None
+
+    def stop(self, deadline: float | None = None) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [None, "paused", "preparation_restart_required", "library", "persistence"],
+)
+def test_description_advice_retry_survives_a_refused_preparation_wake(
+    tmp_path, refusal: str | None
+) -> None:
+    """A committed retry is answered as queued whatever the wake says (#1784).
+
+    With no refusal, preparation is running and the retry wakes it for the
+    case's library. With a refusal, preparation is paused and the wake raises
+    that pipeline code: the retry stays recorded, the case is announced and
+    the answer is still 200, never a post-commit failure (ADR-0091).
+    """
+    preparation = _StoppablePreparation()
+    with _description_case(
+        tmp_path, automatic=False, review_preparation=preparation
+    ) as (live, binding):
+        case_id = binding.review_case_id
+        connection = live.repository._connection
+        lineage = connection.execute(
+            "SELECT connection_name,library_name FROM current_review_case_lineages "
+            "WHERE review_case_id=?",
+            (case_id,),
+        ).fetchone()
+        attempts = connection.execute(
+            "SELECT count(*) FROM description_advice_attempts"
+        ).fetchone()
+        updates = live.client.app.state.review_application.updates
+        subscription = updates.subscribe(updates.sequence)
+        try:
+            if refusal is None:
+                capture = live.call(
+                    "POST", f"/api/v1/review-cases/{case_id}/description-advice/retry"
+                )
+                assert preparation.requests == [(*lineage, None)]
+            else:
+                live.repository.set_review_pipeline_paused(True, NOW)
+                with patch.object(
+                    preparation,
+                    "request",
+                    side_effect=ReviewPipelineError(refusal),
+                ) as wake:
+                    capture = live.call(
+                        "POST",
+                        f"/api/v1/review-cases/{case_id}/description-advice/retry",
+                    )
+                wake.assert_called_once_with(*lineage)
+            assert capture[2:] == (200, {"queued": True})
+            assert connection.execute(
+                "SELECT retry FROM description_preparation_pending "
+                "WHERE review_case_id=?",
+                (case_id,),
+            ).fetchall() == [(1,)]
+            assert (
+                connection.execute(
+                    "SELECT count(*) FROM description_advice_attempts"
+                ).fetchone()
+                == attempts
+            )
+            assert ("case", case_id) in {
+                (update.topic, update.subject) for update in subscription.take()
+            }
+        finally:
+            updates.release(subscription)
 
 
 def test_description_advice_activity(tmp_path) -> None:

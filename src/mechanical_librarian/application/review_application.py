@@ -46,6 +46,7 @@ from mechanical_librarian.application.operations import (
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_pipeline import (
+    ReviewPipelineError,
     ReviewPreparationSupervisor,
     is_first_boot_scan_id,
 )
@@ -1225,9 +1226,17 @@ class ReviewApplication:
         connection, library = self.serialized(
             lambda: self._decisions.retry_description(review_case_id)
         )
-        if self._preparation is not None:
-            self._preparation.request(connection, library)
-        self._updates.publish("case", review_case_id)
+        # The retry is committed and waits in persistence until a scan of its
+        # library runs, including while preparation is paused (configuration.md,
+        # "Description advice"). Waking preparation only shortens that wait, so
+        # its refusal never reports the saved retry as failed (ADR-0091).
+        try:
+            if self._preparation is not None:
+                self._preparation.request(connection, library)
+        except ReviewPipelineError:
+            pass
+        finally:
+            self._updates.publish("case", review_case_id)
         return {"queued": True}
 
     def select_description_advice(

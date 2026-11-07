@@ -104,6 +104,9 @@ brackets are GitHub issues.
   own sentence; source statuses, preview outcomes, evidence roles and reviewer
   errors drop internal words; and the policy preview gives each automatic
   refusal the same sentence the review case gives it (#1765).
+- Retrying description advice while preparation is paused now records the
+  retry and says so. The retry runs once preparation resumes. Before, the page
+  reported a failure for a retry that had been saved (#1784).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

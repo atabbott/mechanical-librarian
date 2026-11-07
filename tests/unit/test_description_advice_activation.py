@@ -515,6 +515,36 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
             assert repository._connection.execute(
                 "SELECT count(*) FROM description_advice_attempts"
             ).fetchone() == (2,)
+            # A retry recorded while preparation is paused waits, then runs at
+            # the first due scan after resume (#1784).
+            supervisor.set_paused(True)
+            pipeline._clock = lambda: 40
+            repository.description_advice_store().request_retry(
+                deterministic.review_case_id, 40
+            )
+            supervisor._schedule_due()
+            assert pipeline.run_next(1) is False
+            assert len(calls) == 2
+            assert repository._connection.execute(
+                "SELECT retry FROM description_preparation_pending WHERE review_case_id=?",
+                (deterministic.review_case_id,),
+            ).fetchall() == [(1,)]
+            interval = supervisor._polling_interval_seconds
+            assert interval is not None
+            supervisor._clock = lambda: 40 + interval
+            supervisor.set_paused(False)
+            for _ in range(64):
+                if not pipeline.run_next(1):
+                    break
+            else:
+                pytest.fail("description retry recorded while paused did not settle")
+            assert len(calls) == 3
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_advice_attempts"
+            ).fetchone() == (3,)
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_preparation_pending"
+            ).fetchone() == (0,)
         finally:
             supervisor.stop()
             recovery.close()
