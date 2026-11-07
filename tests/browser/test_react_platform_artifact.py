@@ -996,12 +996,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 finally:
                     page.set_viewport_size(prior_viewport)
                 for work, label in (
-                    ("Equal automatic title", "No change required"),
+                    ("Equal automatic title", "No change needed"),
                     ("Synthetic completed cover advice", "Cover advice completed"),
                     ("Synthetic unavailable cover advice", "Cover advice unavailable"),
-                    ("Synthetic failed cover advice", "Cover advice failed safely"),
-                    ("Synthetic stale cover advice", "Closed safely"),
-                    ("Synthetic superseded cover advice", "Superseded"),
+                    ("Synthetic failed cover advice", "Cover advice failed"),
+                    ("Synthetic stale cover advice", "Closed"),
+                    ("Synthetic superseded cover advice", "Replaced"),
                 ):
                     row = activity_ledger.get_by_text(work, exact=True).locator(
                         "xpath=ancestor::article"
@@ -1447,7 +1447,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 comparison.get_by_label("Hardcover cover evidence").get_by_text(
                     "Open Library", exact=True
                 ).wait_for()
-                comparison.get_by_text("External corroboration", exact=True).wait_for()
+                comparison.get_by_text("Confirms this value", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-recommended")
                 ).to_have_attribute("aria-checked", "false")
@@ -1472,7 +1472,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(unavailable_evidence).to_have_count(1)
                 expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
                 expect(unavailable_evidence).to_have_text("Hide evidence")
-                comparison.get_by_text("Local presence", exact=True).wait_for()
+                comparison.get_by_text("Already in the library", exact=True).wait_for()
                 comparison.get_by_text(
                     "Preview unavailable for this retained cover.", exact=True
                 ).wait_for()
@@ -1621,7 +1621,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator("#choice-evidence-current")).to_be_visible()
         workspace_evidence = page.locator("#choice-evidence-current").inner_text()
         assert "Local library record" in workspace_evidence
-        assert "Local presence" in workspace_evidence
+        assert "Already in the library" in workspace_evidence
         assert (
             "No recommendation retained"
             not in page.locator(".metadata-choice.is-current").inner_text()
@@ -2834,7 +2834,7 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         expect(checks).to_contain_text("Synthetic checked work")
         expect(checks.get_by_text("Checked 3 fields, no changes")).to_be_visible()
         assert "Checked 3 fields, no changes" in checks.aria_snapshot()
-        expect(checks).to_contain_text("No change required")
+        expect(checks).to_contain_text("No change needed")
         expect(toggle).to_have_attribute("aria-expanded", "false")
         expect(page.locator(".cm-activity-checks")).to_have_count(0)
 

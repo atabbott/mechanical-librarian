@@ -203,7 +203,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'Automatic explicit-content handling is unavailable for this option.',
+      detail: 'Explicit content is never marked for you with this setting.',
     })
     expect(
       policyImpactDisplay({
@@ -231,7 +231,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'Needs review',
-      detail: 'The retained evidence does not select one value for automatic handling.',
+      detail: 'The sources do not agree on one value.',
     })
     expect(
       policyImpactDisplay({
@@ -245,7 +245,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'The retained evidence contradicts applicability to this work.',
+      detail: 'The sources suggest this value belongs to a different work.',
     })
     expect(
       policyImpactDisplay({
@@ -273,7 +273,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'Automatic explicit-content handling is unavailable for this option.',
+      detail: 'Explicit content is never marked for you with this setting.',
     })
     expect(
       policyImpactTotals([
@@ -427,11 +427,14 @@ describe('policy impact projections', () => {
 })
 
 it.each([
-  ['source_value_absent', 'No ISBN value was supplied.'],
-  ['source_unavailable', 'Source evidence is unavailable.'],
-  ['source_value_malformed_or_incomplete', 'ISBN evidence is malformed or incomplete.'],
-  ['source_values_conflict', 'Conflicting ISBN values remain.'],
-  ['source_value_insufficient_association', 'Association with this recording is insufficient.'],
+  ['source_value_absent', 'No source supplied an ISBN.'],
+  ['source_unavailable', 'The sources could not be read.'],
+  ['source_value_malformed_or_incomplete', 'The sources give an unreadable or incomplete ISBN.'],
+  ['source_values_conflict', 'The sources give different ISBNs.'],
+  [
+    'source_value_insufficient_association',
+    'The sources do not tie this ISBN closely enough to this recording.',
+  ],
 ])('keeps the specific ISBN refusal visible: %s', (reason, explanation) => {
   expect(
     policyImpactDisplay({
@@ -449,15 +452,15 @@ describe('ebook synopsis refusals', () => {
   it.each([
     [
       'description_quality_floor_not_met',
-      'Retained source text does not meet the automatic synopsis rules.',
+      'No source description meets the rules for choosing one for you.',
       'No change',
     ],
     [
       'target_work_applicability_unproved',
-      'does not establish that this value describes this work',
+      'do not show that this value describes this work',
       'No change',
     ],
-    ['ambiguous_evidence', 'does not select one value for automatic handling', 'Needs review'],
+    ['ambiguous_evidence', 'do not agree on one value', 'Needs review'],
   ])('explains %s without claiming no retained source', (reason, text, title) => {
     const display = policyImpactDisplay({
       field: 'description_fill',
@@ -475,14 +478,11 @@ describe('ebook synopsis refusals', () => {
 })
 
 it.each([
-  [
-    'manifestation_verification_required',
-    'The retained evidence does not verify the ISBN for this edition.',
-  ],
-  ['series_provider_failure_work', 'A contributing work lookup did not supply usable evidence.'],
+  ['manifestation_verification_required', 'The sources do not confirm this ISBN for this edition.'],
+  ['series_provider_failure_work', 'A title and author lookup did not return a usable answer.'],
   [
     'target_work_applicability_unproved',
-    'The retained evidence does not establish that this value describes this work.',
+    'The sources do not show that this value describes this work.',
   ],
 ])('preserves specific empty-value refusal before equality: %s', (reason, detail) => {
   expect(

@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -1256,7 +1257,7 @@ def _cover_descriptor(
             "inventaire-edition-" + edition_uri.replace(":", "-"),
         ),
         wait,
-        False,
+        CoverRedirects.NONE,
         INVENTAIRE_USER_AGENT,
         CoverSourceState.ABSENT if value is None else None,
     )
@@ -1282,7 +1283,7 @@ def _work_cover_descriptor(
         INVENTAIRE_ORIGIN + value,
         CoverProvenance(provider, CoverDesignation.WORK, identity),
         wait,
-        False,
+        CoverRedirects.NONE,
         INVENTAIRE_USER_AGENT,
     )
 

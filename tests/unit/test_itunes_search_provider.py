@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchPacer,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryPlan,
     audiobook_discovery_plan,
     observe_provider,
@@ -471,7 +472,7 @@ def test_a_search_states_one_related_edition_cover_for_each_retained_result() ->
         assert descriptor.url is not None
         assert "is1-ssl.mzstatic.com" == httpx.URL(descriptor.url).host
         assert descriptor.terminal_state is None
-        assert descriptor.allow_redirects is False
+        assert descriptor.redirects is CoverRedirects.NONE
         assert descriptor.provenance is not None
         assert CoverDesignation.RELATED_EDITION is descriptor.provenance.designation
 

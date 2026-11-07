@@ -105,6 +105,17 @@ brackets are GitHub issues.
   change now answers with its saved view (#1571).
 - Closing the Attention queue with its toolbar toggle keeps focus on the
   toggle, as Close and Escape do (#1566).
+- **Clean rebuild required.** Older Open Library covers, which Open Library
+  serves from the Internet Archive, are now fetched and judged like any other
+  cover instead of being reported unavailable (#1752). A "no cover" marker in
+  an Open Library cover list no longer hides the record's real covers (#1753).
+- The shared status and reason words read plainly and the same on every
+  screen. Activity and History say Failed, Waiting to retry, Closed, Replaced
+  and Stopped instead of "failed safely" and the like; comparison conditions
+  say "sources" instead of "providers" and put the request to choose in its
+  own sentence; source statuses, preview outcomes, evidence roles and reviewer
+  errors drop internal words; and the policy preview gives each automatic
+  refusal the same sentence the review case gives it (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
