@@ -1453,9 +1453,7 @@ def test_the_cold_start_report_counts_what_the_companion_did() -> None:
     )
     use = cold_start._companion_use(report)
     # This report states no target title claim, so it planned no search.
-    # No ASIN lane asked for the linked product here.
-    assert use == ("read", True, True, None, False)
-    linked_use = (*use[:4], True)
+    assert use == ("read", True, True, None)
 
     def row(value: tuple[object, ...], outcome: str) -> tuple[object, ...]:
         return (None,) * 3 + (outcome,) + (None,) * 4 + (value,)
@@ -1463,11 +1461,12 @@ def test_the_cold_start_report_counts_what_the_companion_did() -> None:
     counts = cold_start._companion_counts(
         [
             row(use, "recording_admitted"),
-            row(linked_use, "recording_admitted"),
-            # A linked product kept, but the recording was not admitted.
-            row(linked_use, "work_only"),
+            row(use, "recording_admitted"),
+            row(use, "work_only"),
         ]
     )
+    # How a linked recording was admitted is now counted by its admission
+    # basis (#1723), so the companion block no longer guesses at it.
     assert counts == {
         "reports": 3,
         "unreadable": 0,
@@ -1476,5 +1475,4 @@ def test_the_cold_start_report_counts_what_the_companion_did() -> None:
         "title_alternative": 0,
         "work_fallback": 0,
         "recording_admitted": 2,
-        "linked_recording_admitted": 1,
     }

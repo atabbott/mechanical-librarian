@@ -42,7 +42,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ProviderResult,
     provider_observation,
-    qualify_provider_observation,
+    qualify_provider_lane,
 )
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
@@ -278,7 +278,8 @@ class AudnexusMetadataProvider:
             for lane in lanes:
                 lookup = _lane_lookup(lane, plan)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
-                observation = qualify_provider_observation(physical, lookup)
+                qualified = qualify_provider_lane(physical, lookup)
+                observation = qualified.observation
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -287,6 +288,7 @@ class AudnexusMetadataProvider:
                         observation.accessed_at,
                         recording_lookup_candidates=observation.recording_lookup_candidates,
                         refused_products=observation.refused_products,
+                        admission_bases=qualified.admission_bases,
                     )
                 )
         return provider_observation(

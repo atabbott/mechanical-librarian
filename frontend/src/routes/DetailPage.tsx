@@ -22,7 +22,7 @@ import {
   evidenceRoleLabel,
   languageName,
   observationText,
-  lookupLabels,
+  sourceLookupLabel,
   mediaKindLabels,
   previewDispositionLabels,
   sourceStatusLabels,
@@ -316,6 +316,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
               ) : null}
               <RecordingIdentityBasis
                 value={data.recordingIdentityBasis}
+                admission={data.recordingAdmissionBasis}
                 scope={data.audiobookReviewScope}
                 offered={data.fields.filter(railOffers).map((field) => field.destination)}
               />
@@ -373,7 +374,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                     {sourceLedger.map((source, index) => (
                       <li key={`${source.provider}-${source.laneKind}-${String(index)}`}>
                         <strong>{source.provider}</strong>
-                        <span>{lookupLabels[source.laneKind]}</span>
+                        <span>{sourceLookupLabel(source)}</span>
                         <b>{sourceStatusLabels[source.status]}</b>
                         <p>{source.reason}</p>
                         <small>

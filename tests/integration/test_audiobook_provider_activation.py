@@ -37,6 +37,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
+    MetadataLookup,
     MetadataProvider,
     ProviderCoverDescriptor,
     ProviderLaneResult,
@@ -44,6 +45,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     provider_observation,
+    qualify_provider_lane,
 )
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain import metadata_report
@@ -296,21 +298,57 @@ class _FakeAudiobookProvider:
         return ProviderResult(
             provider_observation(
                 self.name,
-                tuple(
-                    ProviderLaneResult(
-                        lane,
-                        ProviderStatus.CANDIDATES,
-                        (
-                            _enrichment_candidate(
-                                self.name, plan.local_claims, self.duration
-                            ),
-                        ),
-                    )
-                    for lane in lanes
-                ),
+                tuple(self._answered(lane, plan) for lane in lanes),
                 authority=self.authority,
             ),
             cover_descriptors=self.cover_descriptors,
+        )
+
+    def _answered(self, lane, plan) -> ProviderLaneResult:
+        """Answer one lane the way the real adapters do.
+
+        An ASIN lane's answer is qualified with `qualify_provider_lane`, as
+        the Audible, Audnexus and AudioSilo adapters do, so the lane carries
+        how it admitted each recording (#1723). A WORK lane's value is its
+        title basis, which `provider_observation` reads off the lane.
+        """
+        candidates = (
+            _enrichment_candidate(self.name, plan.local_claims, self.duration),
+        )
+        if lane.kind is not ProviderQueryKind.ASIN:
+            return ProviderLaneResult(lane, ProviderStatus.CANDIDATES, candidates)
+        qualified = qualify_provider_lane(
+            metadata_report.ProviderObservation(
+                self.name,
+                ProviderStatus.CANDIDATES,
+                candidates=candidates,
+                query_kind=ProviderQueryKind.ASIN,
+                authority=self.authority,
+            ),
+            MetadataLookup(
+                lane.kind,
+                plan.local_claims,
+                None,
+                (),
+                audio=plan.audio,
+                companion=plan.companion,
+                companion_linked_asins=plan.companion_linked_asins,
+                work_title=plan.work_title,
+                work_authors=plan.work_authors,
+                recording_corroboration=plan.recording_corroboration,
+                corroborated_rule=plan.corroborated_rule,
+                library_languages=plan.library_languages,
+                requested_asin=lane.canonical_asin,
+            ),
+        )
+        observation = qualified.observation
+        return ProviderLaneResult(
+            lane,
+            observation.status,
+            observation.candidates,
+            refused_products=observation.refused_products,
+            diagnostics=qualified.diagnostics,
+            admission_bases=qualified.admission_bases,
         )
 
 
@@ -529,7 +567,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v69" == published.schema_version
+        assert "metadata-report-v70" == published.schema_version
         # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).

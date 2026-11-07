@@ -53,7 +53,7 @@ from mechanical_librarian.application.metadata_report import (
     observe_work_ladder,
     provider_discovery_lane_order,
     provider_observation,
-    qualify_provider_observation,
+    qualify_provider_lane,
 )
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
@@ -453,9 +453,7 @@ class AudibleCatalogMetadataProvider:
                 _lane_asin(lane),
                 execute=lambda: self._observe_asin(lane, lookup, deadline=deadline),
             )
-            return QualifiedLaneObservation(
-                qualify_provider_observation(physical, lookup)
-            )
+            return qualify_provider_lane(physical, lookup)
         qualified, _replayed = ledger.resolve(
             kind=lane.kind.value,
             matched_family=lane.matched_family,
@@ -845,6 +843,7 @@ def _lane_result(
         transformation_lineage=observation.transformation_lineage,
         exhausted_dispatch=qualified.exhausted_dispatch,
         recording_lookup_hints=qualified.recording_lookup_hints,
+        admission_bases=qualified.admission_bases,
     )
 
 

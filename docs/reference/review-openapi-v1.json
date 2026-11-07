@@ -2926,6 +2926,58 @@
         "title": "_ActivityWaitingReasons",
         "type": "object"
       },
+      "_AdmissionSearched": {
+        "additionalProperties": false,
+        "properties": {
+          "authors": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "maxItems": 128,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authors"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[0-9]{13}|[0-9]{9}[0-9X])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "title",
+          "authors",
+          "isbn"
+        ],
+        "title": "_AdmissionSearched",
+        "type": "object"
+      },
       "_AdultEbookQualification": {
         "additionalProperties": false,
         "properties": {
@@ -3575,6 +3627,16 @@
             "title": "Media Health",
             "type": "array"
           },
+          "recording_admission_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_RecordingAdmissionBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recording_identity_basis": {
             "anyOf": [
               {
@@ -3590,7 +3652,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v6",
+            "const": "review-case-detail-v7",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3604,6 +3666,7 @@
         },
         "required": [
           "recording_identity_basis",
+          "recording_admission_basis",
           "audiobook_review_scope",
           "comparison_notices",
           "current",
@@ -5637,7 +5700,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-evidence-v4",
+            "const": "review-case-evidence-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -6660,7 +6723,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v4",
+            "const": "review-library-v5",
             "title": "Schema Version",
             "type": "string"
           }
@@ -9200,6 +9263,10 @@
       "_ProviderOutcome": {
         "additionalProperties": false,
         "properties": {
+          "companion_isbn": {
+            "title": "Companion Isbn",
+            "type": "boolean"
+          },
           "lane_kind": {
             "enum": [
               "isbn",
@@ -9249,6 +9316,7 @@
           }
         },
         "required": [
+          "companion_isbn",
           "provider_requests",
           "lane_kind",
           "provider",
@@ -9399,6 +9467,47 @@
           "option"
         ],
         "title": "_PublisherEbookQualification",
+        "type": "object"
+      },
+      "_RecordingAdmissionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "enum": [
+              "companion_isbn_work",
+              "companion_work",
+              "companion_title",
+              "path_leaf",
+              "title_tag"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "candidate": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f   -     　﻿][^\\x00-\\x1f\\x7f]*$",
+            "title": "Candidate",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f   -     　﻿][^\\x00-\\x1f\\x7f]*$",
+            "title": "Provider",
+            "type": "string"
+          },
+          "searched": {
+            "$ref": "#/components/schemas/_AdmissionSearched"
+          }
+        },
+        "required": [
+          "basis",
+          "searched",
+          "provider",
+          "candidate"
+        ],
+        "title": "_RecordingAdmissionBasis",
         "type": "object"
       },
       "_RecordingIdentityBasis": {
@@ -9583,6 +9692,16 @@
             "title": "Provider Sources",
             "type": "array"
           },
+          "recording_admission_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_RecordingAdmissionBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recording_identity_basis": {
             "anyOf": [
               {
@@ -9599,7 +9718,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-report-detail-v5",
+            "const": "review-report-detail-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -9611,6 +9730,7 @@
         },
         "required": [
           "recording_identity_basis",
+          "recording_admission_basis",
           "audiobook_review_scope",
           "chapters",
           "chapters_truncated",

@@ -66,8 +66,13 @@ from mechanical_librarian.application.provider_recovery_evidence import (
 from mechanical_librarian.application.provider_recovery_policy import (
     provider_recovery_decision,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    companion_linked_asins,
+    lane_queried_asin,
+)
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    TARGET_ADMISSION_BASIS,
     MetadataReport,
     ProviderCandidate,
     ProviderLaneObservation,
@@ -331,20 +336,22 @@ class GenerateProviderRetrySuccessor:
                     evidence=replace(evidence, outcome=failure),
                 )
             merged = self._merged(plan, original, selected, replacement)
+            providers = tuple(
+                sorted(
+                    (
+                        merged if value.provider == original.provider else value
+                        for value in source.providers
+                    ),
+                    key=lambda value: value.provider,
+                )
+            )
+            _refuse_moved_companion_links(source, providers)
             successor = MetadataReport.create(
                 target=source.target,
                 file=source.file,
                 local_claims=source.local_claims,
                 local_reasons=source.local_reasons,
-                providers=tuple(
-                    sorted(
-                        (
-                            merged if value.provider == original.provider else value
-                            for value in source.providers
-                        ),
-                        key=lambda value: value.provider,
-                    )
-                ),
+                providers=providers,
                 cover_sources=source.cover_sources,
                 # A successor replaces one provider's lanes and nothing the
                 # inspector read. The audio section travels unchanged, and the
@@ -808,6 +815,19 @@ class GenerateProviderRetrySuccessor:
                         for item in observation.candidates
                     )
                 ),
+                # Each lane keeps how it kept its recordings (#1723): an
+                # unselected lane its old values, a retried lane its new
+                # dispatch's. A WORK lane's too is copied, never read again
+                # off the merged products, whose evidence another lane's copy
+                # may have widened, so an unselected lane stays byte for byte.
+                admission_bases=tuple(
+                    sorted(
+                        (item.edition_identity, item.admission_basis)
+                        for item in observation.candidates
+                        if item.admission_basis is not None
+                    )
+                ),
+                admission_bases_recorded=True,
                 # An audio edition stays with the WORK lane that admitted its
                 # book (#962); the aggregate drops any whose work is gone.
                 audio_editions=tuple(
@@ -909,6 +929,46 @@ class GenerateProviderRetrySuccessor:
             if previous.to_data() != lane.to_data():
                 raise ProviderRetrySuccessorError("provider retry lanes conflict")
         return result
+
+
+def _refuse_moved_companion_links(
+    source: MetadataReport, providers: tuple[ProviderObservation, ...]
+) -> None:
+    """Fail closed when a retry moves an ASIN lane's alternative route (#1723).
+
+    A retried Hardcover lane can change which ASINs the companion ISBN's book
+    links (`companion_linked_asins`), and an ASIN lane's alternative route was
+    chosen against the set its plan read. Where a lane that survives the merge
+    holds an alternative value for an ASIN that joined or left the set, its
+    first replaying route may have moved, so nothing is published.
+    """
+    before = set(
+        companion_linked_asins(
+            source.local_claims, source.audio, source.providers, source.companion
+        )
+    )
+    after = set(
+        companion_linked_asins(
+            source.local_claims, source.audio, providers, source.companion
+        )
+    )
+    moved = tuple(sorted(before ^ after))
+    if not moved:
+        return
+    if any(
+        lane.kind is ProviderQueryKind.ASIN
+        and any(
+            member.admission_basis is not None
+            and member.admission_basis != TARGET_ADMISSION_BASIS
+            for member in lane.candidates
+        )
+        and lane_queried_asin(lane, moved) is not None
+        for observation in providers
+        for lane in observation.lanes
+    ):
+        raise ProviderRetrySuccessorError(
+            "provider retry moves a companion-linked admission"
+        )
 
 
 def _is_audio(source: MetadataReport) -> bool:

@@ -42,6 +42,7 @@ from mechanical_librarian.domain.audio_inspection import (
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
+    RecordingAdmissionBasis,
     _chapter_candidate_support,
     admitted_recording_asin,
     candidate_narrator_disjoint,
@@ -59,6 +60,9 @@ from mechanical_librarian.domain.audiobook_corroboration import (
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity as _domain_admitted_audiobook_identity,
+)
+from mechanical_librarian.domain.audiobook_corroboration import (
+    recording_admission_basis as _domain_recording_admission_basis,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     recording_identity_basis as _domain_recording_identity_basis,
@@ -80,11 +84,12 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.field_outcomes import library_languages_valid
 from mechanical_librarian.domain.metadata_report import (
     ASSERTED_ASIN_BASES,
+    AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_EBOOK_CLAIM_KINDS,
     COMPANION_ISBN_AUTHORITIES,
-    COMPANION_TITLE_BASIS,
+    COMPANION_ISBN_WORK_BASIS,
     CORROBORATED_RULE_AUTHORITY,
     LANE_TITLE_BASES,
     MAX_ASIN_DISCOVERY_LANES,
@@ -94,6 +99,8 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_PROVIDER_DISCOVERY_QUERIES,
     MAX_RECORDING_LOOKUP_HINTS,
     PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
+    RECORDING_ADMISSION_BASES,
+    TARGET_ADMISSION_BASIS,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -125,6 +132,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     WorkIdentityContradiction,
+    alternative_lane_identity,
     audio_set_identity,
     candidate_asins,
     canonical_asin,
@@ -132,11 +140,12 @@ from mechanical_librarian.domain.metadata_report import (
     companion_isbn_books,
     companion_isbn_claims,
     companion_isbn_lane,
-    companion_work_payload,
     complete_creator_identity_bindings,
     default_target_fields,
     derive_field_results,
     discovery_lane_identity,
+    edition_marketplace_evidence,
+    identifier_only_candidate,
     isbn_family,
     lane_dispatch_outcome,
     local_identifier_asins,
@@ -626,8 +635,40 @@ class ProviderLaneResult:
     # Hardcover audio editions of this WORK lane's admitted books (#962), or
     # of the book the companion ISBN lane kept (#1468).
     audio_editions: tuple[ProviderCandidate, ...] = ()
+    # How an ASIN lane kept each recording (#1723), as sorted (product
+    # identity, admission basis) pairs. A WORK lane's route is its title
+    # basis, which `provider_observation` reads off the lane.
+    admission_bases: tuple[tuple[str, str], ...] = ()
+    # Set only by a retry successor carrying a lane's persisted record over:
+    # `admission_bases` is then that lane's own values verbatim, a WORK
+    # lane's included, rather than read again off the merged products.
+    admission_bases_recorded: bool = False
 
     def __post_init__(self) -> None:
+        if (
+            type(self.admission_bases_recorded) is not bool
+            or type(self.admission_bases) is not tuple
+            or any(
+                type(value) is not tuple
+                or len(value) != 2
+                or type(value[0]) is not str
+                or value[1] not in RECORDING_ADMISSION_BASES
+                for value in self.admission_bases
+            )
+            or self.admission_bases != tuple(sorted(dict(self.admission_bases).items()))
+            or (
+                self.admission_bases
+                and self.lane.kind is not ProviderQueryKind.ASIN
+                and not (
+                    self.admission_bases_recorded
+                    and self.lane.kind is ProviderQueryKind.WORK
+                )
+            )
+            or not {identity for identity, _ in self.admission_bases}.issubset(
+                {value.identity for value in self.candidates}
+            )
+        ):
+            raise MetadataReportError("provider lane result is invalid")
         if (
             type(self.audio_editions) is not tuple
             or len(self.audio_editions) > MAX_AUDIO_EDITIONS
@@ -1473,6 +1514,37 @@ def _regional_sibling_copies(
     )
 
 
+def _lane_admission_bases(
+    result: ProviderLaneResult, authority: str | None
+) -> dict[str, str]:
+    """How one lane kept each recording, where its own copy was corroborated.
+
+    An ASIN lane states its routes as it qualified. A WORK lane at an
+    audiobook authority kept a recording on the title it asked (#1723): the
+    target's own on the asserted lane, otherwise its title basis. Only a full
+    product whose lane copy kept edition marketplace evidence says how. A
+    lane a retry successor carries over keeps its recorded values: its own
+    copy's evidence is gone from the merged products, which may hold more.
+    """
+    if (
+        result.admission_bases_recorded
+        or result.lane.kind is not ProviderQueryKind.WORK
+    ):
+        return dict(result.admission_bases)
+    if (
+        authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+        or result.status is not ProviderStatus.CANDIDATES
+    ):
+        return {}
+    basis = result.lane.title_basis or TARGET_ADMISSION_BASIS
+    return {
+        candidate.identity: basis
+        for candidate in result.candidates
+        if not identifier_only_candidate(candidate)
+        and edition_marketplace_evidence(candidate)
+    }
+
+
 def provider_observation(
     provider: str,
     results: tuple[ProviderLaneResult, ...],
@@ -1583,6 +1655,7 @@ def provider_observation(
     )
     lanes: list[ProviderLaneObservation] = []
     for result in results:
+        bases = _lane_admission_bases(result, authority)
         lane_candidates = tuple(
             sorted(
                 (
@@ -1595,6 +1668,7 @@ def provider_observation(
                         ),
                         candidate.identity,
                         candidate.work_identity,
+                        bases.get(candidate.identity),
                     )
                     for candidate in result.candidates
                 ),
@@ -2397,7 +2471,11 @@ def metadata_lookup(
 
 def _identifier_lane_candidates(
     observation: ProviderObservation, lookup: MetadataLookup
-) -> tuple[tuple[ProviderCandidate, ...], tuple[ProviderCandidate, ...]]:
+) -> tuple[
+    tuple[ProviderCandidate, ...],
+    tuple[ProviderCandidate, ...],
+    tuple[tuple[str, str], ...],
+]:
     """Corroboration-gate an ASIN lane the item's own surfaces did not name.
 
     A lane built from an embedded, sidecar, or path ASIN *is* this recording's
@@ -2412,20 +2490,24 @@ def _identifier_lane_candidates(
     The second value is each product cut to its identifier, with every claim
     it stated and no evidence (#1307): a record of what was refused, which
     nothing reads as an admission.
+
+    The third names, for each product this lane kept as the corroborated
+    recording, the route that admitted it (#1723): `target` for a target
+    route, otherwise the first alternative route in the total order.
     """
     if (
         lookup.kind is not ProviderQueryKind.ASIN
         or observation.status is not ProviderStatus.CANDIDATES
         or observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
     ):
-        return observation.candidates, ()
+        return observation.candidates, (), ()
     independent = (
         lookup.requested_asin in local_identifier_asins(lookup.local_claims)
         if lookup.requested_asin is not None
         else bool(local_identifier_asins(lookup.local_claims))
     )
     if independent:
-        return tuple(
+        passed = tuple(
             _shaped_with_runtime_comparison(
                 candidate,
                 not candidate_recording_runtime_veto(
@@ -2442,7 +2524,12 @@ def _identifier_lane_candidates(
                 recording_hints=True,
             )
             for candidate in observation.candidates
-        ), ()
+        )
+        return (
+            passed,
+            (),
+            _kept_recording_bases(passed, lambda _identity: TARGET_ADMISSION_BASIS),
+        )
     # A carried admission is looked up again only to be re-verified, so a
     # product whose narrators the recording's own credits never name is a
     # different recording of the work and is refused here (#1316, ADR-0088).
@@ -2466,27 +2553,43 @@ def _identifier_lane_candidates(
             audiobook=lookup.audio is not None,
         ).admitted
     }
+    # The alternative work this lookup may admit against, through the one
+    # helper the report's replay also reads (#1723). With no target work, the
+    # search asked with the companion EPUB's own title and creators (#1468).
+    # With one, it is the title the item's alternative WORK lane asks
+    # (#1255): the plan's first surviving discovery title, with the target's
+    # authors.
+    alternative = alternative_lane_identity(
+        (
+            lookup.audio.discovery_titles[0]
+            if lookup.audio is not None and lookup.audio.discovery_titles
+            else None
+        ),
+        (
+            (lookup.work_title, lookup.work_authors)
+            if lookup.work_title is not None and lookup.work_authors
+            else None
+        ),
+        lookup.companion,
+    )
     # The carried edition may first have been matched on the item's
     # alternative discovery title (#1255), so its lookup is admitted against
-    # that title too. As on the alternative lane, such a product is kept only
-    # as the recording the tight band corroborates; otherwise it is a stub.
-    alternative_admitted = (
+    # that title too. A companion title or companion work was asked by the
+    # alternative lane itself, so a product it promoted is looked up again
+    # against that same identity on any lane (#1468). As on the alternative
+    # lane, such a product is kept only as the recording the tight band
+    # corroborates; otherwise it is a stub.
+    title_admitted = (
         {
             c.identity
             for c in observation.candidates
             if c.identity not in work_admitted
-            and lookup.work_authors
-            and any(
-                provider_candidate_exact_work_identity_admission(
-                    c,
-                    title,
-                    lookup.work_authors,
-                    audiobook=True,
-                ).admitted
-                for title in _carried_alternative_titles(lookup)
-            )
+            and provider_candidate_exact_work_identity_admission(
+                c, alternative[0], alternative[1], audiobook=True
+            ).admitted
         }
-        if carried_lane
+        if alternative is not None
+        and (alternative[2] not in AUDIO_DISCOVERY_TITLE_BASES or carried_lane)
         else set()
     )
     # An edition the corroborated rule admitted (#1307) is re-verified by the
@@ -2498,7 +2601,6 @@ def _identifier_lane_candidates(
             c.identity
             for c in observation.candidates
             if c.identity not in work_admitted
-            and c.identity not in alternative_admitted
             and lookup.work_title is not None
             and lookup.work_authors
             and corroborated_recording_candidate(
@@ -2516,38 +2618,11 @@ def _identifier_lane_candidates(
         and lookup.corroborated_rule
         else set()
     )
-    alternative_admitted |= corroborated_admitted
-    # With no target work, the search asked with the companion EPUB's own
-    # title and creators (#1468), so a product it promoted is looked up again
-    # against that same identity. Like an alternative title's, it is kept only
-    # as the recording the tight band corroborates.
-    # With a target work, the alternative lane may instead have asked with the
-    # companion's title and the target's authors, so a product it promoted is
-    # looked up again against those too.
-    fallback = (
-        companion_work_payload(lookup.companion)
-        if lookup.work_title is None or not lookup.work_authors
-        else None
-    )
-    companion_identity = (
-        (fallback.title, fallback.authors)
-        if fallback is not None
-        else _companion_title_identity(lookup)
-    )
-    if companion_identity is not None:
-        alternative_admitted |= {
-            c.identity
-            for c in observation.candidates
-            if c.identity not in work_admitted
-            and provider_candidate_exact_work_identity_admission(
-                c, *companion_identity, audiobook=True
-            ).admitted
-        }
     # A product whose ASIN the companion ISBN's own book lists as an audio
     # edition counted against this file is that book's work (#1468). Like an
     # alternative title's, it is kept only as the recording the tight band
     # corroborates, so the ISBN confirms the work and never the recording.
-    alternative_admitted |= {
+    linked_admitted = {
         c.identity
         for c in observation.candidates
         if c.identity not in work_admitted
@@ -2557,6 +2632,7 @@ def _identifier_lane_candidates(
         # Narrators the file never credits name another recording of the work.
         and not candidate_narrator_disjoint(c, lookup.local_claims)
     }
+    alternative_admitted = title_admitted | corroborated_admitted | linked_admitted
     runtime_candidates = tuple(
         c
         for c in observation.candidates
@@ -2580,6 +2656,7 @@ def _identifier_lane_candidates(
     # way: its runtime and cast would otherwise admit and describe this one.
     shaped: list[ProviderCandidate] = []
     refused: list[ProviderCandidate] = []
+    chapters: set[str] = set()
     for candidate in observation.candidates:
         chapter = candidate.identity not in narrator_refused and (
             _chapter_candidate_support(
@@ -2592,12 +2669,16 @@ def _identifier_lane_candidates(
                 lookup.library_languages,
             )
         )
-        alternative = (
+        if chapter:
+            chapters.add(candidate.identity)
+        alternative_kept = (
             candidate.identity in alternative_admitted
             and candidate.identity == admitted
         )
         if candidate.identity in narrator_refused or (
-            candidate.identity not in work_admitted and not chapter and not alternative
+            candidate.identity not in work_admitted
+            and not chapter
+            and not alternative_kept
         ):
             stub = replace(
                 candidate,
@@ -2625,7 +2706,47 @@ def _identifier_lane_candidates(
                 recording_hints=True,
             )
         )
-    return tuple(shaped), tuple(sorted(refused, key=lambda value: value.identity))
+
+    def route(identity: str) -> str | None:
+        # A target route first, the corroborated rule among them while the
+        # plan permits it; then the alternative routes in the total order.
+        if (
+            identity in work_admitted
+            or identity in chapters
+            or identity in corroborated_admitted
+        ):
+            return TARGET_ADMISSION_BASIS
+        if identity in linked_admitted:
+            return COMPANION_ISBN_WORK_BASIS
+        if identity in title_admitted and alternative is not None:
+            return alternative[2]
+        return None
+
+    return (
+        tuple(shaped),
+        tuple(sorted(refused, key=lambda value: value.identity)),
+        _kept_recording_bases(tuple(shaped), route),
+    )
+
+
+def _kept_recording_bases(
+    shaped: tuple[ProviderCandidate, ...], route: Callable[[str], str | None]
+) -> tuple[tuple[str, str], ...]:
+    """Name the route of each product a lane kept as the recording (#1723).
+
+    Only a full product whose own copy kept edition marketplace evidence, the
+    mark of the corroborated recording, says how it was kept.
+    """
+    bases: dict[str, str] = {}
+    for candidate in shaped:
+        if identifier_only_candidate(candidate) or not edition_marketplace_evidence(
+            candidate
+        ):
+            continue
+        basis = route(candidate.identity)
+        if basis is not None:
+            bases[candidate.identity] = basis
+    return tuple(sorted(bases.items()))
 
 
 def _candidate_valid_asins(candidate: ProviderCandidate) -> frozenset[str]:
@@ -2638,37 +2759,72 @@ def _candidate_valid_asins(candidate: ProviderCandidate) -> frozenset[str]:
     )
 
 
-def _companion_title_identity(
-    lookup: MetadataLookup,
-) -> tuple[str, tuple[str, ...]] | None:
-    """The work the alternative lane asked when it asked the companion title.
+def qualify_provider_lane(
+    observation: ProviderObservation, lookup: MetadataLookup
+) -> QualifiedLaneObservation:
+    """Qualify one product lane's answer and name how it kept each recording.
 
-    The plan's first surviving discovery title is the one the alternative WORK
-    lane asks (#1255); when it is the companion EPUB's (#1468), that lane
-    asked it with the target's authors.
+    An ASIN lane's route is decided while it qualifies (#1723), so it travels
+    with the qualified observation to the lane result. A WORK lane's route is
+    its title basis, which `provider_observation` reads off the lane itself.
     """
-    titles = _carried_alternative_titles(lookup)
+    if lookup.kind is not ProviderQueryKind.ASIN:
+        return QualifiedLaneObservation(
+            qualify_provider_observation(observation, lookup)
+        )
+    observation = _requested_asin_checked(observation, lookup)
+    shaped, refused, bases = _identifier_lane_candidates(observation, lookup)
+    return QualifiedLaneObservation(
+        _identifier_lane_observation(observation, lookup, shaped, refused),
+        admission_bases=bases,
+    )
+
+
+def _requested_asin_checked(
+    observation: ProviderObservation, lookup: MetadataLookup
+) -> ProviderObservation:
     if (
-        not titles
-        or lookup.audio is None
-        or lookup.audio.discovery_titles[0].basis != COMPANION_TITLE_BASIS
-        or not lookup.work_authors
+        lookup.requested_asin is not None
+        and observation.status is ProviderStatus.CANDIDATES
+        and any(
+            not any(
+                claim.kind is ClaimKind.ASIN
+                and claim.state is FieldState.VALID
+                and claim.value == lookup.requested_asin
+                for claim in candidate.claims
+            )
+            for candidate in observation.candidates
+        )
     ):
-        return None
-    return titles[0], lookup.work_authors
+        return replace(
+            observation,
+            status=ProviderStatus.MALFORMED,
+            candidates=(),
+            input_references=(),
+        )
+    return observation
 
 
-def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:
-    """The alternative discovery-lane title a carried lookup may admit against.
-
-    It is the title the item's alternative WORK lane asks (#1255). The plan
-    every lookup comes from keeps only the discovery titles that survive the
-    target's own title, authors, series names and earlier entries
-    (`surviving_discovery_titles`), and the lane asks the first of them.
-    """
-    if lookup.audio is None:
-        return ()
-    return tuple(value.title for value in lookup.audio.discovery_titles[:1])
+def _identifier_lane_observation(
+    observation: ProviderObservation,
+    lookup: MetadataLookup,
+    shaped: tuple[ProviderCandidate, ...],
+    refused: tuple[ProviderCandidate, ...],
+) -> ProviderObservation:
+    return ProviderObservation(
+        observation.provider,
+        observation.status,
+        observation.input_references,
+        shaped,
+        lookup.kind,
+        observation.authority,
+        accessed_at=observation.accessed_at,
+        diagnostics=observation.diagnostics,
+        request_accounting=observation.request_accounting,
+        # ISBN lanes cannot establish the exact work title and author set.
+        edition_enrichment_overflow=None,
+        refused_products=refused,
+    )
 
 
 def qualify_provider_observation(
@@ -2684,41 +2840,10 @@ def qualify_provider_observation(
     catalogue's ladder walk sets it, and only once its exact walk admitted
     nothing, on its asserted lane.
     """
-    if (
-        lookup.requested_asin is not None
-        and observation.status is ProviderStatus.CANDIDATES
-        and any(
-            not any(
-                claim.kind is ClaimKind.ASIN
-                and claim.state is FieldState.VALID
-                and claim.value == lookup.requested_asin
-                for claim in candidate.claims
-            )
-            for candidate in observation.candidates
-        )
-    ):
-        observation = replace(
-            observation,
-            status=ProviderStatus.MALFORMED,
-            candidates=(),
-            input_references=(),
-        )
+    observation = _requested_asin_checked(observation, lookup)
     if lookup.kind is not ProviderQueryKind.WORK:
-        shaped, refused = _identifier_lane_candidates(observation, lookup)
-        return ProviderObservation(
-            observation.provider,
-            observation.status,
-            observation.input_references,
-            shaped,
-            lookup.kind,
-            observation.authority,
-            accessed_at=observation.accessed_at,
-            diagnostics=observation.diagnostics,
-            request_accounting=observation.request_accounting,
-            # ISBN lanes cannot establish the exact work title and author set.
-            edition_enrichment_overflow=None,
-            refused_products=refused,
-        )
+        shaped, refused, _bases = _identifier_lane_candidates(observation, lookup)
+        return _identifier_lane_observation(observation, lookup, shaped, refused)
     if observation.edition_enrichment_overflow is not None:
         witness = observation.edition_enrichment_overflow
         admission = replay_provider_work_identity_admission(
@@ -2929,6 +3054,9 @@ class QualifiedLaneObservation:
     corroborated: Callable[[], QualifiedLaneObservation | None] | None = (
         dataclass_field(default=None, compare=False)
     )
+    # Set only on an ASIN lane (#1723): how it kept each recording, as
+    # sorted (product identity, admission basis) pairs.
+    admission_bases: tuple[tuple[str, str], ...] = ()
 
 
 def observe_work_ladder(
@@ -4428,6 +4556,8 @@ __all__ = [
     "TargetSnapshot",
     "UnsupportedMediaError",
     "admitted_audiobook_identity",
+    "recording_admission_basis",
+    "qualify_provider_lane",
     "alternative_work_lane_permitted",
     "corroborated_rule_permitted",
     "audiobook_asin_feed_plan",
@@ -4453,6 +4583,14 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
     if type(report) is not MetadataReport:
         raise MetadataReportError("provider observation is invalid")
     return _domain_recording_identity_basis(report)
+
+
+def recording_admission_basis(
+    report: MetadataReport,
+) -> RecordingAdmissionBasis | None:
+    if type(report) is not MetadataReport:
+        raise MetadataReportError("provider observation is invalid")
+    return _domain_recording_admission_basis(report)
 
 
 def admitted_audiobook_identity(report: MetadataReport) -> bool:

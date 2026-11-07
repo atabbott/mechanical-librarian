@@ -600,3 +600,21 @@ admission changes. With an English declaration the two non-English products
 are refused; neither was inside the tight band and both reports keep their
 English admission, so no admission changes either. English orders the
 marketplaces exactly as the default does.
+
+## Amendment: how a lane kept the recording (#1723)
+
+Beside `recording_identity_basis`, which states the chapter route only, each
+lane candidate now records `admission_basis`: how that lane kept the product as
+the corroborated recording. It is `target` for the target's own identity (the
+asserted WORK lane, or an ASIN lane's independent, work-admitted,
+chapter-supported or corroborated route), or one of `companion_isbn_work`,
+`companion_work`, `companion_title`, `path_leaf` and `title_tag`, in that total
+order, strongest checkable link first. It is set only where the lane's own copy
+kept edition marketplace evidence, and every value replays from the report: an
+alternative WORK lane's is its title basis, and an ASIN lane's is the first
+replaying alternative route read against its own queried ASIN. The
+product-level basis is derived, never stored: `target` when any lane says so.
+`recording_admission_basis` reads it for the runtime-admitted products, and
+never coexists with `recording_identity_basis`. The report advances to
+`metadata-report-v70`. **Clean rebuild required** under ADR-0013.
+

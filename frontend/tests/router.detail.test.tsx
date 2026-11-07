@@ -66,7 +66,7 @@ describe('Library review ownership', () => {
         })),
       }
       renderRoute(route, http)
-      const section = await screen.findByRole('region', { name: 'Recording identity evidence' })
+      const section = await screen.findByRole('region', { name: 'How this recording was matched' })
       expect(
         within(section).getByText(
           /Complete chapter timing and structure corroborate this recording/u,
@@ -149,7 +149,7 @@ describe('Library review ownership', () => {
     ).toBeVisible()
     // One offered field reads in the singular (#1642).
     expect(within(section).getByText(/^Your choice applies only to this field\./u)).toBeVisible()
-    expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'How this recording was matched' })).toBeNull()
   })
 
   it('names only the offered book-level fields, in the note’s order (C1)', async () => {
@@ -299,7 +299,7 @@ describe('Library review ownership', () => {
 
     expect(await screen.findByRole('heading', { name: 'Evidence' })).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Media health' })).toBeNull()
-    expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'How this recording was matched' })).toBeNull()
   })
 
   it('cross-links diagnostics with URL-owned state and browser history', async () => {
@@ -355,6 +355,7 @@ describe('Library review ownership', () => {
               {
                 laneKind: 'isbn' as const,
                 provider: 'Hardcover',
+                companionIsbn: false,
                 providerRequests: 1,
                 reason: 'Returned no matching metadata.',
                 status: 'no_match',
@@ -362,6 +363,7 @@ describe('Library review ownership', () => {
               {
                 laneKind: 'work' as const,
                 provider: 'Open Library',
+                companionIsbn: false,
                 providerRequests: 2,
                 reason: 'Returned more than the accepted bound, so nothing was retained.',
                 status: 'oversized',

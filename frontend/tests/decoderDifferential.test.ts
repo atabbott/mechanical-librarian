@@ -331,6 +331,7 @@ const permissionReadiness = builder(
 const recordingBasis = builder('Library', 'reportDetail.recording-basis', REPORT, () =>
   reportDetail({
     audiobook_review_scope: 'recording',
+    recording_admission_basis: null,
     recording_identity_basis: {
       basis: 'chapter_runtime_and_structure',
       provider: 'Audnexus',

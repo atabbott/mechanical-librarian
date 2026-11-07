@@ -744,8 +744,59 @@ class _RecordingIdentityBasis(_ClosedModel):
         return self
 
 
+class _AdmissionSearched(_ClosedModel):
+    # The text an alternative route searched with (#1723): a title, the
+    # companion's title and authors, or the ISBN the companion EPUB states.
+    title: StrictStr | None = Field(max_length=512)
+    authors: list[Annotated[StrictStr, Field(max_length=512)]] | None = Field(
+        max_length=128
+    )
+    isbn: StrictStr | None = Field(pattern=r"^(?:[0-9]{13}|[0-9]{9}[0-9X])$")
+
+    @model_validator(mode="after")
+    def one_shape(self) -> Self:
+        if (self.isbn is None) == (self.title is None) or (
+            self.authors is not None and (self.title is None or not self.authors)
+        ):
+            raise ValueError("admission search is inconsistent")
+        return self
+
+
+class _RecordingAdmissionBasis(_ClosedModel):
+    basis: Literal[
+        "companion_isbn_work",
+        "companion_work",
+        "companion_title",
+        "path_leaf",
+        "title_tag",
+    ]
+    searched: _AdmissionSearched
+    provider: StrictStr = Field(
+        min_length=1, max_length=128, pattern=_RECORDING_REFERENCE
+    )
+    candidate: StrictStr = Field(
+        min_length=1, max_length=128, pattern=_RECORDING_REFERENCE
+    )
+
+    @model_validator(mode="after")
+    def consistent_search(self) -> Self:
+        searched = self.searched
+        if (self.basis == "companion_isbn_work") != (searched.isbn is not None) or (
+            self.basis == "companion_work"
+        ) != (searched.authors is not None):
+            raise ValueError("admission search does not match its basis")
+        for value in (self.provider, self.candidate):
+            if not value.strip() or any(
+                ord(character) < 32 or ord(character) == 127 for character in value
+            ):
+                raise ValueError("recording admission reference is invalid")
+        return self
+
+
 class _CaseDetailResponse(_ClosedModel):
     recording_identity_basis: _RecordingIdentityBasis | None
+    # How the matched recording was found when its title differs (#1723).
+    recording_admission_basis: _RecordingAdmissionBasis | None
     audiobook_review_scope: Literal["work", "recording"] | None
     comparison_notices: list[str]
     current: bool
@@ -758,18 +809,30 @@ class _CaseDetailResponse(_ClosedModel):
         max_length=MAX_HEALTH_OBSERVATIONS
     )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v6"]
+    schema_version: Literal["review-case-detail-v7"]
     target: _TargetIdentity
     writes_consented: bool
 
     @model_validator(mode="after")
     def consistent_audiobook_scope(self) -> Self:
         if (
-            self.recording_identity_basis is not None
-            and self.audiobook_review_scope != "recording"
-        ) or (
-            self.target.media_kind not in {"m4b", "m4a", "mp3"}
-            and self.audiobook_review_scope is not None
+            (
+                (
+                    self.recording_identity_basis is not None
+                    or self.recording_admission_basis is not None
+                )
+                and self.audiobook_review_scope != "recording"
+            )
+            or (
+                # The two notes never meet (#1723): a running-time match leaves
+                # no chapter basis to state.
+                self.recording_admission_basis is not None
+                and self.recording_identity_basis is not None
+            )
+            or (
+                self.target.media_kind not in {"m4b", "m4a", "mp3"}
+                and self.audiobook_review_scope is not None
+            )
         ):
             raise ValueError("audiobook review scope is inconsistent")
         return self
@@ -819,7 +882,7 @@ class _EvidenceResponse(_ClosedModel):
     missing_lineage_count: int = Field(ge=0, le=10_000)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-evidence-v4"]
+    schema_version: Literal["review-case-evidence-v5"]
     source_ledger: list["_ProviderOutcome"] = Field(max_length=100)
 
 
@@ -1042,6 +1105,8 @@ class _PreparationFailure(_ClosedModel):
 
 
 class _ProviderOutcome(_ClosedModel):
+    # The companion EPUB's ISBN lane (#1723).
+    companion_isbn: bool
     provider_requests: int = Field(ge=0)
     lane_kind: Literal["isbn", "work", "asin", "discovery", "none"]
     provider: str = Field(max_length=128)
@@ -1203,6 +1268,7 @@ class _ReportProviderEvidence(_ClosedModel):
 
 class _ReportDetailResponse(_ClosedModel):
     recording_identity_basis: _RecordingIdentityBasis | None
+    recording_admission_basis: _RecordingAdmissionBasis | None
     audiobook_review_scope: Literal["work", "recording"] | None
     chapters: list[_ReportChapter] = Field(max_length=1024)
     chapters_truncated: bool
@@ -1230,17 +1296,27 @@ class _ReportDetailResponse(_ClosedModel):
     provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
     provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v5"]
+    schema_version: Literal["review-report-detail-v6"]
     title: str = Field(max_length=1024)
 
     @model_validator(mode="after")
     def consistent_audiobook_scope(self) -> Self:
         if (
-            self.recording_identity_basis is not None
-            and self.audiobook_review_scope != "recording"
-        ) or (
-            self.media_kind not in {"m4b", "m4a", "mp3"}
-            and self.audiobook_review_scope is not None
+            (
+                (
+                    self.recording_identity_basis is not None
+                    or self.recording_admission_basis is not None
+                )
+                and self.audiobook_review_scope != "recording"
+            )
+            or (
+                self.recording_admission_basis is not None
+                and self.recording_identity_basis is not None
+            )
+            or (
+                self.media_kind not in {"m4b", "m4a", "mp3"}
+                and self.audiobook_review_scope is not None
+            )
         ):
             raise ValueError("audiobook review scope is inconsistent")
         return self
@@ -1265,7 +1341,7 @@ class _LibraryResponse(_ClosedModel):
     # how `review-library-v1` gained a required `media_health` member and stayed
     # v1; the literal makes the declared version and the served shape the same
     # statement, and publishes it in the OpenAPI a client is built from.
-    schema_version: Literal["review-library-v4"]
+    schema_version: Literal["review-library-v5"]
 
 
 class _AttentionItem(_ClosedModel):

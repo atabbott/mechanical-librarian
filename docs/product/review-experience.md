@@ -346,6 +346,29 @@ only formats.
 A supported first book may share its title with its series. The canvas then
 keeps the title and offers series name and position separately.
 
+When Mechanical Librarian found the matched recording by a title other than
+the audiobook's own, a note says how, at the top of the Evidence page, in
+Recorded evidence and in Library's Whole-work context. The section is named
+"How this recording was matched", quotes what was searched, and offers the
+Recording source as the chapter note does (#1723):
+
+- "Mechanical Librarian found the matched recording by searching with “…”,
+  read from this folder's name, which differs from this audiobook's title."
+- "Mechanical Librarian found the matched recording by searching with “…”,
+  read from the title tag in this audiobook's audio file, which differs from
+  this audiobook's title."
+- "Mechanical Librarian found the matched recording by searching with “…”, the
+  title of the EPUB in this folder, which differs from this audiobook's title."
+- "Mechanical Librarian found the matched recording by searching with the title
+  and author(s) of the EPUB in this folder, “…” by …, because this audiobook's
+  own title or author is missing or incomplete."
+- "Hardcover lists the matched recording as an audio edition of the book with
+  ISBN …, which is stated in the EPUB in this folder."
+
+Each is followed by "Its running time closely matches this audiobook's." (for
+the ISBN, "The matched recording's running time …"). No note appears when the
+audiobook's own title and authors also found the recording.
+
 ## Covers
 
 Covers are compared side by side: the current cover and candidates equally in
@@ -369,7 +392,9 @@ has decision controls or shows internal identifiers.
 
 - **Evidence** lists observations by field with their source, and provider
   outcomes in a Sources disclosure. Missing lineage never claims a field is
-  empty.
+  empty. An audiobook's companion EPUB lookup reads "ISBN lookup (EPUB in this
+  folder)" here, in the work summary and in the comparison footer, so an
+  audiobook with no ISBN of its own never shows a bare ISBN row (#1723).
 - **History** lists owner and automatic outcomes for the case, each with its
   own time, and shows a value only where the record links it exactly.
 
