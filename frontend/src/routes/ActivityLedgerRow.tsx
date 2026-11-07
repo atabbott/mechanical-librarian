@@ -147,7 +147,9 @@ function ActivityTransitions({
           >
             {more.isPending ? 'Loading transitions…' : 'Load more transitions'}
           </button>
-          {more.isError ? (
+          {more.error instanceof BuildMismatchError ? (
+            <StaleBuildRead lead="More recorded transitions were not loaded." />
+          ) : more.isError ? (
             <p role="alert">
               More recorded transitions could not be loaded.{' '}
               <button

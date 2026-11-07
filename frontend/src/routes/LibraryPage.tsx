@@ -36,7 +36,7 @@ import type {
   WorkSummaryState,
 } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
-import { drawerQuery, useAttentionRail } from '../attentionRail'
+import { useAttentionRail } from '../attentionRail'
 import { focusFieldHeading, useRouteReadyFocus } from '../focus'
 import { destinationLabel, mediaKindLabels, sourceStatusLabels } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
@@ -97,6 +97,7 @@ import {
   usePreparationDismissal,
 } from '../libraryPreparation'
 import { WorkSources, WorkSummary } from './WorkSummary'
+import { AttentionRail } from './AttentionRail'
 import { BookMark } from '../components/BookMark'
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import {
@@ -227,6 +228,7 @@ export default function LibraryPage({
   retained,
   pending,
   failed,
+  error,
   retry,
   onRailRetaining,
 }: {
@@ -235,6 +237,8 @@ export default function LibraryPage({
   retained: boolean
   pending: boolean
   failed: boolean
+  /** The works read's failure, which a build mismatch makes unrecoverable by another try. */
+  error: unknown
   retry: () => void
   /** Reports whether the attention rail is showing a retained queue. */
   onRailRetaining?: (retaining: boolean) => void
@@ -374,7 +378,6 @@ export default function LibraryPage({
   const attentionRail = useRef<HTMLElement>(null)
   const attentionHeading = useRef<HTMLHeadingElement>(null)
   const attentionToggle = useRef<HTMLButtonElement>(null)
-  const attentionRetry = useRef<HTMLButtonElement>(null)
   const revealWorkspace = useRef(false)
   const revealQueueChoice = useRef(false)
   const workSelectionGeneration = useRef(0)
@@ -669,46 +672,6 @@ export default function LibraryPage({
     }
     return [...groups.values()]
   }, [attentionItems])
-  // Load more keeps its place: once the page lands, focus moves to the first row
-  // it added, even when that row joins a work already in the rail (#1284). The
-  // press ends at the query's next data or error update, whether or not a render
-  // saw it fetching, so a refetch that cancels the page ends it too; a new search
-  // drops it, and focus moves only for an added page the owner has not left.
-  const attentionKey = `${search.q ?? ''} ${search.attentionCursor ?? ''}`
-  const loadMore = useRef<{
-    key: string
-    pages: number
-    updated: number
-    errors: number
-    from: number
-  } | null>(null)
-  useEffect(() => {
-    const pending = loadMore.current
-    if (!pending) return
-    if (pending.key !== attentionKey || attentionQuery.errorUpdateCount > pending.errors) {
-      loadMore.current = null
-      return
-    }
-    const pages = attention.data?.pages.length ?? 0
-    if (attentionQuery.dataUpdatedAt === pending.updated && pages <= pending.pages) return
-    loadMore.current = null
-    if (pages <= pending.pages) return
-    const active = document.activeElement
-    if (active && active !== document.body && !attentionRail.current?.contains(active)) return
-    const first = attentionItems[pending.from]
-    const row = first
-      ? [
-          ...(attentionRail.current?.querySelectorAll<HTMLElement>('[data-attention-row]') ?? []),
-        ].find((node) => node.dataset.attentionRow === `${first.id}:${first.destination}`)
-      : undefined
-    ;(row ?? attentionRail.current)?.focus()
-  }, [
-    attention.data,
-    attentionItems,
-    attentionKey,
-    attentionQuery.dataUpdatedAt,
-    attentionQuery.errorUpdateCount,
-  ])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -1233,6 +1196,11 @@ export default function LibraryPage({
     !displayedIdentity &&
     (reading || attention.isPending || attention.isPlaceholderData || detail.isPending)
   const identityError = !displayedIdentity && (failed || attention.isError)
+  const identityStale =
+    identityError &&
+    (error instanceof BuildMismatchError ||
+      attention.error instanceof BuildMismatchError ||
+      detail.error instanceof BuildMismatchError)
   // While a command records, the Library asks for the successor, the owner is
   // moved to it, or its identity is still being read, the absence is the move.
   const leaving =
@@ -1242,6 +1210,9 @@ export default function LibraryPage({
     (reconciledSuccessorIdentity === search.preview && detail.isPending)
   const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
+  // A works retry that meets a newer build can leave the identity in error
+  // throughout, so the switch to the reload is what settles the retry.
+  const selectedReadStale = identityStale || detail.error instanceof BuildMismatchError
   const selectedDetailReady =
     !preparationSelected &&
     Boolean(search.preview) &&
@@ -1254,7 +1225,10 @@ export default function LibraryPage({
     selectedDetailShown.current = null
   }, [search.preview])
   useEffect(() => {
-    const selectedDetailSettled = selectedDetailReady || selectedReadError
+    // An error is settled only once it renders: while another read is still
+    // in flight the work shows as loading, and its Try again or Reload does
+    // not exist yet to take focus.
+    const selectedDetailSettled = selectedDetailReady || (selectedReadError && !selectedReadPending)
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
@@ -1269,7 +1243,13 @@ export default function LibraryPage({
     }
     selectedDetailRetry.current = null
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
-  }, [selectedReadError, search.preview, selectedDetailReady])
+  }, [
+    selectedReadError,
+    selectedReadPending,
+    selectedReadStale,
+    search.preview,
+    selectedDetailReady,
+  ])
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
   // the masthead, so once it holds focus it is brought fully into view; the
@@ -2078,7 +2058,9 @@ export default function LibraryPage({
           <div className="library-work-list" aria-busy={retained || undefined}>
             {!data ? (
               <div className="empty-copy" aria-busy={!failed}>
-                {failed ? (
+                {failed && error instanceof BuildMismatchError ? (
+                  <StaleBuildRead lead="Works were not loaded." />
+                ) : failed ? (
                   <>
                     <p role="alert">Works are unavailable.</p>
                     <button type="button" onClick={retry}>
@@ -2314,10 +2296,11 @@ export default function LibraryPage({
           ) : !displayedIdentity ? (
             identityPending || leaving || successorPending === search.preview ? (
               <p role="status">Loading selected work…</p>
-            ) : identityError &&
-              (attention.error instanceof BuildMismatchError ||
-                detail.error instanceof BuildMismatchError) ? (
-              <StaleBuildRead lead="Selected work was not loaded." />
+            ) : identityStale ? (
+              <StaleBuildRead
+                lead="Selected work was not loaded."
+                ref={selectedDetailRetryButton}
+              />
             ) : identityError ? (
               <p role="alert">
                 Selected work could not be loaded.{' '}
@@ -2356,7 +2339,7 @@ export default function LibraryPage({
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
           ) : detail.error instanceof BuildMismatchError ? (
-            <StaleBuildRead lead="Selected work was not loaded." />
+            <StaleBuildRead lead="Selected work was not loaded." ref={selectedDetailRetryButton} />
           ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
@@ -2571,6 +2554,8 @@ export default function LibraryPage({
                       attention.isPlaceholderData ||
                       attention.isFetchingNextPage ? (
                       <span>Looking for the next visible work…</span>
+                    ) : nextWorkError && attention.error instanceof BuildMismatchError ? (
+                      <StaleBuildRead lead="The next attention work was not loaded." />
                     ) : nextWorkError ? (
                       <>
                         <span>The next attention work could not be loaded.</span>
@@ -3004,179 +2989,32 @@ export default function LibraryPage({
             </>
           )}
         </section>
-        {search.attention === 'open' ? (
-          <aside
-            className="attention-rail"
-            aria-label="Attention queue"
-            aria-busy={attention.isPlaceholderData || undefined}
-            tabIndex={-1}
-            ref={attentionRail}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                closeAttention()
-                return
-              }
-              if (event.key !== 'Tab' || typeof window.matchMedia !== 'function') return
-              if (!window.matchMedia(drawerQuery).matches) return
-              const stops = [
-                ...event.currentTarget.querySelectorAll<HTMLElement>('button, a[href], input'),
-              ].filter((stop) => !stop.matches(':disabled') && stop.getClientRects().length)
-              const edge = event.shiftKey ? stops[0] : stops.at(-1)
-              const active = document.activeElement
-              if (active === edge || (event.shiftKey && !stops.some((stop) => stop === active))) {
-                event.preventDefault()
-                ;(event.shiftKey ? stops.at(-1) : stops[0])?.focus()
-              }
-            }}
-          >
-            <header>
-              <div>
-                <h2 ref={attentionHeading} tabIndex={-1}>
-                  Attention
-                </h2>
-                <p>
-                  {search.q && !data
-                    ? failed
-                      ? 'Count unavailable'
-                      : 'Counting works…'
-                    : summaryAttention === undefined
-                      ? !summary.isError
-                        ? 'Counting works…'
-                        : search.q
-                          ? `Matching: ${workCount(data?.counts.attention ?? 0)} needing a decision`
-                          : 'Count unavailable'
-                      : !search.q
-                        ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
-                        : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
-                </p>
-              </div>
-              <button onClick={closeAttention}>Close</button>
-            </header>
-            {attention.data === undefined ? (
-              <p role={attention.isError ? 'alert' : 'status'}>
-                {attention.isError ? (
-                  <>
-                    Attention could not be loaded.{' '}
-                    <button
-                      ref={attentionRetry}
-                      type="button"
-                      onClick={() =>
-                        void attention.refetch().then((result) => {
-                          // The retry removes this button while it reads, so
-                          // the rail's heading takes focus back on success
-                          // (#1399) and Try again does when it fails again.
-                          const active = document.activeElement
-                          if (
-                            active &&
-                            active !== document.body &&
-                            !attentionRail.current?.contains(active)
-                          )
-                            return
-                          if (result.isSuccess)
-                            attentionHeading.current?.focus({ preventScroll: true })
-                          else
-                            requestAnimationFrame(() =>
-                              attentionRetry.current?.focus({ preventScroll: true }),
-                            )
-                        })
-                      }
-                    >
-                      Try again
-                    </button>
-                  </>
-                ) : (
-                  'Loading attention…'
-                )}
-              </p>
-            ) : (
-              <>
-                {attentionGroups.map((group, index) => {
-                  const work = group[0]
-                  if (!work) return null
-                  return (
-                    <div key={work.id} className="attention-work-group">
-                      <div className="attention-work-identity">
-                        <span className="attention-position">{String(index + 1)}</span>
-                        <span>
-                          <strong>{work.title}</strong>
-                          <small>
-                            {work.authors.length
-                              ? work.authors.join(', ')
-                              : 'Author details unavailable'}
-                          </small>
-                          <small>
-                            {work.libraryDisplayName ?? work.library} ·{' '}
-                            {mediaKindLabels[work.mediaKind]}
-                          </small>
-                        </span>
-                        <span className="attention-work-count">
-                          {`${String(work.workAttentionCount)} ${work.workAttentionCount === 1 ? 'field' : 'fields'}`}
-                        </span>
-                      </div>
-                      <ul className="attention-field-rows">
-                        {group.map((item) => {
-                          const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs your decision'}`
-                          return (
-                            <li key={item.destination}>
-                              <button
-                                className="attention-queue-item"
-                                // The same field in two works would otherwise share a name in a
-                                // screen reader's list of buttons; the work is shown above (#1361).
-                                aria-label={`${line}, ${work.title}`}
-                                aria-current={
-                                  item.id === search.preview &&
-                                  item.destination === selected?.destination
-                                }
-                                aria-disabled={attention.isPlaceholderData || undefined}
-                                data-attention-row={`${item.id}:${item.destination}`}
-                                onClick={() =>
-                                  selectFromQueue(item.id, item.destination, item.attentionCursor)
-                                }
-                              >
-                                <span className="attention-queue-copy">
-                                  <b>{line}</b>
-                                </span>
-                              </button>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  )
-                })}
-                {attention.hasNextPage ? (
-                  <button
-                    className="attention-load-more"
-                    type="button"
-                    aria-disabled={attention.isFetchingNextPage || undefined}
-                    onClick={() => {
-                      if (loadMore.current || attention.isFetchingNextPage) return
-                      loadMore.current = {
-                        key: attentionKey,
-                        pages: attention.data.pages.length,
-                        updated: attentionQuery.dataUpdatedAt,
-                        errors: attentionQuery.errorUpdateCount,
-                        from: attentionItems.length,
-                      }
-                      void attention.fetchNextPage()
-                    }}
-                  >
-                    {attention.isFetchingNextPage ? 'Loading more…' : 'Load more attention'}
-                  </button>
-                ) : null}
-                {attention.isFetchNextPageError ? (
-                  <p role="alert">
-                    More attention could not be loaded.{' '}
-                    <button type="button" onClick={() => void attention.fetchNextPage()}>
-                      Try again
-                    </button>
-                  </p>
-                ) : null}
-              </>
-            )}
-          </aside>
-        ) : null}
+        <AttentionRail
+          search={search}
+          countText={
+            search.q && !data
+              ? failed
+                ? 'Count unavailable'
+                : 'Counting works…'
+              : summaryAttention === undefined
+                ? !summary.isError
+                  ? 'Counting works…'
+                  : search.q
+                    ? `Matching: ${workCount(data?.counts.attention ?? 0)} needing a decision`
+                    : 'Count unavailable'
+                : !search.q
+                  ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
+                  : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`
+          }
+          attention={attention}
+          attentionItems={attentionItems}
+          attentionGroups={attentionGroups}
+          attentionRail={attentionRail}
+          attentionHeading={attentionHeading}
+          selected={selected}
+          closeAttention={closeAttention}
+          selectFromQueue={selectFromQueue}
+        />
       </div>
     </div>
   )

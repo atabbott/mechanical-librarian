@@ -310,6 +310,10 @@ brackets are GitHub issues.
   resuming automatic handling and signing out now say a result that cannot be
   confirmed may have taken effect, and show the current state or ask you to
   reload it (#1577).
+- A tab left on the previous build now offers to reload, instead of a retry
+  that cannot succeed, when Library's works, the Attention queue or its next
+  work, more of an Activity row's recorded transitions, or a field's recorded
+  observations fail to load (#1602).
 - Settings and setup no longer show Codex as ready to sign in after its
   sign-in failed, expired, was cancelled or interrupted, or when its sign-in
   cannot be read, while Codex is not selected. They show that outcome and
