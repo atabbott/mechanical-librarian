@@ -83,10 +83,9 @@ leave them.
   it admits and FP the negatives; precision is TP / (TP + FP). n counts admitted
   records, not fields. Unlabelled records are counted, never assigned, and so
   are blocked fields whose loosened rule reaches no record. Controls are
-  pooled across the snapshots; per-snapshot counts are in each row.
+  pooled; per-snapshot counts are in each row.
 - **The bound.** The precision bound is the lower limit of a two-sided (not
-  one-sided) 95% Wilson score interval (z = 1.96, computed as 1.959964) on
-  n = TP + FP. n = 0 is "not estimable".
+  one-sided) 95% Wilson interval (z = 1.959964) on n = TP + FP. n = 0 is "not estimable".
 - **What the bound measures.** How often the records behind the picked value
   belong to this work, not whether the value is correct or well formed. When
   two competing values both come from this work's records, the pick counts as
@@ -102,10 +101,10 @@ leave them.
   latest decision on an item's field names the right alternative, even when
   the item has been rescanned since. A decision from before the case was last
   reopened, or one that was withdrawn, labels nothing. Accepting or entering a
-  value names the alternative with that value; keeping the current value, the
-  alternative that keeps it; a rejection, or a value no alternative carries,
-  none. The pick column adds how often the pick is the named alternative, with
-  the same Wilson lower limit. This measures value
+  value names the alternative with that value. Keeping the current value names
+  the alternative that keeps it. A rejection, or a value no alternative
+  carries, names none. The pick column adds how often the pick is the named
+  alternative, with the same Wilson lower limit. This measures value
   correctness, but only on fields the owner chose to decide.
 - **Corroborated pick.** `--breakdown ID` also measures one ranking. It picks
   the alternative that more independent sources state than any other, and at
