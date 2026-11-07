@@ -43,35 +43,35 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# Near-duplicate study (2026-10-24), level L2.
 SAME_ART_MAX_PHASH_DISTANCE = 8
 """Largest pHash Hamming distance (of 64 bits) between two copies of one art."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# Near-duplicate study (2026-10-24), level L2.
 SAME_ART_MAX_DHASH_DISTANCE = 8
 """Largest dHash Hamming distance (of 64 bits) between two copies of one art."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# Near-duplicate study (2026-10-24), level L2.
 SAME_ART_MAX_COLOUR_DISTANCE = 0.25
 """Largest total-variation distance between two 64-bin RGB histograms."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# Near-duplicate study (2026-10-24), level L2.
 SAME_ART_MAX_LAYOUT_DISTANCE = 0.06
 """Largest mean absolute difference between two 4x4 mean-RGB layouts, 0 to 1."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# Near-duplicate study (2026-10-24), level L2.
 SAME_ART_MAX_ASPECT_DISTANCE = 0.05
 """Largest absolute log ratio between two height-to-width ratios."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# The near-duplicate study's 1.5x area cut (owner lane decision, 2026-11-07).
 SHARPER_COPY_MIN_AREA_RATIO = 1.5
 """How many times the current cover's pixel area a copy must have to replace it."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# From the 2026-10-24 cover replay's square band.
 SQUARE_MIN_ASPECT = 0.9
 """Smallest height-to-width ratio of square art."""
 
-# TODO(#1363 Q1): value from the near-duplicate study
+# From the 2026-10-24 cover replay's square band.
 SQUARE_MAX_ASPECT = 1.1
 """Largest height-to-width ratio of square art; anything taller is portrait."""
 
