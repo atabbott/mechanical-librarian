@@ -157,6 +157,39 @@ def test_replay_reports_aggregates_per_setting_and_medium(tmp_path: Path) -> Non
     assert report["exclusions"]["ebook"]["wrong_shape"] == 1
     assert report["exclusions"]["audiobook"]["below_floor"] == 1
     assert report["collapsed_images"] == {"ebook": 1, "audiobook": 0}
+    protected = report["reasons"]["protected"]
+    assert protected["ebook"]["replace"] == {"sharper_copy": 1, "wrong_shape": 1}
+    assert protected["ebook"]["keep"] == {"none": 2}
+    assert protected["ebook"]["hold"] == {"title_names_other_work": 1}
+    assert protected["audiobook"]["suggest"] == {"unreadable": 1}
+    assert protected["audiobook"]["empty"] == {"none": 1}
+    assert report["reasons"]["unprotected+prefer_edition"]["ebook"]["replace"] == {
+        "edition_preference": 1,
+        "sharper_copy": 1,
+        "wrong_shape": 1,
+    }
+
+
+def test_a_kept_fault_and_a_switched_fault_are_counted_apart(tmp_path: Path) -> None:
+    fields = [
+        {
+            "medium": "ebook",
+            "current": _current(500, 500),
+            "candidates": [_candidate(500, 500)],
+        },
+        {
+            "medium": "ebook",
+            "current": _current(500, 500),
+            "candidates": [_candidate()],
+        },
+    ]
+
+    code, stdout, _ = _run(tmp_path, _document([], fields))
+
+    assert code == 0
+    protected = json.loads(stdout)["reasons"]["protected"]["ebook"]
+    assert protected["keep"] == {"wrong_shape": 1}
+    assert protected["replace"] == {"wrong_shape": 1}
 
 
 def test_a_rule_whose_input_is_not_persisted_is_not_replayable(
@@ -263,8 +296,42 @@ SECRET = "Private Title /library/book"
             ),
             "input values are invalid",
         ),
+        (
+            _document(
+                [],
+                [
+                    {
+                        "medium": "ebook",
+                        "current": None,
+                        "candidates": [_candidate(identity=[SECRET])],
+                    }
+                ],
+            ),
+            "input values are invalid",
+        ),
+        (
+            _document(
+                [],
+                [
+                    {
+                        "medium": "ebook",
+                        "current": {"readable": False, "identity": {SECRET: 1}},
+                        "candidates": [],
+                    }
+                ],
+            ),
+            "input values are invalid",
+        ),
     ],
-    ids=["schema", "persisted", "field_key", "identity", "width"],
+    ids=[
+        "schema",
+        "persisted",
+        "field_key",
+        "identity",
+        "width",
+        "list_identity",
+        "object_identity",
+    ],
 )
 def test_a_malformed_input_is_refused_without_echoing_it(
     tmp_path: Path, document: object, message: str

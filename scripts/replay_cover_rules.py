@@ -20,8 +20,10 @@ not declare is refused. Shape and the floor read dimensions, which every field
 carries.
 
 The output is aggregates only: outcome counts per protection setting (with and
-without the edition option) and medium, issue and exclusion counts, and the
-number of images same-art collapse removed. No reference, value or title from
+without the edition option) and medium; the same counts split by the reason
+recorded on each decision (a closed issue, ``edition_preference`` or ``none``),
+so a kept fault and a switched fault are counted apart; issue and exclusion
+counts; and the number of images same-art collapse removed. No reference, value or title from
 the input is written.
 """
 
@@ -201,6 +203,10 @@ def replay(document: object) -> dict[str, object]:
         name: {medium: Counter[str]() for medium in MEDIA} for name, _, _ in settings
     }
     issues = {medium: Counter[str]() for medium in MEDIA}
+    reasons = {
+        name: {medium: Counter[tuple[str, str]]() for medium in MEDIA}
+        for name, _, _ in settings
+    }
     exclusions = {medium: Counter[str]() for medium in MEDIA}
     collapsed = Counter[str]()
     unmeasured = 0
@@ -221,6 +227,14 @@ def replay(document: object) -> dict[str, object]:
                 omnibus=omnibus,
             )
             outcomes[name][medium][election.outcome.value] += 1
+            reason = (
+                election.reason.value
+                if election.reason is not None
+                else "edition_preference"
+                if election.edition_preferred
+                else "none"
+            )
+            reasons[name][medium][(election.outcome.value, reason)] += 1
             if index == 0:
                 issues[medium].update(issue.value for issue in election.issues)
                 exclusions[medium].update(
@@ -248,6 +262,20 @@ def replay(document: object) -> dict[str, object]:
                 for medium, counter in by_medium.items()
             }
             for name, by_medium in outcomes.items()
+        },
+        "reasons": {
+            name: {
+                medium: {
+                    outcome.value: {
+                        reason: count
+                        for (decided, reason), count in sorted(counter.items())
+                        if decided == outcome.value
+                    }
+                    for outcome in CoverOutcome
+                }
+                for medium, counter in by_medium.items()
+            }
+            for name, by_medium in reasons.items()
         },
         "issues": {
             medium: table(counter, [i.value for i in CoverIssue])

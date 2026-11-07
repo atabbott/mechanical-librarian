@@ -4,13 +4,14 @@ One pure stage, per medium. It reads no reviewer observation and makes no model
 or provider call. In order:
 
 1. **Shape.** An ebook never takes square art. An audiobook takes portrait art
-   only when square art it could take exists (a square current cover counts).
-   Landscape art is not a shape fault for either medium.
+   only when square art at or above the floor exists, among the candidates or
+   as the current cover. Landscape art is not a shape fault for either medium.
 2. **Same-art collapse.** Two images are the same art when every bound below
-   holds between them; a group is a connected component of that relation over
-   the current cover and the eligible candidates of this one call. Collapse
-   removes copies only: it never admits a candidate or establishes identity,
-   because publisher templates collide across works.
+   holds between them. The current cover's art is the candidates that match it
+   directly; the other candidates of this one call group into connected
+   components of the relation. Collapse removes copies only: it never admits a
+   candidate or establishes identity, because publisher templates collide
+   across works.
 3. **Resolution.** Decides only between copies of one art, by pixel area. A copy
    replaces the current cover only when it is larger by the materiality margin,
    so near-equal copies do not churn.
@@ -24,8 +25,9 @@ shape rule: verified manifestation before verified work, then pixel area, width,
 height, source precedence and the opaque reference.
 
 A readable current cover with no detectable issue is kept. A current cover with
-an issue is replaced by the first candidate in that order, except that a sharper
-copy of the same art takes that copy. ``current_cover_protection`` then decides
+an issue takes a sharper copy of its art when one exists, and otherwise the first
+candidate in that order outside its art; only an undersized cover may take a
+copy of its own art, which clears the floor. ``current_cover_protection`` then decides
 whether a replacement is automatic or a suggestion. A library title that names
 another work holds selection in every mode.
 
@@ -180,6 +182,7 @@ class CoverRuleCandidate:
         if (
             type(self.reference) is not str
             or not self.reference
+            or type(self.identity) is not str
             or self.identity not in _IDENTITY_TIERS
             or not _valid_dimensions(self.width, self.height)
             or type(self.packet_ordinal) is not int
@@ -220,7 +223,13 @@ class CurrentCover:
         if (
             type(self.reference) is not str
             or not self.reference
-            or (self.identity is not None and self.identity not in _IDENTITY_TIERS)
+            or (
+                self.identity is not None
+                and (
+                    type(self.identity) is not str
+                    or self.identity not in _IDENTITY_TIERS
+                )
+            )
             or type(self.readable) is not bool
             or (self.measures is not None and type(self.measures) is not CoverMeasures)
             or type(self.non_english_edition) is not bool
@@ -321,6 +330,96 @@ def _below_floor(width: int, height: int) -> bool:
     return min(width, height) < COVER_FLOOR_SHORT_EDGE
 
 
+def _collapse(
+    eligible: list[CoverRuleCandidate],
+    readable: CurrentCover | None,
+) -> tuple[
+    set[str], list[CoverRuleCandidate], list[SameArtGroup], CoverRuleCandidate | None
+]:
+    """Collapse same-art copies around a readable current cover, if any.
+
+    Returns the candidates of the current cover's art, the sharpest copy of each
+    art in rank order, the groups of two or more, and the current cover's sharper
+    copy. Kept apart from ``elect_measured_covers`` so neither function passes
+    the repository's 200-line limit.
+    """
+    current_size = None if readable is None else readable.size
+    # The current cover's art is only what matches it directly, so a chain of
+    # near matches never makes another art its copy.
+    current_art: set[str] = set()
+    if readable is not None and current_size is not None:
+        current_measures = readable.measures
+        current_art = {
+            c.reference
+            for c in eligible
+            if current_measures is not None
+            and c.measures is not None
+            and same_art(
+                current_measures, current_size, c.measures, (c.width, c.height)
+            )
+        }
+    direct = [c for c in eligible if c.reference in current_art]
+    others = [c for c in eligible if c.reference not in current_art]
+
+    # The other candidates collapse into connected components among themselves.
+    parent = list(range(len(others)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for left in range(len(others)):
+        for right in range(left + 1, len(others)):
+            left_measures = others[left].measures
+            right_measures = others[right].measures
+            if (
+                left_measures is not None
+                and right_measures is not None
+                and same_art(
+                    left_measures,
+                    (others[left].width, others[left].height),
+                    right_measures,
+                    (others[right].width, others[right].height),
+                )
+            ):
+                parent[find(left)] = find(right)
+    components: dict[int, list[CoverRuleCandidate]] = {}
+    for index, candidate in enumerate(others):
+        components.setdefault(find(index), []).append(candidate)
+
+    def sharpest(copies: list[CoverRuleCandidate]) -> CoverRuleCandidate:
+        return min(copies, key=lambda c: (-(c.width * c.height), c.rank_key))
+
+    ranked_candidates: list[CoverRuleCandidate] = []
+    groups: list[SameArtGroup] = []
+    for copies in components.values():
+        best = sharpest(copies)
+        ranked_candidates.append(best)
+        if len(copies) > 1:
+            groups.append(
+                SameArtGroup(tuple(sorted(c.reference for c in copies)), best.reference)
+            )
+    sharper: CoverRuleCandidate | None = None
+    if direct and readable is not None and current_size is not None:
+        best = sharpest(direct)
+        ranked_candidates.append(best)
+        if best.width * best.height >= (
+            SHARPER_COPY_MIN_AREA_RATIO * current_size[0] * current_size[1]
+        ):
+            sharper = best
+        groups.append(
+            SameArtGroup(
+                tuple(sorted([readable.reference, *current_art])),
+                readable.reference if sharper is None else sharper.reference,
+            )
+        )
+    ranked_candidates.sort(key=lambda c: c.rank_key)
+    groups.sort(key=lambda group: group.members)
+    return current_art, ranked_candidates, groups, sharper
+
+
 def elect_measured_covers(
     candidates: tuple[CoverRuleCandidate, ...],
     *,
@@ -368,8 +467,11 @@ def elect_measured_covers(
         elif omnibus and candidate.omnibus_volume:
             excluded[candidate.reference] = CoverExclusion.OMNIBUS_VOLUME
     takeable = [c for c in candidates if c.reference not in excluded]
+    # Square art counts only when it is at or above the floor, on either side.
     square_exists = any(_is_square(c.width, c.height) for c in takeable) or (
-        current_size is not None and _is_square(*current_size)
+        current_size is not None
+        and _is_square(*current_size)
+        and not _below_floor(*current_size)
     )
 
     def wrong_shape(width: int, height: int) -> bool:
@@ -382,69 +484,8 @@ def elect_measured_covers(
             excluded[candidate.reference] = CoverExclusion.WRONG_SHAPE
     eligible = [c for c in takeable if c.reference not in excluded]
 
-    # Same-art groups: connected components over measured images.
-    members: list[tuple[str, CoverMeasures | None, tuple[int, int]]] = [
-        (c.reference, c.measures, (c.width, c.height)) for c in eligible
-    ]
-    if readable is not None and current_size is not None:
-        members.insert(0, (readable.reference, readable.measures, current_size))
-    # Every bound is symmetric, so the components do not depend on input order.
-    parent = list(range(len(members)))
-
-    def find(index: int) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    for left in range(len(members)):
-        for right in range(left + 1, len(members)):
-            left_measures, right_measures = members[left][1], members[right][1]
-            if (
-                left_measures is not None
-                and right_measures is not None
-                and same_art(
-                    left_measures, members[left][2], right_measures, members[right][2]
-                )
-            ):
-                parent[find(left)] = find(right)
-    components: dict[int, list[int]] = {}
-    for index in range(len(members)):
-        components.setdefault(find(index), []).append(index)
-
-    by_reference = {c.reference: c for c in eligible}
-    ranked_candidates: list[CoverRuleCandidate] = []
-    groups: list[SameArtGroup] = []
-    current_art: set[str] = set()
-    sharper: CoverRuleCandidate | None = None
-    for indices in components.values():
-        group = [members[index][0] for index in indices]
-        copies = [by_reference[ref] for ref in group if ref in by_reference]
-        best = (
-            min(copies, key=lambda c: (-(c.width * c.height), c.rank_key))
-            if copies
-            else None
-        )
-        if best is not None:
-            ranked_candidates.append(best)
-        representative = best.reference if best is not None else group[0]
-        if (
-            readable is not None
-            and current_size is not None
-            and readable.reference in group
-        ):
-            current_art = set(group)
-            if best is not None and best.width * best.height >= (
-                SHARPER_COPY_MIN_AREA_RATIO * current_size[0] * current_size[1]
-            ):
-                sharper = best
-            else:
-                representative = readable.reference
-        if len(group) > 1:
-            groups.append(SameArtGroup(tuple(sorted(group)), representative))
-    ranked_candidates.sort(key=lambda c: c.rank_key)
+    current_art, ranked_candidates, groups, sharper = _collapse(eligible, readable)
     ranked = tuple(c.reference for c in ranked_candidates)
-    groups.sort(key=lambda group: group.members)
     exclusions = tuple(sorted(excluded.items()))
 
     def result(
@@ -487,8 +528,17 @@ def elect_measured_covers(
             issues.append(CoverIssue.SHARPER_COPY)
 
     if issues:
+        # Without a sharper copy, a fault of the art itself is not cured by
+        # another copy of it; only an undersized cover is, by a copy that
+        # clears the floor.
+        copies_cure = set(issues) == {CoverIssue.BELOW_FLOOR}
         choice = (
-            sharper.reference if sharper is not None else ranked[0] if ranked else None
+            sharper.reference
+            if sharper is not None
+            else next(
+                (ref for ref in ranked if copies_cure or ref not in current_art),
+                None,
+            )
         )
         if choice is None:
             return result(CoverOutcome.KEEP, None, tuple(issues))

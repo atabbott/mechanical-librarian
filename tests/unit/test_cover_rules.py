@@ -364,6 +364,98 @@ def test_every_same_art_bound_must_hold(
     assert same_art(measures, (PORTRAIT[0], height), _measures(), PORTRAIT) is not over
 
 
+def test_a_chain_of_near_matches_never_makes_another_art_a_copy() -> None:
+    near = _measures(phash_bits=SAME_ART_MAX_PHASH_DISTANCE)
+    far = _measures(phash_bits=2 * SAME_ART_MAX_PHASH_DISTANCE)
+    width = _margin_widths()[0]
+    large = (width, 3 * width // 2)
+    assert same_art(_measures(), PORTRAIT, near, PORTRAIT)
+    assert same_art(near, PORTRAIT, far, large)
+    assert not same_art(_measures(), PORTRAIT, far, large)
+    candidates = (
+        _candidate("near", PORTRAIT, measures=near),
+        _candidate("far", large, measures=far),
+    )
+
+    fault_free = _elect(candidates, current=_current(measures=_measures()))
+    assert (fault_free.outcome, fault_free.choice) == (CoverOutcome.KEEP, None)
+    assert fault_free.issues == ()
+    assert fault_free.groups == (SameArtGroup(("current", "near"), "current"),)
+    assert set(fault_free.ranked) == {"near", "far"}
+
+    faulty = _elect(
+        candidates, current=_current(measures=_measures(), non_english_edition=True)
+    )
+    assert faulty.issues == (CoverIssue.EDITION_LANGUAGE,)
+    assert (faulty.outcome, faulty.choice) == (CoverOutcome.REPLACE, "far")
+
+
+def test_a_fault_of_the_art_is_not_replaced_by_another_copy_of_it() -> None:
+    copy = _candidate("copy", PORTRAIT, identity=EDITION, measures=_measures())
+    other = _candidate("other", (1000, 1500), measures=_measures(art=1))
+    current = _current((800, 1200), measures=_measures(), non_english_edition=True)
+
+    election = _elect((copy, other), current=current)
+    assert election.ranked == ("copy", "other")
+    assert election.issues == (CoverIssue.EDITION_LANGUAGE,)
+    assert (election.outcome, election.choice) == (CoverOutcome.REPLACE, "other")
+
+    only_copy = _elect((copy,), current=current)
+    assert (only_copy.outcome, only_copy.choice) == (CoverOutcome.KEEP, None)
+    assert only_copy.issues == (CoverIssue.EDITION_LANGUAGE,)
+
+
+def test_a_square_cover_at_the_band_edge_does_not_take_its_own_copy() -> None:
+    edge = (1000, SQUARE_EDGE_HIGH)
+    outside = (1000, SQUARE_EDGE_HIGH + 1)
+    assert same_art(_measures(), edge, _measures(), outside)
+    election = _elect(
+        (
+            _candidate("copy", outside, identity=EDITION, measures=_measures()),
+            _candidate("other", PORTRAIT, measures=_measures(art=1)),
+        ),
+        current=_current(edge, measures=_measures()),
+    )
+
+    assert election.ranked == ("copy", "other")
+    assert election.issues == (CoverIssue.WRONG_SHAPE,)
+    assert (election.outcome, election.choice) == (CoverOutcome.REPLACE, "other")
+
+
+def test_an_undersized_cover_is_cured_by_a_copy_that_clears_the_floor() -> None:
+    edge = COVER_FLOOR_SHORT_EDGE
+    small = (edge - 1, round((edge - 1) * 1.5))
+    copy = _candidate(
+        "copy", (edge, edge * 3 // 2), identity=EDITION, measures=_measures()
+    )
+    other = _candidate("other", PORTRAIT, measures=_measures(art=1))
+    assert same_art(_measures(), small, _measures(), (copy.width, copy.height))
+
+    election = _elect((copy, other), current=_current(small, measures=_measures()))
+    assert election.issues == (CoverIssue.BELOW_FLOOR,)
+    assert (election.outcome, election.choice) == (CoverOutcome.REPLACE, "copy")
+
+    foreign = _elect(
+        (copy, other),
+        current=_current(small, measures=_measures(), non_english_edition=True),
+    )
+    assert foreign.issues == (CoverIssue.BELOW_FLOOR, CoverIssue.EDITION_LANGUAGE)
+    assert foreign.choice == "other"
+
+
+def test_square_art_under_the_floor_never_keeps_portrait_art_out() -> None:
+    small = COVER_FLOOR_SHORT_EDGE - 1
+    election = _elect(
+        (_candidate("portrait", (1000, 1500)),),
+        medium="audiobook",
+        current=_current((small, small)),
+    )
+
+    assert election.excluded == ()
+    assert election.issues == (CoverIssue.BELOW_FLOOR,)
+    assert (election.outcome, election.choice) == (CoverOutcome.REPLACE, "portrait")
+
+
 def test_the_order_keeps_adr_0059_without_its_portrait_sane_step() -> None:
     election = _elect(
         (
@@ -692,6 +784,8 @@ def test_the_result_does_not_depend_on_candidate_order() -> None:
         lambda: CurrentCover("current", WORK, readable=False, width=1, height=1),
         lambda: CurrentCover("current", WORK, readable=False, non_english_edition=True),
         lambda: CurrentCover("current", "unverified", readable=True, width=1, height=1),
+        lambda: _candidate("x", PORTRAIT, identity=["verified_work_match"]),  # type: ignore[arg-type]  # reason: proves the exact-type check
+        lambda: CurrentCover("current", {}, readable=True, width=1, height=1),  # type: ignore[arg-type]  # reason: as above
     ],
     ids=[
         "short_phash",
@@ -709,6 +803,8 @@ def test_the_result_does_not_depend_on_candidate_order() -> None:
         "unreadable_with_size",
         "unreadable_language",
         "current_identity",
+        "list_identity",
+        "object_identity",
     ],
 )
 def test_malformed_values_are_refused(build: Callable[[], object]) -> None:
