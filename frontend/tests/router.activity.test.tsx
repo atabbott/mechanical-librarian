@@ -1586,6 +1586,104 @@ describe('Activity route', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
+  describe('a transitions retry hands focus to what replaced it (#1742)', () => {
+    const transitionId = 'effect_plan_' + 'a'.repeat(64)
+    const page = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        event_id: `transition-${String(from + index + 1)}`,
+        occurred_at: from + index + 1,
+        sequence: from + index + 1,
+        state: 'planned',
+        failure: null,
+      }))
+    const render = async (getActivityTransitions: ReviewHttp['getActivityTransitions']) => {
+      const user = userEvent.setup()
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () =>
+          activity({ events: [{ event_id: 'lifecycle', transition_id: transitionId }] }),
+        ),
+        getActivityTransitions: vi.fn(getActivityTransitions),
+      }
+      renderRoute('/activity', http)
+      await user.click(await screen.findByRole('button', { name: /^Details for /u }))
+      return user
+    }
+
+    it.each(['mismatch', 'success'] as const)(
+      'moves focus after the recorded transitions Try again meets a %s',
+      async (outcome) => {
+        let reads = 0
+        const user = await render(async () => {
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { events: page(0, 3), has_more: false }
+        })
+        const alert = await screen.findByRole('alert')
+        await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+        const target =
+          outcome === 'mismatch'
+            ? await screen.findByRole('button', { name: 'Reload the current application' })
+            : await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+        await waitFor(() => expect(target).toHaveFocus())
+        expect(document.body).not.toHaveFocus()
+      },
+    )
+
+    it('keeps Load more transitions focusable while it reads', async () => {
+      let release: () => void = () => undefined
+      let moreReads = 0
+      const user = await render(async (_eventId, afterSequence) => {
+        if (afterSequence === undefined) return { events: page(0, 20), has_more: true }
+        moreReads += 1
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return { events: page(20, 5), has_more: false }
+      })
+      const more = await screen.findByRole('button', { name: 'Load more transitions' })
+      await user.click(more)
+      const loading = await screen.findByRole('button', { name: 'Loading transitions…' })
+      expect(loading).toBe(more)
+      expect(loading).not.toBeDisabled()
+      expect(loading).toHaveAttribute('aria-disabled', 'true')
+      expect(loading).toHaveFocus()
+      // A press while it reads is ignored.
+      await user.click(loading)
+      expect(moreReads).toBe(1)
+      await act(async () => release())
+    })
+
+    it.each(['mismatch', 'last page'] as const)(
+      'moves focus after the more transitions Try again meets a %s',
+      async (outcome) => {
+        let more = 0
+        const user = await render(async (_eventId, afterSequence) => {
+          if (afterSequence === undefined) return { events: page(0, 20), has_more: true }
+          more += 1
+          if (more === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { events: page(20, 5), has_more: false }
+        })
+        await user.click(await screen.findByRole('button', { name: 'Load more transitions' }))
+        const alert = await screen.findByRole('alert')
+        await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+        if (outcome === 'mismatch') {
+          const reload = await screen.findByRole('button', {
+            name: 'Reload the current application',
+          })
+          await waitFor(() => expect(reload).toHaveFocus())
+        } else {
+          const list = screen.getByRole('list', { name: 'Recorded lifecycle transitions' })
+          await waitFor(() => expect(list.querySelectorAll('li')).toHaveLength(25))
+          await waitFor(() => expect(list.querySelectorAll('li')[20]).toHaveFocus())
+        }
+        expect(document.body).not.toHaveFocus()
+      },
+    )
+  })
+
   it('reaches every bounded lifecycle transition and recovers a disclosure read', async () => {
     const user = userEvent.setup()
     const transitions = Array.from({ length: 25 }, (_, index) => ({
