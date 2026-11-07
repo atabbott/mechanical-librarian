@@ -1249,12 +1249,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         {
                             "authority": "none",
                             "dispositions": dispositions,
-                            "kind": "shadow_preview_recorded",
+                            "kind": "preview_recorded",
                             "occurred_at": evaluated_at,
                             "origin": "policy_preview",
                             "outcome_set_id": row[0],
                             "review_case_id": review_case_id,
-                            "schema_version": "shadow-preview-history-event-v1",
+                            "schema_version": "preview-history-event-v1",
                         },
                     )
                 )

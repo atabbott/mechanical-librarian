@@ -240,7 +240,7 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
                 "automatic_decision_recorded",
                 "automatic_prepared",
                 "human_decision_recorded",
-                "shadow_preview_recorded",
+                "preview_recorded",
             }
 
             library_page_2 = client.get("/api/v1/library?lens=all&cursor=page-2")

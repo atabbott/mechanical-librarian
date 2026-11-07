@@ -6528,7 +6528,9 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             )
             assert api_field["automatic_decision"] == projected["automatic_decision"]
             assert api_field["proposed_values"] == projected["proposed_values"]
-            sample = client.get("/api/v1/metadata-policy/shadow/outcomes?limit=20")
+            sample = client.get(
+                "/api/v1/metadata-policy/preview-mode/outcomes?limit=20"
+            )
             assert sample.status_code == 200
             assert sample.json() == app.state.review_application.policy.shadow_sample(
                 20

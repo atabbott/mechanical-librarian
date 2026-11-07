@@ -18,7 +18,7 @@ import type {
   PolicyPreviewView,
   PreparationView,
   ReviewHttp,
-  ShadowPostureView,
+  PreviewPostureView,
 } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, idlePreparation, inertAudiobookQualification, renderRoute } from './fixtures'
@@ -444,8 +444,8 @@ describe('Policy route', () => {
     // Contributor names keeps the ebook answer (#967).
     renderRoute('/policy?section=curation', {
       ...createHttp(),
-      getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-        schema_version: 'shadow-posture-v1',
+      getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
+        schema_version: 'preview-posture-v1',
         posture: 'preview',
         authority: 'none',
         can_leave_preview: false,
@@ -2153,8 +2153,8 @@ it('keeps explicit off until the owner chooses its representation and review mod
   const command = vi.spyOn(http, 'policyCommand')
   renderRoute('/policy?section=unsupported', {
     ...http,
-    getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-      schema_version: 'shadow-posture-v1',
+    getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
+      schema_version: 'preview-posture-v1',
       posture: 'preview',
       authority: 'none',
       can_leave_preview: false,
@@ -2337,8 +2337,8 @@ it('keeps a refused Automatic confirmation as nothing changed', async () => {
   const user = userEvent.setup()
   const http: ReviewHttp = {
     ...createHttp(),
-    getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-      schema_version: 'shadow-posture-v1',
+    getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
+      schema_version: 'preview-posture-v1',
       posture: 'preview',
       authority: 'none',
       can_leave_preview: false,
@@ -2355,7 +2355,7 @@ it('keeps a refused Automatic confirmation as nothing changed', async () => {
   await user.click(screen.getByRole('button', { name: 'Turn on Automatic' }))
 
   expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
-  expect(http.policyCommand).toHaveBeenCalledWith('shadow/confirm-automatic', undefined)
+  expect(http.policyCommand).toHaveBeenCalledWith('preview-mode/confirm-automatic', undefined)
 })
 
 it('names a provider-consensus title suspension by its destination (#1286)', async () => {

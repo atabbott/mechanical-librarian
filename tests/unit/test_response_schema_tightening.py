@@ -309,14 +309,14 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
     ),
     (
         "S50",
-        "_HistoryShadowItem",
+        "_HistoryPreviewItem",
         "/properties/dispositions/propertyNames",
         "enum",
         shadow_outcome._DISPOSITIONS,
     ),
     (
         "S51",
-        "_HistoryShadowItem",
+        "_HistoryPreviewItem",
         "/properties/dispositions/additionalProperties",
         "minimum",
         0,
@@ -325,7 +325,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S52", component, "/properties/occurred_at", keyword, value)
         for component in (
             "_HistoryDecisionItem",
-            "_HistoryShadowItem",
+            "_HistoryPreviewItem",
             "_HistoryAutomaticItem",
             "_HistoryCoverItem",
             "_HistoryDescriptionItem",
@@ -617,7 +617,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._ProviderOutcome, "lane_kind", "identity", "literal_error"),
     (app._MediaHealthObservation, "tracks", [-1], "greater_than_equal"),
     (app._HistoryTransitionItem, "kind", "invented", "literal_error"),
-    (app._HistoryShadowItem, "dispositions", {"approve": 1}, "literal_error"),
+    (app._HistoryPreviewItem, "dispositions", {"approve": 1}, "literal_error"),
     (app._HistoryDecisionItem, "occurred_at", 8_640_000_000_001, "less_than_equal"),
     (app._HistoryAutomaticItem, "destination", "cover_art", "literal_error"),
     (app._HistoryCoverItem, "occurred_at", -1, "greater_than_equal"),
