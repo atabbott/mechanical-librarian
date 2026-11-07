@@ -15,7 +15,8 @@ publication: together they establish what merging actually proves.
 Everything else is reference, read when the work reaches it and not before.
 [Security and threat model](docs/architecture/security.md) is the authority for
 any change touching credentials, network access, parsers, AI inputs, writes,
-backups, authentication, or upgrades.
+backups, authentication, or upgrades. [DESIGN.md](DESIGN.md) is the authority
+for anything the owner sees, and its Voice section for every word they read.
 [Delivery and merging](docs/development/slice-delivery.md) governs how a change
 is delivered and merged; GitHub milestones hold what is planned.
 [Dependencies](docs/development/dependencies.md),
