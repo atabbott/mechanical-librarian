@@ -15,7 +15,7 @@ uv run python scripts/cold_start_report.py \
 ```
 
 It writes nothing, can run at any time, and prints one
-`cold-start-report-v7` JSON document.
+`cold-start-report-v8` JSON document.
 
 - `--mount-root NAME=PATH` (optional, repeatable) maps a configured mount to a
   host path, because the configuration records container paths; without it
@@ -54,7 +54,7 @@ Each library carries these blocks, defined fully in the script's docstrings.
 | `automatic_decision_corroboration` | Automatic decisions by corroborating provider sources (`0`, `1`, `2`, `3_plus`). |
 | `automatic_decisions` | Persisted automatic decisions on current cases, per destination and `outcome`. |
 | `audiobook_dispatch` | How each audiobook report's lanes ended, by kind, provider class, Audible ladder depth, runtime `band` and `near_miss`. |
-| `audiobook_outcomes` | Audiobook reports split into `recording_admitted`, `work_only` and `evidence_only`; `hardcover_witness` counts what Hardcover's audio editions say about each ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)); `companion` counts reports whose item holds an EPUB (`reports`, `unreadable`), and how that EPUB was used: `isbn_lane_kept_book`, `linked_edition`, `title_alternative`, `work_fallback`, `recording_admitted` for those whose recording was admitted by any route, and `linked_recording_admitted` for those whose recording was admitted while an ASIN lane kept a product the companion's book linked (#1468). |
+| `audiobook_outcomes` | Audiobook reports split into `recording_admitted`, `work_only` and `evidence_only`; `hardcover_witness` counts what Hardcover's audio editions say about each ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)); `companion` counts reports whose item holds an EPUB (`reports`, `unreadable`), and how that EPUB was used: `isbn_lane_kept_book`, `linked_edition`, `title_alternative`, `work_fallback`, and `recording_admitted` for those whose recording was admitted by any route (#1468); `recording_admission_bases` counts, library-wide, the reports a stated runtime admitted a recording for by how it was found: `target` on the audiobook's own title and authors, otherwise `companion_isbn_work`, `companion_work`, `companion_title`, `path_leaf` or `title_tag`, the route the owner is told of; a report whose read names no route, because a product was kept on the target or none was left once the carried edition's precedence applied, counts as `target` (#1723). |
 | `audiobook_cover_reads` | Audiobookshelf cover read states; `without_read` counts reports with none. |
 | `dispatches` | Initial, retry and replayed provider requests, per item and per provider, and `never_dispatched`. |
 

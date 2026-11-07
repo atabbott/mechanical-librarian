@@ -18,6 +18,12 @@ records the report itself bound to the work (positives) or to another work
 interval. Rows rank by actionable fields (blocked fields with something the
 loosened rule could admit) times that lower limit.
 
+Every decision-level (alternative-control) row also splits its controls and
+its pick measure by destination and by medium (#1744), and classes its
+actionable fields: tied, decidable, contaminated, no right-work alternative or
+single alternative. ``--breakdown GATE`` renders one such row's split as an
+extra Markdown section.
+
 Attention per case (#1310) is read under each snapshot's own source: a child
 ``python -I`` process imports only that revision's tree and composes the
 per-case query from its own ``review_sql`` fragments, so no attention
@@ -36,7 +42,7 @@ Usage:
         --source-root LABEL SCRATCH/src-REV \
         [--source-report LABEL /copy/cold-start-report.json] \
         [--snapshot ...] [--repository CHECKOUT] [--format json|markdown] \
-        [--follow-on GATE=ISSUE ...]
+        [--follow-on GATE=ISSUE ...] [--breakdown GATE]
 """
 
 from __future__ import annotations
@@ -50,7 +56,7 @@ import subprocess
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Literal, NoReturn, TextIO, cast
 from urllib.parse import quote
@@ -1060,6 +1066,7 @@ CATALOGUE: tuple[Gate, ...] = (
         # A cover's competing_evidence is _cover_result's multi-candidate
         # branch, which cover election (C1) governs, not value comparison.
         _reason({"competing_evidence"}, _ALL - _COVER),
+        disposition="kept (#1744)",
     ),
     Gate(
         "T2",
@@ -1313,11 +1320,10 @@ _STATUS_TEXT: dict[str, str] = {
 
 
 @dataclass(slots=True)
-class Tally:
+class Split:
+    """Field counts for a row, or for one destination or medium of it (#1744)."""
+
     fields: int = 0
-    works: int = 0
-    by_destination: Counter[str] = field(default_factory=Counter)
-    by_medium: Counter[str] = field(default_factory=Counter)
     true_positive: int = 0
     false_positive: int = 0
     unlabelled: int = 0
@@ -1325,15 +1331,42 @@ class Tally:
     unreached: int = 0
     # blocked fields the loosened rule has something to admit for
     actionable: int = 0
-    # fields with two or more alternatives where exactly one alternative's
-    # evidence is bound to this work and clean (the controls decide) ...
+    # Decision-level rows only: every actionable field falls in exactly one of
+    # the next five classes. Fields with two or more alternatives where exactly
+    # one alternative's evidence is bound to this work and clean (the controls
+    # decide) ...
     decidable: int = 0
     # ... and of those, the fields where the lowest-identifier pick is it
     pick_agrees: int = 0
     # fields where two or more alternatives are bound to this work
     tied: int = 0
+    # fields where no alternative is clean, but one's evidence reaches this
+    # work's records together with another work's
+    contaminated: int = 0
+    # fields where no alternative's evidence reaches this work's records
+    no_right_work: int = 0
+    # fields that kept one alternative: nothing competes with it
+    single_alternative: int = 0
+    # actionable fields whose pick preserves the current value
+    pick_preserves: int = 0
+
+    def add(self, other: Split) -> None:
+        for item in fields(Split):
+            setattr(
+                self, item.name, getattr(self, item.name) + getattr(other, item.name)
+            )
+
+
+@dataclass(slots=True)
+class Tally(Split):
+    works: int = 0
+    by_destination: Counter[str] = field(default_factory=Counter)
+    by_medium: Counter[str] = field(default_factory=Counter)
     # blocked fields competing on a destination a later election decides
     election_fields: int = 0
+    # decision-level rows only: the same counts per destination and per medium
+    destinations: dict[str, Split] = field(default_factory=dict)
+    media: dict[str, Split] = field(default_factory=dict)
 
 
 # Elections that decide competing values on these destinations on main. A
@@ -1405,26 +1438,40 @@ def _pick(result: Mapping[str, object]) -> dict[str, object]:
     )
 
 
-def _right_work(case: Case, alternative: Mapping[str, object]) -> bool:
-    """Whether the alternative's evidence is bound to this work and only to it."""
-    labels = {
+def _evidence_labels(case: Case, alternative: Mapping[str, object]) -> set[str]:
+    return {
         case.labels.get(record, "unlabelled")
         for record in case.resolve(_list(alternative.get("evidence_references")))
     }
+
+
+def _right_work(case: Case, alternative: Mapping[str, object]) -> bool:
+    """Whether the alternative's evidence is bound to this work and only to it."""
+    labels = _evidence_labels(case, alternative)
     return "positive" in labels and "negative" not in labels
 
 
-def _classify_pick(case: Case, result: Mapping[str, object], tally: Tally) -> None:
+def _classify_pick(case: Case, result: Mapping[str, object], counts: Split) -> None:
+    """Count one actionable field into exactly one class, and the pick's effect."""
     alternatives = _dicts(result.get("alternatives"))
+    if not alternatives:
+        return
+    if _pick(result).get("assessment") == "preserves_target":
+        counts.pick_preserves += 1
     if len(alternatives) < 2:
+        counts.single_alternative += 1
         return
     right = [item for item in alternatives if _right_work(case, item)]
     if len(right) == 1:
-        tally.decidable += 1
+        counts.decidable += 1
         if _pick(result) is right[0]:
-            tally.pick_agrees += 1
+            counts.pick_agrees += 1
     elif len(right) > 1:
-        tally.tied += 1
+        counts.tied += 1
+    elif any("positive" in _evidence_labels(case, item) for item in alternatives):
+        counts.contaminated += 1
+    else:
+        counts.no_right_work += 1
 
 
 def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
@@ -1455,27 +1502,28 @@ def _tally_case(
         return
     tally.works += 1
     for destination in blocked:
-        tally.fields += 1
+        one = Split(fields=1, actionable=int(_actionable(gate, case, destination)))
         tally.by_destination[destination] += 1
         tally.by_medium[case.medium] += 1
-        if _actionable(gate, case, destination):
-            tally.actionable += 1
         result = case.results.get(destination, {})
         if destination in elections and _COMPETING in _list(result.get("reasons")):
             tally.election_fields += 1
-        if gate.control == "alternative":
-            _classify_pick(case, result, tally)
         reached = _reached(gate, case, destination)
         if not reached and gate.control in ("alternative", "cover_candidates"):
-            tally.unreached += 1
+            one.unreached = 1
         for record in reached:
             label = case.labels.get(record, "unlabelled")
             if label == "positive":
-                tally.true_positive += 1
+                one.true_positive += 1
             elif label == "negative":
-                tally.false_positive += 1
+                one.false_positive += 1
             else:
-                tally.unlabelled += 1
+                one.unlabelled += 1
+        if gate.control == "alternative":
+            _classify_pick(case, result, one)
+            tally.destinations.setdefault(destination, Split()).add(one)
+            tally.media.setdefault(case.medium, Split()).add(one)
+        tally.add(one)
 
 
 def wilson_lower_bound(successes: int, total: int, z: float = WILSON_Z) -> float | None:
@@ -1815,10 +1863,9 @@ def _row(
     follow_ons: Mapping[str, int],
 ) -> dict[str, object]:
     per_snapshot: list[dict[str, object]] = []
-    pooled_tp = pooled_fp = pooled_unlabelled = 0
-    pooled_decidable = pooled_agrees = pooled_tied = 0
-    fields_blocked = 0
-    fields_actionable = 0
+    pooled = Split()
+    destinations: dict[str, Split] = {}
+    media: dict[str, Split] = {}
     measurable_anywhere = False
     estimable_control = gate.control in ("alternative", "cover_candidates")
     picks = gate.control == "alternative"
@@ -1828,14 +1875,13 @@ def _row(
         if status == "measurable":
             measurable_anywhere = True
             tally = tallies[gate.gate_id]
-            fields_blocked += tally.fields
-            fields_actionable += tally.actionable
-            pooled_tp += tally.true_positive
-            pooled_fp += tally.false_positive
-            pooled_unlabelled += tally.unlabelled
-            pooled_decidable += tally.decidable
-            pooled_agrees += tally.pick_agrees
-            pooled_tied += tally.tied
+            pooled.add(tally)
+            for pool, split in (
+                (destinations, tally.destinations),
+                (media, tally.media),
+            ):
+                for key, counts in split.items():
+                    pool.setdefault(key, Split()).add(counts)
             entry.update(
                 {
                     "fields": tally.fields,
@@ -1856,11 +1902,13 @@ def _row(
                 }
             )
         per_snapshot.append(entry)
-    total = pooled_tp + pooled_fp
-    precision = pooled_tp / total if estimable_control and total else None
-    lower = wilson_lower_bound(pooled_tp, total) if estimable_control else None
+    total = pooled.true_positive + pooled.false_positive
+    precision = pooled.true_positive / total if estimable_control and total else None
+    lower = (
+        wilson_lower_bound(pooled.true_positive, total) if estimable_control else None
+    )
     score = (
-        round(fields_actionable * lower, 1)
+        round(pooled.actionable * lower, 1)
         if gate.ranked and measurable_anywhere and lower is not None
         else 0.0
     )
@@ -1881,33 +1929,69 @@ def _row(
         "control": gate.control,
         "snapshots": per_snapshot,
         "pooled": {
-            "true_positive": pooled_tp,
-            "false_positive": pooled_fp,
-            "unlabelled": pooled_unlabelled,
+            "true_positive": pooled.true_positive,
+            "false_positive": pooled.false_positive,
+            "unlabelled": pooled.unlabelled,
             "n": total,
             "precision": None if precision is None else round(precision, 4),
             "wilson_lower_bound": None if lower is None else round(lower, 4),
         },
-        "pick": {
-            "decidable_fields": pooled_decidable,
-            "pick_agrees": pooled_agrees,
-            "tied_fields": pooled_tied,
-            "rate": round(pooled_agrees / pooled_decidable, 4)
-            if pooled_decidable
-            else None,
-            "wilson_lower_bound": None
-            if (bound := wilson_lower_bound(pooled_agrees, pooled_decidable)) is None
-            else round(bound, 4),
+        "pick": _pick_entry(pooled) if picks and measurable_anywhere else None,
+        "split": {
+            "by_destination": {
+                key: _split_entry(counts)
+                for key, counts in sorted(destinations.items())
+            },
+            "by_medium": {
+                key: _split_entry(counts) for key, counts in sorted(media.items())
+            },
+            "total": _split_entry(pooled),
         }
         if picks and measurable_anywhere
         else None,
-        "ceiling": fields_blocked,
-        "actionable": fields_actionable if estimable_control else None,
+        "ceiling": pooled.fields,
+        "actionable": pooled.actionable if estimable_control else None,
         "score": score,
         "ranked": gate.ranked,
         "note": gate.unranked_note,
         "disposition": disposition,
         "proposed_follow_on": False,
+    }
+
+
+def _pick_entry(counts: Split) -> dict[str, object]:
+    """The pick measure and the field classes of a decision-level row or split."""
+    bound = wilson_lower_bound(counts.pick_agrees, counts.decidable)
+    return {
+        "decidable_fields": counts.decidable,
+        "pick_agrees": counts.pick_agrees,
+        "tied_fields": counts.tied,
+        "contaminated_fields": counts.contaminated,
+        "no_right_work_fields": counts.no_right_work,
+        "single_alternative_fields": counts.single_alternative,
+        "pick_preserves": counts.pick_preserves,
+        "rate": round(counts.pick_agrees / counts.decidable, 4)
+        if counts.decidable
+        else None,
+        "wilson_lower_bound": None if bound is None else round(bound, 4),
+    }
+
+
+def _split_entry(counts: Split) -> dict[str, object]:
+    """One destination's or medium's controls and pick measure (#1744)."""
+    total = counts.true_positive + counts.false_positive
+    lower = wilson_lower_bound(counts.true_positive, total)
+    return {
+        "fields": counts.fields,
+        "actionable_fields": counts.actionable,
+        "true_positive": counts.true_positive,
+        "false_positive": counts.false_positive,
+        "unlabelled": counts.unlabelled,
+        "unreached_fields": counts.unreached,
+        "n": total,
+        "precision": round(counts.true_positive / total, 4) if total else None,
+        "wilson_lower_bound": None if lower is None else round(lower, 4),
+        "pick": _pick_entry(counts),
     }
 
 
@@ -1999,6 +2083,13 @@ _STRUCTURAL_KEYS = frozenset(
         "pick",
         "rate",
         "note",
+        "split",
+        "total",
+        "contaminated_fields",
+        "no_right_work_fields",
+        "single_alternative_fields",
+        "pick_preserves",
+        "breakdown",
     }
 )
 
@@ -2058,6 +2149,7 @@ def build_ledger(
     ancestry: Ancestry,
     attention: AttentionReader,
     follow_ons: Mapping[str, int] | None = None,
+    breakdown: str | None = None,
 ) -> dict[str, object]:
     measured: list[tuple[str, Mapping[str, Status], Mapping[str, Tally]]] = []
     snapshot_entries: list[dict[str, object]] = []
@@ -2103,6 +2195,7 @@ def build_ledger(
         "wilson_z": WILSON_Z,
         "snapshots": snapshot_entries,
         "rows": rows,
+        "breakdown": breakdown,
     }
     _closed(ledger, closed_vocabulary(item.label for item in inputs))
     return ledger
@@ -2145,25 +2238,65 @@ def _controls(row: Mapping[str, object]) -> str:
     return "; ".join(parts) + f"; n = {pooled['n']}"
 
 
-def _precision(row: Mapping[str, object]) -> str:
-    pooled = _dict(row["pooled"])
-    if pooled["precision"] is None or pooled["wilson_lower_bound"] is None:
+def _precision(estimate: Mapping[str, object]) -> str:
+    if estimate["precision"] is None or estimate["wilson_lower_bound"] is None:
         return "not estimable"
-    return f"{cast('float', pooled['precision']):.3f} ({cast('float', pooled['wilson_lower_bound']):.3f})"
+    return f"{cast('float', estimate['precision']):.3f} ({cast('float', estimate['wilson_lower_bound']):.3f})"
+
+
+def _agreement(pick: Mapping[str, object]) -> str | None:
+    if pick["rate"] is None or pick["wilson_lower_bound"] is None:
+        return None
+    return (
+        f"{_number(pick['pick_agrees'])}/{_number(pick['decidable_fields'])} "
+        f"{cast('float', pick['rate']):.3f} "
+        f"({cast('float', pick['wilson_lower_bound']):.3f})"
+    )
 
 
 def _pick_cell(row: Mapping[str, object]) -> str:
     pick = row.get("pick")
     if not isinstance(pick, dict):
         return "not applicable"
-    tied = f"; {_number(pick['tied_fields'])} tied"
-    if pick["rate"] is None or pick["wilson_lower_bound"] is None:
-        return f"not estimable (0 decidable{tied})"
-    return (
-        f"{_number(pick['pick_agrees'])}/{_number(pick['decidable_fields'])} "
-        f"{cast('float', pick['rate']):.3f} "
-        f"({cast('float', pick['wilson_lower_bound']):.3f}){tied}"
-    )
+    agreement = _agreement(cast("dict[str, object]", pick))
+    tied = f"{_number(pick['tied_fields'])} tied"
+    if agreement is None:
+        return f"not estimable (0 decidable; {tied})"
+    return f"{agreement}; {tied}"
+
+
+def _breakdown_section(row: Mapping[str, object]) -> list[str]:
+    """One decision-level row's controls and field classes per destination and medium."""
+    lines = ["", f"### Breakdown: {row['gate_id']}", ""]
+    split = row.get("split")
+    if not isinstance(split, dict):
+        return [*lines, "Not measurable on either snapshot."]
+    lines += [
+        "| Split | Fields | Actionable | TP/FP/unlabelled | Reach no record | "
+        "Identity precision (lower) | Pick agrees (lower) | Tied | Contaminated | "
+        "No right-work | Single | Pick preserves |",
+        "|" + "---|" * 12,
+    ]
+    groups = [
+        (key if basis == "destination" else f"medium: {key}", _dict(entry))
+        for basis in ("destination", "medium")
+        for key, entry in _dict(_dict(split)[f"by_{basis}"]).items()
+    ]
+    groups.append(("total", _dict(_dict(split)["total"])))
+    for name, entry in groups:
+        pick = _dict(entry["pick"])
+        lines.append(
+            f"| {name} | {_number(entry['fields'])} | "
+            f"{_number(entry['actionable_fields'])} | "
+            f"{entry['true_positive']}/{entry['false_positive']}/{entry['unlabelled']} | "
+            f"{_number(entry['unreached_fields'])} | {_precision(entry)} | "
+            f"{_agreement(pick) or 'not estimable'} | {_number(pick['tied_fields'])} | "
+            f"{_number(pick['contaminated_fields'])} | "
+            f"{_number(pick['no_right_work_fields'])} | "
+            f"{_number(pick['single_alternative_fields'])} | "
+            f"{_number(pick['pick_preserves'])} |"
+        )
+    return lines
 
 
 def render_markdown(ledger: Mapping[str, object]) -> str:
@@ -2203,7 +2336,7 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
             ),
             cast("str", row["loosened_rule"]),
             _controls(row),
-            _precision(row),
+            _precision(_dict(row["pooled"])),
             _pick_cell(row),
             f"{cast('float', row['score']):,.1f}",
             disposition,
@@ -2248,6 +2381,14 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
     for entry in snapshots:
         for reason, count in _dict(_dict(entry["attention"])["by_reason"]).items():
             lines.append(f"| {entry['label']} | {reason} | {_number(count)} |")
+    if ledger.get("breakdown") is not None:
+        lines += _breakdown_section(
+            next(
+                row
+                for row in cast("list[dict[str, object]]", ledger["rows"])
+                if row["gate_id"] == ledger["breakdown"]
+            )
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -2293,6 +2434,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--follow-on", action="append", default=[], metavar="GATE=ISSUE"
     )
+    parser.add_argument("--breakdown", default=None, metavar="GATE")
     return parser.parse_args(argv)
 
 
@@ -2327,6 +2469,14 @@ def _inputs(arguments: argparse.Namespace) -> list[SnapshotInput]:
     return inputs
 
 
+def _breakdown_gate(value: str) -> Gate:
+    """The decision-level gate a breakdown is asked for; refuses anything else."""
+    for gate in CATALOGUE:
+        if gate.gate_id == value and gate.control == "alternative":
+            return gate
+    raise Refusal("invalid breakdown")
+
+
 def _follow_ons(values: Sequence[str]) -> dict[str, int]:
     parsed: dict[str, int] = {}
     for value in values:
@@ -2355,6 +2505,9 @@ def main(
         arguments = _parse(argv)
         inputs = _inputs(arguments)
         follow_ons = _follow_ons(cast("list[str]", arguments.follow_on))
+        breakdown = cast("str | None", arguments.breakdown)
+        if breakdown is not None:
+            _breakdown_gate(breakdown)
         for item in inputs:
             if not item.database.is_file():
                 raise Refusal("database unreadable")
@@ -2365,6 +2518,7 @@ def main(
             else ancestry,
             attention=child_attention if attention is None else attention,
             follow_ons=follow_ons,
+            breakdown=breakdown,
         )
         if arguments.format == "markdown":
             rendered = render_markdown(ledger)

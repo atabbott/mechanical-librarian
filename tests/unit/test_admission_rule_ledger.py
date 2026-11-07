@@ -522,16 +522,23 @@ def test_output_is_aggregate_only(tmp_path: Path, profile: Profile) -> None:
                 tmp_path,
                 "--format",
                 output_format,
+                "--breakdown",
+                "T1",
             ),
             attention=lambda _root, _db: probe,
         )
         assert code == 0, stderr
         assert _SENTINEL not in stdout and _SENTINEL not in stderr
         assert str(tmp_path) not in stdout
+    assert "### Breakdown: T1" in stdout
     code, stdout, _ = _run(
-        _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path),
+        _arguments(
+            [("snap-a", database, EBOOK_REVISION)], tmp_path, "--breakdown", "T1"
+        ),
         attention=lambda _root, _db: probe,
     )
+    assert json.loads(stdout)["breakdown"] == "T1"
+    assert _rows(stdout)["T1"]["split"] is not None
     keys: list[str] = []
     values: list[str] = []
     _strings(json.loads(stdout), keys, values)
@@ -792,10 +799,15 @@ def test_controls_give_precision_and_the_wilson_lower_limit(tmp_path: Path) -> N
 
 
 def _competing(
-    fixture: Fixture, destination: str, cited: Sequence[tuple[str, str]]
+    fixture: Fixture,
+    destination: str,
+    cited: Sequence[tuple[str, str | Sequence[str]]],
+    *,
+    preserves: str | None = None,
 ) -> None:
-    """A competing result whose alternatives are (alternative_id, claim) pairs,
-    stored in the given order."""
+    """A competing result whose alternatives are (alternative_id, claims) pairs,
+    stored in the given order; ``preserves`` names the alternative that keeps
+    the current value."""
     fixture.results.append(
         {
             "destination": destination,
@@ -805,9 +817,14 @@ def _competing(
                 {
                     "alternative_id": alternative,
                     "value": fixture.text(),
-                    "evidence_references": [claim],
+                    "evidence_references": [claims]
+                    if isinstance(claims, str)
+                    else list(claims),
+                    "assessment": "preserves_target"
+                    if alternative == preserves
+                    else "replaces_target",
                 }
-                for alternative, claim in cited
+                for alternative, claims in cited
             ],
             "selected_alternative_id": None,
         }
@@ -1599,3 +1616,288 @@ def test_an_unexpected_failure_is_a_fixed_line(tmp_path: Path) -> None:
     )
     assert (code, stdout) == (2, "")
     assert stderr == "admission-rule-ledger: replay failed\n"
+
+
+# --- Per-destination and field-level breakdown (#1744) ---------------------
+
+
+class _Records:
+    """Claims citing records the controls label positive, negative or unlabelled."""
+
+    def __init__(self, fixture: Fixture) -> None:
+        self.fixture = fixture
+        self.bound, self.unbound = fixture.provider(), fixture.provider()
+        self.work = fixture.text()
+        accepted, self.accepted = fixture.record(self.bound, self.work)
+        fixture.bind(self.bound, accepted, self.work, "accepted")
+
+    def positive(self) -> str:
+        return self.fixture.record(self.bound, self.work)[1]
+
+    def negative(self) -> str:
+        return self.fixture.record(self.bound, self.fixture.text())[1]
+
+    def unlabelled(self) -> str:
+        return self.fixture.record(self.unbound, self.fixture.text())[1]
+
+
+def _split(row: Mapping[str, object], basis: str) -> dict[str, dict[str, object]]:
+    split = cast("dict[str, object]", row["split"])
+    return cast("dict[str, dict[str, object]]", split[f"by_{basis}"])
+
+
+def test_destination_and_medium_splits_sum_to_the_row(tmp_path: Path) -> None:
+    text = Sentinels()
+    ebook, audio = Fixture(text, "v26-like"), Fixture(text, "v57-like")
+    for fixture in (ebook, audio):
+        records = _Records(fixture)
+        _competing(
+            fixture,
+            "title",
+            [
+                ("alternative_a", records.negative()),
+                ("alternative_b", records.accepted),
+            ],
+        )
+        _competing(
+            fixture,
+            "series",
+            [
+                ("alternative_a", [records.positive(), records.unlabelled()]),
+                ("alternative_b", records.negative()),
+            ],
+        )
+    # A field whose pick reaches no record, on the ebook side only.
+    _competing(
+        ebook, "description", [("alternative_a", "local_" + text()), ("b", text())]
+    )
+    snapshots = [
+        (
+            "ebook",
+            _database(tmp_path / "e.sqlite3", "v26-like", [ebook]),
+            EBOOK_REVISION,
+        ),
+        (
+            "audio",
+            _database(tmp_path / "a.sqlite3", "v57-like", [audio]),
+            AUDIO_REVISION,
+        ),
+    ]
+    code, stdout, _ = _run(_arguments(snapshots, tmp_path))
+    assert code == 0
+    row = _rows(stdout)["T1"]
+    pooled = cast("dict[str, object]", row["pooled"])
+    entries = [_snapshot(row, label) for label, _database_path, _revision in snapshots]
+    for basis in ("destination", "medium"):
+        split = _split(row, basis).values()
+        for key, total in (
+            ("true_positive", pooled["true_positive"]),
+            ("false_positive", pooled["false_positive"]),
+            ("unlabelled", pooled["unlabelled"]),
+            ("fields", row["ceiling"]),
+            ("actionable_fields", row["actionable"]),
+            (
+                "unreached_fields",
+                sum(cast("int", e["unreached_fields"]) for e in entries),
+            ),
+        ):
+            assert sum(cast("int", entry[key]) for entry in split) == total, key
+    assert set(_split(row, "medium")) == {"audiobook", "ebook"}
+    destinations = _split(row, "destination")
+    # Title picks the wrong work on both snapshots; series the accepted one,
+    # plus the unlabelled record on the same alternative.
+    assert (
+        destinations["title"]["true_positive"],
+        destinations["title"]["false_positive"],
+    ) == (0, 2)
+    assert destinations["title"]["precision"] == 0.0
+    assert destinations["title"]["wilson_lower_bound"] == 0.0
+    series = destinations["series"]
+    assert (
+        series["true_positive"],
+        series["false_positive"],
+        series["unlabelled"],
+    ) == (
+        2,
+        0,
+        2,
+    )
+    assert series["precision"] == 1.0
+    assert series["wilson_lower_bound"] == round(_wilson_reference(2, 2), 4)
+    assert destinations["description"]["n"] == 0
+    assert destinations["description"]["precision"] is None
+    assert destinations["description"]["wilson_lower_bound"] is None
+    assert destinations["description"]["unreached_fields"] == 1
+    total = cast("dict[str, object]", cast("dict[str, object]", row["split"])["total"])
+    assert total["pick"] == row["pick"]
+    # Only decision-level rows split.
+    assert _rows(stdout)["C1"]["split"] is None and _rows(stdout)["X1"]["split"] is None
+    assert json.loads(stdout)["breakdown"] is None
+    markdown = _run([*_arguments(snapshots, tmp_path), "--format", "markdown"])[1]
+    assert "### Breakdown" not in markdown
+
+
+def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    records = _Records(fixture)
+    # Tied: two clean right-work alternatives.
+    _competing(
+        fixture,
+        "description",
+        [("alternative_a", records.accepted), ("alternative_b", records.positive())],
+    )
+    # Decidable, and the lowest identifier is the right-work one, although
+    # it is stored second.
+    _competing(
+        fixture,
+        "series",
+        [("alternative_b", records.negative()), ("alternative_a", records.positive())],
+    )
+    # Decidable against the pick: the right-work alternative sorts last.
+    _competing(
+        fixture,
+        "title",
+        [
+            ("alternative_a", records.unlabelled()),
+            ("alternative_b", records.positive()),
+        ],
+    )
+    # Contaminated: the only right-work evidence shares an alternative with
+    # another work's record.
+    _competing(
+        fixture,
+        "authors",
+        [
+            ("alternative_a", [records.positive(), records.negative()]),
+            ("alternative_b", records.unlabelled()),
+        ],
+    )
+    # No right-work alternative: local and unlabelled evidence only.
+    _competing(
+        fixture,
+        "genres",
+        [("alternative_a", "local_" + text()), ("alternative_b", records.unlabelled())],
+    )
+    # No right-work alternative either: another work's and unlabelled records.
+    _competing(
+        fixture,
+        "subtitle",
+        [
+            ("alternative_a", records.negative()),
+            ("alternative_b", records.unlabelled()),
+        ],
+    )
+    # Single alternative: nothing competes with it, and it keeps the value.
+    _competing(
+        fixture,
+        "tags",
+        [("alternative_a", records.positive())],
+        preserves="alternative_a",
+    )
+    # Blocked but not actionable: no alternative at all.
+    fixture.result("asin", "unresolved_choice", ["competing_evidence"])
+    database = _database(tmp_path / "c.sqlite3", "v26-like", [fixture])
+    arguments = _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
+    code, stdout, _ = _run([*arguments, "--breakdown", "T1"])
+    assert code == 0
+    row = _rows(stdout)["T1"]
+    pick = cast("dict[str, object]", row["pick"])
+    classes = (
+        "decidable_fields",
+        "tied_fields",
+        "contaminated_fields",
+        "no_right_work_fields",
+        "single_alternative_fields",
+    )
+    assert [pick[key] for key in classes] == [2, 1, 1, 2, 1]
+    assert (row["ceiling"], row["actionable"]) == (8, 7)
+    assert sum(cast("int", pick[key]) for key in classes) == row["actionable"]
+    assert (pick["pick_agrees"], pick["rate"]) == (1, 0.5)
+    destinations = _split(row, "destination")
+    expected = {
+        "description": "tied_fields",
+        "series": "decidable_fields",
+        "title": "decidable_fields",
+        "authors": "contaminated_fields",
+        "genres": "no_right_work_fields",
+        "subtitle": "no_right_work_fields",
+        "tags": "single_alternative_fields",
+    }
+    for destination, key in expected.items():
+        counts = cast("dict[str, object]", destinations[destination]["pick"])
+        assert [counts[name] for name in classes] == [
+            int(name == key) for name in classes
+        ], destination
+    assert cast("dict[str, object]", destinations["series"]["pick"])["pick_agrees"] == 1
+    assert cast("dict[str, object]", destinations["title"]["pick"])["pick_agrees"] == 0
+    assert destinations["asin"]["actionable_fields"] == 0
+    # A single alternative's pick is that alternative, so it can preserve too.
+    assert (
+        cast("dict[str, object]", destinations["tags"]["pick"])["pick_preserves"] == 1
+    )
+    assert pick["pick_preserves"] == 1
+    markdown = _run([*arguments, "--format", "markdown", "--breakdown", "T1"])[1]
+    lines = markdown.splitlines()
+    assert lines[lines.index("### Breakdown: T1") + 4 :][:2] == [
+        "| asin | 1 | 0 | 0/0/0 | 1 | not estimable | not estimable "
+        "| 0 | 0 | 0 | 0 | 0 |",
+        "| authors | 1 | 1 | 1/1/0 | 0 | 0.500 (0.095) | not estimable "
+        "| 0 | 1 | 0 | 0 | 0 |",
+    ]
+    assert lines[-2:] == [
+        "| medium: ebook | 8 | 7 | 4/2/1 | 2 | 0.667 (0.300) | 1/2 0.500 (0.095) "
+        "| 1 | 1 | 2 | 1 | 1 |",
+        "| total | 8 | 7 | 4/2/1 | 2 | 0.667 (0.300) | 1/2 0.500 (0.095) "
+        "| 1 | 1 | 2 | 1 | 1 |",
+    ]
+    # T1's decision is recorded: it is kept, not proposed again.
+    ranked = next(line for line in lines if line.split(" | ")[1:2] == ["T1"])
+    assert ranked.endswith("| kept (#1744) |")
+    assert row["proposed_follow_on"] is False
+
+
+def test_pick_preservation_follows_the_lowest_identifier(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    # The preserving alternative is stored second but has the lowest identifier.
+    _competing(
+        fixture,
+        "title",
+        [("alternative_b", text()), ("alternative_a", text())],
+        preserves="alternative_a",
+    )
+    # Stored first, but not the pick: admitting the pick would change the value.
+    _competing(
+        fixture,
+        "series",
+        [("alternative_b", text()), ("alternative_a", text())],
+        preserves="alternative_b",
+    )
+    database = _database(tmp_path / "p.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    row = _rows(stdout)["T1"]
+    assert cast("dict[str, object]", row["pick"])["pick_preserves"] == 1
+    destinations = _split(row, "destination")
+    assert (
+        cast("dict[str, object]", destinations["title"]["pick"])["pick_preserves"] == 1
+    )
+    assert (
+        cast("dict[str, object]", destinations["series"]["pick"])["pick_preserves"] == 0
+    )
+
+
+def test_a_breakdown_needs_a_decision_level_gate(tmp_path: Path) -> None:
+    # The value is refused before any database is opened, and is never echoed.
+    for value in ("C1", "X1", "Z9", f"{_SENTINEL}0003"):
+        code, stdout, stderr = _run(
+            _arguments(
+                [("snap-a", tmp_path / "missing.sqlite3", EBOOK_REVISION)],
+                tmp_path,
+                "--breakdown",
+                value,
+            )
+        )
+        assert (code, stdout) == (2, "")
+        assert stderr == "admission-rule-ledger: invalid breakdown\n"
