@@ -497,6 +497,42 @@ segmented Off/On choices, dropdowns, native disclosures, change-count badges
 and the inset finish tray are the same components on both pages. Each page
 keeps its own draft, validation and save.
 
+## Voice
+
+Copy is as long as it takes to explain the core idea or use case and no
+longer. It is plain: no emphasis, no explanation the reader did not need, no
+promotion. The first-run walkthrough explains the product; a screen does not
+explain itself through labels. Sub-headings are rare.
+
+**The Walkthrough Rule.** A screen carries short labels and the values the
+owner acts on. Explanation lives in the first-run walkthrough and the product
+pages, not in a caption under every control. A line that reads the same on
+every card, an empty section shown anyway, or a reminder on every field that
+writes are protected is removed.
+
+**The One Heading Rule.** One screen, one heading. A sub-heading divides
+sections the reader moves between; none sits directly under the heading, and
+none stands without sibling sections. Headings and labels are short and in
+sentence case.
+
+**The Owner's Words Rule.** Everything the owner reads is in the owner's
+words: the value, the source, the book, the cover. No field code, internal
+state, raw unit or design-document term reaches a screen. A state is said in
+words, once, and in the same words on every page.
+
+**The Plain Sentence Rule.** One idea per sentence, in the active voice with
+the real actor. An error names what failed and the one thing to do. No
+reassurance the reader did not ask for, no hedging around a fact the product
+knows, no lists of three for rhythm, no "not X but Y", no em dashes, no bold
+for emphasis, no exclamation marks, and no promotional vocabulary (seamless,
+powerful, effortless, unlock, leverage). "Learns" and "taught" are said only
+of the parts that are, the taste profile and the reviewer; the rest says what
+it did.
+
+The working checklist a change is held to, with the full vocabulary and the
+scan to run before review, is the development controls' `product-copy.md`,
+linked into a checkout as `.codex/product-copy.md`.
+
 ## Do's and Don'ts
 
 ### Do:
