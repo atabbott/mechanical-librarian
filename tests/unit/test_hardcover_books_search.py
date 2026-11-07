@@ -7,6 +7,7 @@ the typed failures.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import cast
 
 import httpx
@@ -196,7 +197,7 @@ def test_an_audiobook_book_still_states_its_first_publication() -> None:
     )
     plan = work_plan(local_runtime_claim())
     observation = provider.observe(
-        plan.__class__(**{**_fields(plan), "audio": single_track_audio_facts()})
+        replace(plan, audio=single_track_audio_facts())
     ).observation
 
     assert any(
@@ -204,10 +205,6 @@ def test_an_audiobook_book_still_states_its_first_publication() -> None:
         for candidate in observation.candidates
         for claim in candidate.claims
     )
-
-
-def _fields(plan: object) -> dict[str, object]:
-    return {name: getattr(plan, name) for name in plan.__slots__}  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
@@ -242,10 +239,11 @@ def test_seven_books_collapsing_to_five_are_kept_with_only_their_covers() -> Non
     assert [f"hardcover-work-{index:010d}" for index in range(1, 6)] == [
         candidate.identity for candidate in result.observation.candidates
     ]
+    provenances = [descriptor.provenance for descriptor in result.cover_descriptors]
     assert {f"hardcover-work-{index:010d}" for index in range(1, 6)} == {
-        cast("object", descriptor.provenance).work_identity  # type: ignore[attr-defined]
-        for descriptor in result.cover_descriptors
+        provenance.work_identity for provenance in provenances if provenance
     }
+    assert all(provenances)
 
 
 @pytest.mark.parametrize(
