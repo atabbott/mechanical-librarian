@@ -656,6 +656,8 @@ class Gate:
     medium: str | None = None
     disposition: str = "kept"
     ranked: bool = True
+    # Why a row that would score is kept out of the ranking.
+    unranked_note: str | None = None
 
 
 _NOT_RECORDED = "not recorded"
@@ -1188,6 +1190,12 @@ CATALOGUE: tuple[Gate, ...] = (
                 "no_eligible_action",
             },
         ),
+        # The signal catches the rich-preview path's collapsed refusals on
+        # 1203cf58 and fields the proposal set already refused, and misses
+        # proposed fields the decision abstained on (#1745 findings 1-2).
+        ranked=False,
+        unranked_note="mis-scoped: counts upstream refusals and pre-election rich "
+        "destinations; re-measured under #1745",
     ),
     Gate(
         "A7",
@@ -1897,6 +1905,7 @@ def _row(
         "actionable": fields_actionable if estimable_control else None,
         "score": score,
         "ranked": gate.ranked,
+        "note": gate.unranked_note,
         "disposition": disposition,
         "proposed_follow_on": False,
     }
@@ -1989,6 +1998,7 @@ _STRUCTURAL_KEYS = frozenset(
         "election_fields",
         "pick",
         "rate",
+        "note",
     }
 )
 
@@ -2014,6 +2024,8 @@ def closed_vocabulary(labels: Iterable[str]) -> frozenset[str]:
             gate.loosened,
             gate.disposition,
         }
+        if gate.unranked_note is not None:
+            strings.add(gate.unranked_note)
     strings |= set(labels)
     return frozenset(strings)
 
@@ -2176,9 +2188,11 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
         if row["proposed_follow_on"] and not disposition.startswith("filed as #"):
             disposition = "proposed follow-on"
         cells = [
-            "out of scope" if rank is None else str(rank),
+            str(rank)
+            if rank is not None
+            else ("unranked" if row["note"] else "out of scope"),
             cast("str", row["gate_id"]),
-            cast("str", row["gate"]),
+            cast("str", row["gate"]) + (f" ({row['note']})" if row["note"] else ""),
             cast("str", row["destinations"])
             + ("" if row["medium"] is None else f" ({row['medium']} only)"),
             cast("str", row["origin"]),

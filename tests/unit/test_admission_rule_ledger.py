@@ -479,6 +479,11 @@ def _test_vocabulary(labels: Sequence[str]) -> set[str]:
     vocabulary |= {"audiobook", "ebook", "other_reason", "automatic_safety_suspended"}
     vocabulary |= {"measurable", "gate_postdates_source", "block_not_retained"}
     vocabulary |= {"cause_not_separable", "informational"}
+    vocabulary |= {
+        gate.unranked_note
+        for gate in ledger.CATALOGUE
+        if gate.unranked_note is not None
+    }
     vocabulary |= {"alternative", "cover_candidates", "not_identity", "not_retained"}
     vocabulary |= {ledger.LEDGER_SCHEMA, *labels}
     for gate in ledger.CATALOGUE:
@@ -897,6 +902,35 @@ def test_fields_a_later_election_decides_are_marked_stale(tmp_path: Path) -> Non
     # Every election is in the source by default: nothing is marked.
     default = _snapshot(_rows(_run(arguments)[1])["T1"], "snap-a")
     assert default["election_fields"] == 0
+
+
+def test_a6_is_kept_out_of_the_ranking_as_mis_scoped(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, claim = fixture.record(provider, work)
+    fixture.bind(provider, accepted, work, "accepted")
+    fixture.result("title", "defer", ["insufficient_support"], [claim])
+    fixture.abstain("title", "insufficient_support")
+    database = _database(tmp_path / "m.sqlite3", "v26-like", [fixture])
+    arguments = _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
+    code, stdout, _ = _run(arguments)
+    assert code == 0
+    row = _rows(stdout)["A6"]
+    # Measured as before, but neither scored, ranked nor proposed.
+    assert _snapshot(row, "snap-a")["true_positive"] == 1
+    assert (row["rank"], row["score"], row["proposed_follow_on"]) == (None, 0.0, False)
+    assert row["note"] == (
+        "mis-scoped: counts upstream refusals and pre-election rich destinations; "
+        "re-measured under #1745"
+    )
+    markdown = _run([*arguments, "--format", "markdown"])[1]
+    assert (
+        "| unranked | A6 | Automatic-decision abstention (mis-scoped: counts "
+        "upstream refusals and pre-election rich destinations; re-measured under "
+        "#1745) |"
+    ) in markdown
 
 
 def test_wilson_lower_bound_matches_the_closed_form() -> None:
@@ -1449,7 +1483,12 @@ def test_every_catalogue_row_has_an_origin_and_a_full_introducing_commit() -> No
         assert len(gate.introduced_in) == 40 and int(gate.introduced_in, 16) >= 0
         assert gate.introduced_in[:8] in gate.origin
         assert gate.loosened and gate.destinations
-    assert [gate.gate_id for gate in ledger.CATALOGUE if not gate.ranked] == ["A7"]
+    unranked = [gate.gate_id for gate in ledger.CATALOGUE if not gate.ranked]
+    assert unranked == ["A6", "A7"]
+    # Every unranked row but the out-of-scope one says why.
+    assert [
+        gate.gate_id for gate in ledger.CATALOGUE if gate.unranked_note is not None
+    ] == ["A6"]
 
 
 def test_mirrored_bounds_match_the_product() -> None:
