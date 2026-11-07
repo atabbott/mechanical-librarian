@@ -102,7 +102,10 @@ leave them.
   class: decidable, tied, contaminated (no alternative is clean, but one's
   evidence reaches a positive record), no right-work alternative, or single
   (nothing competes). "Pick preserves" counts fields whose pick keeps the
-  current value.
+  current value. Automatic pick/keep/other counts blocked fields that one of
+  the snapshot's automatic decisions already took or kept, under that
+  snapshot's source and policy. Each snapshot's total appears in its row as
+  "decided automatically". It does not change the score.
 - **Identity precision only.** The measure says whether the loosened rule
   admits evidence for the right work, not whether a value is well formed. A row
   whose risk is not identity (text bounds, checksums, cover source admission)
@@ -166,20 +169,20 @@ The origin ADRs are
 
 | Rank | ID | Gate | Fields | Origin | Origin corpus / precision | ebook-744 fields / works | audiobook-1294 fields / works | Loosened rule | Controls TP/FP/unlabelled | Identity precision (Wilson 95% lower) | Pick agrees where controls decide (Wilson 95% lower) | Score | Disposition |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | T1 | More than one value group is an unresolved choice (equality by closed title and complete-creator agreement) | every compared destination except cover | #351 (d35215e8); ADR-0020; equality forms #414 (3586e1be), #815 (ce76c7fd), ADR-0018 | not recorded | 1,141 / 856 (1,141 actionable; 759 stale: later election) | 191 / 125 (191 actionable) | admit the lowest-identifier of the competing values | ebook-744 773/80/500 (321 fields reach no record); audiobook-1294 47/0/160 (44 fields reach no record); n = 900 | 0.911 (0.891) | 247/480 0.515 (0.470); 246 tied | 1,186.5 | kept (#1744) |
+| 1 | T1 | More than one value group is an unresolved choice (equality by closed title and complete-creator agreement) | every compared destination except cover | #351 (d35215e8); ADR-0020; equality forms #414 (3586e1be), #815 (ce76c7fd), ADR-0018 | not recorded | 1,141 / 856 (1,141 actionable; 759 stale: later election; 152 decided automatically) | 191 / 125 (191 actionable; 87 decided automatically) | admit the lowest-identifier of the competing values | ebook-744 773/80/500 (321 fields reach no record); audiobook-1294 47/0/160 (44 fields reach no record); n = 900 | 0.911 (0.891) | 247/480 0.515 (0.470); 246 tied | 1,186.5 | kept (#1744) |
 | 2 | A3 | Coherent bibliographic combination | title, subtitle and series | #429 (cef7644a); ADR-0021; same-name series #1099 (79dbbf4c); withheld titles #1497 (ce3a172d) | not recorded | 327 / 162 (327 actionable) | 6 / 3 (6 actionable) | none: the lowest-identifier rule is rejected; closed relaxations in the A3 analysis | ebook-744 392/13/243 (32 fields reach no record); audiobook-1294 2/0/14 (0 fields reach no record); n = 407 | 0.968 (0.946) | 12/20 0.600 (0.387); 7 tied | 315.1 | kept (ADR-0097) |
 | 3 | C1 | Classifier outcomes (unknown, conflict block election) | cover | #577 (f7e974d0), #588 (40a97a54); ADR-0046, ADR-0047, ADR-0059 | 96/99 exact agreement; plausible 18/21, none falsely plausible | 385 / 385 (385 actionable) | 97 / 97 (97 actionable) | admit unknown and conflict cover candidates | ebook-744 42/45/343 (39 fields reach no record); audiobook-1294 0/0/24 (76 fields reach no record); n = 87 | 0.483 (0.381) | not applicable | 183.5 | already filed as #1355 |
-| 4 | A2 | Independent corroboration required | every proposable destination | #351 (d35215e8) | as A1 | 50 / 49 (50 actionable) | 85 / 62 (85 actionable) | admit the lowest-identifier single-source alternative | ebook-744 37/0/10 (20 fields reach no record); audiobook-1294 8/0/79 (0 fields reach no record); n = 45 | 1.000 (0.921) | not estimable (0 decidable; 0 tied) | 124.4 | filed as #1747 |
+| 4 | A2 | Independent corroboration required | a populated field other than genres, tags and description; narrators also when empty | #351 (d35215e8); narrators #966 (0ce358e9), #1642 (5558b7b3) | as A1 | 50 / 49 (50 actionable; 20 decided automatically) | 85 / 62 (85 actionable; 76 decided automatically) | admit the only alternative, which one source states | ebook-744 37/0/10 (20 fields reach no record); audiobook-1294 8/0/79 (0 fields reach no record); n = 45 | 1.000 (0.921) | not estimable (0 decidable; 0 tied) | 124.4 | kept (#1747) |
 | 5 | C2 | Plausible only for ISBN-search records | cover | #577 (f7e974d0), #588 (40a97a54) | not measured at origin | 134 / 134 (134 actionable) | 19 / 19 (19 actionable) | admit unknown cover candidates reached only by work search | ebook-744 36/4/94 (0 fields reach no record); audiobook-1294 0/0/20 (0 fields reach no record); n = 40 | 0.900 (0.769) | not applicable | 117.7 | already filed as #1380 |
-| 6 | I3 | Local ISBN acceptance classes; anything else stays unresolved | isbn | #333 (f1dd28f5) | accepted-evidence precision 38/40 (95%), recall 41/46 | 524 / 524 (25 actionable; 25 stale: later election) | 36 / 36 (0 actionable) | admit the lowest-identifier alternative of an unresolved local ISBN | ebook-744 19/0/0 (511 fields reach no record); audiobook-1294 0/0/0 (36 fields reach no record); n = 19 | 1.000 (0.832) | 6/6 1.000 (0.610); 7 tied | 20.8 | already filed as #1356 (closed) |
+| 6 | I3 | Local ISBN acceptance classes; anything else stays unresolved | isbn | #333 (f1dd28f5) | accepted-evidence precision 38/40 (95%), recall 41/46 | 524 / 524 (25 actionable; 25 stale: later election; 98 decided automatically) | 36 / 36 (0 actionable; 2 decided automatically) | admit the lowest-identifier alternative of an unresolved local ISBN | ebook-744 19/0/0 (511 fields reach no record); audiobook-1294 0/0/0 (36 fields reach no record); n = 19 | 1.000 (0.832) | 6/6 1.000 (0.610); 7 tied | 20.8 | already filed as #1356 (closed) |
 | 7 | W9 | Series identity match for series fill | series | #998 (dc8de6f5); ADR-0070 | not recorded | not measurable on that snapshot: gate postdates source | 5 / 5 (4 actionable) | admit the lowest-identifier series alternative | audiobook-1294 2/0/4 (1 field reaches no record); n = 2 | 1.000 (0.342) | 1/1 1.000 (0.206); 0 tied | 1.4 | filed as #1748 |
 | 8 | X1 | Candidate limit (an over-limit lane keeps no candidate) | every destination its provider lanes feed | #297 (f564e598) | not recorded | 5,841 / 677 (181 stale: later election) | 371 / 35 | keep the first five candidates of an over-limit lane | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | kept |
-| 9 | A1 | Replace only with positive preservation evidence | every proposable destination | #351 (d35215e8) | 54 exact replays, zero measured systemic false positives | 1,756 / 1,281 (0 actionable) | 310 / 142 (0 actionable) | admit the lowest-identifier alternative without preservation evidence | ebook-744 0/0/0 (1,756 fields reach no record); audiobook-1294 0/0/0 (310 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
+| 9 | A1 | Replace only with positive preservation evidence | every proposable destination | #351 (d35215e8) | 54 exact replays, zero measured systemic false positives | 1,756 / 1,281 (0 actionable; 489 decided automatically) | 310 / 142 (0 actionable; 37 decided automatically) | admit the lowest-identifier alternative without preservation evidence | ebook-744 0/0/0 (1,756 fields reach no record); audiobook-1294 0/0/0 (310 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 10 | X5 | Redundant publication context | publication destinations | #818 (e28584e6) | not recorded | 1,761 / 1,761 (0 actionable) | 138 / 138 (0 actionable) | admit the lowest-identifier redundant publication value | ebook-744 0/0/0 (1,761 fields reach no record); audiobook-1294 0/0/0 (138 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 11 | A5 | Cover gallery incomplete | cover | #351 (d35215e8) | not recorded | 1,411 / 1,411 (0 actionable) | 4 / 4 (3 actionable) | admit the lowest-identifier cover of an incomplete gallery | ebook-744 0/0/0 (1,411 fields reach no record); audiobook-1294 0/0/3 (1 field reaches no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 12 | B1 | Local text bounds and unsafe-text sentinels | the destinations the bounded local claim feeds | #296 (ef49d6c2), 102548c0 | not recorded | 898 / 889 | 57 / 57 | admit oversized or unsafe local text | not estimable from natural controls | not estimable | not applicable | 0.0 | kept |
 | 13 | C4 | Cover source admission (media type, byte bound, declaration validity) | cover | #298 (cbd2a835) | not recorded | 670 / 670 | 6 / 6 | admit a refused, truncated, oversized or undeclared cover source | not estimable from natural controls | not estimable | not applicable | 0.0 | already filed as #1357 (closed) |
-| 14 | I4 | Provider ISBN family applicability (print, ambiguous, unknown scope) | isbn | #388 (999edaf0) | not recorded | 499 / 499 (0 actionable) | 3 / 3 (0 actionable) | admit the lowest-identifier alternative where only a print, ambiguous or unknown-scope local ISBN exists | ebook-744 0/0/0 (499 fields reach no record); audiobook-1294 0/0/0 (3 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
+| 14 | I4 | Provider ISBN family applicability (print, ambiguous, unknown scope) | isbn | #388 (999edaf0) | not recorded | 499 / 499 (0 actionable; 93 decided automatically) | 3 / 3 (0 actionable; 2 decided automatically) | admit the lowest-identifier alternative where only a print, ambiguous or unknown-scope local ISBN exists | ebook-744 0/0/0 (499 fields reach no record); audiobook-1294 0/0/0 (3 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 15 | W1 | Exact work-identity admission (title and creators, transformation rules, decoration fail-closed) | every destination its provider lanes feed | #870/#916 (a0958ac2); diagnostic #1268 (a4315d6a); ADR-0018, ADR-0067, ADR-0068 | 89-case adjudicated corpus, zero false admissions | not measurable on that snapshot: gate postdates source | 354 / 32 | admit the refused work candidates | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | already filed as #1355 |
 | 16 | I7 | Audiobook ISBN refusal | isbn (audiobook only) | #1059 (ed997a7f) | not recorded | not measurable on that snapshot: gate postdates source | 103 / 103 (0 actionable) | admit the lowest-identifier audiobook ISBN without a recording association | audiobook-1294 0/0/0 (103 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 17 | I1 | ISBN form and checksum | isbn | #291 (b48aae94); identifier_validity_invalid #816 (e3df6c21) | not recorded | 84 / 84 (41 stale: later election) | 13 / 13 | admit an ISBN whose form or checksum fails | not estimable from natural controls | not estimable | not applicable | 0.0 | kept |
@@ -189,7 +192,7 @@ The origin ADRs are
 | 21 | C5 | Audiobook cover withheld | cover (audiobook only) | #985 (0ce358e9) | not recorded | not measurable on that snapshot: gate postdates source | 6 / 6 (0 actionable) | admit the lowest-identifier withheld audiobook cover | audiobook-1294 0/0/0 (6 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 22 | I6 | Competing ISBNs need a verified manifestation | isbn | #979 (8056f4d3); ADR-0080 | development 42/42, sealed holdout 30/30 | not measurable on that snapshot: gate postdates source | 3 / 3 (0 actionable) | admit the lowest-identifier competing ISBN | audiobook-1294 0/0/0 (3 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 23 | T2 | Evidence-led title identity key and ISBN-title material conflict | title | #1040 (c1963d97); ADR-0075 | constructor controls 50/50 and 75/75 | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the lowest-identifier title despite a material ISBN-title conflict | audiobook-1294 0/0/2 (0 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
-| 24 | T3 | Decoration-equivalence election and its dissent reasons | title, subtitle | #981 (c843ea7f); ADR-0067 | sealed 89-case admission corpus, 0 false admissions; 1,988-report archived replay | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the lowest-identifier title despite decoration dissent | audiobook-1294 0/0/1 (0 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
+| 24 | T3 | Decoration-equivalence election and its dissent reasons | title, subtitle | #981 (c843ea7f); ADR-0067 | sealed 89-case admission corpus, 0 false admissions; 1,988-report archived replay | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable; 1 decided automatically) | admit the lowest-identifier title despite decoration dissent | audiobook-1294 0/0/1 (0 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 25 | W5 | Target-work representation for work-scope fields | work-scope destinations | #972 (da35e6df) | 7 correct decisions per tag option, 100%, 49 works | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the lowest-identifier alternative without target-work proof | audiobook-1294 0/0/0 (1 field reaches no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | already filed as #1355 |
 | 26 | A4 | Date refinement and year conflict need corroboration | publishedDate, publishedYear | #351 (d35215e8), #415 (0d0021d1); ADR-0019 | not recorded | 0 / 0 (0 actionable) | 0 / 0 (0 actionable) | admit the lowest-identifier uncorroborated date | ebook-744 0/0/0 (0 fields reach no record); audiobook-1294 0/0/0 (0 fields reach no record); n = 0 | not estimable | not estimable (0 decidable; 0 tied) | 0.0 | kept |
 | 27 | B2 | Discovery fan-out caps (8 ISBN lanes, 9 queries, 4 ASIN lanes) | every destination its provider lanes feed | #388 (999edaf0), #916, #948 | not recorded | 0 / 0 | 0 / 0 | query every distinct local ISBN family | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | kept |
@@ -209,7 +212,7 @@ The origin ADRs are
 | 41 | X3 | Wrong-language, control-number and untidy-author value exclusion | language-bearing and creator destinations | #1497/#1560 (ce3a172d) | not recorded | not measurable on that snapshot: gate postdates source | not measurable on that snapshot: gate postdates source | admit the excluded values | not estimable: the refused records were not retained | not estimable | not applicable | 0.0 | kept |
 | unranked | A6a | Automatic-decision abstention, scalar engine (insufficient support, no eligible action) (kept by ADR-0092; its own cost is the proposable population in the A6 analysis) | the source's scalar decision destinations | #442 (593e6198); ADR-0036; re-scoped #1745, ADR-0092 | development 159/172 correct at 100% precision; sealed 12/12 and 43/43 | 80 / 80 (80 actionable; 80 stale: later election) | 5 / 5 (5 actionable) | none: the lowest-identifier rule is rejected; closed relaxations in the A6 analysis | ebook-744 41/0/58 (35 fields reach no record); audiobook-1294 1/0/9 (1 field reaches no record); n = 42 | 1.000 (0.916) | 17/23 0.739 (0.535); 1 tied | 0.0 | kept (ADR-0092) |
 | unranked | A6b | Rich-preview no-eligible-action leftover (leftover of rich-preview refusals outside their own reasons) | rich-preview destinations | #442 (593e6198); #1745, ADR-0092 | not recorded | not separable on that snapshot: rich-preview refusals collapsed | 0 / 0 | none: refile under the rich-preview reason's own row | not estimable from natural controls | not estimable | not applicable | 0.0 | kept (ADR-0092) |
-| out of scope | A7 | Owner-reserved and write-safety holds | subjective and unusable-target destinations | #351 (d35215e8) | not applicable | 372 / 337 (220 actionable) | 145 / 100 (142 actionable) | none: listed for completeness | ebook-744 178/9/140 (156 fields reach no record); audiobook-1294 76/0/94 (10 fields reach no record); n = 263 | 0.966 (0.936) | 6/8 0.750 (0.409); 0 tied | 0.0 | kept (out of scope) |
+| out of scope | A7 | Owner-reserved and write-safety holds | subjective and unusable-target destinations | #351 (d35215e8) | not applicable | 372 / 337 (220 actionable; 220 decided automatically) | 145 / 100 (142 actionable; 80 decided automatically) | none: listed for completeness | ebook-744 178/9/140 (156 fields reach no record); audiobook-1294 76/0/94 (10 fields reach no record); n = 263 | 0.966 (0.936) | 6/8 0.750 (0.409); 0 tied | 0.0 | kept (out of scope) |
 
 - ebook-744: source predates #974, #978, #979, #981, #1040.
 - audiobook-1294: source predates no later election.
@@ -274,28 +277,29 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Follow-ons.** Four rows were filed:
-  A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745),
-  A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333),
-  A2 as [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747) (135) and
+- **Follow-ons.** One row is filed:
   W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
-  a measurement task rather than a loosening. #1745 kept the A6 gate
-  (ADR-0092) and its rows are unranked. #1746 kept the A3 gate (ADR-0097).
-  A2 and W9 are the only scored rows still open under a follow-on this
-  ledger filed. T1 was measured under
+  a measurement task rather than a loosening. T1 was measured under
   [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744)
-  (1,332 actionable fields) and kept.
+  (1,332 actionable fields), A6 under
+  [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745)
+  (ADR-0092), A2 under
+  [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747)
+  (135) and A3 under
+  [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746)
+  (333, ADR-0097). All four were kept.
 - **Identity precision is not a case for loosening.** Where the controls can
   decide, the lowest-identifier pick agrees with the one right-work
   alternative in about half the fields: T1 247 of 480 (0.515, lower limit
   0.470), A6a 17 of 23 (0.739, 0.535; unranked), A3 12 of 20 (0.600, 0.387). A2 has no
-  decidable field. `--breakdown T1` splits T1's by destination; no
+  decidable field: each of its fields has one alternative. Of its 135 fields,
+  96 were already decided automatically. `--breakdown T1` splits T1's by destination; no
   destination's lower limit reaches 0.46. Most of T1's ebook fields (759 of 1,141) and all of A6a's
   (80) compete on destinations a later election decides on main, so those
   ceilings are stale.
 - **Dispositions.** `kept` rows stay as they are. `kept (#1744)`,
-  `kept (ADR-0092)` and `kept (ADR-0097)` were decided after measurement
-  under #1744, #1745 and #1746. Rows already covered by an
+  `kept (ADR-0092)`, `kept (#1747)` and `kept (ADR-0097)` were decided after
+  measurement under #1744, #1745, #1747 and #1746. Rows already covered by an
   issue link it: W1, W5 and the cover-identity part of C1 (#1355), I3 (#1356,
   closed after measurement), C4's EPUB `invalid_declaration` part (#1357,
   closed) and C2's work-search records (#1380). A filed follow-on's row gets
@@ -344,7 +348,7 @@ uv run python scripts/admission_rule_ledger.py \
         32360e99c708ea2ac346a7bf4cb157711fd74049 \
     --source-root audiobook-1294 "$SCRATCH/src-32360e99" \
     --source-report audiobook-1294 "$AUDIO/final-report.json" \
-    --follow-on A2=1747 --follow-on W9=1748 \
+    --follow-on W9=1748 \
     --format markdown
 ```
 

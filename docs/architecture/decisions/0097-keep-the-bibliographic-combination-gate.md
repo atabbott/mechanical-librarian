@@ -247,8 +247,8 @@ already qualified as automatic, so a formed combination would act at once.
 
 ### Unrank the row, as for A6
 
-Not taken. A3 is a proposal-set rule like T1, which stayed ranked after
-#1744 kept it. The analysis page carries the corrected cost.
+Not taken. A3 is a proposal-set rule like T1 and A2, which stayed ranked
+after #1744 and #1747 kept them. The analysis page carries the corrected cost.
 
 ### Amend ADR-0092 for rich-preview outcomes
 

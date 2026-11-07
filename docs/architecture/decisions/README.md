@@ -99,4 +99,7 @@ preference; supersede or amend it.
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |
 | [0092](0092-keep-the-automatic-decision-abstention-gate.md) | proposed | Keep the automatic-decision abstention gate and define the would-admit note |
+| [0093](0093-measured-cover-rules-and-current-cover-protection.md) | proposed | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
+| [0094](0094-unconfirmed-current-covers-take-part.md) | proposed | Let an unconfirmed current cover take part in cover election |
+| [0095](0095-learned-cover-taste-profile.md) | proposed | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
 | [0097](0097-keep-the-bibliographic-combination-gate.md) | proposed | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |

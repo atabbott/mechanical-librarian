@@ -844,21 +844,6 @@ class A3Tally:
     )
 
 
-_CASES_SQL = (
-    "SELECT rc.review_case_id,rc.document,mr.document,"
-    "(SELECT shadow.document FROM shadow_decision_outcomes shadow "
-    "WHERE shadow.review_case_id=rc.review_case_id "
-    "ORDER BY shadow.evaluated_at DESC LIMIT 1),"
-    "(SELECT consideration.document FROM current_cover_considerations current_cover "
-    "JOIN cover_considerations consideration "
-    "ON consideration.consideration_id=current_cover.consideration_id "
-    "WHERE current_cover.review_case_id=rc.review_case_id LIMIT 1) "
-    "FROM review_cases rc JOIN metadata_reports mr ON mr.report_id=rc.report_id "
-    "WHERE rc.review_case_id IN (SELECT review_case_id FROM current_review_packages "
-    "WHERE review_case_id IS NOT NULL) ORDER BY rc.review_case_id"
-)
-
-
 def _screen(
     case: ledger.Case,
     destination: str,
@@ -903,7 +888,7 @@ def measure_a3(
                 clauses(item, same_name_rule=probe.same_name_rule)
             )
     try:
-        rows = connection.execute(_CASES_SQL)
+        rows = connection.execute(ledger._CASES_SQL)
         for case_id, case_text, report_text, shadow_text, consideration_text in rows:
             shadow = ledger._document(shadow_text)
             case = ledger._build_case(

@@ -23,6 +23,9 @@ from mechanical_librarian.adapters.persistence.schema import _expected_schema_ob
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
+    CoverDesignation,
+    CoverFinalHost,
+    CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
@@ -53,6 +56,7 @@ def _v26_document(
     missing_work_lineage: bool = False,
     artifact_bearing_cover: bool = False,
     nonartifact_cover: bool = False,
+    open_library_retrieved_cover: bool = False,
     work_lane: bool = False,
 ) -> str:
     report = synthetic_report()
@@ -154,6 +158,24 @@ def _v26_document(
                 CoverSourceState.ABSENT,
             ).to_data()
         ]
+    elif open_library_retrieved_cover:
+        data["covers"] = [
+            CoverSource(
+                cover_source_id(CoverSourceKind.OPEN_LIBRARY, "catalogue:edition-1"),
+                CoverSourceKind.OPEN_LIBRARY,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    b"synthetic original", b"synthetic preview", "image/jpeg", 2, 3
+                ),
+                provenance=CoverProvenance(
+                    "catalogue", CoverDesignation.WORK, "work-1"
+                ),
+                final_host=CoverFinalHost.COVERS_OPEN_LIBRARY,
+            ).to_data()
+        ]
+    for cover in data["covers"]:
+        # v26 predates the closed final-host family (#1752).
+        cover.pop("final_host")
     identity = dict(data)
     identity.pop("report_id")
     data["report_id"] = (
@@ -294,7 +316,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v70"
+    assert report.schema_version == "metadata-report-v71"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -1358,6 +1380,25 @@ def test_script_distinguishes_recovery() -> None:
     assert stderr.getvalue() == "Qualification-state bridge requires recovery.\n"
 
 
+def test_a_v26_retrieved_open_library_cover_is_invalidated_without_a_final_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, backup, output = _paths(tmp_path)
+    _create_source(source, document=_v26_document(open_library_retrieved_cover=True))
+    _accept_synthetic_source_and_target(monkeypatch, source)
+
+    result = bridge.bridge_qualification_state(
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
+    )
+
+    assert result["selectively_invalidated"] == 1
+    with sqlite3.connect(f"file:{output}?mode=ro", uri=True) as connection:
+        report = MetadataReport.from_json(
+            connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
+        )
+    assert report.cover_sources == ()
+
+
 def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1375,6 +1416,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
             provenance=CoverProvenance("inventaire", CoverDesignation.WORK, "work-1"),
         ).to_data()
     ]
+    data["covers"][0].pop("final_host")
     identity = {key: value for key, value in data.items() if key != "report_id"}
     data["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
@@ -1391,7 +1433,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v70"
+    assert report.schema_version == "metadata-report-v71"
 
 
 def test_a_bridged_lane_gains_every_lane_field_its_source_predates(
