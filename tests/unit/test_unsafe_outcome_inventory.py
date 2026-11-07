@@ -268,7 +268,8 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (422, "policy_automatic_unqualified"): "pre-commit",
         (503, "persistence"): "post-commit",
     },
-    # Validation and preview write nothing (`http.ts` `policyCommand`).
+    # Validation and preview write nothing (`http.ts` `policyCommand` for validate,
+    # `previewPolicy` for preview).
     ("POST", "/api/v1/metadata-policy/validate"): {
         **dict.fromkeys(_POLICY_PROBLEM, "no-commit"),
         (422, "policy_validation_is_invalid"): "no-commit",
