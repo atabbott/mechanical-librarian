@@ -261,6 +261,11 @@ def test_an_immaterial_optional_choice_says_why_no_review_is_needed() -> None:
             "Tags are off in your settings, so your tags are left as they are "
             "and no review is needed. You can still choose proposed tags.",
         ),
+        (
+            "single_source",
+            "Only one source suggests this, and nothing else confirms it, so it "
+            "isn't used and no review is needed. You can still choose it.",
+        ),
     ),
 )
 def test_a_choice_the_policy_settles_says_the_value_is_kept(

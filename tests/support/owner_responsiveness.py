@@ -136,6 +136,36 @@ class OwnerResponsivenessFixture:
                     scope=ClaimScope.WORK,
                 )
                 providers = base.providers
+                if not (mixed and index % 5 == 0):
+                    # A provider proposes another title, so the opening
+                    # matter's title is a choice between two sources that asks
+                    # rather than a single-source choice (#1310).
+                    provider = providers[0]
+                    candidate = provider.candidates[0]
+                    providers = (
+                        replace(
+                            provider,
+                            candidates=(
+                                replace(
+                                    candidate,
+                                    claims=(
+                                        *candidate.claims,
+                                        ProviderClaim.create(
+                                            provider=provider.provider,
+                                            candidate=candidate.identity,
+                                            kind=ClaimKind.TITLE,
+                                            value=f"Catalogue record {index:04d}",
+                                            state=FieldState.VALID,
+                                            scope=ClaimScope.WORK,
+                                            applicability="not_applicable",
+                                            raw_order=len(candidate.claims),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        *providers[1:],
+                    )
                 if mixed and index % 5 == 0:
                     provider = providers[0]
                     candidate = provider.candidates[0]

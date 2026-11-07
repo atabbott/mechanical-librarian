@@ -1631,7 +1631,17 @@ def test_sqlite_library_groups_attention_by_current_provider_completeness() -> N
             file=source.file,
             local_claims=source.local_claims,
             local_reasons=source.local_reasons,
-            providers=(ProviderObservation(f"provider-{index}", status),),
+            # The fixture's competing title source keeps the title a choice
+            # that asks; the status lane is what ranks it.
+            providers=tuple(
+                sorted(
+                    (
+                        ProviderObservation(f"provider-{index}", status),
+                        *source.providers,
+                    ),
+                    key=lambda provider: provider.provider,
+                )
+            ),
         )
 
     with tempfile.TemporaryDirectory() as directory:
@@ -1940,16 +1950,26 @@ def test_admitted_preservation_only_sibling_enters_attention_only_as_successor()
     """An admitted case can retain readable non-owner sibling context."""
 
     def revised(titles: tuple[str, ...], revision: str) -> MetadataReport:
-        providers = (
-            ()
-            if not titles
-            else (
-                _bibliographic_source(
-                    "catalogue-a", "edition-1", titles=(), series="One"
+        # A provider proposes another title than the opening matter, so the
+        # title asks in both revisions (#1310).
+        providers = tuple(
+            sorted(
+                (
+                    *_report().providers,
+                    *(
+                        ()
+                        if not titles
+                        else (
+                            _bibliographic_source(
+                                "catalogue-a", "edition-1", titles=(), series="One"
+                            ),
+                            _bibliographic_source(
+                                "catalogue-b", "edition-2", titles=(), series="Two"
+                            ),
+                        )
+                    ),
                 ),
-                _bibliographic_source(
-                    "catalogue-b", "edition-2", titles=(), series="Two"
-                ),
+                key=lambda provider: provider.provider,
             )
         )
         source = _bibliographic_report(
@@ -2238,7 +2258,7 @@ def test_sqlite_complete_library_keeps_current_no_case_and_retired_work() -> Non
             == "retired"
         )
         in_progress = for_item(
-            _report("In-progress report", "7", "8"),
+            _report("In-progress report", "7", "8", competing=False),
             "in-progress-item",
         )
         repository.publish(in_progress, lambda: True)

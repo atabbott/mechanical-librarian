@@ -46,6 +46,7 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
+    _single_source_choice,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
@@ -594,7 +595,12 @@ class FakeReviewRepository:
     def _field_attention(case: ReviewCase, proposal: dict[str, object]) -> bool:
         result = proposal["result"]
         assert isinstance(result, dict)
-        return result["outcome"] == "unresolved_choice" or (
+        # A single-source choice is the owner's to choose but is not queued
+        # (#1310), so the double reads the same shape as the case page.
+        return (
+            result["outcome"] == "unresolved_choice"
+            and not _single_source_choice(proposal)
+        ) or (
             proposal["destination"] in {"title", "subtitle", "series"}
             and any(
                 sibling["result"]["reasons"] == ["no_safe_bibliographic_combination"]
