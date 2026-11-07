@@ -48,9 +48,11 @@ records the decision they support: keep the gate.
   rebuild, and replayed reasons that differ from the stored ones.
 - For each candidate value of an abstained field, the script names the first
   eligibility check it fails. The checks are those of the source's
-  `_candidate_is_eligible`, mirrored clause by clause, in this order: scope,
-  binding, citations, publication, preservation, local support, correlation
-  support, narrator, evidence-led title. Local support (`support_local`) asks
+  `_candidate_is_eligible`, mirrored clause by clause, in this order: degraded
+  value, scope, binding, citations, publication, preservation, local support,
+  correlation support, narrator, evidence-led title. From policy v23 the
+  source refuses a degraded value (`degraded`), such as a narrator credit in
+  the authors field, before any other check. Local support (`support_local`) asks
   whether the value matches the book file's own metadata. Correlation support
   (`support_correlation`) counts the independent providers that agree on it.
   Where no check applies, the table names a state instead. A candidate can pass

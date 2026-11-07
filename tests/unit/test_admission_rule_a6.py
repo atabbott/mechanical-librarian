@@ -215,15 +215,42 @@ def test_candidate_and_field_states_are_not_checks() -> None:
     ]
 
 
-def test_the_checkout_engine_is_mirrored_by_the_v22_table() -> None:
+def test_the_checkout_engine_is_mirrored_by_the_v23_table() -> None:
     # A policy-version bump on main must revisit the mirror (and the
     # relaxations, which run under it).
-    assert a6.table_for(shadow_decision.DECISION_POLICY_VERSION) == "v22"
+    assert a6.table_for(shadow_decision.DECISION_POLICY_VERSION) == "v23"
+    assert a6.table_for("deterministic-shadow-decision-policy-v22") == "v22"
+    assert a6.table_for("deterministic-shadow-decision-policy-v23") == "v23"
     assert a6.table_for("deterministic-shadow-decision-policy-v9") == "v9"
     assert a6.table_for("deterministic-shadow-decision-policy-v12") is None
     # Outside the mirrored range: a later engine is never read as v22.
     assert a6.table_for("deterministic-shadow-decision-policy-v21") is None
     assert a6.table_for("deterministic-shadow-decision-policy-v28") is None
+
+
+def test_a_degraded_candidate_fails_its_own_check_from_v23() -> None:
+    text = Sentinels()
+    # A well-supported narrator credit in the authors field, beside a clean
+    # author with too little support. From v23 the source refuses the credit
+    # as degraded (#1283) before any other check.
+    credit = _work(
+        text,
+        value={"kind": "text_list", "value": ["Read by"]},
+        local=1,
+        correlations=2,
+        eligible=False,
+    )
+    clean = _work(text, local=0, correlations=1, eligible=False)
+    proposal = _proposal(text, "authors", [credit, clean])
+    assert a6.attribute(proposal, "v23") == (
+        ["degraded", "support_correlation"],
+        2,
+        0,
+    )
+    # v22 had no degraded refusal: there the credit passes every check, so a
+    # v22 verdict of eligible agrees and this one would not.
+    assert a6.failing_checks(proposal, credit, "v22", report_only=False) == ()
+    assert "degraded" in a6.VOCABULARY
 
 
 # --- Relaxations ------------------------------------------------------------

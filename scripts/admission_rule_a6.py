@@ -65,8 +65,10 @@ _AUTOMATIC = "automatic"
 _ABSTENTION = "abstention"
 ALTERNATIVE_CLASSES = ("none", "one", "more")
 
-# Named checks of _candidate_is_eligible, in attribution order.
+# Named checks of _candidate_is_eligible, in attribution order. From v23 the
+# source refuses a degraded candidate (#1283) before any other check.
 CHECKS = (
+    "degraded",
     "scope",
     "binding",
     "citations",
@@ -91,7 +93,9 @@ _WORK = frozenset({"title", "authors"})
 _PUBLICATION = "publishedDate"
 _PRECISIONS = frozenset({"year", "month", "day"})
 _ENGINE = re.compile(r"^deterministic-shadow-decision-policy-v([1-9][0-9]{0,2})$")
-Table = Literal["v9", "v22"]
+Table = Literal["v9", "v22", "v23"]
+# v23 is v22 plus the degraded-candidate refusal; everything else is shared.
+_V22_FAMILY: frozenset[str] = frozenset({"v22", "v23"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,9 +483,9 @@ def child_a6(source_root: Path, database: Path) -> A6Probe:
 def table_for(version: str) -> Table | None:
     """The clause table that mirrors a source engine, or None when unmirrored.
 
-    v22 and every later version through the checkout's v27 share one
-    _candidate_is_eligible; v27 adds only the degraded-candidate refusal,
-    which the relaxations apply through the product function.
+    v22 has its own table. v23 added the degraded-candidate refusal (#1283),
+    and every version from v23 through the checkout's v27 shares that one
+    _candidate_is_eligible.
     """
     matched = _ENGINE.match(version)
     if matched is None:
@@ -489,8 +493,10 @@ def table_for(version: str) -> Table | None:
     number = int(matched.group(1))
     if number == 9:
         return "v9"
-    if 22 <= number <= 27:
+    if number == 22:
         return "v22"
+    if 23 <= number <= 27:
+        return "v23"
     return None
 
 
@@ -577,6 +583,8 @@ def failing_checks(
             if work_publication
             else "manifestation_publication"
         )
+        if table == "v23" and degraded(proposal, candidate):
+            failing.add("degraded")
     if candidate.scope != expected_scope or candidate.evidence_scope != expected_scope:
         failing.add("scope")
     if candidate.binding != expected_binding:
@@ -607,14 +615,16 @@ def evaluated(
     proposal: Proposal, candidate: Candidate, table: Table, report_only: bool
 ) -> bool:
     """Whether _eligible_actions runs the eligibility checks on this candidate."""
-    if table == "v22" and language_conflict(proposal):
+    if table in _V22_FAMILY and language_conflict(proposal):
         return False
     if proposal.sufficiency == "keep_current":
         return candidate.assessment == "preserves_target"
     return (
         proposal.sufficiency == "candidate"
         or report_only
-        or (table == "v22" and any(item.recording for item in proposal.candidates))
+        or (
+            table in _V22_FAMILY and any(item.recording for item in proposal.candidates)
+        )
     )
 
 
@@ -649,7 +659,7 @@ def attribute(proposal: Proposal, table: Table | None) -> tuple[list[str], int, 
         return ["no_candidate"], 0, 0
     if table is None:
         return ["not_mirrored"] * len(proposal.candidates), 0, 0
-    if table == "v22" and language_conflict(proposal):
+    if table in _V22_FAMILY and language_conflict(proposal):
         return ["language_conflict"], 0, 0
     states: list[str] = []
     compared = disagreed = 0
@@ -679,6 +689,8 @@ def relax(proposal: Proposal) -> tuple[str, Candidate | None]:
     if language_conflict(proposal):
         return "refused_conflict", None
     report_only = _main_report_only(proposal.destination)
+    # Main's checks without the degraded refusal, which is applied below so
+    # that a degraded candidate reads refused_degraded, not refused_none.
     candidates = [
         candidate
         for candidate in proposal.candidates
