@@ -1495,7 +1495,7 @@ class InspectCurrentReviewCase:
                 else None
             ),
             "review_case_id": review_case_id,
-            "schema_version": "review-case-evidence-v4",
+            "schema_version": "review-case-evidence-v5",
             "source_ledger": _provider_outcomes(provider_lane_facts(report)),
         }
 
@@ -2006,7 +2006,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v4",
+            "schema_version": "review-library-v5",
         }
 
     def attention(

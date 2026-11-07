@@ -1012,7 +1012,7 @@
     "missing_lineage_count": 0,
     "next_cursor": null,
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-evidence-v4",
+    "schema_version": "review-case-evidence-v5",
     "source_ledger": [
       {
         "companion_isbn": false,

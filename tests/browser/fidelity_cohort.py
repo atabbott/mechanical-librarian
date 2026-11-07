@@ -1120,7 +1120,7 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
     start = (page - 1) * 6
     end = start + 6
     return {
-        "schema_version": "review-library-v4",
+        "schema_version": "review-library-v5",
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
@@ -1846,7 +1846,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             cursor = query.get("cursor", [""])[0]
             page = 2 if cursor == "evidence-page-2" else 1
             return {
-                "schema_version": "review-case-evidence-v4",
+                "schema_version": "review-case-evidence-v5",
                 "review_case_id": case_id,
                 "next_cursor": "evidence-page-2" if page == 1 else None,
                 "missing_lineage_count": 2,

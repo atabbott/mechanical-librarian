@@ -401,7 +401,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v4',
+  schema_version: 'review-library-v5',
   ...overrides,
 })
 

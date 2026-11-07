@@ -1684,3 +1684,50 @@ def test_the_build_and_the_replay_read_one_alternative_identity(
         return
     (lane,) = lanes
     assert (lane.title, lane.authors, lane.title_basis) == replayed
+
+
+def test_a_retry_keeps_a_work_lane_value_its_own_copy_never_earned() -> None:
+    """A1 path A through a retry: the asserted lane's copy had no marketplace.
+
+    The merged product holds the carried lane's marketplace evidence, so a
+    WORK lane's value read again off it would turn the asserted lane's `None`
+    into `target`. The unselected lane is carried over byte for byte instead.
+    """
+    claims = _claims()
+    plan = audiobook_carried_plan(_plan(claims, _LEAF_AUDIO))
+    (leaf,) = (lane for lane in plan.lanes if lane.title_basis == "path_leaf")
+    (asserted,) = (
+        lane
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
+    )
+    bare = _candidate("audible", (_CARRIED,), marketplace=False)
+    full = _candidate("audible", (_CARRIED,))
+    results = []
+    for lane in plan.lanes:
+        if lane.identity == leaf.identity:
+            results.append(ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE))
+        elif lane.identity == asserted.identity:
+            results.append(_answer(plan, lane, "audible", "audible_catalog", (bare,)))
+        else:
+            results.append(_answer(plan, lane, "audible", "audible_catalog", (full,)))
+    original = recorded_dispatch(
+        provider_observation("audible", tuple(results), authority="audible_catalog")
+    )
+    source = _report(claims, (original,), _LEAF_AUDIO)
+    before = next(lane for lane in original.lanes if lane.identity == asserted.identity)
+    assert before.candidates[0].admission_basis is None
+    replacement = recorded_dispatch(
+        provider_observation(
+            "audible",
+            (ProviderLaneResult(leaf, ProviderStatus.NO_MATCH),),
+            authority="audible_catalog",
+        )
+    )
+
+    merged = _merged(plan, original, (leaf,), replacement)
+
+    after = next(lane for lane in merged.lanes if lane.identity == asserted.identity)
+    assert before.to_data() == after.to_data()
+    successor = _report(claims, (merged,), _LEAF_AUDIO)
+    assert _derived(_replayed(successor)) == _derived(source)

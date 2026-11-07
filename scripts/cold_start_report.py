@@ -610,7 +610,10 @@ def _admission_basis(report: MetadataReport) -> str | None:
 
     `target` when it was found on the audiobook's own title and authors, the
     alternative route the owner is told of otherwise, and `None` for a report
-    no stated runtime admitted a recording for.
+    no stated runtime admitted a recording for. A stated-runtime report whose
+    read is empty counts as `target` too: the read names no alternative when
+    any admitted product was kept on the target, when a product states no
+    value, or when the carried edition's precedence withholds every product.
     """
     if not stated_runtime_admission(
         report.providers,

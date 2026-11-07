@@ -882,7 +882,7 @@ class _EvidenceResponse(_ClosedModel):
     missing_lineage_count: int = Field(ge=0, le=10_000)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-evidence-v4"]
+    schema_version: Literal["review-case-evidence-v5"]
     source_ledger: list["_ProviderOutcome"] = Field(max_length=100)
 
 
@@ -1341,7 +1341,7 @@ class _LibraryResponse(_ClosedModel):
     # how `review-library-v1` gained a required `media_health` member and stayed
     # v1; the literal makes the declared version and the served shape the same
     # statement, and publishes it in the OpenAPI a client is built from.
-    schema_version: Literal["review-library-v4"]
+    schema_version: Literal["review-library-v5"]
 
 
 class _AttentionItem(_ClosedModel):

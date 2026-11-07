@@ -1663,7 +1663,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         )
 
     assert first["next_cursor"] == reopened["next_cursor"]
-    assert first["schema_version"] == "review-case-evidence-v4"
+    assert first["schema_version"] == "review-case-evidence-v5"
     assert first["missing_lineage_count"] == 0
     assert first["source_ledger"] == []
     assert partial["missing_lineage_count"] == 1

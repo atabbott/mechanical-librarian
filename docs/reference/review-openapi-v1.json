@@ -5700,7 +5700,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-evidence-v4",
+            "const": "review-case-evidence-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -6723,7 +6723,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v4",
+            "const": "review-library-v5",
             "title": "Schema Version",
             "type": "string"
           }

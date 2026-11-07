@@ -1230,7 +1230,7 @@ describe('ReviewApiClient', () => {
 
   it('maps only bounded readable diagnostic evidence', async () => {
     const payload = {
-      schema_version: 'review-case-evidence-v4',
+      schema_version: 'review-case-evidence-v5',
       review_case_id: 'case-1',
       missing_lineage_count: 1,
       next_cursor: 'next',
@@ -3095,7 +3095,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v4', error: { code: 'busy' } },
+          { schema_version: 'review-library-v5', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3169,8 +3169,12 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v2' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v5 added each source's companion ISBN flag (#1723); a v4 document lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v4' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v5' }),
     ).resolves.toBeDefined()
   })
 
@@ -4296,7 +4300,7 @@ describe('central response decoding (#1685)', () => {
         missing_lineage_count: 0,
         next_cursor: null,
         review_case_id: 'case-1',
-        schema_version: 'review-case-evidence-v4',
+        schema_version: 'review-case-evidence-v5',
       },
       '/source_ledger',
     ],

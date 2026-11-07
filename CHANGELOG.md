@@ -103,7 +103,9 @@ brackets are GitHub issues.
   the recording as an audio edition of. It quotes what was searched and notes
   that the running time closely matches. The note appears on the Evidence
   page, in Recorded evidence and in Library's Whole-work context. In Sources,
-  the EPUB's ISBN lookup now reads "ISBN lookup (EPUB in this folder)" (#1723).
+  the EPUB's ISBN lookup now reads "ISBN lookup (EPUB in this folder)". The
+  Library and case-evidence responses move to `review-library-v5` and
+  `review-case-evidence-v5`, whose sources flag that lookup (#1723).
 
 - **Clean rebuild required.** When an audiobook's folder also holds an EPUB,
   that EPUB now helps find and confirm the book. Its ISBN asks Hardcover for the

@@ -639,10 +639,15 @@ class ProviderLaneResult:
     # identity, admission basis) pairs. A WORK lane's route is its title
     # basis, which `provider_observation` reads off the lane.
     admission_bases: tuple[tuple[str, str], ...] = ()
+    # Set only by a retry successor carrying a lane's persisted record over:
+    # `admission_bases` is then that lane's own values verbatim, a WORK
+    # lane's included, rather than read again off the merged products.
+    admission_bases_recorded: bool = False
 
     def __post_init__(self) -> None:
         if (
-            type(self.admission_bases) is not tuple
+            type(self.admission_bases_recorded) is not bool
+            or type(self.admission_bases) is not tuple
             or any(
                 type(value) is not tuple
                 or len(value) != 2
@@ -651,7 +656,14 @@ class ProviderLaneResult:
                 for value in self.admission_bases
             )
             or self.admission_bases != tuple(sorted(dict(self.admission_bases).items()))
-            or (self.admission_bases and self.lane.kind is not ProviderQueryKind.ASIN)
+            or (
+                self.admission_bases
+                and self.lane.kind is not ProviderQueryKind.ASIN
+                and not (
+                    self.admission_bases_recorded
+                    and self.lane.kind is ProviderQueryKind.WORK
+                )
+            )
             or not {identity for identity, _ in self.admission_bases}.issubset(
                 {value.identity for value in self.candidates}
             )
@@ -1510,9 +1522,14 @@ def _lane_admission_bases(
     An ASIN lane states its routes as it qualified. A WORK lane at an
     audiobook authority kept a recording on the title it asked (#1723): the
     target's own on the asserted lane, otherwise its title basis. Only a full
-    product whose lane copy kept edition marketplace evidence says how.
+    product whose lane copy kept edition marketplace evidence says how. A
+    lane a retry successor carries over keeps its recorded values: its own
+    copy's evidence is gone from the merged products, which may hold more.
     """
-    if result.lane.kind is not ProviderQueryKind.WORK:
+    if (
+        result.admission_bases_recorded
+        or result.lane.kind is not ProviderQueryKind.WORK
+    ):
         return dict(result.admission_bases)
     if (
         authority not in AUDIOBOOK_PROVIDER_AUTHORITIES

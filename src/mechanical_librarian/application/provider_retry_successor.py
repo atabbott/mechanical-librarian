@@ -817,18 +817,17 @@ class GenerateProviderRetrySuccessor:
                 ),
                 # Each lane keeps how it kept its recordings (#1723): an
                 # unselected lane its old values, a retried lane its new
-                # dispatch's. A WORK lane's route is read off the lane again.
-                admission_bases=(
-                    tuple(
-                        sorted(
-                            (item.edition_identity, item.admission_basis)
-                            for item in observation.candidates
-                            if item.admission_basis is not None
-                        )
+                # dispatch's. A WORK lane's too is copied, never read again
+                # off the merged products, whose evidence another lane's copy
+                # may have widened, so an unselected lane stays byte for byte.
+                admission_bases=tuple(
+                    sorted(
+                        (item.edition_identity, item.admission_basis)
+                        for item in observation.candidates
+                        if item.admission_basis is not None
                     )
-                    if lane.kind is ProviderQueryKind.ASIN
-                    else ()
                 ),
+                admission_bases_recorded=True,
                 # An audio edition stays with the WORK lane that admitted its
                 # book (#962); the aggregate drops any whose work is gone.
                 audio_editions=tuple(
