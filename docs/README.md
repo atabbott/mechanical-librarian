@@ -35,6 +35,8 @@ How the pipeline prepares each work, stage by stage:
 - [Review experience](product/review-experience.md)
 - [Automation policy](product/automation-policy.md) and
   [qualification records](product/rich-metadata-qualification.md)
+- [Admission-rule ledger](product/admission-rule-ledger.md): every early
+  admission and exclusion gate, its origin, cost and precision if loosened
 - [Opening-ebook evidence](product/opening-ebook-evidence.md) and
   [opening-audio evidence](product/opening-audio-evidence.md)
 - [Future reviewer backends](product/future-reviewer-backends.md)
