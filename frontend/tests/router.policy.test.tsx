@@ -18,7 +18,7 @@ import type {
   PolicyPreviewView,
   PreparationView,
   ReviewHttp,
-  ShadowPostureView,
+  PreviewPostureView,
 } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, idlePreparation, inertAudiobookQualification, renderRoute } from './fixtures'
@@ -444,7 +444,7 @@ describe('Policy route', () => {
     // Contributor names keeps the ebook answer (#967).
     renderRoute('/policy?section=curation', {
       ...createHttp(),
-      getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+      getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
         schema_version: 'preview-posture-v1',
         posture: 'preview',
         authority: 'none',
@@ -2153,7 +2153,7 @@ it('keeps explicit off until the owner chooses its representation and review mod
   const command = vi.spyOn(http, 'policyCommand')
   renderRoute('/policy?section=unsupported', {
     ...http,
-    getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+    getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
       schema_version: 'preview-posture-v1',
       posture: 'preview',
       authority: 'none',
@@ -2337,7 +2337,7 @@ it('keeps a refused Automatic confirmation as nothing changed', async () => {
   const user = userEvent.setup()
   const http: ReviewHttp = {
     ...createHttp(),
-    getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+    getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
       schema_version: 'preview-posture-v1',
       posture: 'preview',
       authority: 'none',

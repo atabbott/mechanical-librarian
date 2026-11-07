@@ -24,7 +24,7 @@ import {
   observationText,
   lookupLabels,
   mediaKindLabels,
-  shadowDispositionLabels,
+  previewDispositionLabels,
   sourceStatusLabels,
   transitionLabels,
   writeStateLabels,
@@ -134,7 +134,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <ul className="diagnostic-facts" aria-label="Preview outcomes">
             {item.dispositions.map((disposition) => (
               <li key={disposition.outcome}>
-                <strong>{shadowDispositionLabels[disposition.outcome]}</strong>
+                <strong>{previewDispositionLabels[disposition.outcome]}</strong>
                 <span>{String(disposition.count)}</span>
               </li>
             ))}

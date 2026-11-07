@@ -1548,6 +1548,44 @@ describe('Activity route', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
+  it('offers a reload, not another try, when more recorded transitions meet a newer build', async () => {
+    const user = userEvent.setup()
+    const transitions = Array.from({ length: 20 }, (_, index) => ({
+      event_id: `transition-${String(index + 1)}`,
+      occurred_at: index + 1,
+      sequence: index + 1,
+      state: 'planned',
+      failure: null,
+    }))
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [{ event_id: 'lifecycle', transition_id: 'effect_plan_' + 'a'.repeat(64) }],
+        }),
+      ),
+      getActivityTransitions: vi.fn(async (_eventId: string, afterSequence?: number) => {
+        if (afterSequence === 20) throw new BuildMismatchError()
+        return { events: transitions, has_more: true }
+      }),
+    }
+    renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: /^Details for /u }))
+    await user.click(await screen.findByRole('button', { name: 'Load more transitions' }))
+    const lead = await screen.findByText(
+      'More recorded transitions were not loaded. This tab is running an earlier build.',
+      { exact: false },
+    )
+    expect(lead).toBeVisible()
+    expect(lead).not.toHaveAttribute('role')
+    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(
+      screen.queryByText('More recorded transitions could not be loaded.', { exact: false }),
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
   it('reaches every bounded lifecycle transition and recovers a disclosure read', async () => {
     const user = userEvent.setup()
     const transitions = Array.from({ length: 25 }, (_, index) => ({

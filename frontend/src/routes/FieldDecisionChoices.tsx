@@ -3,7 +3,9 @@ import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
+import { BuildMismatchError } from '../api/http'
 import type { ChoiceContextView, EvidenceView } from '../api/http'
+import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
 import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labels'
 import { useReviewContext } from '../router'
@@ -124,7 +126,9 @@ export function RecordedFieldObservations({
         </ul>
       ) : null}
       {missing ? <p>Some referenced observations are unavailable.</p> : null}
-      {evidence.isError ? (
+      {evidence.error instanceof BuildMismatchError ? (
+        <StaleBuildRead lead="The observations were not loaded." />
+      ) : evidence.isError ? (
         <p role="alert">
           The observations could not be loaded.{' '}
           <button
