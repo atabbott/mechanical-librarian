@@ -119,11 +119,11 @@ def hours_minutes(seconds: int, *, exact: bool = False) -> str:
 AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
     AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER: (
         "A complete recording runs within "
-        f"{hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition's stated "
+        f"{hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition’s stated "
         "running time."
     ),
     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH: (
-        "The embedded chapter lengths match the edition's, allowing one "
+        "The embedded chapter lengths match the edition’s, allowing one "
         "skipped chapter at each end."
     ),
     AudioHealthKind.TRACK_SEQUENCE_GAP: ("The track numbers run without a gap."),
@@ -144,12 +144,12 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
         "Each file’s container matches its file extension."
     ),
     AudioHealthKind.CODEC_UNEXPECTED: (
-        "Each file's audio stream is "
+        "Each file’s audio stream is "
         + " or ".join(sorted(ADMITTED_AUDIO_CODECS))
         + "."
     ),
     AudioHealthKind.DURATION_UNSTATED: (
-        "Each file's container states the running time of what it holds."
+        "Each file’s container states the running time of what it holds."
     ),
     AudioHealthKind.STREAM_ENCRYPTED: ("No file is protected by DRM."),
     AudioHealthKind.MEDIA_UNREADABLE: (

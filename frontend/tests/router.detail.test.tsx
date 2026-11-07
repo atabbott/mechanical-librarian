@@ -260,7 +260,7 @@ describe('Library review ownership', () => {
         mediaHealth: [
           {
             bound:
-              "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+              'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
             cited: ['local_abc123', 'audible-product-B0SYNE7P1K'],
             expected: '20 h stated by the matched edition',
             kind: 'runtime_short_of_provider' as const,
@@ -276,7 +276,7 @@ describe('Library review ownership', () => {
     expect(within(section).getByText('Shorter than the edition')).toBeVisible()
     expect(
       within(section).getByText(
-        "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+        'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
       ),
     ).toBeVisible()
     expect(

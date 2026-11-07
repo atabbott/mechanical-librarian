@@ -3466,7 +3466,7 @@ describe('mapReportDetail', () => {
 
 describe('mapCaseDetail media health', () => {
   const observation = {
-    bound: "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+    bound: 'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
     cited: ['local_abc123', 'audible-product-B0SYNE7P1K'],
     expected: '20 h stated by the matched edition',
     kind: 'runtime_short_of_provider',
