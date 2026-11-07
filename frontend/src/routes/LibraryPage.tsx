@@ -2860,7 +2860,7 @@ export default function LibraryPage({
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
                         <p key={notice}>
-                          {noticeText(selected, notice, detail.data.target.mediaKind)}
+                          {`${noticeText(selected, notice, detail.data.target.mediaKind) ?? ''}.`}
                         </p>
                       ))}
                     </aside>

@@ -402,11 +402,11 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     )
     assert no_change["change"] == "Kept Secret History"
 
-    waiting = _ledger(effects, search="Waiting safely")
+    waiting = _ledger(effects, search="Waiting to retry")
     assert [(event["state"], event["destination"]) for event in waiting] == [
         ("retryable", "subtitle")
     ]
-    no_change_rows = _ledger(effects, search="No change required")
+    no_change_rows = _ledger(effects, search="No change needed")
     assert [event["state"] for event in no_change_rows] == ["no_change_required"]
     assert _ledger(effects, search="retryable") == []
     assert _ledger(effects, search="no_change_required") == []
