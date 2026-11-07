@@ -12,8 +12,10 @@
 ## Context
 
 The admission-rule ledger (#1350) lists every rule that keeps a metadata
-value from reaching a book automatically, and ranks the rules by how many
-fields they hold back. Its row A6 is automatic-decision abstention: the
+value from reaching a book automatically. It ranks the rules by the number
+of held-back fields a loosened rule could reach, multiplied by the lower
+limit of a 95% interval on how often the records it would admit belong to
+the right work. Its row A6 is automatic-decision abstention: the
 decision step looks at a field it is allowed to fill automatically, and
 declines to pick a value, so the field falls back to manual review. The
 ledger ranked A6 second. Its proposed loosening was to take the first-listed
@@ -251,8 +253,9 @@ Rejected by Decision 5. Only owner-labelled values can qualify a relaxation.
 Both snapshots hold 0 owner decisions, so there is no owner label, and the
 one admitted field that could be compared with an uncited accepted record
 disagreed with it. Identity precision cannot qualify a relaxation at any
-level, because it counts records rather than values, and the title records
-come from stale ebook-744 fields. The pass mark is not set. When the owner
+level, because it measures whether a cited record belongs to the right
+work, not whether the admitted value is correct. It also counts records
+rather than fields, and the title records come from stale ebook-744 fields. The pass mark is not set. When the owner
 sets it, it will apply to owner-labelled values, not to identity.
 
 ### Record the keep as an issue comment
