@@ -2,12 +2,20 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
+import { ApiError } from '../src/api/http'
+import { DecodeFailure } from '../src/generated/review-decoders'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
 import type { CaseDetailView, ReviewHttp } from '../src/api/http'
-import { createHttp, detail, renderRoute } from './fixtures'
+import {
+  createHttp,
+  detail,
+  readCaseDetail,
+  readEvidence,
+  readHistory,
+  renderRoute,
+} from './fixtures'
 import {
   caseHistory,
   coverCandidate,
@@ -374,15 +382,15 @@ describe('Library review ownership', () => {
   })
 
   it('shows retained conflicting identifiers as observations without offering choices', async () => {
-    const evidence = mapEvidence(identifierEvidenceFixture.evidence)
-    const current = mapCaseDetail(identifierEvidenceFixture.detail)
+    const evidence = readEvidence(identifierEvidenceFixture.evidence)
+    const current = readCaseDetail(identifierEvidenceFixture.detail)
     const changed = structuredClone(identifierEvidenceFixture.detail)
     const choiceEvidence = changed.fields
       .flatMap((field) => field.choice_contexts)
       .flatMap((context) => context.evidence)[0]
     if (!choiceEvidence) throw new Error('actual linked choice evidence required')
     choiceEvidence.role = 'invented_support'
-    expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+    expect(() => readCaseDetail(changed)).toThrow(DecodeFailure)
     renderRoute(`/review/${current.id}?field=isbn&subview=evidence`, {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => current),
@@ -775,6 +783,7 @@ describe('Library review ownership', () => {
           humanDecision: {
             actor: 'owner',
             application: 'apply' as const,
+            application_reason: null,
             decision_id: 'decision-1',
             destination: field.destination,
             occurred_at: 1,
@@ -794,6 +803,7 @@ describe('Library review ownership', () => {
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
         application: 'apply' as const,
+        application_reason: null,
         decision_id: 'decision-1',
         destination: 'title' as const,
         occurred_at: 1,
@@ -1294,7 +1304,7 @@ describe('bounded diagnostic return context', () => {
 it.each(['evidence', 'history'])(
   'keeps %s diagnostic-only while retaining authored history',
   async (subview) => {
-    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const authored = readCaseDetail(descriptionAdviceFixture)
     const candidate = authored.fields.find((field) => field.destination === 'description')
       ?.descriptionAdvice?.candidate
     if (!candidate) throw new Error('description fixture requires its candidate')
@@ -1379,7 +1389,7 @@ it.each(['evidence', 'history'])(
 it('retains unconfirmed incumbent evidence in actual mapped owner history', async () => {
   const http = createHttp()
   http.getHistory = vi.fn(async () =>
-    mapHistory(
+    readHistory(
       caseHistory({
         items: [
           historyCoverItem({

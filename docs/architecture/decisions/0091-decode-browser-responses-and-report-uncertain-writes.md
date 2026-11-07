@@ -56,7 +56,10 @@ told:
    unsafe `/api/v1` route, each error status and code and the latest point it
    can be raised, and fails for an unclassified route. A decision's same-key
    Retry is the one place a repeat is offered, because the decision route
-   replays a recorded decision instead of recording a second one.
+   replays a recorded decision instead of recording a second one. An
+   acknowledgement the browser cannot read is reported as uncertain and the
+   case is refreshed, because a same-key Retry would replay the same
+   unreadable acknowledgement.
 5. **Build identity on authenticated responses.** The server sets
    `x-ml-build-identity` on `/api/v1` responses to requests that authenticated
    an owner session, and the browser compares it on every response, read or
@@ -82,7 +85,7 @@ documents (identity), a check whose only owner is persisted (persisted), or one
 that shares the persisted Decimal price grammar no regex states (shared
 grammar). Each line gives the check, its owner and why. The first 40 are the
 `mapper_cross_field` rows of `frontend/tests/decoderDifferential.test.ts`; X40
-to X54 are checks that suite does not exercise.
+to X61 are checks that suite does not exercise.
 
 - `check:mapActivity.failure-reasons-order`: failure reasons ascend.
   `_ProviderRecoveryActivity.failure_reasons`. Positional.
@@ -209,6 +212,20 @@ to X54 are checks that suite does not exercise.
   which admits five. Cross-field (a subset that depends on the item kind).
 - X54: each passage count is at most the run's `total`.
   `_PreparationPresentation.passage`. Cross-field.
+- X55: the current choice context names no alternative.
+  `_ChoiceContext.alternative_id` on the first context. Positional.
+- X56: every later choice context is proposed and names an alternative.
+  `_ChoiceContext.selection` and `alternative_id`. Positional.
+- X57: proposed alternatives are distinct. `_ReviewField.choice_contexts`
+  and `_CoverConsiderationResponse.choice_contexts`. Identity across items.
+- X58: candidate artifacts are distinct.
+  `_CoverConsiderationResponse.candidates`. Identity across items.
+- X59: a confirmed incumbent is unselectable and unranked but has a rank key,
+  and a confirmed alternative has a rank key. `_CoverCandidate`. Cross-field.
+- X60: proposed cover contexts follow the manually eligible alternatives in
+  candidate order. `_CoverConsiderationResponse.choice_contexts`. Positional.
+- X61: an unavailable reason needs the `unavailable` status.
+  `_CoverConsiderationResponse.reviewer_unavailable_reason`. Cross-field.
 
 ## Alternatives rejected
 
