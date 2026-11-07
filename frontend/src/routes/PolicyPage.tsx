@@ -92,7 +92,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   // performed. Anything the owner still has to act on -- work in flight, or a
   // failure to retry -- is shown whoever is looking.
   const [activatedTransitionId, setActivatedTransitionId] = useState<string>()
-  const shadow = data.shadow
+  const posture = data.posture
   const safety = data.safety
   const transition = useQuery({
     queryKey: ['policy', 'transition'],
@@ -346,7 +346,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       document.getElementById(`policy-${section}`)?.focus({ preventScroll: true }),
     )
   }
-  const automaticAllowed = shadow.posture === 'preview' || shadow.posture === 'automatic'
+  const automaticAllowed = posture.posture === 'preview' || posture.posture === 'automatic'
   const qualification = policyAutomaticQualification(data.state)
   const draftDisplay = derivePolicyDraftDisplay(data.state, draft, fieldDefaults)
   const fieldChanged = (field: FieldDefinition) => {
@@ -693,7 +693,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           </nav>
           {changedFields.length ? <p className="cm-policy-chapter-legend">Changed fields</p> : null}
           <PolicySafety
-            shadow={shadow}
+            posture={posture}
             safety={safety}
             pending={command.isPending}
             summaryRef={safetySummaryRef}
