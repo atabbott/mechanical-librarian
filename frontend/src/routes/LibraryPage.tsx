@@ -1225,7 +1225,10 @@ export default function LibraryPage({
     selectedDetailShown.current = null
   }, [search.preview])
   useEffect(() => {
-    const selectedDetailSettled = selectedDetailReady || selectedReadError
+    // An error is settled only once it renders: while another read is still
+    // in flight the work shows as loading, and its Try again or Reload does
+    // not exist yet to take focus.
+    const selectedDetailSettled = selectedDetailReady || (selectedReadError && !selectedReadPending)
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
@@ -1240,7 +1243,13 @@ export default function LibraryPage({
     }
     selectedDetailRetry.current = null
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
-  }, [selectedReadError, selectedReadStale, search.preview, selectedDetailReady])
+  }, [
+    selectedReadError,
+    selectedReadPending,
+    selectedReadStale,
+    search.preview,
+    selectedDetailReady,
+  ])
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
   // the masthead, so once it holds focus it is brought fully into view; the

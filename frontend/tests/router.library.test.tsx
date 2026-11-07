@@ -266,6 +266,50 @@ it('moves focus to Reload when a selected-work retry meets a newer build (#1288)
   expect(document.body).not.toHaveFocus()
 })
 
+it('moves focus to Reload when both selected-work reads meet a newer build, the case first (#1288)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  let releaseWorks: () => void = () => undefined
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getLibrary: vi.fn(async () => {
+      if (!retried) throw new ApiError(503, 'unavailable')
+      // The works read is still in flight when the case read settles stale.
+      await new Promise<void>((resolve) => {
+        releaseWorks = resolve
+      })
+      throw new BuildMismatchError()
+    }),
+    getAttention: vi.fn(async () => {
+      if (retried) throw new BuildMismatchError()
+      throw new ApiError(503, 'unavailable')
+    }),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      if (retried) throw new BuildMismatchError()
+      throw new ApiError(503, 'unavailable')
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(http.getAttention).toHaveBeenCalledTimes(2))
+  await screen.findByText('Loading selected work…')
+  releaseWorks()
+  await screen.findByText('Selected work was not loaded. This tab is running an earlier build.', {
+    exact: false,
+  })
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  await waitFor(() =>
+    expect(
+      within(workspace).getByRole('button', { name: 'Reload the current application' }),
+    ).toHaveFocus(),
+  )
+  expect(document.body).not.toHaveFocus()
+})
+
 it('moves focus to Reload when a selected detail retry meets a newer build (#1288)', async () => {
   const user = userEvent.setup()
   let retried = false
