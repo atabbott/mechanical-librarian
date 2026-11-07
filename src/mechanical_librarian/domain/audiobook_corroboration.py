@@ -1004,6 +1004,7 @@ __all__ = [
     "counted_audio_editions",
     "hardcover_edition_leads",
     "hardcover_edition_witness",
+    "unconfirmed_audio_editions",
     "recording_admitted",
     "recording_unmatched",
     "band_first_candidate",
@@ -2015,6 +2016,64 @@ def _edition_witness(
     ):
         return HardcoverEditionWitness.AGREES, editions
     return HardcoverEditionWitness.CHALLENGED, editions
+
+
+# The authorities whose word a Hardcover audio edition may only repeat
+# (ADR-0090 decision 2). iTunes lists no Audible product, so it is not one.
+_AUDIBLE_FAMILY: Final = frozenset({"audible_catalog", "audnexus", "audiosilo"})
+
+
+def unconfirmed_audio_editions(
+    report: MetadataReport,
+) -> tuple[tuple[ProviderObservation, ProviderCandidate], ...]:
+    """Counted Hardcover audio editions Audible cannot confirm (#1642).
+
+    Such an edition may come from another audiobook publisher, so it is
+    independent of Audible and its narrators may be offered for an empty
+    narrator field, as an owner choice. An edition qualifies when it states
+    no ASIN, or when every ASIN it states was asked of the Audible family and
+    every lane that asked it found nothing. An ASIN no lane asked, a lane
+    that answered with a product and a lane that failed each disqualify it.
+    An edition whose narrators are disjoint from the file's own narrator
+    credits names another recording and qualifies for nothing. Nothing
+    qualifies once a recording is admitted, or when the counted editions
+    disagree on the cast (ADR-0090 decision 6).
+    """
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    if report.audio is None or admitted_audiobook_identity(report):
+        return ()
+    witness, editions = _edition_witness(
+        report.local_claims, report.audio, report.providers
+    )
+    if witness is HardcoverEditionWitness.EDITIONS_DISAGREE:
+        return ()
+    family = tuple(
+        observation
+        for observation in report.providers
+        if observation.authority in _AUDIBLE_FAMILY
+    )
+
+    def unconfirmed(asin: str) -> bool:
+        statuses = tuple(
+            lane.status
+            for observation in family
+            for lane in observation.lanes
+            if _queried_asin(lane, (asin,)) is not None
+        )
+        return bool(statuses) and all(
+            status is ProviderStatus.NO_MATCH for status in statuses
+        )
+
+    counted = {id(edition) for edition in editions}
+    return tuple(
+        (observation, edition)
+        for observation in report.providers
+        for edition in observation.audio_editions
+        if id(edition) in counted
+        and not candidate_narrator_disjoint(edition, report.local_claims)
+        and all(unconfirmed(asin) for asin in _edition_asins(edition))
+    )
 
 
 def hardcover_edition_leads(

@@ -355,3 +355,13 @@ genre list that passes the audiobook synopsis and genre floor carries the
 proposal reason `populated_value_meets_floor`, so the proposal policy moves to
 `fixed-conservative-v44`, and the review-case field facts read the resolved
 policy's options. The report schema is unchanged; no adoption is supplied.
+
+Issue #1642 also takes the clean-rebuild branch. `metadata-report-v68` adds
+Hardcover's work first-publication date claim on an audiobook WORK lane, which a
+v67 report cannot state; a report carries forward while its file and
+configuration fingerprints are unchanged, so a stored report would keep the
+earlier claims. `fixed-conservative-v45` widens the audiobook work route to a
+work's first publication date, narrators from audio editions Audible cannot
+confirm, and a work-bound cover, so an earlier proposal set is not what this
+policy prepares. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.

@@ -18,10 +18,12 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
     carried_asin_precedence,
     target_current_asin,
+    unconfirmed_audio_editions,
     verified_carried_asin,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
+    CoverSource,
     CoverSourceKind,
     CoverSourceState,
 )
@@ -125,7 +127,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v44"
+POLICY_VERSION = "fixed-conservative-v45"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -187,15 +189,6 @@ _BIBLIOGRAPHIC_DESTINATIONS = (
     TargetDestination.TITLE,
     TargetDestination.SUBTITLE,
     TargetDestination.SERIES,
-)
-# The fields witnessed book evidence answers while the recording is unresolved.
-_WORK_ROUTE_DESTINATIONS = frozenset(
-    {
-        TargetDestination.DESCRIPTION,
-        TargetDestination.GENRES,
-        TargetDestination.SERIES,
-        TargetDestination.TITLE,
-    }
 )
 
 
@@ -1217,28 +1210,160 @@ def _supported_work_source(
 def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | None:
     """Distinguish useful book evidence from admitted recording identity.
 
-    Book evidence is a witnessed description, genre list or series, or a
-    witnessed title that cleans up the current one: a title that only restates
-    the current value gives the owner nothing to decide (#1253).
+    Book evidence is whatever the work route offers (`_work_route_offers`):
+    a title that only restates the current value gives the owner nothing to
+    decide (#1253).
     """
     if report.audio is None:
         return None
     if admitted_audiobook_identity(report):
         return AudiobookReviewScope.RECORDING
-    title = canonical_target_fields(report.target.fields)[TargetDestination.TITLE]
-    if any(
-        _observations(report, destination)
+    if _work_route_offers(report, canonical_target_fields(report.target.fields)):
+        return AudiobookReviewScope.WORK
+    return None
+
+
+def _work_route_offers(
+    report: MetadataReport, targets: dict[TargetDestination, TargetField]
+) -> frozenset[TargetDestination]:
+    """The fields witnessed book evidence answers while the recording is unresolved.
+
+    Every value comes from an exact work source (`_supported_work_source`),
+    so a target with no title or no authors has no work route at all:
+    - a description, genre list or series the work states (#1253);
+    - a title that cleans up the current one (#1253);
+    - the work's first publication date (#1642);
+    - narrators, for an empty field only, from Hardcover audio editions
+      Audible cannot confirm (#1642, `unconfirmed_audio_editions`);
+    - a cover under the work-route cover rule (`_work_cover_sources`).
+    The subtitle stays out, because a recording's subtitle is edition
+    evidence. The caller has established that no recording is admitted.
+    """
+    offers = {
+        destination
         for destination in (
             TargetDestination.DESCRIPTION,
             TargetDestination.GENRES,
             TargetDestination.SERIES,
         )
-    ) or any(
-        _work_title_cleanup(title, observed.value)
+        if _observations(report, destination)
+    }
+    if any(
+        _work_title_cleanup(targets[TargetDestination.TITLE], observed.value)
         for observed in _observations(report, TargetDestination.TITLE)
     ):
-        return AudiobookReviewScope.WORK
-    return None
+        offers.add(TargetDestination.TITLE)
+    if _date_observations(report):
+        offers.add(TargetDestination.PUBLISHED_DATE)
+    if _target_explicitly_empty(targets[TargetDestination.NARRATORS]) and (
+        _observations(report, TargetDestination.NARRATORS)
+    ):
+        offers.add(TargetDestination.NARRATORS)
+    if _work_cover_sources(report, targets[TargetDestination.COVER]):
+        offers.add(TargetDestination.COVER)
+    return frozenset(offers)
+
+
+def _target_explicitly_empty(target: TargetField) -> bool:
+    """Whether a field is known to hold nothing, never merely unreadable.
+
+    A malformed, unloaded or oversized field is not empty: the work route
+    offers no value into a field it cannot read.
+    """
+    return target.state in {
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    } or (target.state is TargetFieldState.VALUE and target.value in ((), [], ""))
+
+
+# A cover the work route may offer replaces only an incumbent shorter than
+# this on its shorter edge, as the audiobook cover replacement rule does.
+_WORK_COVER_INCUMBENT_EDGE = 300
+
+
+def _work_cover_sources(
+    report: MetadataReport, target: TargetField
+) -> tuple[CoverSource, ...]:
+    """Provider covers the work route offers for an unresolved recording (#1642).
+
+    The current cover must be empty, or a retrieved local cover known to be
+    under 300 px on its shorter edge. A candidate must be portrait or square,
+    no more than twice as tall as it is wide, and bound to a candidate that
+    is an exact work source for this item.
+    """
+    if report.audio is None or admitted_audiobook_identity(report):
+        return ()
+    if target.state is TargetFieldState.VALUE:
+        incumbents = tuple(
+            source.artifact
+            for source in report.cover_sources
+            if source.kind is CoverSourceKind.ABS
+            and source.state is CoverSourceState.RETRIEVED
+            and source.artifact is not None
+        )
+        if len(incumbents) != 1 or (
+            min(incumbents[0].width, incumbents[0].height) >= _WORK_COVER_INCUMBENT_EDGE
+        ):
+            return ()
+    elif target.state not in {
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    }:
+        return ()
+
+    return tuple(
+        source
+        for source in report.cover_sources
+        if source.kind is not CoverSourceKind.ABS
+        and source.state is CoverSourceState.RETRIEVED
+        and source.artifact is not None
+        and source.artifact.width <= source.artifact.height <= 2 * source.artifact.width
+        and _cover_bound_to_work_source(report, source)
+    )
+
+
+def _cover_bound_to_work_source(report: MetadataReport, source: CoverSource) -> bool:
+    """Whether a provider cover belongs to a candidate that is an exact work source."""
+    provenance = source.provenance
+    return provenance is not None and any(
+        _supported_work_source(report, provider, candidate)
+        for provider in report.providers
+        if provider.provider == provenance.provider
+        for candidate in provider.candidates
+        if candidate.work_identity == provenance.work_identity
+        and (
+            provenance.edition_identity is None
+            or candidate.identity == provenance.edition_identity
+        )
+    )
+
+
+def work_route_cover_sources(report: MetadataReport) -> tuple[CoverSource, ...]:
+    """The provider covers the work route offers, beside the current cover (#1642).
+
+    Empty unless the report is an audiobook with no admitted recording whose
+    current cover the work-route cover rule allows replacing. Every cover
+    surface for such an audiobook (gallery, consideration, owner decision)
+    keeps to the library's own cover plus this set.
+    """
+    if type(report) is not MetadataReport:
+        raise ProposalValueError("proposal report is invalid")
+    return _work_cover_sources(
+        report,
+        canonical_target_fields(report.target.fields)[TargetDestination.COVER],
+    )
+
+
+def work_route_cover_offered(report: MetadataReport) -> bool:
+    """Whether an audiobook with no admitted recording is offered a cover.
+
+    The one test every cover gate asks for such an audiobook: its work route
+    offers a cover as an owner choice, never automatically, and never opens
+    description advice (#1642).
+    """
+    return bool(work_route_cover_sources(report))
 
 
 # Typographic quotes and their straight forms; a title differing only in these
@@ -1492,20 +1617,18 @@ def evaluate_report(
         or TargetDestination.TITLE in ignored
     )
     if work_only:
-        # Book evidence answers only the book's own fields; the subtitle stays
-        # out because a recording's subtitle is edition evidence, and a title
-        # or series stays masked unless a witness offers a cleanup or a series
-        # (#1253).
-        cleanup = any(
-            _work_title_cleanup(targets[TargetDestination.TITLE], value.value)
-            for value in observed_by_destination[TargetDestination.TITLE]
-        )
-        series = bool(observed_by_destination[TargetDestination.SERIES])
+        # Book evidence answers only the fields the work route offers
+        # (#1253, #1642); every other field stays masked. Description and
+        # genres stay open on every work route, so a current value with no
+        # evidence keeps its owner controls (#1253).
+        offers = _work_route_offers(report, targets) | {
+            TargetDestination.DESCRIPTION,
+            TargetDestination.GENRES,
+        }
+        cleanup = TargetDestination.TITLE in offers
+        series = TargetDestination.SERIES in offers
         for destination in TargetDestination:
-            if destination not in _WORK_ROUTE_DESTINATIONS or (
-                (destination is TargetDestination.TITLE and not cleanup)
-                or (destination is TargetDestination.SERIES and not series)
-            ):
+            if destination not in offers:
                 results[destination] = ProposalResult(
                     destination,
                     ProposalOutcome.INELIGIBLE,
@@ -3108,7 +3231,18 @@ def _narrator_corroboration_guard(
     about, and one provider naming a cast the file itself never mentions is a
     single source rather than agreement. The owner still sees the alternative
     and can accept it; the proposal only stops calling it settled (#966).
+    A cast from an audio edition, all a recording with no admitted identity
+    is offered, is always one catalogue's word, so it is never settled (#1642).
     """
+    if report.audio is not None and not admitted_audiobook_identity(report):
+        return ProposalResult(
+            result.destination,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            result.alternatives,
+            None,
+            ("insufficient_independent_corroboration",),
+            result.dependencies,
+        )
     if len(result.alternatives) == 1 and any(
         provider_candidate_represents_target_recording(report, provider, candidate)
         and provider_candidate_supports_complete_narrators(
@@ -3313,6 +3447,45 @@ def _has_generic_provider_subtitle(report: MetadataReport) -> bool:
     )
 
 
+def _unconfirmed_edition_narrators(report: MetadataReport) -> tuple[_Observed, ...]:
+    """Narrator casts of audio editions Audible cannot confirm (#1642).
+
+    An edition is read only under a book that is itself an exact work source.
+    Its narrators are edition evidence, and every edition of one provider
+    shares that provider's one correlation, so two editions never vote.
+    """
+    values: list[_Observed] = []
+    for provider, edition in unconfirmed_audio_editions(report):
+        if not any(
+            candidate.identity == edition.work_identity
+            and _supported_work_source(report, provider, candidate)
+            for candidate in provider.candidates
+        ):
+            continue
+        claims = tuple(
+            claim
+            for claim in edition.claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.role == "narrator"
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        )
+        if claims:
+            values.append(
+                _Observed(
+                    _value(
+                        TargetDestination.NARRATORS,
+                        tuple(cast("str", claim.value) for claim in claims),
+                    ),
+                    tuple(claim.reference for claim in claims),
+                    _provider_correlation(provider),
+                    ProposalScope.EDITION,
+                    _provider_representation(provider, edition),
+                )
+            )
+    return tuple(values)
+
+
 def _list_observations(
     report: MetadataReport, destination: TargetDestination
 ) -> tuple[_Observed, ...]:
@@ -3412,6 +3585,8 @@ def _list_observations(
                     _local_representation(basis),
                 )
             )
+    if work_only and destination is TargetDestination.NARRATORS:
+        return _unconfirmed_edition_narrators(report)
     for provider in report.providers:
         candidates = provider.candidates
         if destination is TargetDestination.NARRATORS and report.audio is not None:
@@ -4435,6 +4610,13 @@ def _series_from_claims(
 
 
 def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
+    """Publication dates, as an audiobook's work or an ebook's edition states them.
+
+    A file's own date tag is a manifestation date, so it never votes on an
+    audiobook. On the work route only an exact work source speaks for the
+    date (#1642). Hardcover states a work date only for that route; an
+    admitted recording keeps the sources it had.
+    """
     values: list[_Observed] = []
     event = (
         DateEvent.WORK_FIRST_PUBLICATION
@@ -4443,6 +4625,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     )
     scope = ClaimScope.WORK if report.audio is not None else ClaimScope.EDITION
     work_context = target_work_identity_context(report.target)
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
@@ -4490,6 +4673,14 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 and not provider_candidate_represents_target_work(
                     report, provider, candidate
                 )
+            ):
+                continue
+            if work_only and not _supported_work_source(report, provider, candidate):
+                continue
+            if (
+                report.audio is not None
+                and not work_only
+                and provider.authority == HARDCOVER_AUTHORITY
             ):
                 continue
             for claim in candidate.claims:
@@ -4702,21 +4893,38 @@ def _date_compatible_with_projection(
 
 
 def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
+    considered = report.cover_sources
     if report.file.format in AUDIO_FILE_FORMATS and not any(
         provider_candidate_represents_target_recording(report, provider, candidate)
         for provider in report.providers
         for candidate in provider.candidates
     ):
-        return ProposalResult(
-            TargetDestination.COVER,
-            ProposalOutcome.INELIGIBLE,
-            (),
-            None,
-            ("audiobook_cover_withheld",),
+        # With no recording, only the covers the work route offers are
+        # considered, beside the current cover itself (#1642).
+        offered = _work_cover_sources(report, target)
+        if not offered:
+            return ProposalResult(
+                TargetDestination.COVER,
+                ProposalOutcome.INELIGIBLE,
+                (),
+                None,
+                ("audiobook_cover_withheld",),
+            )
+        # A work cover still pending keeps the gallery incomplete (#1642).
+        considered = tuple(
+            source
+            for source in considered
+            if source.kind is CoverSourceKind.ABS
+            or source in offered
+            or (
+                source.state
+                not in {CoverSourceState.RETRIEVED, CoverSourceState.ABSENT}
+                and _cover_bound_to_work_source(report, source)
+            )
         )
     retrieved = [
         source
-        for source in report.cover_sources
+        for source in considered
         if source.state is CoverSourceState.RETRIEVED and source.artifact is not None
     ]
     grouped: dict[str, list[Any]] = {}
@@ -4833,7 +5041,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
     incomplete = any(
         source.kind is not CoverSourceKind.ABS
         and source.state not in {CoverSourceState.RETRIEVED, CoverSourceState.ABSENT}
-        for source in report.cover_sources
+        for source in considered
     )
     if len(candidates) == 1 and not incomplete:
         return ProposalResult(
@@ -6856,4 +7064,6 @@ __all__ = [
     "subtitle_restates_series",
     "subtitle_segment_evidence",
     "title_strip_series_label",
+    "work_route_cover_offered",
+    "work_route_cover_sources",
 ]

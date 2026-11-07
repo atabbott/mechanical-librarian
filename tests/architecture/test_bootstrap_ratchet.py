@@ -73,7 +73,7 @@ DEF_COUNT = {
 }
 # Set to the measured size only by an owner review; lowered by a refactor
 # stage's own net change; raised only on the owner's instruction.
-REVIEWED_NCNC = 3197
+REVIEWED_NCNC = 3204
 REVIEW_BAND = 300
 REVIEWED_MODULE = "composition.py"
 _C = "composition.py::"

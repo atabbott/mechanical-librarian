@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -32,7 +32,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterFailure,
     ReviewerDispatch,
 )
-from mechanical_librarian.domain.cover_evidence import CoverSourceKind
+from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverSourceKind
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.reviewer_access import ReviewerEngine
 from tests.support.audiobook_reports import asserted_asin_report
@@ -1666,3 +1666,294 @@ def test_chat_time_reviewer_failure_exposes_only_a_closed_code(
     )
     historical = service.project_historical(canonical_packet_json(legacy))
     assert historical["reviewer_failure_code"] is None
+
+
+def test_a_work_route_cover_is_an_owner_choice_with_no_observer() -> None:
+    """A recording-less audiobook's work cover is offered, never observed (#1642)."""
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        work_route_cover_offered,
+    )
+    from tests.support.hardcover_work_route import (
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    service, _document, dispatches, proposal = _audiobook_case()
+    payload = _preview(51)
+    source = work_cover_source(preview=payload)
+    report = hardcover_work_report(cover_sources=(source,))
+    assert audiobook_review_scope(report) == "work"
+    assert work_route_cover_offered(report)
+    artifact = source.artifact
+    assert artifact is not None
+    with (
+        patch.object(service, "_read_preview", lambda _artifact, _variant: payload),
+        patch.object(
+            service,
+            "_read_preview_digest",
+            {artifact.preview_digest: payload}.__getitem__,
+        ),
+    ):
+        request = service.prepare_observation(
+            "review_case_" + "e" * 64, report.to_json()
+        )
+        assert request.packet_payload is None
+        projected = service.ensure(
+            "review_case_" + "e" * 64, report.to_json(), proposal
+        )
+
+        assert [] == dispatches
+        assert "unavailable" == projected["reviewer_status"]
+        assert projected["ready"] is True
+        (candidate,) = cast("list[dict[str, object]]", projected["candidates"])
+        assert candidate["manual_eligible"] is True
+        assert candidate["observation"] is None
+        assert candidate["source_kinds"] == ["hardcover"]
+        # The identity stays unverified, so the owner confirms the match and
+        # the cover is never selectable and never automatic (#1642).
+        assert candidate["match_state"] == "match_not_confirmed"
+        assert candidate["selectable"] is False
+        assert cast("dict[str, object]", candidate["identity"])["outcome"] not in {
+            "verified_manifestation_match",
+            "verified_work_match",
+        }
+        service.validate_decision(
+            "review_case_" + "e" * 64,
+            projected["consideration_id"],
+            "accept",
+            {"kind": "cover", "value": candidate["artifact_id"]},
+        )
+
+
+def test_a_work_route_gallery_holds_only_the_offered_covers() -> None:
+    """A landscape cover and another work's cover are neither shown nor accepted.
+
+    The work-route cover rule (#1642, Q7) bounds the gallery itself, not only
+    whether it opens: the owner can choose only what the proposal offers.
+    """
+    from mechanical_librarian.domain.proposal_set import work_route_cover_sources
+    from tests.support.hardcover_work_route import (
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    service, _document, dispatches, proposal = _audiobook_case()
+    payloads = {index: _preview(60 + index) for index in (1, 2, 3)}
+    offered = work_cover_source(preview=payloads[1])
+    landscape = work_cover_source(900, 500, index=2, preview=payloads[2])
+    other_work = work_cover_source(
+        work_identity="hardcover-work-0000000099", index=3, preview=payloads[3]
+    )
+    report = hardcover_work_report(cover_sources=(offered, landscape, other_work))
+    assert work_route_cover_sources(report) == (offered,)
+    by_digest = {
+        cast("CoverArtifact", source.artifact).preview_digest: payloads[index]
+        for index, source in ((1, offered), (2, landscape), (3, other_work))
+    }
+    by_artifact = {
+        cast("CoverArtifact", source.artifact).artifact_id: payloads[index]
+        for index, source in ((1, offered), (2, landscape), (3, other_work))
+    }
+    with (
+        patch.object(
+            service,
+            "_read_preview",
+            lambda artifact_id, _variant: by_artifact[artifact_id],
+        ),
+        patch.object(service, "_read_preview_digest", by_digest.__getitem__),
+    ):
+        projected = service.ensure(
+            "review_case_" + "e" * 64, report.to_json(), proposal
+        )
+        assert [] == dispatches
+        (candidate,) = cast("list[dict[str, object]]", projected["candidates"])
+        assert (
+            candidate["artifact_id"]
+            == cast("CoverArtifact", offered.artifact).artifact_id
+        )
+        for refused in (landscape, other_work):
+            with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+                service.validate_decision(
+                    "review_case_" + "e" * 64,
+                    projected["consideration_id"],
+                    "accept",
+                    {
+                        "kind": "cover",
+                        "value": cast("CoverArtifact", refused.artifact).artifact_id,
+                    },
+                )
+
+
+def test_a_verified_work_route_cover_never_gains_automatic_authority(
+    tmp_path,
+) -> None:
+    """No recording admitted means no automatic cover, whatever its identity.
+
+    The work route opens a cover consideration on an audiobook with no
+    admitted recording (#1642). A work-bound cover can still classify as
+    verified_work_match (an accepted or associated identifier on its
+    candidate). Under the F46 automatic replacement of a tiny incumbent that
+    cover must not be admitted automatically, and validation must refuse an
+    automatic decision for it (ADR-0073).
+    """
+    from types import SimpleNamespace
+
+    from mechanical_librarian.adapters import cover_artifacts as decoder
+    from mechanical_librarian.adapters.persistence import field_effect_validation
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        FieldEffectError,
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application import cover_identity
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+        CoverSource,
+        CoverSourceState,
+        cover_source_id,
+    )
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        work_route_cover_sources,
+    )
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.audiobook_reports import publish_audiobook_preview
+    from tests.support.cover_images import synthetic_image
+    from tests.support.hardcover_work_route import WORK, hardcover_work_report
+
+    originals = [synthetic_image("PNG", size) for size in ((80, 120), (640, 960))]
+    decoded = [decoder.decode_cover(payload) for payload in originals]
+    incumbent = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "incumbent"),
+        CoverSourceKind.ABS,
+        CoverSourceState.RETRIEVED,
+        decoded[0].artifact,
+    )
+    work_cover = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:work:1"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        decoded[1].artifact,
+        provenance=CoverProvenance("hardcover", CoverDesignation.DEFAULT, WORK),
+    )
+    # The book's catalogue also shows the current cover, which confirms it.
+    current_cover = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:work:0"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        decoded[0].artifact,
+        provenance=CoverProvenance("hardcover", CoverDesignation.DEFAULT, WORK),
+    )
+    report = hardcover_work_report(cover_sources=(incumbent, current_cover, work_cover))
+    assert not admitted_audiobook_identity(report)
+    assert audiobook_review_scope(report) == "work"
+    assert work_cover in work_route_cover_sources(report)
+    artifacts = CoverArtifactStore(tmp_path / "artifacts")
+    for original, item in zip(originals, decoded, strict=True):
+        artifacts.stage(item.artifact, original, item.preview)
+
+    # The classifier's verified-work outcome, citing the work's own claim as
+    # the identifier evidence an accepted local ISBN family would supply.
+    hardcover = next(
+        value for value in report.providers if value.provider == "hardcover"
+    )
+    work_claim = next(
+        claim.reference
+        for candidate in hardcover.candidates
+        if candidate.work_identity == WORK
+        for claim in candidate.claims
+    )
+    verified = (
+        "verified_work_match",
+        ["accepted_or_associated_work_identifier"],
+        [work_claim],
+    )
+    repository = open_repository(tmp_path / "state.sqlite")
+    try:
+        with patch.object(
+            cover_identity,
+            "_classify_sources",
+            lambda _report, sources: (
+                verified
+                if any(source.kind is CoverSourceKind.HARDCOVER for source in sources)
+                else ("unknown", ["no_provider_identity"], [])
+            ),
+        ):
+            case_id, _resolved = publish_audiobook_preview(
+                repository,
+                report,
+                ("cover_order",),
+                selected_options={"cover_order": "replace_if_strictly_better"},
+            )
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = next(
+                row for row in case.proposals if row["destination"] == "cover"
+            )
+            service = CoverConsiderationService(
+                repository,
+                read_preview=lambda identity, _variant: artifacts.preview(
+                    next(
+                        source.artifact
+                        for source in report.cover_sources
+                        if source.artifact is not None
+                        and source.artifact.artifact_id == identity
+                    )
+                ),
+                read_preview_digest=artifacts.read_preview_digest,
+                require_artifact=artifacts.require_artifact,
+                clock=lambda: 10,
+                reviewer_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("image observer prohibited")
+                ),
+            )
+            projected = service.ensure(case_id, report.to_json(), proposal)
+
+        offered = next(
+            row
+            for row in cast("list[dict[str, object]]", projected["candidates"])
+            if row["incumbent"] is False
+        )
+        assert cast("dict[str, object]", offered["identity"])["outcome"] == (
+            "verified_work_match"
+        )
+        # Manual choice stays open; selection, which automatic reads, does not.
+        assert offered["manual_eligible"] is True
+        assert offered["selectable"] is False
+        assert repository.get_review_case_decisions(case_id) == ()
+
+        # Even a consideration claiming the cover selectable mints nothing.
+        document = repository.current_cover_consideration_document(case_id)
+        assert document is not None
+        forged = json.loads(document)
+        policy_report = json.loads(forged["policy_report_document"])
+        assert policy_report["owner_ready"] is True
+        assert policy_report["actual_target_state"] == "confirmed"
+        for row in forged["candidates"]:
+            if row["incumbent"] is False:
+                row["selectable"] = True
+        repository._cover_considerations._admit_automatic_cover(json.dumps(forged), 11)
+        assert repository.get_review_case_decisions(case_id) == ()
+
+        # Validation refuses automatic cover authority for this audiobook.
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            field_effect_validation._cover_automatic_decision_value(
+                repository._connection,
+                cast("Any", SimpleNamespace()),
+                case,
+                report,
+                cast("Any", None),
+                document,
+            )
+    finally:
+        repository.close()

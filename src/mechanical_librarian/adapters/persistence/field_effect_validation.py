@@ -682,6 +682,10 @@ def _cover_automatic_decision_value(
     consideration_document: str,
 ) -> object:
     """Bind qualified cover authority to its exact current consideration."""
+    # An audiobook with no admitted recording has no automatic authority: its
+    # work-route cover is an owner choice only (ADR-0073, #1642).
+    if report.audio is not None and not admitted_audiobook_identity(report):
+        raise FieldEffectError("authority_binding")
     resolution = connection.execute(
         "SELECT document FROM metadata_policy_resolutions WHERE resolved_policy_id=? "
         "AND generation=? AND library_name=?",

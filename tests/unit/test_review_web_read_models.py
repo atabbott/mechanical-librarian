@@ -1541,6 +1541,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 "provider": "hardcover-main",
                 "authority": "hardcover",
                 "recording_lookup_candidates": [],
+                "audio_editions": [],
                 "candidates": [
                     {
                         "identity": "candidate-1",
@@ -1558,6 +1559,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "provider": "open-library-main",
                 "recording_lookup_candidates": [],
+                "audio_editions": [],
                 "authority": "open_library",
                 "candidates": [
                     {
@@ -4377,3 +4379,99 @@ def test_provider_recovery_retry_without_settings_is_unavailable(
     )
     assert response.status_code == 503
     assert response.json()["error"] == {"code": "settings_unavailable"}
+
+
+def test_an_edition_narrator_choice_names_the_audio_edition_it_came_from() -> None:
+    """Edition references reach the packet and the owner's choice (#1642)."""
+    from mechanical_librarian.application.review_web import _provider_source_labels
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+    from tests.support.hardcover_work_route import (
+        LOCAL_SECONDS,
+        NARRATOR,
+        audio_edition,
+        hardcover_work_report,
+    )
+
+    # Two editions crediting the same cast are told apart by number and
+    # runtime (#1642).
+    report = hardcover_work_report(
+        editions=(
+            audio_edition(3),
+            audio_edition(4, seconds=LOCAL_SECONDS - 60),
+        )
+    )
+    proposal = evaluate_report(report)
+    narrators = next(
+        value for value in proposal.results if value.destination.value == "narrators"
+    )
+    (alternative,) = narrators.alternatives
+    edition_references = {
+        claim.reference
+        for provider in report.providers
+        for edition in provider.audio_editions
+        for claim in edition.claims
+    }
+    assert set(alternative.evidence_references) <= edition_references
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert set(alternative.evidence_references) <= {
+        citation["citation_id"] for citation in packet.citations
+    }
+    data = narrators.to_data()
+    contexts = _choice_contexts(
+        cast("list[dict[str, object]]", data["alternatives"]),
+        data,
+        report,
+        {"state": "missing", "value": None},
+    )
+    proposed = contexts[1]
+    assert sorted(
+        cast("list[dict[str, str]]", proposed["evidence"]),
+        key=lambda row: row["observation"],
+    ) == [
+        {
+            "observation": f"Narration credit: {NARRATOR} (Edition 3, 16 h 11 min)",
+            "role": "external_corroboration",
+            "source": "Hardcover audio edition",
+        },
+        {
+            "observation": f"Narration credit: {NARRATOR} (Edition 4, 16 h 10 min)",
+            "role": "external_corroboration",
+            "source": "Hardcover audio edition",
+        },
+    ]
+    assert proposed["rationale"] == "Hardcover audio edition"
+    assert _provider_source_labels(report, list(alternative.evidence_references)) == [
+        "Hardcover audio edition"
+    ]
+    assert set(alternative.evidence_references) <= set(_evidence_by_reference(report))
+
+
+def test_a_work_route_date_reads_as_the_books_first_publication() -> None:
+    """The owner can tell a work date from an edition's release (#1642)."""
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.hardcover_work_route import hardcover_work_report
+
+    report = hardcover_work_report(release_date="1999-05-01")
+    date = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination.value == "publishedDate"
+    )
+    data = date.to_data()
+    contexts = _choice_contexts(
+        cast("list[dict[str, object]]", data["alternatives"]),
+        data,
+        report,
+        {"state": "missing", "value": None},
+    )
+    assert contexts[1]["evidence"] == [
+        {
+            "observation": "First published (book): 1999-05-01",
+            "role": "external_corroboration",
+            "source": "Hardcover",
+        }
+    ]

@@ -333,11 +333,16 @@ Further audiobook records grant nothing by themselves:
 - **`audio_editions`**: on Hardcover only, up to 16 audio editions of an
   admitted book that credit a narrator and state a runtime within 90 seconds
   of the file's. Each keeps only its ASIN, runtime and narrators. They are
-  compared with the file, never with Audible, and never count as a second
-  source. `hardcover_edition_witness` reads them as `no_edition`,
-  `editions_disagree`, `unmatched`, `agrees` or `challenged`. A match is
-  `challenged` only when every accepted recording states a runtime outside
-  the tight band, after minute floors, and credits only other narrators
+  compared with the file, never with Audible. `hardcover_edition_witness`
+  reads them as `no_edition`, `editions_disagree`, `unmatched`, `agrees` or
+  `challenged`. A match is `challenged` only when every accepted recording
+  states a runtime outside the tight band, after minute floors, and credits
+  only other narrators. While no recording is admitted and the editions agree,
+  `unconfirmed_audio_editions` names those Audible cannot confirm: an edition
+  with no ASIN, or one whose every ASIN was asked of the Audible catalog,
+  Audnexus or AudioSilo and found nothing, crediting no cast the file's own
+  narrator tags rule out. Only their narrators may be offered, for an empty
+  narrator field
   ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
 - **`dispatch`**: each lane's `outcome` (`admitted`, `empty`, `refused`,
   `overflow`, `unavailable`, `starved`, `not_dispatched` or
@@ -387,6 +392,11 @@ stderr lines ([observability](observability.md)).
 
 - Dates keep their exact lexical, precision, event and scope; precision is
   never filled in. Only `Z` or `±HH:MM` offsets become typed claims.
+- On an audiobook title-and-author lane, Hardcover's book states its release
+  date as the work's first publication (`work_first_publication`, work
+  scope), last among the book's claims. It is offered only while no recording
+  is admitted; an ebook lane states none
+  ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)).
 - A provider date counts for this edition only when a checksum-valid local and
   provider ISBN family match exactly. Other dates stay visible as incompatible.
 - Title and creator links record one comparison method: exact; normalized
@@ -406,8 +416,17 @@ window. Besides it and one declared EPUB cover, cover-enabled providers add at
 most eight sources, four per provider. A provider cover is admitted only for a
 work or edition that provider observed; anything else is refused before
 fetching. Identical bytes share storage. Raw cover URLs and private paths are
-never stored. For audiobooks, Audible is the only provider whose cover is
-fetched, behind its own `cover_enabled` switch, and that cover stays evidence.
+never stored. For audiobooks, each provider's cover is fetched behind its own
+`cover_enabled` switch. Audible's cover is compared for an admitted recording.
+With no admitted recording, a portrait or square cover bound to the witnessed
+work is offered as an owner choice when the current cover is empty or under
+300 pixels on its shorter edge; every other cover stays evidence. The cover
+packet, and so the gallery and the owner's decision, then holds only the
+current cover and those offered covers. While no recording is admitted no
+cover is selectable, whatever its identity, so none is automatic: automatic
+cover admission and its validation both refuse such an audiobook. An owner
+choice of an unverified cover still confirms the unverified match. A work
+cover still pending keeps the gallery incomplete.
 
 An EPUB whose cover declaration is malformed keeps an `absent` cover source.
 When it declares a cover another way, `local.cover_recovery` records the

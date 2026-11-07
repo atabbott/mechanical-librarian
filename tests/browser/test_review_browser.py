@@ -73,7 +73,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioEvidenceSurface,
 )
-from mechanical_librarian.domain.cover_evidence import CoverSourceState
+from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverSourceState
 from mechanical_librarian.domain.human_decision import RECORDED_ONLY_REASON
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -448,6 +448,7 @@ def _server(
     refusal_fixture: bool = False,
     synopsis_fixture: str | None = None,
     work_review_fixture: bool = False,
+    work_route_cover: bool = False,
     work_series_title: bool = False,
     synopsis_destination: str = "automatic",
     ebook_synopsis: bool = False,
@@ -883,6 +884,67 @@ def _server(
             report, isbn_policy.resolved_id, human_review_destinations(isbn_policy)
         )
         repository.persist_shadow_outcome(case_id, 4)
+    elif work_route_cover:
+        # A recording-less audiobook whose book Hardcover admits, offering a
+        # work cover over a small current one (#1642).
+        from mechanical_librarian.domain.proposal_set import (
+            audiobook_review_scope,
+            work_route_cover_sources,
+        )
+        from tests.support.hardcover_work_route import (
+            audio_edition,
+            hardcover_work_report,
+            incumbent_cover_source,
+            work_cover_source,
+        )
+
+        payloads = (
+            _cover_preview(1, width=20, height=30),
+            _cover_preview(2, width=40, height=60),
+        )
+        sources = (
+            replace(
+                incumbent_cover_source(200, 300),
+                artifact=CoverArtifact.create(
+                    b"incumbent-original", payloads[0], "image/png", 200, 300, None
+                ),
+            ),
+            work_cover_source(500, 750, preview=payloads[1]),
+        )
+        report = hardcover_work_report(
+            editions=(audio_edition(3),), cover_sources=sources
+        )
+        assert audiobook_review_scope(report) == "work"
+        assert work_route_cover_sources(report) == (sources[1],)
+        artifacts = CoverArtifactStore(database.parent / "cover-artifacts")
+        for source, original, payload in zip(
+            sources, (b"incumbent-original", b"work-original-1"), payloads, strict=True
+        ):
+            assert source.artifact is not None
+            artifacts.stage(source.artifact, original, payload)
+        cover_considerations = CoverConsiderationService(
+            repository,
+            read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+                next(
+                    source.artifact.preview_digest
+                    for source in sources
+                    if source.artifact is not None
+                    and source.artifact.artifact_id == artifact_id
+                )
+            ),
+            read_preview_digest=artifacts.read_preview_digest,
+            require_artifact=artifacts.require_artifact,
+            clock=lambda: 1_000,
+            bind_policy=repository.bind_current_cover_authority,
+        )
+        repository.bind_owner_cover_validation(cover_considerations.require_owner_cover)
+        cover_considerations.update_policy(CoverPolicy())
+        repository.publish(report, lambda: True)
+        proposal_set = evaluate_report(report)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
     elif work_review_fixture:
         from mechanical_librarian.domain.proposal_set import audiobook_review_scope
         from tests.support.audiobook_reports import (
@@ -1643,6 +1705,7 @@ def _server(
         or isbn_title_fixture is not None
         or synopsis_fixture is not None
         or work_review_fixture
+        or work_route_cover
         or language_fixture is not None
         or genre_fixture is not None
         or series_fixture is not None
@@ -1675,7 +1738,7 @@ def _server(
             tuple((library, None) for library in consent_libraries)
             or (
                 ((report.target.library, None),)
-                if refusal_fixture or work_review_fixture
+                if refusal_fixture or work_review_fixture or work_route_cover
                 else ()
             )
         ),
@@ -1687,6 +1750,7 @@ def _server(
             and isbn_title_fixture is None
             and synopsis_fixture is None
             and not work_review_fixture
+            and not work_route_cover
             and language_fixture is None
             and genre_fixture is None
             and series_fixture is None
@@ -11389,6 +11453,66 @@ def test_same_name_series_owner_journey(media, destination):
         browser.close()
 
 
+def test_a_prepared_work_route_cover_keeps_the_case_readable():
+    """Preparing a work-route cover leaves the case readable (#1642).
+
+    The prepared consideration crosses the real wire parser: its offered
+    cover reads as an unconfirmed match, and the case, the field rail and the
+    work's Evidence page all still load after a reload.
+    """
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "work-cover.sqlite",
+                hash_path=password,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                work_route_cover=True,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+            with page.expect_response(
+                lambda response: (
+                    "/cover-considerations" in response.url
+                    and response.request.method == "POST"
+                )
+            ) as prepared:
+                page.get_by_role("button", name="Prepare cover comparison").click()
+            assert prepared.value.status == 200
+            for _ in range(2):
+                expect(
+                    page.get_by_text("Match not confirmed", exact=False).first
+                ).to_be_visible()
+                expect(
+                    page.get_by_text("Selected work could not be loaded")
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role("region", name="Book-level evidence")
+                ).to_contain_text("The exact recording remains unresolved.")
+                page.reload()
+            page.goto(f"{origin}/review/{case_id}")
+            expect(page.get_by_text("Work diagnostics are unavailable")).to_have_count(
+                0
+            )
+            expect(
+                page.get_by_text("First published (book): 1999-05-01").first
+            ).to_be_visible()
+        browser.close()
+
+
 def test_audiobook_work_owner_journey():
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
         root = Path(directory)
@@ -11424,6 +11548,14 @@ def test_audiobook_work_owner_journey():
             ).to_contain_text(
                 "Book-level evidence supports description and genre choices. "
                 "The exact recording remains unresolved."
+            )
+            # Covers may be chosen on this route now, so the note names only
+            # what stays unavailable (#1642).
+            expect(
+                page.get_by_role("region", name="Book-level evidence")
+            ).to_contain_text(
+                "Recording identifiers and automatic changes are unavailable "
+                "from this evidence."
             )
             # A title the evidence only restates is no choice: the case shows
             # the same rows as before #1253.

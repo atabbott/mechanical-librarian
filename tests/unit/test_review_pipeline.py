@@ -11380,7 +11380,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     assert presentation.passage.failed == 0
     assert presentation.recent_completions[0].outcome == "ready"
     assert presentation.throughput_per_minute > 0
-    assert retained.schema_version == "metadata-report-v67"
+    assert retained.schema_version == "metadata-report-v68"
     assert retained.audio is not None
     assert retained.providers == ()
     # The evidence is what the owner browses: a report, not a terminal card.
@@ -11391,7 +11391,7 @@ def test_a_published_audiobook_report_ends_terminally_at_its_local_evidence(
     # And addressable by the identity of the package row that lists it, which
     # is the only route to an audiobook's evidence: it has no review case.
     assert addressed is not None
-    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v67"
+    assert MetadataReport.from_json(addressed).schema_version == "metadata-report-v68"
     assert browse_report(addressed)["audio"] is not None
     # No such work is a `None`, not a refusal: a store that cannot answer
     # raises, and the two must not read alike to the caller above.
@@ -12441,3 +12441,52 @@ def test_work_only_advice_stage_never_calls_secondary_preparation(tmp_path):
             ),
         ):
             stages.prepare_advice(repository, action)
+
+
+def test_work_route_advice_prepares_its_cover_and_never_a_description(tmp_path):
+    """A work route that offers a cover prepares it; description stays shut (#1642)."""
+    from contextlib import closing
+
+    from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+    from tests.support.hardcover_work_route import (
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    report = hardcover_work_report(cover_sources=(work_cover_source(),))
+    assert work_route_cover_offered(report)
+    with closing(open_repository(tmp_path / "work.sqlite")) as repository:
+        repository.publish(report, lambda: True)
+        stages = _proposal_stages(lambda *_: pytest.fail("proposal dispatch"))
+        action = PipelineAction(
+            "action-1",
+            "scan-1",
+            "projection",
+            1,
+            "primary",
+            "audio",
+            "library-id",
+            _PRODUCER,
+            1,
+            "a" * 64,
+            "item-1",
+            "b" * 64,
+            0,
+            report_id=report.report_id,
+            source_fingerprint="c" * 64,
+        )
+        covers: list[PipelineAction] = []
+        with (
+            patch.object(
+                stages,
+                "prepare_cover",
+                side_effect=lambda _repository, value: covers.append(value),
+            ),
+            patch.object(
+                stages,
+                "_prepare_description",
+                side_effect=AssertionError("description dispatch"),
+            ),
+        ):
+            stages.prepare_advice(repository, action)
+        assert covers == [action]

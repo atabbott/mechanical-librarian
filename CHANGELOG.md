@@ -100,6 +100,11 @@ brackets are GitHub issues.
 - **Clean rebuild required.** The image now runs Python 3.15, and Python 3.13
   to 3.15 are supported. Python 3.15's newer Unicode data means an existing
   application database is refused at startup until it is rebuilt (#1639).
+- **Clean rebuild required.** When Audible cannot match an audiobook but its
+  book is matched exactly, you can also choose the book's first publication
+  date from Hardcover, a cover for an empty or tiny one, and, for an empty
+  narrator field, the narrators of a Hardcover audio edition Audible cannot
+  confirm. Each is your choice; nothing changes automatically (#1642).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
