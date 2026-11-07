@@ -1170,8 +1170,9 @@ export default function LibraryPage({
     const answered = queryClient.getQueryState(
       detailQuery(http, selectedReviewCaseId).queryKey,
     )?.dataUpdateCount
-    if (baseline === undefined || answered === undefined || detail.isFetching) return 'reloading'
-    if (answered <= baseline) return 'reloading'
+    // A reread that answered after the baseline settles it; a later
+    // background reread keeps the answer shown.
+    if (baseline === undefined || answered === undefined || answered <= baseline) return 'reloading'
     return selected?.manualReturnRequested === true ? 'requested' : 'not-requested'
   })()
   const automaticShown = automaticReload === 'requested' ? 'success' : automaticResult

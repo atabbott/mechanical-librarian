@@ -1025,12 +1025,13 @@ describe('Library review ownership', () => {
       })
       return reload(held)
     })
-    renderRoute('/library?lens=all&preview=case-1&field=title', {
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
       getCaseDetail,
       returnToAutomatic,
     })
     return {
+      queryClient,
       getCaseDetail,
       returnToAutomatic,
       startReload: () => {
@@ -1097,6 +1098,36 @@ describe('Library review ownership', () => {
   // A reread that fails replaces the work with its own failure and Try again
   // (#1288), so the panel never claims a reload that did not happen; the
   // next reread settles the uncertainty.
+  // A background reread after the outcome resolved (window focus, a live
+  // update) keeps the resolved message rather than reverting to reloading.
+  it.each([
+    ['requested', true, S0],
+    ['not requested', false, U2],
+  ] as const)(
+    'keeps a resolved %s outcome while the case rereads in the background',
+    async (_name, requested, copy) => {
+      const user = userEvent.setup()
+      const run = unconfirmed(async (held) => ({
+        ...held,
+        fields: held.fields.map((field) => ({ ...field, manualReturnRequested: requested })),
+      }))
+      await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+      run.startReload()
+      await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+      expect(await screen.findByText(U1)).toBeVisible()
+      run.finishReload()
+      expect(await screen.findByText(copy)).toBeVisible()
+      const readsBefore = run.getCaseDetail.mock.calls.length
+      void run.queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
+      await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
+      expect(screen.getByText(copy)).toBeVisible()
+      expect(screen.queryByText(U1)).toBeNull()
+      run.finishReload()
+      await waitFor(() => expect(screen.getByText(copy)).toBeVisible())
+      expect(screen.queryByText(U1)).toBeNull()
+    },
+  )
+
   it('settles an unknown outcome from the next reread when the first one fails', async () => {
     const user = userEvent.setup()
     let rereads = 0
