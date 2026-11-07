@@ -105,6 +105,10 @@ brackets are GitHub issues.
   date from Hardcover, a cover for an empty or tiny one, and, for an empty
   narrator field, the narrators of a Hardcover audio edition Audible cannot
   confirm. Each is your choice; nothing changes automatically (#1642).
+- Tooling: a read-only workbench script measures, per field and provider, how
+  often Hardcover's and Open Library's exact book matches agree with admitted
+  recordings and owner decisions, the evidence for letting the work route fill
+  empty fields without asking (#1642).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
