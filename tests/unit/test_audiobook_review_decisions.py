@@ -889,7 +889,37 @@ def test_chapter_fallback_needs_retained_matched_local_asin_evidence(
             input_references=(),
         )
     else:
-        observation = replace(observation, authority=None)
+        # No lane outside an audiobook authority states how it kept a
+        # recording (#1723), so the foreign lane carries no value.
+        observation = replace(
+            observation,
+            authority=None,
+            lanes=tuple(
+                replace(
+                    lane,
+                    candidates=tuple(
+                        replace(value, admission_basis=None)
+                        for value in lane.candidates
+                    ),
+                )
+                for lane in observation.lanes
+            ),
+        )
+    if mutation == "wrong_asin_lane":
+        # A lane that asked for another ASIN cannot have kept this product on
+        # any route, so the report refuses the value it states (#1723).
+        from mechanical_librarian.domain.metadata_report import ReportValueError
+
+        with pytest.raises(ReportValueError, match="admission basis"):
+            MetadataReport.create(
+                target=base.target,
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=(observation,),
+                audio=base.audio,
+            )
+        return
     report = MetadataReport.create(
         target=base.target,
         file=base.file,
@@ -941,17 +971,27 @@ def test_two_supporting_providers_use_one_deterministic_recording_source() -> No
 
 
 def test_multiple_local_asins_do_not_grant_chapter_admission() -> None:
-    from mechanical_librarian.domain.metadata_report import ClaimKind
+    from mechanical_librarian.domain.metadata_report import ClaimKind, LocalClaim
 
     base = chapter_runtime_report()
-    other = chapter_runtime_report(local_asin="B0CW1KL2QD")
+    # A second embedded ASIN beside the one the lane asked for. Built here
+    # rather than through the fixture, whose lane would then ask for this
+    # ASIN and answer with a product that never names it (#1723).
+    other = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="B0CW1KL2QD",
+        canonical="B0CW1KL2QD",
+        excerpt="B0CW1KL2QD",
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=3,
+    )
     report = MetadataReport.create(
         target=base.target,
         file=base.file,
-        local_claims=(
-            *base.local_claims,
-            *(c for c in other.local_claims if c.kind is ClaimKind.ASIN),
-        ),
+        local_claims=(*base.local_claims, other),
         local_reasons=base.local_reasons,
         providers=base.providers,
         audio=base.audio,

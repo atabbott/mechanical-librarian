@@ -845,7 +845,7 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
         return _json(value)
 
     provider = _provider(dispatch)
-    qualify = audible_catalog_metadata.qualify_provider_observation
+    qualify = audible_catalog_metadata.qualify_provider_lane
 
     def qualification(observation, lookup):
         # This adapter-local field is the pre-1005 dispatch-boundary projection.
@@ -855,7 +855,7 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
         return qualify(observation, lookup)
 
     monkeypatch.setattr(
-        audible_catalog_metadata, "qualify_provider_observation", qualification
+        audible_catalog_metadata, "qualify_provider_lane", qualification
     )
     with pytest.raises(ProviderObservationFailure) as caught:
         provider.observe(plan)
@@ -2896,7 +2896,7 @@ def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> Non
     previous.pop("report_id")
     previous["report_id"] = d.report_content_address(previous)
 
-    assert "metadata-report-v69" == report.schema_version
+    assert "metadata-report-v70" == report.schema_version
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(d.canonical_json(previous))
 
