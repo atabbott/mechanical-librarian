@@ -669,6 +669,11 @@ describe('owner settings route', () => {
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
     expect(vi.mocked(http.getSettings).mock.calls.length).toBe(reads)
     expect(http.writeSettings).toHaveBeenCalledOnce()
+    // An edit after the mismatch does not offer a save that cannot succeed.
+    await user.type(endpoint, '/edited')
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reload the current application' })).toBeVisible()
+    expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
   it('associates every editable validation family with its named field', async () => {

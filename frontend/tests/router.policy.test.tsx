@@ -3205,7 +3205,10 @@ describe('Description preferences on an earlier build (#1742)', () => {
     expect(save).toHaveAttribute('aria-disabled', 'true')
     await user.click(save)
     expect(http.writeSettings).toHaveBeenCalledOnce()
-  })
+    // An edit after the mismatch does not offer a save that cannot succeed.
+    const praise = within(region).getByRole('group', {
+      name: 'Remove pull quotes and author praise',
+    })
     await user.click(within(praise).getByRole('button', { name: 'Off' }))
     expect(save).toHaveAttribute('aria-disabled', 'true')
     expect(within(region).getByRole('button', { name: reloadName })).toBeVisible()
