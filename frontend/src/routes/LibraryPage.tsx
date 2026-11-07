@@ -36,7 +36,7 @@ import type {
   WorkSummaryState,
 } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
-import { drawerQuery, useAttentionRail } from '../attentionRail'
+import { useAttentionRail } from '../attentionRail'
 import { focusFieldHeading, useRouteReadyFocus } from '../focus'
 import { destinationLabel, mediaKindLabels, sourceStatusLabels } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
@@ -97,6 +97,7 @@ import {
   usePreparationDismissal,
 } from '../libraryPreparation'
 import { WorkSources, WorkSummary } from './WorkSummary'
+import { AttentionRail } from './AttentionRail'
 import { BookMark } from '../components/BookMark'
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import {
@@ -377,7 +378,6 @@ export default function LibraryPage({
   const attentionRail = useRef<HTMLElement>(null)
   const attentionHeading = useRef<HTMLHeadingElement>(null)
   const attentionToggle = useRef<HTMLButtonElement>(null)
-  const attentionRetry = useRef<HTMLButtonElement>(null)
   const revealWorkspace = useRef(false)
   const revealQueueChoice = useRef(false)
   const workSelectionGeneration = useRef(0)
@@ -672,46 +672,6 @@ export default function LibraryPage({
     }
     return [...groups.values()]
   }, [attentionItems])
-  // Load more keeps its place: once the page lands, focus moves to the first row
-  // it added, even when that row joins a work already in the rail (#1284). The
-  // press ends at the query's next data or error update, whether or not a render
-  // saw it fetching, so a refetch that cancels the page ends it too; a new search
-  // drops it, and focus moves only for an added page the owner has not left.
-  const attentionKey = `${search.q ?? ''} ${search.attentionCursor ?? ''}`
-  const loadMore = useRef<{
-    key: string
-    pages: number
-    updated: number
-    errors: number
-    from: number
-  } | null>(null)
-  useEffect(() => {
-    const pending = loadMore.current
-    if (!pending) return
-    if (pending.key !== attentionKey || attentionQuery.errorUpdateCount > pending.errors) {
-      loadMore.current = null
-      return
-    }
-    const pages = attention.data?.pages.length ?? 0
-    if (attentionQuery.dataUpdatedAt === pending.updated && pages <= pending.pages) return
-    loadMore.current = null
-    if (pages <= pending.pages) return
-    const active = document.activeElement
-    if (active && active !== document.body && !attentionRail.current?.contains(active)) return
-    const first = attentionItems[pending.from]
-    const row = first
-      ? [
-          ...(attentionRail.current?.querySelectorAll<HTMLElement>('[data-attention-row]') ?? []),
-        ].find((node) => node.dataset.attentionRow === `${first.id}:${first.destination}`)
-      : undefined
-    ;(row ?? attentionRail.current)?.focus()
-  }, [
-    attention.data,
-    attentionItems,
-    attentionKey,
-    attentionQuery.dataUpdatedAt,
-    attentionQuery.errorUpdateCount,
-  ])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -3017,184 +2977,32 @@ export default function LibraryPage({
             </>
           )}
         </section>
-        {search.attention === 'open' ? (
-          <aside
-            className="attention-rail"
-            aria-label="Attention queue"
-            aria-busy={attention.isPlaceholderData || undefined}
-            tabIndex={-1}
-            ref={attentionRail}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                closeAttention()
-                return
-              }
-              if (event.key !== 'Tab' || typeof window.matchMedia !== 'function') return
-              if (!window.matchMedia(drawerQuery).matches) return
-              const stops = [
-                ...event.currentTarget.querySelectorAll<HTMLElement>('button, a[href], input'),
-              ].filter((stop) => !stop.matches(':disabled') && stop.getClientRects().length)
-              const edge = event.shiftKey ? stops[0] : stops.at(-1)
-              const active = document.activeElement
-              if (active === edge || (event.shiftKey && !stops.some((stop) => stop === active))) {
-                event.preventDefault()
-                ;(event.shiftKey ? stops.at(-1) : stops[0])?.focus()
-              }
-            }}
-          >
-            <header>
-              <div>
-                <h2 ref={attentionHeading} tabIndex={-1}>
-                  Attention
-                </h2>
-                <p>
-                  {search.q && !data
-                    ? failed
-                      ? 'Count unavailable'
-                      : 'Counting works…'
-                    : summaryAttention === undefined
-                      ? !summary.isError
-                        ? 'Counting works…'
-                        : search.q
-                          ? `Matching: ${workCount(data?.counts.attention ?? 0)} needing a decision`
-                          : 'Count unavailable'
-                      : !search.q
-                        ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
-                        : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
-                </p>
-              </div>
-              <button onClick={closeAttention}>Close</button>
-            </header>
-            {attention.data === undefined && attention.error instanceof BuildMismatchError ? (
-              <StaleBuildRead lead="Attention was not loaded." ref={attentionRetry} />
-            ) : attention.data === undefined ? (
-              <p role={attention.isError ? 'alert' : 'status'}>
-                {attention.isError ? (
-                  <>
-                    Attention could not be loaded.{' '}
-                    <button
-                      ref={attentionRetry}
-                      type="button"
-                      onClick={() =>
-                        void attention.refetch().then((result) => {
-                          // The retry removes this button while it reads, so
-                          // the rail's heading takes focus back on success
-                          // (#1399) and the control that replaces it does when
-                          // it fails again: Try again, or Reload on a newer build.
-                          const active = document.activeElement
-                          if (
-                            active &&
-                            active !== document.body &&
-                            !attentionRail.current?.contains(active)
-                          )
-                            return
-                          if (result.isSuccess)
-                            attentionHeading.current?.focus({ preventScroll: true })
-                          else
-                            requestAnimationFrame(() =>
-                              attentionRetry.current?.focus({ preventScroll: true }),
-                            )
-                        })
-                      }
-                    >
-                      Try again
-                    </button>
-                  </>
-                ) : (
-                  'Loading attention…'
-                )}
-              </p>
-            ) : (
-              <>
-                {attentionGroups.map((group, index) => {
-                  const work = group[0]
-                  if (!work) return null
-                  return (
-                    <div key={work.id} className="attention-work-group">
-                      <div className="attention-work-identity">
-                        <span className="attention-position">{String(index + 1)}</span>
-                        <span>
-                          <strong>{work.title}</strong>
-                          <small>
-                            {work.authors.length
-                              ? work.authors.join(', ')
-                              : 'Author details unavailable'}
-                          </small>
-                          <small>
-                            {work.libraryDisplayName ?? work.library} ·{' '}
-                            {mediaKindLabels[work.mediaKind]}
-                          </small>
-                        </span>
-                        <span className="attention-work-count">
-                          {`${String(work.workAttentionCount)} ${work.workAttentionCount === 1 ? 'field' : 'fields'}`}
-                        </span>
-                      </div>
-                      <ul className="attention-field-rows">
-                        {group.map((item) => {
-                          const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs your decision'}`
-                          return (
-                            <li key={item.destination}>
-                              <button
-                                className="attention-queue-item"
-                                // The same field in two works would otherwise share a name in a
-                                // screen reader's list of buttons; the work is shown above (#1361).
-                                aria-label={`${line}, ${work.title}`}
-                                aria-current={
-                                  item.id === search.preview &&
-                                  item.destination === selected?.destination
-                                }
-                                aria-disabled={attention.isPlaceholderData || undefined}
-                                data-attention-row={`${item.id}:${item.destination}`}
-                                onClick={() =>
-                                  selectFromQueue(item.id, item.destination, item.attentionCursor)
-                                }
-                              >
-                                <span className="attention-queue-copy">
-                                  <b>{line}</b>
-                                </span>
-                              </button>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  )
-                })}
-                {attention.hasNextPage ? (
-                  <button
-                    className="attention-load-more"
-                    type="button"
-                    aria-disabled={attention.isFetchingNextPage || undefined}
-                    onClick={() => {
-                      if (loadMore.current || attention.isFetchingNextPage) return
-                      loadMore.current = {
-                        key: attentionKey,
-                        pages: attention.data.pages.length,
-                        updated: attentionQuery.dataUpdatedAt,
-                        errors: attentionQuery.errorUpdateCount,
-                        from: attentionItems.length,
-                      }
-                      void attention.fetchNextPage()
-                    }}
-                  >
-                    {attention.isFetchingNextPage ? 'Loading more…' : 'Load more attention'}
-                  </button>
-                ) : null}
-                {attention.isFetchNextPageError && attention.error instanceof BuildMismatchError ? (
-                  <StaleBuildRead lead="More attention was not loaded." />
-                ) : attention.isFetchNextPageError ? (
-                  <p role="alert">
-                    More attention could not be loaded.{' '}
-                    <button type="button" onClick={() => void attention.fetchNextPage()}>
-                      Try again
-                    </button>
-                  </p>
-                ) : null}
-              </>
-            )}
-          </aside>
-        ) : null}
+        <AttentionRail
+          search={search}
+          countText={
+            search.q && !data
+              ? failed
+                ? 'Count unavailable'
+                : 'Counting works…'
+              : summaryAttention === undefined
+                ? !summary.isError
+                  ? 'Counting works…'
+                  : search.q
+                    ? `Matching: ${workCount(data?.counts.attention ?? 0)} needing a decision`
+                    : 'Count unavailable'
+                : !search.q
+                  ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
+                  : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`
+          }
+          attention={attention}
+          attentionItems={attentionItems}
+          attentionGroups={attentionGroups}
+          attentionRail={attentionRail}
+          attentionHeading={attentionHeading}
+          selected={selected}
+          closeAttention={closeAttention}
+          selectFromQueue={selectFromQueue}
+        />
       </div>
     </div>
   )
