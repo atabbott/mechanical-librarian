@@ -1550,7 +1550,7 @@ def test_activity_states_a_lapse_only_for_a_configured_library() -> None:
 
 
 def test_waiting_is_split_by_next_step_and_counted_per_destination() -> None:
-    """`46 Waiting safely` is four different next steps, and this separates them.
+    """`46 Waiting to retry` is four different next steps, and this separates them.
 
     An owner reading one number cannot tell consent they can give from a retry
     that time resolves, and cannot tell which permission would carry which

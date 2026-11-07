@@ -10013,7 +10013,7 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         (
             "quality",
             "description_quality_floor_not_met",
-            "No source description meets the rules for a synopsis.",
+            "No source description meets the rules for choosing one for you.",
         ),
         (
             "unproved",
@@ -10028,7 +10028,7 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         (
             "unusable",
             "target_state_unusable",
-            "The current value cannot safely be changed for you.",
+            "The current value cannot be changed for you.",
         ),
         (
             "unavailable",
@@ -10043,7 +10043,7 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         (
             "unqualified",
             "automatic_unqualified",
-            "Your settings leave this kind of change to you.",
+            "Automatic is not offered for this kind of change, so it is left to you.",
         ),
         (
             "contradicted",
@@ -10290,7 +10290,7 @@ def test_supported_current_title_conflict_stays_manual_without_suspension(
         field = next(f for f in detail["fields"] if f["destination"] == "title")
         assert field["needs_attention"] is (mode != "ignore")
         assert field["automatic_withheld_reason"] == (
-            "The sources disagree about the work or title; choose the title yourself."
+            "The sources disagree about the work or title. Choose the title yourself."
             if mode == "automatic"
             else None
         )
