@@ -35,7 +35,9 @@ def _require_private_directory(root: Path, error: str) -> None:
         raise ValueError(error)
     descriptor = os.open(
         root,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
     )
     os.close(descriptor)
 
@@ -48,18 +50,13 @@ class IsolatedNetworkProfile:
     input_sha256: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if (
-            re.fullmatch(r"[a-z][a-z0-9-]{0,63}", self.profile_id) is None
-            or not self.sanitized
-            or not self.bounded_authority
-            or not self.input_sha256
-            or len(self.input_sha256) > MAX_NETWORK_AUTHORITY_FILES
-            or tuple(sorted(set(self.input_sha256))) != self.input_sha256
-            or any(
-                re.fullmatch(r"[0-9a-f]{64}", value) is None
-                for value in self.input_sha256
-            )
-        ):
+        if (re.fullmatch(r"[a-z][a-z0-9-]{0,63}", self.profile_id) is None
+                or not self.sanitized or not self.bounded_authority
+                or not self.input_sha256
+                or len(self.input_sha256) > MAX_NETWORK_AUTHORITY_FILES
+                or tuple(sorted(set(self.input_sha256))) != self.input_sha256
+                or any(re.fullmatch(r"[0-9a-f]{64}", value) is None
+                       for value in self.input_sha256)):
             raise ValueError("isolated network profile is required")
 
 
@@ -73,9 +70,7 @@ class WorkbenchContext:
     _temporary: bool = field(default=False, repr=False)
     _workspace_root: Path = field(init=False, repr=False)
     _cleanup_workspace: Path | None = field(default=None, init=False, repr=False)
-    _cleanup_identity: tuple[int, int] | None = field(
-        default=None, init=False, repr=False
-    )
+    _cleanup_identity: tuple[int, int] | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def temporary(cls) -> "WorkbenchContext":
@@ -141,21 +136,14 @@ class WorkbenchContext:
         self._cleanup_identity = None
 
     def path(self, relative: str) -> Path:
-        if (
-            not relative
-            or len(relative) > 256
-            or "\x00" in relative
-            or Path(relative).is_absolute()
-        ):
+        if (not relative or len(relative) > 256 or "\x00" in relative
+                or Path(relative).is_absolute()):
             raise ValueError("workbench path is invalid")
         candidate = self._workspace_root / relative
         if candidate.is_symlink():
             raise ValueError("workbench paths cannot be symbolic links")
         resolved = candidate.resolve()
-        if (
-            resolved != self._workspace_root
-            and self._workspace_root not in resolved.parents
-        ):
+        if resolved != self._workspace_root and self._workspace_root not in resolved.parents:
             raise ValueError("workbench path escapes its workspace")
         return resolved
 
@@ -195,20 +183,15 @@ class WorkbenchContext:
                     self._authority_payload(
                         path,
                         private=(
-                            private_first
-                            and index == 0
+                            private_first and index == 0
                             or index >= len(authority_files) - private_tail
                         ),
                     )
                 )
         authority_tuple = tuple(authorities)
         digests = tuple(sorted(digest for digest, _ in authority_tuple))
-        if any(
-            digest not in self.network.input_sha256 for digest, _ in authority_tuple
-        ):
-            raise PermissionError(
-                "network authority is not bound to the isolated profile"
-            )
+        if any(digest not in self.network.input_sha256 for digest, _ in authority_tuple):
+            raise PermissionError("network authority is not bound to the isolated profile")
         for attempt_number in range(1_000):
             evidence = json.dumps(
                 {
@@ -227,9 +210,7 @@ class WorkbenchContext:
             try:
                 descriptor = os.open(
                     target,
-                    os.O_WRONLY
-                    | os.O_CREAT
-                    | os.O_EXCL
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL
                     | getattr(os, "O_CLOEXEC", 0)
                     | getattr(os, "O_NOFOLLOW", 0),
                     0o600,
@@ -240,9 +221,7 @@ class WorkbenchContext:
                     while offset < len(attempt_payload):
                         written = os.write(descriptor, attempt_payload[offset:])
                         if written <= 0:
-                            raise PermissionError(
-                                "workbench attempt evidence is invalid"
-                            )
+                            raise PermissionError("workbench attempt evidence is invalid")
                         offset += written
                     os.fchmod(descriptor, 0o600)
                     os.fsync(descriptor)
@@ -276,18 +255,13 @@ class WorkbenchContext:
         if type(connections) is not list:
             raise PermissionError("isolated configuration is invalid")
         for connection in connections:
-            if (
-                type(connection) is not dict
-                or type(connection.get("endpoint")) is not str
-            ):
+            if type(connection) is not dict or type(connection.get("endpoint")) is not str:
                 raise PermissionError("isolated configuration is invalid")
             endpoint = urlsplit(connection["endpoint"])
             hostname = endpoint.hostname or ""
-            if (
-                endpoint.scheme not in {"http", "https"}
-                or hostname not in {"127.0.0.1", "::1", "localhost"}
-                and not hostname.endswith(".invalid")
-            ):
+            if (endpoint.scheme not in {"http", "https"}
+                    or hostname not in {"127.0.0.1", "::1", "localhost"}
+                    and not hostname.endswith(".invalid")):
                 raise PermissionError("production service origins are refused")
         providers = value.get("providers", [])
         if type(providers) is not list or any(
@@ -371,7 +345,9 @@ class WorkbenchContext:
             raise PermissionError("isolated configuration is invalid")
         bindings = {
             original.resolve(): snapshot
-            for original, snapshot in zip(private_files, private_snapshots, strict=True)
+            for original, snapshot in zip(
+                private_files, private_snapshots, strict=True
+            )
         }
         try:
             value = json.loads(
@@ -396,26 +372,22 @@ class WorkbenchContext:
     ) -> None:
         if type(value) is dict:
             for key, item in value.items():
-                if (key.endswith("_file") or key == "container_path") and type(
-                    item
-                ) is str:
+                if ((key.endswith("_file") or key == "container_path")
+                        and type(item) is str):
                     candidate = Path(item)
                     if key.endswith("_file") and not candidate.is_absolute():
                         raise PermissionError(
                             "network configuration private file must be absolute"
                         )
                     resolved = (
-                        candidate.resolve()
-                        if candidate.is_absolute()
+                        candidate.resolve() if candidate.is_absolute()
                         else (self._workspace_root / candidate).resolve()
                     )
                     if (
                         resolved != self._workspace_root
                         and self._workspace_root not in resolved.parents
                     ):
-                        raise PermissionError(
-                            "network configuration path escapes its workspace"
-                        )
+                        raise PermissionError("network configuration path escapes its workspace")
                     if key.endswith("_file") and resolved not in authority_files:
                         authority_files.append(resolved)
                 self._require_private_paths_confined(item, authority_files)
@@ -456,24 +428,23 @@ class WorkbenchContext:
     def _invalid_configuration() -> object:
         raise PermissionError("isolated configuration is invalid")
 
-    def _authority_payload(
-        self, path: Path, *, private: bool = False
-    ) -> tuple[str, bytes]:
+    def _authority_payload(self, path: Path, *, private: bool = False) -> tuple[str, bytes]:
         self._require_workspace_path(path)
         descriptor = -1
         try:
             descriptor = os.open(
                 path,
-                os.O_RDONLY
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
             )
             information = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(information.st_mode)
                 or not 1 <= information.st_size <= MAX_AUTHORITY_BYTES
                 or private
-                and (information.st_uid != os.geteuid() or information.st_mode & 0o077)
+                and (
+                    information.st_uid != os.geteuid()
+                    or information.st_mode & 0o077
+                )
             ):
                 raise PermissionError("network authority file is invalid")
             chunks: list[bytes] = []
@@ -506,7 +477,9 @@ class WorkbenchContext:
     def _private_directory(self, relative: str) -> Path:
         target = self.path(relative)
         try:
-            _require_private_directory(target, "workbench private directory is invalid")
+            _require_private_directory(
+                target, "workbench private directory is invalid"
+            )
         except (OSError, ValueError):
             raise PermissionError("workbench private directory is invalid") from None
         return target
@@ -519,9 +492,7 @@ class WorkbenchContext:
         try:
             descriptor = os.open(
                 target,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 | getattr(os, "O_CLOEXEC", 0)
                 | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
@@ -551,8 +522,7 @@ class WorkbenchContext:
         try:
             descriptor = os.open(
                 target,
-                os.O_RDONLY
-                | getattr(os, "O_CLOEXEC", 0)
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
                 | getattr(os, "O_NOFOLLOW", 0),
             )
             information = os.fstat(descriptor)
@@ -567,7 +537,7 @@ class WorkbenchContext:
             offset = 0
             while offset < len(payload):
                 chunk = os.read(descriptor, min(65_536, len(payload) - offset))
-                if not chunk or chunk != payload[offset : offset + len(chunk)]:
+                if not chunk or chunk != payload[offset:offset + len(chunk)]:
                     raise PermissionError("workbench artifact is invalid")
                 digest.update(chunk)
                 offset += len(chunk)

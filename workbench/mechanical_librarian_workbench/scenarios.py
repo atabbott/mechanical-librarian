@@ -47,9 +47,7 @@ class WorkbenchFailure(Exception):
         if (
             type(attempts) is not tuple
             or len(attempts) > 2
-            or any(
-                type(attempt) is not ContainedReviewerAttempt for attempt in attempts
-            )
+            or any(type(attempt) is not ContainedReviewerAttempt for attempt in attempts)
         ):
             raise ValueError("invalid failure attempts")
         self.category = category
@@ -96,34 +94,19 @@ class ReportRequest:
     preview_variant: str = "preview-320x480-rgba-png-v1"
 
     def __post_init__(self) -> None:
-        _member(
-            self.action,
-            {"observe", "inspect", "inspect-current", "cover"},
-            "report action",
-        )
-        for value, label in (
-            (self.connection, "connection"),
-            (self.library, "library"),
-            (self.item, "item"),
-            (self.report_id, "report id"),
-            (self.artifact_id, "artifact id"),
-        ):
+        _member(self.action, {"observe", "inspect", "inspect-current", "cover"}, "report action")
+        for value, label in ((self.connection, "connection"), (self.library, "library"),
+                             (self.item, "item"), (self.report_id, "report id"),
+                             (self.artifact_id, "artifact id")):
             _identifier(value, label)
         if type(self.file_index) is not int or not 0 <= self.file_index <= 10_000:
             raise ValueError("invalid file index")
         required = {
-            "observe": (
-                (self.connection, "connection"),
-                (self.library, "library"),
-                (self.item, "item"),
-            ),
+            "observe": ((self.connection, "connection"), (self.library, "library"),
+                        (self.item, "item")),
             "inspect": ((self.report_id, "report id"),),
-            "inspect-current": (
-                (self.connection, "connection"),
-                (self.library, "library"),
-                (self.item, "item"),
-                (self.file_identity, "file identity"),
-            ),
+            "inspect-current": ((self.connection, "connection"), (self.library, "library"),
+                                (self.item, "item"), (self.file_identity, "file identity")),
             "cover": ((self.report_id, "report id"), (self.artifact_id, "artifact id")),
         }[self.action]
         for value, label in required:
@@ -131,12 +114,8 @@ class ReportRequest:
 
     @property
     def name(self) -> str:
-        return {
-            "observe": "report-observe",
-            "inspect": "report-inspect",
-            "inspect-current": "report-inspect",
-            "cover": "cover-inspect",
-        }[self.action]
+        return {"observe": "report-observe", "inspect": "report-inspect",
+                "inspect-current": "report-inspect", "cover": "cover-inspect"}[self.action]
 
 
 @dataclass(frozen=True)
@@ -186,12 +165,8 @@ class CatalogueRequest:
 
     def __post_init__(self) -> None:
         _member(self.action, {"refresh", "list", "get"}, "catalogue action")
-        for value, label in (
-            (self.connection, "connection"),
-            (self.library, "library"),
-            (self.library_id, "library id"),
-            (self.selector, "selector"),
-        ):
+        for value, label in ((self.connection, "connection"), (self.library, "library"),
+                             (self.library_id, "library id"), (self.selector, "selector")):
             _identifier(value, label)
         if self.action == "refresh":
             _required(self.connection, "connection")
@@ -225,10 +200,7 @@ class BatchRequest:
 
     def __post_init__(self) -> None:
         _member(self.action, {"preview", "inspect", "run"}, "batch action")
-        if (
-            self.manifest_id is not None
-            and re.fullmatch(r"[0-9a-f]{64}", self.manifest_id) is None
-        ):
+        if self.manifest_id is not None and re.fullmatch(r"[0-9a-f]{64}", self.manifest_id) is None:
             raise ValueError("invalid manifest id")
         if len(self.requested) > 1000 or any(len(item) != 4 for item in self.requested):
             raise ValueError("invalid batch selection")
@@ -262,19 +234,12 @@ class ContainedReviewerRequest:
     output_schema: str | None = None
 
     def __post_init__(self) -> None:
-        _member(
-            self.action,
-            {"invoke", "auth-start", "auth-status", "auth-logout"},
-            "reviewer action",
-        )
+        _member(self.action, {"invoke", "auth-start", "auth-status", "auth-logout"}, "reviewer action")
         if self.action == "invoke":
             _required(self.instruction, "reviewer instruction")
             _required(self.input_document, "reviewer input")
             _required(self.output_schema, "reviewer output schema")
-        elif any(
-            value is not None
-            for value in (self.instruction, self.input_document, self.output_schema)
-        ):
+        elif any(value is not None for value in (self.instruction, self.input_document, self.output_schema)):
             raise ValueError("authentication does not accept reviewer input")
 
     @property
@@ -369,16 +334,9 @@ class CoverPolicyRequest:
 
 
 ScenarioRequest: TypeAlias = (
-    ReportRequest
-    | ProposalRequest
-    | ReviewCaseRequest
-    | CatalogueRequest
-    | BatchRequest
-    | DecisionPreviewRequest
-    | ContainedReviewerRequest
-    | CoverPacketRequest
-    | CoverIdentityRequest
-    | CoverObservationRequest
+    ReportRequest | ProposalRequest | ReviewCaseRequest | CatalogueRequest
+    | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest
+    | CoverPacketRequest | CoverIdentityRequest | CoverObservationRequest
     | CoverPolicyRequest
 )
 
@@ -433,9 +391,7 @@ def _complete(
         json.loads(raw)
         payload = raw.encode("utf-8")
     elif type(raw) is bool:
-        payload = json.dumps(
-            {"completed": raw}, separators=(",", ":"), sort_keys=True
-        ).encode()
+        payload = json.dumps({"completed": raw}, separators=(",", ":"), sort_keys=True).encode()
     else:
         raise ValueError("workbench operation returned an unsupported result")
     artifact_id, digest = context.store_artifact(payload)
@@ -467,13 +423,16 @@ def _admit_configuration(
     )
     private_offset = 1 + len(additional_authority)
     private_snapshots = tuple(
-        context.authority_snapshot(payload) for payload in bound[private_offset:]
+        context.authority_snapshot(payload)
+        for payload in bound[private_offset:]
     )
     return (
-        context.execution_configuration_snapshot(bound[0], private, private_snapshots),
+        context.execution_configuration_snapshot(
+            bound[0], private, private_snapshots
+        ),
         tuple(
             context.authority_snapshot(payload)
-            for payload in bound[1 : 1 + len(additional_authority)]
+            for payload in bound[1:1 + len(additional_authority)]
         ),
     )
 
@@ -491,13 +450,9 @@ def _execute(
         if request.action == "observe":
             admitted_config, _ = _admit_configuration(context, request.config)
             raw = selected.run_metadata_report(
-                admitted_config,
-                context.path(request.database),
-                context.path(request.artifacts),
-                request.connection,
-                request.library,
-                request.item,
-                request.file_index,
+                admitted_config, context.path(request.database),
+                context.path(request.artifacts), request.connection, request.library,
+                request.item, request.file_index,
             )
         elif request.action == "inspect":
             raw = selected.reopen_metadata_report(
@@ -505,19 +460,13 @@ def _execute(
             )
         elif request.action == "inspect-current":
             raw = selected.reopen_current_metadata_report(
-                context.path(request.database),
-                request.connection,
-                request.library,
-                request.item,
-                request.file_identity,
+                context.path(request.database), request.connection, request.library,
+                request.item, request.file_identity,
             )
         else:
             raw = selected.reopen_cover_preview(
-                context.path(request.database),
-                context.path(request.artifacts),
-                request.report_id,
-                request.artifact_id,
-                request.preview_variant,
+                context.path(request.database), context.path(request.artifacts),
+                request.report_id, request.artifact_id, request.preview_variant,
             )
     elif isinstance(request, ProposalRequest):
         if request.action == "create":
@@ -525,8 +474,7 @@ def _execute(
             raw = selected.create_proposal_set(
                 admitted_config,
                 context.path(request.database),
-                context.path(request.artifacts),
-                request.identity,
+                context.path(request.artifacts), request.identity,
             )
         else:
             raw = selected.reopen_proposal_set(
@@ -538,8 +486,7 @@ def _execute(
             raw = selected.admit_review_case(
                 admitted_config,
                 context.path(request.database),
-                context.path(request.artifacts),
-                request.identity,
+                context.path(request.artifacts), request.identity,
             )
         else:
             raw = selected.reopen_review_case(
@@ -551,23 +498,15 @@ def _execute(
         else:
             config = context.path(request.config)
         raw = selected.run_catalogue(
-            config,
-            context.path(request.database),
-            request.action,
-            request.connection,
-            request.library,
-            request.library_id,
-            request.selector,
+            config, context.path(request.database), request.action,
+            request.connection, request.library, request.library_id, request.selector,
             request.limit,
         )
     elif isinstance(request, BatchRequest):
         if request.action == "preview":
             raw = selected.preview_batch(
-                context.path(request.config),
-                context.path(request.catalogue),
-                context.path(request.manifest),
-                request.requested,
-                request.all_eligible,
+                context.path(request.config), context.path(request.catalogue),
+                context.path(request.manifest), request.requested, request.all_eligible,
             )
         elif request.action == "inspect":
             raw = selected.inspect_batch(context.path(request.manifest))
@@ -579,21 +518,16 @@ def _execute(
             admitted_manifest = admitted_additional[0]
             events: list[dict[str, object]] = []
             completed = selected.run_batch(
-                admitted_config,
-                context.path(request.catalogue),
-                admitted_manifest,
+                admitted_config, context.path(request.catalogue), admitted_manifest,
                 request.manifest_id,
-                context.path(request.database),
-                context.path(request.artifacts),
+                context.path(request.database), context.path(request.artifacts),
                 events.append,
             )
             if type(completed) is not bool:
                 raise ValueError("batch operation returned an invalid completion state")
             raw = json.dumps(
                 {"completed": completed, "events": events},
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
+                ensure_ascii=False, separators=(",", ":"), sort_keys=True,
             )
             if not completed:
                 result_status = "failed"
@@ -616,14 +550,8 @@ def _execute(
         )
         bound = context.require_network(*paths, private_first=True, private_tail=1)
         raw = selected.run_cover_packet_reviewer(
-            bound[0],
-            bound[1],
-            bound[3],
-            bound[2],
-            tuple(
-                (value.reference, value.digest, value.payload)
-                for value in packet.images
-            ),
+            bound[0], bound[1], bound[3], bound[2],
+            tuple((value.reference, value.digest, value.payload) for value in packet.images),
         )
     elif isinstance(request, CoverIdentityRequest):
         database = context.path(request.database)
@@ -671,7 +599,8 @@ def _execute(
             selected, database, artifacts, request.report_id
         )
         images = tuple(
-            (value.reference, value.digest, value.payload) for value in packet.images
+            (value.reference, value.digest, value.payload)
+            for value in packet.images
         )
         raw = adjudicate_cover_policy(
             report_document,
@@ -690,19 +619,13 @@ def _execute(
         ).document
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(
-            context.path(value)
-            for value in (
-                request.profile,
-                request.instruction,
-                request.input_document,
-                request.output_schema,
-            )
+            context.path(value) for value in
+            (request.profile, request.instruction, request.input_document, request.output_schema)
             if value is not None
         )
         bound = context.require_network(*paths, private_first=True)
         raw = selected.run_contained_reviewer(
-            bound[0],
-            request.action,
+            bound[0], request.action,
             bound[1] if request.instruction is not None else None,
             bound[2] if request.input_document is not None else None,
             bound[3] if request.output_schema is not None else None,
@@ -717,7 +640,9 @@ def _read_observer_profile(path: Path) -> bytes:
     try:
         descriptor = os.open(
             path,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
         )
         information = os.fstat(descriptor)
         if (
@@ -758,7 +683,9 @@ def _prepare_report_bound_cover_packet(
     if type(report_document) is not str:
         raise ValueError("cover report is invalid")
 
-    read_preview = _cover_preview_reader(operations, database, artifacts, report_id)
+    read_preview = _cover_preview_reader(
+        operations, database, artifacts, report_id
+    )
 
     return report_document, prepare_cover_packet(report_document, read_preview)
 
@@ -801,19 +728,10 @@ def execute(
 
 
 __all__ = [
-    "BatchRequest",
-    "CatalogueRequest",
-    "ContainedReviewerRequest",
-    "CoverIdentityRequest",
-    "CoverObservationRequest",
-    "CoverPacketRequest",
+    "BatchRequest", "CatalogueRequest", "ContainedReviewerRequest",
+    "CoverIdentityRequest", "CoverObservationRequest", "CoverPacketRequest",
     "CoverPolicyRequest",
-    "DecisionPreviewRequest",
-    "ProposalRequest",
-    "ReportRequest",
-    "ReviewCaseRequest",
-    "ScenarioRequest",
-    "WorkbenchFailure",
-    "WorkbenchOperations",
-    "execute",
+    "DecisionPreviewRequest", "ProposalRequest",
+    "ReportRequest", "ReviewCaseRequest",
+    "ScenarioRequest", "WorkbenchFailure", "WorkbenchOperations", "execute",
 ]

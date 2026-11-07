@@ -10,12 +10,8 @@ from typing import TextIO
 from .catalogue import CAPABILITIES
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    *,
-    stdout: TextIO | None = None,
-    stderr: TextIO | None = None,
-) -> int:
+def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None,
+         stderr: TextIO | None = None) -> int:
     """Render the catalogue; scenarios are invoked from their typed modules."""
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
