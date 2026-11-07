@@ -1309,8 +1309,7 @@ const RouteFailure = ({
     </section>
   ) : (
     <section className="route-state">
-      <p className="eyebrow">Review unavailable</p>
-      <h1>{title} could not be loaded.</h1>
+      <h1>{title} couldn't be loaded.</h1>
       {/* Plain words only; the status and code stay under Technical detail (#1756). */}
       <p role="alert">{copy.message}</p>
       {copy.detail ? (

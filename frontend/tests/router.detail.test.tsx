@@ -1007,7 +1007,7 @@ describe('Library review ownership', () => {
   // reread after it, and focus stays on the safe button throughout.
   const U1 = "The request wasn't confirmed. Reloading this work to check…"
   const U2 =
-    "The request wasn't confirmed, and this work doesn't show it. Requesting again is safe."
+    "The request wasn't confirmed, and this work doesn't show fresh checks as requested. Requesting again is safe."
   const S0 = 'Fresh checks requested. Manual handling remains until they complete.'
   const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]

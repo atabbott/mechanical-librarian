@@ -72,6 +72,8 @@ export interface PolicyImpactRow {
 const sameMetadataValue = (left: unknown, right: unknown) =>
   JSON.stringify(left) === JSON.stringify(right)
 const hasMetadataValue = (value: unknown) => value !== null && value !== undefined && value !== ''
+// A reason after "remains …" starts its own sentence (#1760).
+const reasonSentence = (reason: string) => `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`
 const humanReason = (reason: string | null) => {
   if (reason === 'ambiguous_evidence') return 'evidence is ambiguous'
   if (reason === 'policy_ignored' || reason === 'policy_off')
@@ -116,7 +118,7 @@ export const policyImpactDisplay = (
         ? `${proposal ? 'would propose filling' : 'fills'} the empty field with ${previewValue(field.desired_value, language)}`
         : currentIsDisplayable && !desiredIsDisplayable
           ? `${proposal ? 'would propose clearing' : 'clears'} ${current}`
-          : `${proposal ? 'would propose ' : ''}${current} → ${previewValue(field.desired_value, language)}`
+          : `${proposal ? 'would propose changing' : 'changes'} ${current} to ${previewValue(field.desired_value, language)}`
     return {
       changed: true,
       title: 'Change',
@@ -140,7 +142,7 @@ export const policyImpactDisplay = (
       title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
       detail:
         field.reason === 'policy_ignored'
-          ? `remains ${current}: ${humanReason(field.reason)}`
+          ? `remains ${current}. ${reasonSentence(humanReason(field.reason))}`
           : (automaticRefusalReasons[field.reason ?? ''] ??
             'The preview did not select an automatic action; no more specific reason is available.'),
       technicalDetail,
@@ -149,20 +151,20 @@ export const policyImpactDisplay = (
     return {
       changed: false,
       title: 'No change',
-      detail: `remains ${current}: ${field.reason ? humanReason(field.reason) : 'the exact current value is preserved'}`,
+      detail: `remains ${current}. ${reasonSentence(field.reason ? humanReason(field.reason) : 'the exact current value is preserved')}`,
       technicalDetail,
     }
   if (!currentIsDisplayable && !desiredIsDisplayable)
     return {
       changed: false,
       title: 'No change',
-      detail: 'remains empty: no supported value found',
+      detail: 'remains empty. No supported value found.',
       technicalDetail,
     }
   return {
     changed: false,
     title: 'No supported value found',
-    detail: `${current} remains: ${humanReason(field.reason)}`,
+    detail: `${current} remains. ${reasonSentence(humanReason(field.reason))}`,
     technicalDetail,
   }
 }

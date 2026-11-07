@@ -57,14 +57,12 @@ it('keeps navigation available during initial Activity failure and retries the r
   expect(await screen.findByRole('heading', { name: 'Loading activity…' })).toBeVisible()
   expect(screen.getByRole('navigation', { name: 'Primary workspace' })).toBeVisible()
   await act(async () => rejectRead(new ApiError(503, 'unavailable')))
-  expect(
-    await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
-  ).toBeVisible()
+  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded." })).toBeVisible()
   expect(screen.getByRole('link', { name: 'Library' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   await waitFor(() => {
     expect(http.getActivity).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('heading', { name: 'Activity could not be loaded.' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: "Activity couldn't be loaded." })).toBeVisible()
   })
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
@@ -81,9 +79,7 @@ it('explains a lost Activity read in plain words and retries it', async () => {
     .mockRejectedValueOnce(new NetworkUnavailableError())
     .mockResolvedValue(activity())
   renderRoute('/activity', http)
-  expect(
-    await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
-  ).toBeVisible()
+  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded." })).toBeVisible()
   expect(screen.getByRole('alert')).toHaveTextContent(
     "Couldn't reach the server. Check that Mechanical Librarian is running, then try again.",
   )
@@ -120,7 +116,7 @@ it.each([
     http.getActivity = vi.fn<ReviewHttp['getActivity']>().mockRejectedValue(error)
     renderRoute('/activity', http)
     expect(
-      await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
+      await screen.findByRole('heading', { name: "Activity couldn't be loaded." }),
     ).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(message)
     expect(screen.getByText(detail).closest('details')).not.toHaveAttribute('open')

@@ -82,14 +82,14 @@ describe('Policy route', () => {
     }
     renderRoute('/policy?section=curation', http)
 
-    expect(
-      await screen.findByRole('heading', { name: 'Policy could not be loaded.' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: "Policy couldn't be loaded." })).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(
       "The server sent an answer this page couldn't read. Try again.",
     )
     expect(screen.queryByText(/Review API request failed/u)).toBeNull()
     expect(screen.queryByText(/workspace could not be loaded/u)).toBeNull()
+    // The heading names the page; no eyebrow label above it (#1756).
+    expect(screen.queryByText('Review unavailable')).toBeNull()
     const technical = screen.getByText('Technical detail')
     const details = technical.closest('details')
     expect(details).not.toBeNull()
@@ -1107,7 +1107,7 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText(
-        '· Ask me: would propose filling the empty field with Proposed cast → Automatic: fills the empty field with Complete recording cast',
+        '· Ask me now: would propose filling the empty field with Proposed cast. Automatic in the draft: fills the empty field with Complete recording cast',
         { selector: '.cm-policy-impact small' },
       ),
     ).toBeVisible()

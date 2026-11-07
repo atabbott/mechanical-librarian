@@ -294,6 +294,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .subviews button, .field-navigation button, .policy-sections button { padding:.55rem .75rem; border-radius:999px; }
 .subviews button[aria-current='true'], .field-navigation button[aria-current='true'], .policy-sections button[aria-current='true'] { color:var(--surface); background:var(--accent-strong); }
 .route-state, .field-list article, .progressive-panel, .policy-card, .activity-controls, .activity-ledger, aside { min-width:0; padding:1rem; background:var(--surface); border:1px solid var(--line); border-radius:.75rem; }
+/* #1756: the opened Technical detail keeps a gap above the route failure's action. */
+.route-state details { margin: .5rem 0 .75rem; }
 .field-list { min-width:0; }
 .field-list article[hidden] { display:none; }
 .comparison { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }

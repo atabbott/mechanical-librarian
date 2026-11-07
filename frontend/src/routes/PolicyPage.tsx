@@ -406,7 +406,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       ? ('Policy change' as const)
                       : ('No policy change' as const),
                     detail: field.changed
-                      ? `${policyDestinationLabels[field.active_destination]}: ${before.detail} → ${policyDestinationLabels[field.draft_destination]}: ${projected.detail}`
+                      ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail}`
                       : projected.detail,
                     technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
                   },

@@ -2828,7 +2828,7 @@ export default function LibraryPage({
                             // A warning, not an error: requesting again is safe (#1755).
                             <p className="automatic-handling-result is-uncertain" role="status">
                               {automaticReload === 'not-requested'
-                                ? "The request wasn't confirmed, and this work doesn't show it. Requesting again is safe."
+                                ? "The request wasn't confirmed, and this work doesn't show fresh checks as requested. Requesting again is safe."
                                 : "The request wasn't confirmed. Reloading this work to check…"}
                             </p>
                           ) : automaticShown === 'refreshed' ? (
