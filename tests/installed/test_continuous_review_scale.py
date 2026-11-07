@@ -236,8 +236,12 @@ def test_current_authority_and_predecessor_refusal_without_history(
 
     from tests.support.automatic_decisions import _automatic_decisions
     from tests.support.metadata_report_schemas import (
+        PRIOR_ATTENTION_FACT_OBJECTS,
+        PRIOR_ATTENTION_FACT_SOURCE_SQL,
+        PRIOR_AUTOMATIC_DECISIONS_SQL,
         PRIOR_HUMAN_DECISIONS_SQL,
         PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+        PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
         PRIOR_REVIEW_WORK_SQL,
     )
 
@@ -291,6 +295,20 @@ def test_current_authority_and_predecessor_refusal_without_history(
             PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         )
         old_schema.setattr(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL)
+        old_schema.setattr(
+            schema, "_AUTOMATIC_DECISIONS_SQL", PRIOR_AUTOMATIC_DECISIONS_SQL
+        )
+        old_schema.setattr(
+            schema,
+            "_REVIEW_PREPARATION_PRESENTATION_SQL",
+            PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
+        )
+        old_schema.setattr(
+            schema, "_ATTENTION_FACT_OBJECTS", PRIOR_ATTENTION_FACT_OBJECTS
+        )
+        old_schema.setattr(
+            schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
+        )
         old_schema.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
         # The producer predates #1245's report discriminator.
         old_schema.setattr(

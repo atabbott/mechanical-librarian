@@ -34,6 +34,7 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
+    _active_generation_automatic_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -311,12 +312,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
         for decision in decisions:
             conflict = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+                "AND policy_generation=?",
                 (
                     decision.review_case_id,
                     decision.destination,
                     decision.review_case_id,
                     decision.destination,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if conflict is not None and decision.bundle_id is not None:
@@ -340,12 +343,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 continue
             conflict = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+                "AND policy_generation=?",
                 (
                     decision.review_case_id,
                     decision.destination,
                     decision.review_case_id,
                     decision.destination,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if conflict is not None:
@@ -353,7 +358,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 # a global safety event.  Bundles were removed as a unit above.
                 continue
             self._connection.execute(
-                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
                 (
                     decision.decision_id,
                     decision.review_case_id,
@@ -361,6 +366,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.idempotency_digest,
                     decision.occurred_at,
                     decision.to_json(),
+                    decision.policy_generation,
                 ),
             )
 
@@ -528,62 +534,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
             if decision.outcome == "withdraw":
                 self._require_withdrawable(decision)
-            cover_automatic = None
-            if decision.destination == "cover":
-                target = case.target
-                cover_automatic = self._connection.execute(
-                    "SELECT selection.decision_id,selection.kind "
-                    "FROM current_cover_selection_authorities current "
-                    "JOIN cover_selection_authorities selection "
-                    "ON selection.selection_id=current.selection_id "
-                    "WHERE current.connection_name=? AND current.library_name=? "
-                    "AND current.item_id=?",
-                    (target["connection"], target["library"], target["item"]),
-                ).fetchone()
-            # Only this episode's decision is replaced; an earlier
-            # episode's is history (#1358).
-            previous = self._connection.execute(
-                "SELECT decision_id,'human' FROM human_decisions "
-                "WHERE review_case_id=? AND destination=? AND "
-                + _episode_decision_sql("human_decisions")
-                + " ORDER BY ordinal DESC LIMIT 1",
-                (decision.review_case_id, decision.destination),
-            ).fetchone()
-            authored = None
-            if decision.destination == "description":
-                authored = self._connection.execute(
-                    "SELECT decision_id,'authored' FROM current_description_decisions WHERE review_case_id=?",
-                    (decision.review_case_id,),
-                ).fetchone()
-                if authored is not None:
-                    previous = authored
-            if cover_automatic is not None:
-                previous = cover_automatic
-            if previous is None:
-                previous = self._connection.execute(
-                    "SELECT decision_id,'automatic' FROM automatic_decisions "
-                    "WHERE review_case_id=? AND destination=?",
-                    (decision.review_case_id, decision.destination),
-                ).fetchone()
-            automatic = self._connection.execute(
-                "SELECT decision_id FROM automatic_decisions "
-                "WHERE review_case_id=? AND destination=?",
-                (decision.review_case_id, decision.destination),
-            ).fetchone()
-            if cover_automatic is not None and cover_automatic[1] == "automatic":
-                automatic = cover_automatic
-            if previous is not None:
-                effect = self._connection.execute(
-                    "SELECT 1 FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects "
-                    "WHERE decision_id=? UNION ALL SELECT rowid FROM field_effects WHERE "
-                    + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                    + "=?) AND "
-                    + _REPLACEMENT_BLOCKING_EFFECT_SQL
-                    + " LIMIT 1",
-                    (previous[0], previous[0], decision.destination == "cover"),
-                ).fetchone()
-                if effect is not None:
-                    raise HumanDecisionError("already_decided")
+            previous, authored, automatic = self._replacement_authorities(
+                decision, case
+            )
             selected = _canonical_json(decision.selected_value)
             self._connection.execute(
                 "INSERT INTO human_decisions("
@@ -709,6 +662,107 @@ class SQLiteDecisionRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
+    def _replacement_authorities(
+        self, decision: HumanDecision, case: ReviewCase
+    ) -> tuple[
+        sqlite3.Row | tuple[object, ...] | None,
+        sqlite3.Row | tuple[object, ...] | None,
+        sqlite3.Row | tuple[object, ...] | None,
+    ]:
+        """Select the authority an owner decision replaces, and refuse
+        while any write it would replace is still out with the service.
+
+        Runs inside `record_human_decision`'s transaction and returns the
+        decision being replaced, the current authored description decision
+        and the automatic decision to hold, in that order.
+        """
+        cover_automatic = None
+        if decision.destination == "cover":
+            target = case.target
+            cover_automatic = self._connection.execute(
+                "SELECT selection.decision_id,selection.kind "
+                "FROM current_cover_selection_authorities current "
+                "JOIN cover_selection_authorities selection "
+                "ON selection.selection_id=current.selection_id "
+                "WHERE current.connection_name=? AND current.library_name=? "
+                "AND current.item_id=?",
+                (target["connection"], target["library"], target["item"]),
+            ).fetchone()
+        # Only this episode's decision is replaced; an earlier
+        # episode's is history (#1358).
+        previous = self._connection.execute(
+            "SELECT decision_id,'human' FROM human_decisions "
+            "WHERE review_case_id=? AND destination=? AND "
+            + _episode_decision_sql("human_decisions")
+            + " ORDER BY ordinal DESC LIMIT 1",
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        authored = None
+        if decision.destination == "description":
+            authored = self._connection.execute(
+                "SELECT decision_id,'authored' FROM current_description_decisions WHERE review_case_id=?",
+                (decision.review_case_id,),
+            ).fetchone()
+            if authored is not None:
+                previous = authored
+        if cover_automatic is not None:
+            previous = cover_automatic
+        # Without an owner, authored or cover decision, the decisions
+        # being replaced are automatic. Only the active generation's
+        # decides the field, but a write any generation's decision still
+        # has out with the service blocks replacement until it is
+        # reconciled (#1573).
+        replaced_automatic: tuple[str, ...] = ()
+        if previous is None:
+            previous = self._connection.execute(
+                "SELECT decision_id,'automatic' FROM automatic_decisions "
+                "WHERE review_case_id=? AND destination=? AND "
+                + _active_generation_automatic_sql("automatic_decisions"),
+                (decision.review_case_id, decision.destination),
+            ).fetchone()
+            replaced_automatic = tuple(
+                str(row[0])
+                for row in self._connection.execute(
+                    "SELECT decision_id FROM automatic_decisions "
+                    "WHERE review_case_id=? AND destination=? "
+                    "ORDER BY policy_generation",
+                    (decision.review_case_id, decision.destination),
+                )
+                if previous is None or row[0] != previous[0]
+            )
+        automatic = self._connection.execute(
+            "SELECT decision_id FROM automatic_decisions "
+            "WHERE review_case_id=? AND destination=? AND "
+            + _active_generation_automatic_sql("automatic_decisions"),
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        if cover_automatic is not None and cover_automatic[1] == "automatic":
+            automatic = cover_automatic
+        if previous is not None:
+            effect = self._connection.execute(
+                "SELECT 1 FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects "
+                "WHERE decision_id=? UNION ALL SELECT rowid FROM field_effects WHERE "
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + "=?) AND "
+                + _REPLACEMENT_BLOCKING_EFFECT_SQL
+                + " LIMIT 1",
+                (previous[0], previous[0], decision.destination == "cover"),
+            ).fetchone()
+            if effect is not None:
+                raise HumanDecisionError("already_decided")
+        for earlier in replaced_automatic:
+            if self._connection.execute(
+                "SELECT 1 FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects "
+                "WHERE decision_id=? UNION ALL SELECT rowid FROM field_effects WHERE "
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + "=?) AND "
+                + _REPLACEMENT_BLOCKING_EFFECT_SQL
+                + " LIMIT 1",
+                (earlier, earlier, decision.destination == "cover"),
+            ).fetchone():
+                raise HumanDecisionError("already_decided")
+        return previous, authored, automatic
+
     def _require_withdrawable(self, decision: HumanDecision) -> None:
         """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
         latest = self._connection.execute(
@@ -780,12 +834,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise AutomaticDecisionError("stale")
             existing = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+                "AND policy_generation=?",
                 (
                     decision.review_case_id,
                     decision.destination,
                     decision.review_case_id,
                     decision.destination,
+                    decision.policy_generation,
                 ),
             ).fetchone()
             if existing is not None:
@@ -866,7 +922,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 raise AutomaticDecisionError("stale")
             self._connection.execute(
-                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
                 (
                     decision.decision_id,
                     decision.review_case_id,
@@ -874,6 +930,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.idempotency_digest,
                     decision.occurred_at,
                     decision.to_json(),
+                    decision.policy_generation,
                 ),
             )
             if self._binding is not None:

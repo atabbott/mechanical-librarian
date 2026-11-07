@@ -611,8 +611,8 @@ _REVIEW_PREPARATION_PRESENTATION_SQL = (
     "row_id TEXT PRIMARY KEY NOT NULL, row_kind TEXT NOT NULL CHECK(row_kind IN ('run','trigger','enrollment','deferred_enrollment','work')), "
     "run_id TEXT NOT NULL CHECK(run_id GLOB 'preparation_run_[0-9a-f]*' AND length(run_id)=80), "
     "state TEXT CHECK(state IS NULL OR state IN ('starting','running','blocked','completed_clean','completed_with_failures','dismissed')), "
-    "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added','title_recovery')), "
-    "scan_id TEXT, connection_name TEXT, library_name TEXT, cycle_id TEXT CHECK(cycle_id IS NULL OR (substr(cycle_id,1,18)='preparation_cycle_' AND length(cycle_id)=82 AND substr(cycle_id,19) NOT GLOB '*[^0-9a-f]*')), pending_cycle_id TEXT CHECK(pending_cycle_id IS NULL OR (substr(pending_cycle_id,1,18)='preparation_cycle_' AND length(pending_cycle_id)=82 AND substr(pending_cycle_id,19) NOT GLOB '*[^0-9a-f]*')), cycle_state TEXT CHECK(cycle_state IS NULL OR cycle_state IN ('queued','discovering','processing','completed','completed_with_failures')), work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), trigger_ordinal INTEGER CHECK(trigger_ordinal IS NULL OR trigger_ordinal BETWEEN 0 AND 3), enrollment_ordinal INTEGER CHECK(enrollment_ordinal IS NULL OR enrollment_ordinal>=0), "
+    "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added','title_recovery','automatic_confirmed')), "
+    "scan_id TEXT, connection_name TEXT, library_name TEXT, cycle_id TEXT CHECK(cycle_id IS NULL OR (substr(cycle_id,1,18)='preparation_cycle_' AND length(cycle_id)=82 AND substr(cycle_id,19) NOT GLOB '*[^0-9a-f]*')), pending_cycle_id TEXT CHECK(pending_cycle_id IS NULL OR (substr(pending_cycle_id,1,18)='preparation_cycle_' AND length(pending_cycle_id)=82 AND substr(pending_cycle_id,19) NOT GLOB '*[^0-9a-f]*')), cycle_state TEXT CHECK(cycle_state IS NULL OR cycle_state IN ('queued','discovering','processing','completed','completed_with_failures')), work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), trigger_ordinal INTEGER CHECK(trigger_ordinal IS NULL OR trigger_ordinal BETWEEN 0 AND 4), enrollment_ordinal INTEGER CHECK(enrollment_ordinal IS NULL OR enrollment_ordinal>=0), "
     "display_name TEXT CHECK(display_name IS NULL OR (typeof(display_name)='text' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 2048)), "
     "work_stage TEXT CHECK(work_stage IS NULL OR work_stage IN ('extraction','provider','proposal','admission','projection')), "
     "current_work_state TEXT CHECK(current_work_state IS NULL OR current_work_state IN ('queued','delayed','running','complete','failed','stale')), work_outcome TEXT CHECK(work_outcome IS NULL OR work_outcome IN ('ready','failed')), recovery_high_water_stage TEXT CHECK(recovery_high_water_stage IS NULL OR recovery_high_water_stage IN ('extraction','provider','proposal','admission','projection')), recovery_high_water_outcome TEXT CHECK(recovery_high_water_outcome IS NULL OR recovery_high_water_outcome IN ('ready','failed')), completion_sequence INTEGER CHECK(completion_sequence IS NULL OR completion_sequence>0), completion_count INTEGER CHECK(completion_count IS NULL OR completion_count>=0), "
@@ -810,6 +810,9 @@ _COVER_CONSIDERATION_NO_UPDATE_SQL = "CREATE TRIGGER cover_considerations_no_upd
 _COVER_CONSIDERATION_NO_DELETE_SQL = "CREATE TRIGGER cover_considerations_no_delete BEFORE DELETE ON cover_considerations BEGIN SELECT RAISE(ABORT, 'cover considerations are append-only'); END"
 _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER cover_consideration_events_no_update BEFORE UPDATE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
 _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL = "CREATE TRIGGER cover_consideration_events_no_delete BEFORE DELETE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
+# An automatic decision decides its field only in the policy generation it was
+# recorded under (ADR-0036). A case keeps its earlier generations' decisions as
+# history, so a case, field and generation has at most one (#1573).
 _AUTOMATIC_DECISIONS_SQL = (
     "CREATE TABLE automatic_decisions ("
     "decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), "
@@ -818,7 +821,9 @@ _AUTOMATIC_DECISIONS_SQL = (
     "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
-    "UNIQUE(review_case_id,destination))"
+    "policy_generation INTEGER NOT NULL CHECK(typeof(policy_generation)='integer' AND policy_generation>=1), "
+    "CHECK((CASE WHEN json_valid(document) THEN json_extract(document,'$.policy_generation') IS policy_generation ELSE 0 END) IS 1), "
+    "UNIQUE(review_case_id,destination,policy_generation))"
 )
 _AUTOMATIC_SAFETY_SQL = (
     "CREATE TABLE automatic_safety_state ("
@@ -942,8 +947,18 @@ def _same_policy_retirement_sql(connection: str, library: str, item: str) -> str
 # A malformed or origin-less document is never deferred, so the readers that
 # validate it refuse it as before. CASE guards json_extract, which SQLite's AND
 # may evaluate on a malformed document, and COALESCE keeps it two-valued.
+# A ready effect also waits while another effect on the same field may still
+# be reaching the service: a decision of a later generation never writes over
+# an earlier generation's unreconciled request (#1573).
+_FIELD_EFFECT_TARGET_BUSY_SQL = (
+    "EXISTS (SELECT 1 FROM field_effects busy "
+    "WHERE busy.connection_name=effect.connection_name "
+    "AND busy.library_name=effect.library_name AND busy.work_id=effect.work_id "
+    "AND busy.destination=effect.destination AND busy.plan_id<>effect.plan_id "
+    "AND busy.state IN ('claimed','applying','reconciling'))"
+)
 _FIELD_EFFECT_DEFERRED_SQL = (
-    "CASE WHEN json_valid(effect.document) THEN COALESCE(("
+    "(CASE WHEN json_valid(effect.document) THEN COALESCE(("
     "(json_extract(effect.document,'$.plan.authority.origin')='automatic_policy' "
     "AND NOT " + _AUTOMATIC_POSTURE_SQL + ") OR "
     "(json_extract(effect.document,'$.plan.authority.origin')='human' "
@@ -960,7 +975,9 @@ _FIELD_EFFECT_DEFERRED_SQL = (
     + _same_policy_retirement_sql(
         "awaiting.connection_name", "awaiting.library_name", "awaiting.item_id"
     )
-    + "))),0) ELSE 0 END"
+    + "))),0) ELSE 0 END OR "
+    + _FIELD_EFFECT_TARGET_BUSY_SQL
+    + ")"
 )
 
 # The scheduler's claim, the Activity page's waiting effect and description
@@ -1276,6 +1293,14 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         ("insert",),
         _packages_of_case("{row}.destination"),
     ),
+    # Only the active generation's automatic decisions settle a field, so a
+    # change of generation reaches every current package holding one (#1601).
+    "metadata_policy_state": (
+        ("insert", "update", "delete"),
+        "SELECT DISTINCT c.connection_name,c.library_name,c.item_id,decision.destination "
+        "FROM automatic_decisions decision JOIN current_review_packages c "
+        "ON c.review_case_id=decision.review_case_id",
+    ),
     "current_description_decisions": (
         ("insert", "update", "delete"),
         _packages_of_case("'description'"),
@@ -1333,6 +1358,7 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "category_suspensions_document",
     ),
     "review_case_episodes": ("review_case_id", "decision_floor"),
+    "metadata_policy_state": ("generation",),
     "current_description_decisions": ("review_case_id",),
     "current_cover_considerations": ("review_case_id", "consideration_id"),
     "current_cover_selection_authorities": (

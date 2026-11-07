@@ -133,8 +133,9 @@ What the main aggregates mean, where the table names alone do not say:
 - **Decisions.** `human_decisions` holds owner decisions (accept, keep
   current, reject, an owner-entered value, or withdrawal) with their
   idempotency key and target fingerprint. `automatic_decisions` holds one
-  policy decision per case and destination. `shadow_decision_outcomes` is
-  reviewer evidence, never authority.
+  policy decision per case, destination and policy generation; only the
+  active generation's decides. `shadow_decision_outcomes` is reviewer
+  evidence, never authority.
 - **Covers and descriptions.** Each has candidate packets, events or attempts,
   an owner decision and `current_*` pointers per live case. A current cover
   selection pointer is checked by trigger against the authority row it names.

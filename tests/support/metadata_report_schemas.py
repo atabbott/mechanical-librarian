@@ -381,17 +381,60 @@ _KEPT_COVER_SQL = " AND NOT " + review_sql._VERIFIED_CURRENT_COVER_SQL
 # Nor did they admit a refreshing cover by its raw outcome.
 _RAW_REFRESH_SQL = "THEN " + review_sql._COVER_UNRESOLVED_OUTCOME_SQL + " END"
 
+# Every producer before #1573 let an automatic decision of any generation
+# settle its field, so it kept no policy-state attention input either.
+AUTOMATIC_DECIDED_SQL = (
+    "AND decision.destination=result.destination AND "
+    + review_sql._active_generation_automatic_sql("decision")
+    + ") "
+)
+PRIOR_AUTOMATIC_DECIDED_SQL = "AND decision.destination=result.destination ) "
+
 PRIOR_ATTENTION_FACT_OBJECTS = tuple(
     (
         kind,
         name,
         sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL)
+        .replace(AUTOMATIC_DECIDED_SQL, PRIOR_AUTOMATIC_DECIDED_SQL)
         .replace(_KEPT_COVER_SQL, "")
         .replace(_RAW_REFRESH_SQL, "THEN result.unresolved_choice END"),
     )
     for kind, name, sql in persistence_schema._ATTENTION_FACT_OBJECTS
-    if not name.startswith("review_case_episodes_")
+    if not name.startswith(("review_case_episodes_", "metadata_policy_state_"))
 )
+
+assert any(
+    PRIOR_AUTOMATIC_DECIDED_SQL in sql for _, _, sql in PRIOR_ATTENTION_FACT_OBJECTS
+)
+# Open checks the stored facts against this source, so a store holding the
+# prior automatic decisions table is checked by the prior source.
+PRIOR_ATTENTION_FACT_SOURCE_SQL = review_sql._ATTENTION_FACT_SOURCE_SQL.replace(
+    AUTOMATIC_DECIDED_SQL, PRIOR_AUTOMATIC_DECIDED_SQL
+)
+assert PRIOR_ATTENTION_FACT_SOURCE_SQL != review_sql._ATTENTION_FACT_SOURCE_SQL
+
+# Every producer before #1573 kept one automatic decision per case and
+# destination.
+PRIOR_AUTOMATIC_DECISIONS_SQL = persistence_schema._AUTOMATIC_DECISIONS_SQL.replace(
+    "policy_generation INTEGER NOT NULL CHECK(typeof(policy_generation)='integer' "
+    "AND policy_generation>=1), "
+    "CHECK((CASE WHEN json_valid(document) THEN json_extract(document,"
+    "'$.policy_generation') IS policy_generation ELSE 0 END) IS 1), "
+    "UNIQUE(review_case_id,destination,policy_generation))",
+    "UNIQUE(review_case_id,destination))",
+)
+assert PRIOR_AUTOMATIC_DECISIONS_SQL != persistence_schema._AUTOMATIC_DECISIONS_SQL
+
+
+# Every producer before #1573 had four preparation triggers; confirming
+# Automatic reopened preparation under title recovery.
+PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL = (
+    persistence_schema._REVIEW_PREPARATION_PRESENTATION_SQL.replace(
+        "'title_recovery','automatic_confirmed')", "'title_recovery')"
+    ).replace("trigger_ordinal BETWEEN 0 AND 4", "trigger_ordinal BETWEEN 0 AND 3")
+)
+assert PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL.count("'title_recovery')") == 1
+assert PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL.count("BETWEEN 0 AND 3") == 1
 
 
 # Every producer before #1407 derived no provider match state for a report.

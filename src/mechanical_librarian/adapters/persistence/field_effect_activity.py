@@ -76,6 +76,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_automatic_decision_authority,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _active_generation_automatic_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -400,6 +401,14 @@ def activity_projector_event(
         pass
 
 
+# An automatic description, like an automatic field decision, is pending only
+# in the policy generation it was admitted under (#1573).
+_ACTIVE_GENERATION_DESCRIPTION_SQL = (
+    " AND json_extract(d.document,'$.binding.policy_generation')="
+    "(SELECT active_state.generation FROM metadata_policy_state active_state)"
+)
+
+
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     """Project field-effect activity, pending work and operational signals."""
 
@@ -656,8 +665,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             if field.destination != decision.destination
                         )
                         sibling_row = self._connection.execute(
-                            "SELECT document FROM automatic_decisions WHERE review_case_id=? AND destination=?",
-                            (decision.review_case_id, sibling_source.destination),
+                            # The sibling of the decision's own generation
+                            # (#1573).
+                            "SELECT document FROM automatic_decisions WHERE review_case_id=? AND destination=? AND policy_generation=?",
+                            (
+                                decision.review_case_id,
+                                sibling_source.destination,
+                                cast(AutomaticDecision, automatic).policy_generation,
+                            ),
                         ).fetchone()
                         if sibling_row is None:
                             raise FieldEffectError("authority_binding")
@@ -1094,8 +1109,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 return False
             paired_row = (
                 self._connection.execute(
-                    "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination='subtitle' AND json_extract(document,'$.bundle_id')=? AND json_extract(document,'$.policy_option')='corroborated_split:audiobook_subtitle_fill'",
-                    (decision.review_case_id, decision.bundle_id),
+                    "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination='subtitle' AND policy_generation=? AND json_extract(document,'$.bundle_id')=? AND json_extract(document,'$.policy_option')='corroborated_split:audiobook_subtitle_fill'",
+                    (
+                        decision.review_case_id,
+                        decision.policy_generation,
+                        decision.bundle_id,
+                    ),
                 ).fetchone()
                 if decision.bundle_id is not None
                 else None
@@ -1347,6 +1366,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1) AND "
+                # Only the active generation's decision is pending (#1573).
+                + _active_generation_automatic_sql("automatic")
+                + " AND "
                 + _AUTOMATIC_POSTURE_SQL
                 + " UNION ALL SELECT selection.decision_id,selection.occurred_at,"
                 "json_extract(selection.document,'$.decision_document') "
@@ -1370,6 +1392,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "hold.review_case_id=d.review_case_id AND "
                 "hold.destination='description' AND hold.active=1) AND "
                 + _AUTOMATIC_POSTURE_SQL
+                + _ACTIVE_GENERATION_DESCRIPTION_SQL
                 + "))"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
                 "AND "
@@ -1449,6 +1472,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1) AND "
+                # Only the active generation's decision is pending (#1573).
+                + _active_generation_automatic_sql("automatic")
+                + " AND "
                 + _AUTOMATIC_POSTURE_SQL
                 + " UNION ALL "
                 "SELECT selection.decision_id,consideration.review_case_id,'cover','automatic' "
@@ -1469,6 +1495,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "hold.review_case_id=d.review_case_id AND "
                 "hold.destination='description' AND hold.active=1) AND "
                 + _AUTOMATIC_POSTURE_SQL
+                + _ACTIVE_GENERATION_DESCRIPTION_SQL
                 + "))) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "

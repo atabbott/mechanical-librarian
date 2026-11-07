@@ -197,12 +197,16 @@ def test_reader_equals_recomputation_across_pending_changes(
     step()
     # A refused read stays refused, and so does the example once it is reached.
     writer.execute("DROP TRIGGER automatic_decisions_no_update")
+    # An automatic decision's document must name its generation (#1573), so
+    # the corruption is written past that check, as a damaged file would be.
+    writer.execute("PRAGMA ignore_check_constraints=ON")
     step(
         (
             "UPDATE automatic_decisions SET document='{not json' WHERE decision_id=?",
             (pending[4],),
         )
     )
+    writer.execute("PRAGMA ignore_check_constraints=OFF")
     assert answers[-1]["counts"] == ("refused", "persistence")
     writer.execute("DROP INDEX field_effects_companion_decision")
     _effect(writer, "malformed", "human_decision_malformed", "{not json")
@@ -214,8 +218,10 @@ def test_reader_equals_recomputation_across_pending_changes(
     step(("DELETE FROM field_effects WHERE document='{not json'", ()))
     step(
         (
-            "UPDATE automatic_decisions SET document=? WHERE decision_id=?",
-            (json.dumps({"outcome": "candidate"}), pending[4]),
+            # The document still names its generation, as every row must.
+            "UPDATE automatic_decisions SET document=json_object('outcome',"
+            "'candidate','policy_generation',policy_generation) WHERE decision_id=?",
+            (pending[4],),
         )
     )
     totals = [

@@ -23,6 +23,7 @@ import pytest
 
 from mechanical_librarian.adapters.persistence import field_effects, metadata_policy
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    _ACTIVE_GENERATION_DESCRIPTION_SQL,
     _AUTOMATIC_POSTURE_SQL,
     _FIELD_EFFECT_HOLDS_DECISION_SQL,
 )
@@ -30,6 +31,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _active_generation_automatic_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -110,13 +112,15 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
         automatic.update(decision_id=automatic_id, outcome="candidate")
         connection.execute(
             "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-            "idempotency_digest,occurred_at,document) VALUES(?,?,'title',?,?,?)",
+            "idempotency_digest,occurred_at,document,policy_generation) "
+            "VALUES(?,?,'title',?,?,?,?)",
             (
                 automatic_id,
                 case,
                 _digest(f"title-idempotency-{index}"),
                 occurred_at,
                 json.dumps(automatic),
+                automatic["policy_generation"],
             ),
         )
         connection.execute(
@@ -1300,6 +1304,16 @@ def _before_1568(statement: str) -> str:
     return statement.replace(arms, " UNION ALL")
 
 
+def _before_1573(statement: str) -> str:
+    """Remove the active-generation tests #1573 added to the automatic arms."""
+    generation = _active_generation_automatic_sql("automatic") + " AND "
+    assert statement.count(generation) == 1
+    assert statement.count(_ACTIVE_GENERATION_DESCRIPTION_SQL) == 1
+    return statement.replace(generation, "").replace(
+        _ACTIVE_GENERATION_DESCRIPTION_SQL, ""
+    )
+
+
 def _answer(connection: sqlite3.Connection, statement: str) -> object:
     try:
         return connection.execute(statement).fetchall()
@@ -1351,10 +1365,11 @@ def test_lineage_membership_restores_the_1204_text(
     # #1285 later let an owner-entered value plan as an accept does, and held
     # an automatic description under the owner's hold as it holds the rest;
     # #1358 then left an earlier episode's decision unplanned, and #1568 left
-    # an automatic one unplanned outside the Automatic posture.
+    # an automatic one unplanned outside the Automatic posture, and #1573
+    # one of an earlier policy generation.
     restored = {
         name: hashlib.sha256(
-            _before_1568(_before_1205(name, statement))
+            _before_1568(_before_1573(_before_1205(name, statement)))
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)
@@ -1517,10 +1532,14 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
         ),
     }[corrupted]
     connection.execute(f"DROP TRIGGER {trigger}")
+    # An automatic decision's document must name its generation (#1573), so
+    # the corruption is written past that check, as a damaged file would be.
+    connection.execute("PRAGMA ignore_check_constraints=ON")
     connection.execute(
         f"UPDATE {table} SET document='{{not json' WHERE {key}=?",
         ({"review": case_id, "owner": later_id, "automatic": automatic_id}[corrupted],),
     )
+    connection.execute("PRAGMA ignore_check_constraints=OFF")
     connection.commit()
     answers = _assert_lineage_oracle(connection, statements)
     # Every statement that reads past the first pending row reaches the
@@ -1702,3 +1721,33 @@ def test_the_unreturned_case_lookup_uses_its_indexes(
         "(transition_id=?)"
     ) in plan
     assert not any(step.startswith("SCAN retirement") for step in plan), plan
+
+
+def test_an_earlier_generation_automatic_decision_is_not_pending(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    """Only the active generation's automatic decision is pending (#1573)."""
+    connection, pending = store
+    repository = SQLiteMetadataReportRepository(connection)
+
+    def documents() -> list[str]:
+        return sorted(
+            json.loads(document)["decision_id"]
+            for document in repository.pending_field_effect_decision_documents(100)
+        )
+
+    def origins() -> set[object]:
+        return {
+            row["origin"] for row in repository.pending_field_effect_decision_counts()
+        }
+
+    before = documents()
+    assert set(pending) <= set(before) and len(before) < 100
+    assert origins() == {"automatic", "human"}
+    connection.execute("UPDATE metadata_policy_state SET generation=generation+1")
+    assert documents() == [
+        value for value in before if not value.startswith("automatic_")
+    ]
+    assert origins() == {"human"}
+    connection.execute("UPDATE metadata_policy_state SET generation=generation-1")
+    assert documents() == before

@@ -40,7 +40,9 @@ from tests.support.audiobook_reports import (
     publish_audiobook_preview,
 )
 from tests.support.metadata_report_schemas import (
+    AUTOMATIC_DECIDED_SQL,
     HUMAN_DECIDED_SQL,
+    PRIOR_AUTOMATIC_DECIDED_SQL,
     PRIOR_HUMAN_DECIDED_SQL,
 )
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
@@ -94,6 +96,7 @@ _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
         1,
     )
     .replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL, 1)
+    .replace(AUTOMATIC_DECIDED_SQL, PRIOR_AUTOMATIC_DECIDED_SQL, 1)
     .replace(_KEPT_COVER_SQL, "", 1)
     .replace(_RAW_REFRESH_SQL, _FACT_REFRESH_SQL, 1)
 )
@@ -365,6 +368,34 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         "automation decides",
         (("automatic_decisions", "insert"),),
         lambda: _automatic_decision(repository, title[3], "title"),
+    )
+    # #1573: an automatic decision settles its field only in the generation it
+    # was recorded under, so a change of generation asks for the field again.
+    yield (
+        "policy generation moves on",
+        (("metadata_policy_state", "update"),),
+        lambda: run("UPDATE metadata_policy_state SET generation=generation+1"),
+    )
+    yield (
+        "policy generation returns",
+        (("metadata_policy_state", "update"),),
+        lambda: run("UPDATE metadata_policy_state SET generation=generation-1"),
+    )
+    yield (
+        "policy state delete",
+        (("metadata_policy_state", "delete"),),
+        lambda: (
+            save("policy state", "SELECT * FROM metadata_policy_state"),
+            run("DELETE FROM metadata_policy_state"),
+        ),
+    )
+    yield (
+        "policy state insert",
+        (("metadata_policy_state", "insert"),),
+        lambda: run(
+            "INSERT INTO metadata_policy_state VALUES(?,?,?,?,?)",
+            saved["policy state"],
+        ),
     )
     quiet = _quiet(connection, "description")
     yield (
@@ -851,7 +882,8 @@ def _bound(statement: str) -> str:
 def test_maintenance_reaches_its_scope_by_index() -> None:
     """Each refresh recomputes the facts its scope names, never the library.
 
-    A safety change and a policy activation are global inputs and are left out.
+    A safety change, a policy activation and a change of generation are global
+    inputs and are left out.
     Plans depend on the schema alone, so a small store fixes the plan an
     owner-scale store gets.
     """
@@ -869,9 +901,14 @@ def test_maintenance_reaches_its_scope_by_index() -> None:
                     _bound(scope.format(row="NEW"))
                     for table, (_operations, scope) in schema._ATTENTION_INPUTS.items()
                     # Global inputs: a safety change reaches every automatic
-                    # field, and a policy activation every proposal it resolves.
+                    # field, a policy activation every proposal it resolves,
+                    # and a change of generation every automatic decision.
                     if table
-                    not in ("automatic_safety_state", "metadata_policy_resolutions")
+                    not in (
+                        "automatic_safety_state",
+                        "metadata_policy_resolutions",
+                        "metadata_policy_state",
+                    )
                 ),
             ]
             plans = [
@@ -1039,14 +1076,16 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         == "1513216e8213975ceedf17f5ddd01cf7f3ba4c8ab6c68678f9013399bc7b9d86"
     )
     # Exactly two edits: the audiobook clause leaves, and narrators asks
-    # beside authors; #1285 later lets a withdrawn field ask again, and #1310
-    # keeps a verified current cover out of the cover branch.
+    # beside authors; #1285 later lets a withdrawn field ask again, #1310
+    # keeps a verified current cover out of the cover branch, and #1573 lets
+    # only the active generation's automatic decision settle a field.
     assert _ATTENTION_FACT_SOURCE_SQL.count(_NARRATORS_ASK) == 1
     assert _PRE_1249_ATTENTION_FACT_SOURCE_SQL.count(_AUTHORS_ASK) == 1
     assert (
         _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace("OR facts.format <> 'epub' ", "", 1)
         .replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
         .replace(PRIOR_HUMAN_DECIDED_SQL, HUMAN_DECIDED_SQL, 1)
+        .replace(PRIOR_AUTOMATIC_DECIDED_SQL, AUTOMATIC_DECIDED_SQL, 1)
         .replace("'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1)
         .replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
         == _ATTENTION_FACT_SOURCE_SQL

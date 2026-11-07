@@ -22,8 +22,12 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
+    PRIOR_ATTENTION_FACT_OBJECTS,
+    PRIOR_ATTENTION_FACT_SOURCE_SQL,
+    PRIOR_AUTOMATIC_DECISIONS_SQL,
     PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+    PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
     PRIOR_REVIEW_WORK_SQL,
 )
 
@@ -192,6 +196,16 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         ),
         patch.object(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL),
+        patch.object(schema, "_AUTOMATIC_DECISIONS_SQL", PRIOR_AUTOMATIC_DECISIONS_SQL),
+        patch.object(
+            schema,
+            "_REVIEW_PREPARATION_PRESENTATION_SQL",
+            PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
+        ),
+        patch.object(schema, "_ATTENTION_FACT_OBJECTS", PRIOR_ATTENTION_FACT_OBJECTS),
+        patch.object(
+            schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
+        ),
         patch.object(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL),
     ):
         schema._create_schema(connection)
@@ -201,7 +215,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     connection.executescript(
         "".join(
             f"DROP {kind.upper()} {name};"
-            for kind, name, _ in reversed(schema._ATTENTION_FACT_OBJECTS)
+            for kind, name, _ in reversed(PRIOR_ATTENTION_FACT_OBJECTS)
         )
         + "DROP TRIGGER metadata_reports_project_browse_facts;"
         "DROP TABLE metadata_report_browse_authors;"
