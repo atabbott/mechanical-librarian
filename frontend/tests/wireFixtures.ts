@@ -91,6 +91,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   description_advice: null,
   destination: 'title',
   deterministic_disposition: 'propose_change',
+  earlier_automatic_value: null,
   editable: true,
   effect_capability: 'unavailable',
   human_decision: null,

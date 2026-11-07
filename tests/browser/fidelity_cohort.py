@@ -531,6 +531,7 @@ def _field(
         "human_decision": human_decision,
         "automatic_decision": automatic_decision,
         "automatic_withheld_reason": None,
+        "earlier_automatic_value": None,
         "automatic_selection_sources": [],
         "notices": notices or [],
         "provenance": provenance or [],

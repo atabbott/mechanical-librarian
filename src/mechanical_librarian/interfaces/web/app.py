@@ -677,6 +677,7 @@ class _ReviewField(_ClosedModel):
         _AutomaticDecisionProjection | _CoverAutomaticDecisionProjection | None
     )
     automatic_withheld_reason: str | None = Field(default=None, max_length=512)
+    earlier_automatic_value: _ProposedValue | None = None
     automatic_selection_sources: list[str]
     manual_hold: bool
     manual_required: bool

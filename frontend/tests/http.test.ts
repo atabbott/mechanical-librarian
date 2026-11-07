@@ -1142,6 +1142,33 @@ describe('ReviewApiClient', () => {
     await expect(
       readCase(response([field({ automatic_withheld_reason: 'x'.repeat(513) })])),
     ).rejects.toThrow(ApiError)
+    // The value Automatic chose before Preview (#1575). The server always
+    // sends the property, so the decoder refuses a field that omits it.
+    const absent: Record<string, unknown> = { ...field() }
+    delete absent.earlier_automatic_value
+    await expect(readCase(response([absent]))).rejects.toThrow(ApiError)
+    expect(
+      (await readCase(response([field({ earlier_automatic_value: null })]))).fields[0]
+        ?.earlierAutomaticValue,
+    ).toBeNull()
+    expect(
+      (
+        await readCase(
+          response([field({ earlier_automatic_value: { kind: 'list', value: ['Ada Example'] } })]),
+        )
+      ).fields[0]?.earlierAutomaticValue,
+    ).toEqual({ kind: 'list', value: ['Ada Example'] })
+    for (const malformed of [
+      'Ada Example',
+      { kind: 'list' },
+      { kind: 1, value: 'Ada Example' },
+      { kind: 'text', value: 'x'.repeat(16_385) },
+      { kind: 'list', value: [1] },
+      { kind: 'list', value: ['Ada Example'], extra: true },
+    ])
+      await expect(
+        readCase(response([field({ earlier_automatic_value: malformed })])),
+      ).rejects.toThrow(ApiError)
 
     const retainedEvidence = field({
       decision_actions: ['keep_current', 'accept'],

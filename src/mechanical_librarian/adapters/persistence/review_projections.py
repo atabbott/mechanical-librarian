@@ -243,10 +243,17 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             policy = self.current_resolved_metadata_policy(report.target.library)
             # The same read of the same case: its decisions are proved
             # against the document validated above, not a second read (#1202).
-            decision_documents = self._current_generation_decisions(
+            decision_documents, earlier_documents = self._current_generation_decisions(
                 self.get_review_case_decisions(review_case_id, case_document)
             )
             source_documents = self._automatic_source_outcome_documents(review_case_id)
+            selected_values, earlier_values = self._automatic_selected_values(
+                case_document,
+                report,
+                decision_documents,
+                earlier_documents,
+                source_documents,
+            )
             snapshot = CurrentReviewCaseSnapshot(
                 description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
@@ -260,9 +267,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 final_outcome_document=self._latest_final_outcome_document(
                     case_document, policy
                 ),
-                automatic_selected_values=self._automatic_selected_values(
-                    case_document, report, decision_documents, source_documents
-                ),
+                automatic_selected_values=selected_values,
+                earlier_automatic_values=earlier_values,
                 history=(
                     ()
                     if history_limit is None
@@ -333,21 +339,27 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
 
     def _current_generation_decisions(
         self, decision_documents: tuple[str, ...]
-    ) -> tuple[str, ...]:
-        """Leave out field automatic decisions of an earlier policy generation.
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Split off field automatic decisions of an earlier policy generation.
 
         Leaving Automatic with the policy unchanged admits the same case again
         under a new generation (#1568). A field automatic decision recorded
         before stays on the case, bound to its own generation's outcome set,
         and decides nothing now, so the case reads that field as any case of
         the current generation does.
+
+        In Preview, the earlier candidates come back separately so the case can
+        show what Automatic chose before (#1575). Outside Preview an
+        earlier-generation-only field is about to be decided again, so none
+        are returned.
         """
         row = self._connection.execute(
-            "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+            "SELECT generation,posture FROM metadata_policy_state WHERE singleton=1"
         ).fetchone()
         if row is None:
-            return decision_documents
+            return decision_documents, ()
         kept = []
+        earlier = []
         for document in decision_documents:
             value = json.loads(document)
             if (
@@ -356,9 +368,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 and type(value.get("policy_generation")) is int
                 and value["policy_generation"] != row[0]
             ):
+                if row[1] == "preview" and value.get("outcome") == "candidate":
+                    earlier.append(document)
                 continue
             kept.append(document)
-        return tuple(kept)
+        return tuple(kept), tuple(earlier)
 
     def _decision_effect_states(
         self, review_case_id: str
@@ -428,27 +442,41 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         case_document: str,
         report: MetadataReport,
         decision_documents: tuple[str, ...],
+        earlier_documents: tuple[str, ...],
         source_documents: tuple[str, ...],
-    ) -> tuple[tuple[str, dict[str, object]], ...]:
-        """Read the same exact value as effect authority within this snapshot."""
+    ) -> tuple[
+        tuple[tuple[str, dict[str, object]], ...],
+        tuple[tuple[str, dict[str, object]], ...],
+    ]:
+        """Read the same exact value as effect authority within this snapshot.
+
+        The first tuple maps each current candidate decision to its value and
+        fails closed. The second maps a destination to the value its latest
+        earlier-generation candidate chose; one that no longer binds is left
+        out, so the case reads as it would without it (#1575).
+        """
         decisions = tuple(
             AutomaticDecision.from_json(document)
             for document in decision_documents
             if json.loads(document).get("schema_version") == "automatic-decision-v1"
             and json.loads(document).get("outcome") == "candidate"
         )
-        if not decisions:
-            return ()
+        if not decisions and not earlier_documents:
+            return (), ()
         case = ReviewCase.create_from_data(json.loads(case_document)["case"])
         row = self._connection.execute(
             "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
             (case.proposal_set_id,),
         ).fetchone()
         if row is None:
-            raise MetadataReportError("review case snapshot is unavailable")
+            if decisions:
+                raise MetadataReportError("review case snapshot is unavailable")
+            return (), ()
         proposal = ProposalSet.from_json(row[0])
+        # Outcome ids repeat across generations, so each decision binds to the
+        # outcome set of its own generation (#1575).
         sources = {
-            field.outcome_id: source
+            (source.policy_generation, field.outcome_id): source
             for document in source_documents
             for source in (ShadowOutcomeSet.from_json(document),)
             for field in source.outcomes
@@ -461,14 +489,35 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     case,
                     report,
                     proposal,
-                    sources[decision.source_outcome_id],
+                    sources[(decision.policy_generation, decision.source_outcome_id)],
                 )
                 if type(value) is not dict:
                     raise FieldEffectError("authority_binding")
                 values.append((decision.decision_id, value))
-            return tuple(values)
         except (KeyError, FieldEffectError) as error:
             raise MetadataReportError("review case snapshot is unavailable") from error
+        earlier: dict[str, tuple[int, dict[str, object]]] = {}
+        for document in earlier_documents:
+            try:
+                decision = AutomaticDecision.from_json(document)
+                value = _automatic_decision_value(
+                    decision,
+                    case,
+                    report,
+                    proposal,
+                    sources[(decision.policy_generation, decision.source_outcome_id)],
+                )
+            except (KeyError, ValueError, FieldEffectError):
+                continue
+            if (
+                type(value) is dict
+                and decision.policy_generation
+                >= earlier.get(decision.destination, (0, {}))[0]
+            ):
+                earlier[decision.destination] = (decision.policy_generation, value)
+        return tuple(values), tuple(
+            (destination, value) for destination, (_, value) in sorted(earlier.items())
+        )
 
     def _current_cover_automatic_decision_id(self, review_case_id: str) -> str | None:
         row = self._connection.execute(

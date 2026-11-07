@@ -1,16 +1,50 @@
 // A Library field's settled reading: its current value, its recorded outcome
 // and the automatic statements beside it. Moved out of the Library route under
 // the route-size rule (#1571).
+import { displayValue } from '../api/http'
 import { completionOutcome, decisionValue, sameSelectedValue, valueText } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import {
   choiceContext,
   combinedAutomaticTags,
+  fieldReason,
   ownerContext,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
 import { destinationLabel } from '../labels'
 import { ChoiceEvidencePanel, DescriptionText } from './FieldDecisionChoices'
+
+// The Library field panel for a field with nothing new to choose: why it is
+// shown and its current value. Moved out of the Library route under the
+// route-size rule (#1575).
+export function SettledFieldContext({
+  field,
+  actionable,
+  ownerEntry,
+  expanded,
+  toggle,
+}: {
+  field: ReviewField
+  actionable: boolean
+  ownerEntry: boolean
+  expanded: boolean
+  toggle: () => void
+}) {
+  return (
+    <>
+      {actionable || !ownerEntry || field.earlierAutomaticValue ? (
+        <p className={actionable ? 'decision-recorded' : 'decision-context'}>
+          {actionable
+            ? `${fieldReason(field)}${field.humanDecision || field.automaticDecision ? ` The recorded value remains ${decisionValue(field)}.` : ''}`
+            : field.earlierAutomaticValue
+              ? 'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
+              : 'There’s no other value to choose from.'}
+        </p>
+      ) : null}
+      {!actionable ? <ContextValue field={field} expanded={expanded} toggle={toggle} /> : null}
+    </>
+  )
+}
 
 export function ContextValue({
   field,
@@ -39,6 +73,12 @@ export function ContextValue({
             )}
           </dd>
         </div>
+        {field.earlierAutomaticValue ? (
+          <div>
+            <dt>Earlier automatic choice</dt>
+            <dd>{valueText(field.destination, displayValue(field.earlierAutomaticValue.value))}</dd>
+          </div>
+        ) : null}
       </dl>
       <button
         type="button"

@@ -81,7 +81,7 @@ import { LibraryCoverChoices } from './FieldDecisionCover'
 import { useCoverPrepareFailure } from '../coverChoices'
 import {
   AsinAutomaticStatement,
-  ContextValue,
+  SettledFieldContext,
   DescriptionAutomaticStatement,
   NarratorsAutomaticStatement,
   ProviderConsensusAutomaticStatement,
@@ -2755,24 +2755,13 @@ export default function LibraryPage({
                       toggle={() => toggleChoiceEvidence(`${selected.destination}:recorded`)}
                     />
                   ) : (
-                    <>
-                      {selectedActionable || !selectedOwnerEntry ? (
-                        <p
-                          className={selectedActionable ? 'decision-recorded' : 'decision-context'}
-                        >
-                          {selectedActionable
-                            ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
-                            : 'There’s no other value to choose from.'}
-                        </p>
-                      ) : null}
-                      {!selectedActionable ? (
-                        <ContextValue
-                          field={selected}
-                          expanded={expandedChoices.has(`${selected.destination}:context`)}
-                          toggle={() => toggleChoiceEvidence(`${selected.destination}:context`)}
-                        />
-                      ) : null}
-                    </>
+                    <SettledFieldContext
+                      field={selected}
+                      actionable={selectedActionable}
+                      ownerEntry={selectedOwnerEntry}
+                      expanded={expandedChoices.has(`${selected.destination}:context`)}
+                      toggle={() => toggleChoiceEvidence(`${selected.destination}:context`)}
+                    />
                   )}
                   {selected.ownerControl && !controller.reloadRequired ? (
                     <OwnerControls
