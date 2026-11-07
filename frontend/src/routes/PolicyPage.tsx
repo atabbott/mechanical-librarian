@@ -470,7 +470,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       grouped.set(entry.destination, operations)
     }
     // One sentence per set of operations, with the fields as its object:
-    // "Fill empty, keep current or replace authors and narrators." (#1760).
+    // "Fill empty, keep current or replace authors and narrators." A lone
+    // fill reads "Fill tags if empty.", right for one field or many (#1760).
     const byOperations = new Map<string, { operations: string[]; fields: string[] }>()
     for (const [destination, operations] of grouped) {
       const key = operations.join('|')
@@ -483,7 +484,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     const sentences = [...byOperations.values()].map(({ operations, fields }) => {
       const text =
         operations.length === 1 && operations[0] === 'fill empty'
-          ? `fill ${fields.length === 1 ? 'an empty' : 'empty'} ${plainList(fields, 'and')}`
+          ? `fill ${plainList(fields, 'and')} if empty`
           : `${plainList(operations, 'or')} ${plainList(fields, 'and')}`
       return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`
     })

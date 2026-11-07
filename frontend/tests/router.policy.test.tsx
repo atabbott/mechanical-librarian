@@ -570,7 +570,7 @@ describe('Policy route', () => {
       'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me. Your choice. If set to Automatic: Fill an empty ASIN.',
+      'Audiobooks: Ask me. Your choice. If set to Automatic: Fill ASIN if empty.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field\. Automatic available\./u)).toBeVisible()
@@ -670,6 +670,39 @@ describe('Policy route', () => {
       'Fill empty, keep current, normalise, add or replace authors and narrators.',
     )
     expect(scope?.textContent).not.toMatch(/;| or keep| or normali[sz]e or/u)
+  })
+
+  it('reads a lone fill as right for a plural field', async () => {
+    renderRoute('/policy?section=curation', {
+      ...createHttp(),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+        schema_version: 'metadata-policy-notebook-v1',
+        policy_id: 'policy-1',
+        profile: {
+          schema_version: 'metadata-policy-profile-v3',
+          name: 'Default',
+          options: { tags: 'fill_empty' },
+          destinations: {},
+        },
+        rich_qualification: [],
+        audiobook_qualification: [
+          {
+            automatic_available: true,
+            destination: 'tags',
+            field: 'tags',
+            identity: 'tags:fill_empty:audiobook_tags_fill',
+            operation: 'fill',
+            option: 'fill_empty',
+            record_sha256: 'd'.repeat(64),
+          },
+          ...inertAudiobookQualification,
+        ],
+      })),
+    })
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    const scope = tags.querySelector('.cm-policy-media-scope')
+    expect(scope).toHaveTextContent('Fill tags if empty.')
+    expect(scope?.textContent).not.toMatch(/an empty/u)
   })
 
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
