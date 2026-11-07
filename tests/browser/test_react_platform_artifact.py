@@ -338,7 +338,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     ],
                 }
             route.fulfill(
-                status=200,
+                # The server answers a saved policy snapshot 201 Created, the
+                # one status the browser decodes for it.
+                status=201 if path == "/api/v1/metadata-policy/drafts" else 200,
                 content_type="application/json",
                 body=json.dumps(payload),
             )
@@ -3445,7 +3447,9 @@ _PRODUCTION_CSP = (
 # Writes are off and one library may be enabled, so the Library handoff shows.
 _WRITES_OFF_CONSENT = {
     "backup_ready": None,
-    "configured_libraries": [{"connection": "primary", "library": "Household ebooks"}],
+    "configured_libraries": [
+        {"connection": "primary", "library": "Household ebooks", "prepared": None}
+    ],
     "lapsed_consents": [],
     "capabilities": [
         {
@@ -3531,7 +3535,13 @@ def _serve_cohort(
                 # A paused connection withholds the handoff, so none is paused.
                 assert isinstance(payload, dict)
                 payload["connections"] = []
-            route.fulfill(content_type="application/json", body=json.dumps(payload))
+            route.fulfill(
+                # The server answers a saved policy snapshot 201 Created, the
+                # one status the browser decodes for it.
+                status=201 if path == "/api/v1/metadata-policy/drafts" else 200,
+                content_type="application/json",
+                body=json.dumps(payload),
+            )
         elif path.startswith("/assets/review-app/"):
             relative = path.removeprefix("/assets/review-app/")
             css = relative.endswith(".css")
@@ -5355,7 +5365,11 @@ def test_activity_paging_keeps_the_focused_control_in_view() -> None:
         payload["events"] = (
             events
             + [
-                {**event, "event_id": f"{event['event_id']}-{copy}"}
+                {
+                    **event,
+                    "event_id": f"{event['event_id']}-{copy}",
+                    "change_id": f"{event['change_id']}-{copy}",
+                }
                 for copy in range(ledger["page_size"])
                 for event in events
                 if not event["check_group"]

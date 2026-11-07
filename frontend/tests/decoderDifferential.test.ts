@@ -8,15 +8,7 @@ import { resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import openapi from '../../docs/reference/review-openapi-v1.json'
-import {
-  ApiError,
-  DECODED,
-  ReviewApiClient,
-  UncertainMutationError,
-  mapActivity,
-  mapActivityConsent,
-  mapActivityPermissionReadiness,
-} from '../src/api/http'
+import { ApiError, DECODED, ReviewApiClient, UncertainMutationError } from '../src/api/http'
 import type { DecisionCommand } from '../src/api/http'
 import type { D } from '../src/generated/review-decoders'
 import { DecodeFailure, matchOperation, responseDecoders } from '../src/generated/review-decoders'
@@ -591,31 +583,18 @@ const presence = PRESENCE_SITES.flatMap(([site, , component, instance, pointer])
   }),
 )
 
-// ---- Tolerance rows T1-T6: the mapper reads a deliberate absence ------------
+// ---- Tolerance cases T1-T6: the mapper read a deliberate absence ------------
 
-const TOLERANCES = [
-  [
-    'T1',
-    activityItems,
-    '/events/0/check_group',
-    'mapActivity http.ts:3191 reads an absent check_group as null (optionalString)',
-  ],
-  [
-    'T6',
-    activityItems,
-    '/provider_recovery/0/failure_reasons',
-    'mapActivity http.ts:3070 reads absent failure_reasons as [] (=== undefined)',
-  ],
-] as const
-for (const [row, instance, pointer] of TOLERANCES) deletion(`tolerance:${row}`, instance, pointer)
-// Tolerances whose family is decoded: the absence is now refused on both sides,
-// so the case agrees and keeps no row (#1685 drained T5, #1686 drained T4,
-// #1688 drained T2 and T3).
+// Every tolerance's family is decoded: the absence is now refused on both
+// sides, so the case agrees and keeps no row (#1685 drained T5, #1686 drained
+// T4, #1688 drained T2 and T3, #1691 drained T1 and T6).
 const DRAINED = [
+  ['T1', activityItems, '/events/0/check_group'],
   ['T2', series, '/fields/0/current/value/0/sequence'],
   ['T3', coverBase, '/reviewer_failure_code'],
   ['T4', libraryWithWork, '/items/0/cover'],
   ['T5', preparationBase, '/provider_throttling'],
+  ['T6', activityItems, '/provider_recovery/0/failure_reasons'],
 ] as const
 for (const [row, instance, pointer] of DRAINED) deletion(`tolerance:${row}`, instance, pointer)
 
@@ -783,7 +762,8 @@ const CROSS_FIELD: readonly (readonly [string, Case, string, unknown, string, st
     activityItems,
     '/provider_recovery/0/failure_reasons',
     ['transient', 'authentication'],
-    'mapActivity http.ts:3087: failure_reasons are in ascending order; positional',
+    'mapActivity http.ts:2295: failure_reasons are in ascending order; positional',
+    'reject:invalid_provider_recovery_failure_reasons',
   ],
   [
     'check:mapLibraryCover.preview-binding',
@@ -1132,12 +1112,6 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
       'mapCodexDevice http.ts:2283-2289: issued and waiting require verification_url, user_code and expires_in_seconds 900, every other state requires all three null. The capture is the bare waiting of the test double _Auth.start(); #1652 makes it realistic and removes this row.',
   },
   ...Object.fromEntries(
-    TOLERANCES.map(([row, , , check]): [string, Expected] => [
-      `tolerance:${row}`,
-      { class: 'decoder_stricter', check: `${row}: ${check}` },
-    ]),
-  ),
-  ...Object.fromEntries(
     CROSS_FIELD.map(([id, , , , check, result]): [string, Expected] => [
       id,
       { class: 'mapper_cross_field', check, ...(result === undefined ? {} : { result }) },
@@ -1181,6 +1155,16 @@ const decision: DecisionCommand = {
 type Binding = NonNullable<DecisionCommand['authoredDescription']>['binding']
 const authored = { ...decision, authoredDescription: { candidateId: 'c', binding: {} as Binding } }
 const policy = (c: Case) => client(c).policyCommand(c.path.slice('/api/v1/metadata-policy/'.length))
+// Preview and activation go through the typed methods the Policy page calls,
+// so their named checks run (#1692). A captured activation activated the
+// policy it names.
+const draft = { name: 'Draft', options: {}, destinations: {} }
+const activated = (c: Case) => {
+  const document = c.doc()
+  return typeof document === 'object' && document !== null && 'policy_id' in document
+    ? String(document.policy_id)
+    : ''
+}
 const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/library': (c) => client(c).getLibrary({ lens: 'all' }),
   'GET /api/v1/library/report': (c) => client(c).getReportDetail(c.path),
@@ -1209,18 +1193,23 @@ const RUNNERS: Readonly<Record<string, (c: Case) => unknown>> = {
   'GET /api/v1/review-preparation': (c) => client(c).getPreparation(),
   'POST /api/v1/review-preparation/{connection}/{library_name}/scan': (c) =>
     client(c).preparationAction(c.path.slice('/api/v1/review-preparation/'.length)),
-  'GET /api/v1/activity': (c) => mapActivity(c.doc()),
-  'GET /api/v1/activity/consent-state': (c) => mapActivityConsent(c.doc()),
-  'GET /api/v1/activity/permission-readiness': (c) => mapActivityPermissionReadiness(c.doc()),
+  'GET /api/v1/activity': (c) => client(c).getActivity(),
+  'GET /api/v1/activity/consent-state': (c) => client(c).getActivityConsent(),
+  'GET /api/v1/activity/permission-readiness': (c) => client(c).getActivityPermissionReadiness(),
   'GET /api/v1/metadata-policy/state': (c) => client(c).getPolicyState(),
   'GET /api/v1/metadata-policy/shadow': (c) => client(c).getShadowPosture(),
   'GET /api/v1/metadata-policy/shadow/outcomes': (c) => client(c).getShadowSample(),
   'GET /api/v1/metadata-policy/transition': (c) => client(c).getPolicyTransition(),
   'GET /api/v1/metadata-policy/automatic-safety': (c) => client(c).getAutomaticSafety(),
-  'POST /api/v1/metadata-policy/activate': policy,
+  'POST /api/v1/metadata-policy/activate': (c) =>
+    client(c).activatePolicy({
+      policy_id: activated(c),
+      expected_active_policy_id: 'policy-active',
+      expected_active_generation: 1,
+    }),
   'POST /api/v1/metadata-policy/automatic-safety/suspend': policy,
   'POST /api/v1/metadata-policy/drafts': policy,
-  'POST /api/v1/metadata-policy/preview': policy,
+  'POST /api/v1/metadata-policy/preview': (c) => client(c).previewPolicy(draft),
   'POST /api/v1/metadata-policy/shadow/confirm-automatic': policy,
   'POST /api/v1/metadata-policy/validate': policy,
 }
@@ -1342,15 +1331,6 @@ describe('presence parity', () => {
             ? 'reject:invalid_response'
             : `reject:mutation_outcome_unknown:required@${pointer}`,
         observed: 'agree',
-      })
-    },
-  )
-  it.each(TOLERANCES.map(([row, , pointer]) => [row, pointer]))(
-    '%s is decoder-stricter at its one deleted key',
-    (row, pointer) => {
-      expect(seen(`tolerance:${row}`)).toMatchObject({
-        decoder: `required@${pointer}`,
-        mapper: 'accept',
       })
     },
   )

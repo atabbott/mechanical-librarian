@@ -16,6 +16,7 @@ import {
   uncertainWriteOutcome,
 } from '../api/http'
 import type {
+  PolicyActivationRequest,
   PolicyActivationView,
   PolicyDraft,
   PolicyPreviewView,
@@ -52,12 +53,7 @@ import {
   representationConsequence,
 } from '../policyFields'
 import type { FieldDefinition } from '../policyFields'
-import {
-  isPolicyActivation,
-  isPolicyPreview,
-  policyImpactDisplay,
-  policyImpactTotals,
-} from '../policyImpact'
+import { policyImpactDisplay, policyImpactTotals } from '../policyImpact'
 
 type PolicyStage = 'editing' | 'validating' | 'preview' | 'activation' | 'activated'
 
@@ -127,8 +123,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     mutationFn: async ({ action, body }: { action: string; body?: unknown }) => {
       if (action === 'validate' || action === 'drafts')
         return http.policyCommand<{ policy_id: string; schema_version: string }>(action, body)
-      if (action === 'preview') return http.policyCommand<PolicyPreviewView>('preview', body)
-      if (action === 'activate') return http.policyCommand<PolicyActivationView>('activate', body)
+      // Preview and activation carry the checks the schema cannot state, so
+      // they go through their typed client methods (ADR-0091 P-X1 to P-X3).
+      if (action === 'preview') return http.previewPolicy(body as PolicyDraft)
+      if (action === 'activate') return http.activatePolicy(body as PolicyActivationRequest)
       return http.policyCommand<PolicyTransitionView | ShadowPostureView>(action, body)
     },
     retry: false,
@@ -210,9 +208,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       setSnapshotId(saved.policy_id)
       phase = 'preview'
       setStatus({ tone: 'neutral', message: 'Snapshot saved. Inspecting current unapplied work…' })
-      const result = await command.mutateAsync({ action: 'preview', body: draft })
-      if (!isPolicyPreview(result) || result.policy_id !== saved.policy_id)
-        throw new ApiError(502, 'policy_snapshot_mismatch')
+      const result = (await command.mutateAsync({
+        action: 'preview',
+        body: draft,
+      })) as PolicyPreviewView
+      // P-X4 (ADR-0091): the preview is of the snapshot just saved. It
+      // compares two answers, so no single mapper can check it.
+      if (result.policy_id !== saved.policy_id) throw new ApiError(502, 'policy_snapshot_mismatch')
       setPreview(result)
       setPreviewActivePolicyId(result.active_policy_id)
       setStage('preview')
@@ -222,19 +224,20 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       })
     } catch (error) {
       setStage('editing')
-      if (error instanceof AmbiguousMutationError)
-        setStatus({
-          tone: 'warning',
-          message:
-            'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
-        })
       // A snapshot is content-addressed, so saving the same draft again is
-      // harmless; the refreshed state shows whether this one was kept.
-      else if (phase === 'drafts' && uncertainWriteOutcome(error))
+      // harmless; the refreshed state shows whether this one was kept. This
+      // comes first, so a lost or unreadable answer to the save says so too.
+      if (phase === 'drafts' && uncertainWriteOutcome(error))
         setStatus({
           tone: 'warning',
           message:
             'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+        })
+      else if (error instanceof AmbiguousMutationError)
+        setStatus({
+          tone: 'warning',
+          message:
+            'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
         })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })
@@ -267,16 +270,15 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     if (!snapshotId || !preview || !previewActivePolicyId) return
     setStatus({ tone: 'neutral', message: 'Activating the reviewed policy…' })
     try {
-      const result = await command.mutateAsync({
+      // The client checks that the answer activated this snapshot (P-X3).
+      const result = (await command.mutateAsync({
         action: 'activate',
         body: {
           policy_id: snapshotId,
           expected_active_policy_id: previewActivePolicyId,
           expected_active_generation: preview.active_generation,
         },
-      })
-      if (!isPolicyActivation(result, snapshotId))
-        throw new ApiError(502, 'invalid_policy_activation_response')
+      })) as PolicyActivationView
       setActivatedTransitionId(result.transition?.transition_id)
       setStage('activated')
       setStatus({

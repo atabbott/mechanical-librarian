@@ -30,6 +30,7 @@ import {
   targetField,
   targetIdentity,
 } from './wireFixtures'
+import activationCapture from './wire/post-metadata-policy-activate.200.json'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -41,9 +42,6 @@ import {
   MEDIA_HEALTH_KINDS,
   PageCsrfTokenStore,
   ReviewApiClient,
-  mapActivity,
-  mapActivityConsent,
-  mapActivityPermissionReadiness,
   derivePolicyDraftDisplay,
   policyAutomaticQualification,
   SessionExpiredError,
@@ -112,6 +110,16 @@ const readCodexDevice = (document: unknown) =>
     csrf,
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getCodexDevice()
+// The activity family is decoded centrally too (#1691).
+const answeringActivity = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  })
+const readActivity = (document: unknown) => answeringActivity(document).getActivity()
+const readActivityConsent = (document: unknown) => answeringActivity(document).getActivityConsent()
+const readPermissionReadiness = (document: unknown) =>
+  answeringActivity(document).getActivityPermissionReadiness()
 const readEvidence = (document: unknown) =>
   new ReviewApiClient({
     csrf,
@@ -1823,13 +1831,13 @@ describe('ReviewApiClient', () => {
     await expect(readAttention(doc)).rejects.toMatchObject(refused(failure))
   })
 
-  it('rejects a malformed activity display projection before it reaches the workspace', () => {
-    expect(() =>
-      mapActivity(activityResponse({ schema_version: 'continuous-field-activity-v1' })),
-    ).toThrow(ApiError)
+  it('rejects a malformed activity display projection before it reaches the workspace', async () => {
+    await expect(
+      readActivity(activityResponse({ schema_version: 'continuous-field-activity-v1' })),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
   })
 
-  it('maps bounded activity labels and grouped state into the display seam', () => {
+  it('maps bounded activity labels and grouped state into the display seam', async () => {
     // The negatives below mutate these wire parts, never the mapped view.
     const capability = {
       connection: 'primary',
@@ -1902,7 +1910,7 @@ describe('ReviewApiClient', () => {
       prepared: { automatic: 1, human: 2, total: 3 },
       suspensions: [suspension],
     })
-    const activity = mapActivity(payload)
+    const activity = await readActivity(payload)
 
     expect(activity.configured_libraries[0]?.library).toBe('Fiction')
     expect(activity.capabilities[0]?.destinations[0]).toMatchObject({
@@ -1917,67 +1925,62 @@ describe('ReviewApiClient', () => {
       retrying: 4,
       scheduled: 5,
     })
-    expect(activity.provider_recovery?.[0]?.dispatch_reasons).toEqual([
+    expect(activity.provider_recovery[0]?.dispatch_reasons).toEqual([
       'missing_corroboration',
       'blanket_scan',
     ])
-    expect(activity.provider_recovery?.[0]?.failure_reasons).toEqual([])
+    expect(activity.provider_recovery[0]?.failure_reasons).toEqual([])
     const reasons = ['burst_throttled', 'quota_exhausted', 'transient']
     expect(
-      mapActivity({
-        ...payload,
-        provider_recovery: [{ ...recovery, failure_reasons: reasons }],
-      }).provider_recovery?.[0]?.failure_reasons,
+      (
+        await readActivity({
+          ...payload,
+          provider_recovery: [{ ...recovery, failure_reasons: reasons }],
+        })
+      ).provider_recovery[0]?.failure_reasons,
     ).toEqual(reasons)
-    for (const failure_reasons of [
-      ['private'],
-      ['transient', 'transient'],
-      ['transient', 'authentication'],
-      [1],
-      'transient',
-      Array(8).fill('transient'),
-    ]) {
-      expect(() =>
-        mapActivity({
-          ...payload,
-          provider_recovery: [{ ...recovery, failure_reasons }],
-        }),
-      ).toThrow(ApiError)
-    }
-    for (const dispatch_reasons of [
-      ['private-detail'],
-      ['blanket_scan', 'blanket_scan'],
-      'blanket_scan',
-    ])
-      expect(() =>
-        mapActivity({
-          ...payload,
-          provider_recovery: [{ ...recovery, dispatch_reasons }],
-        }),
-      ).toThrow(ApiError)
-    // The mapper reads absent failure reasons as none; this recovery leaves them out.
-    const terminalRecovery = mapActivity({
-      ...payload,
-      provider_recovery: [
-        {
-          state: 'recovered',
-          affected_count: 1,
-          next_eligible_at: null,
-          dispatch_reasons: [],
-        },
-      ],
-    })
-    expect(terminalRecovery.provider_recovery?.[0]).toEqual({
-      failure_reasons: [],
-      state: 'recovered',
-      affected_count: 1,
-      next_eligible_at: null,
-      dispatch_reasons: [],
-    })
-    expect(() => mapActivity({ ...payload, waiting: { applying: 1 } })).toThrow(ApiError)
+    const failureReasons = '/provider_recovery/0/failure_reasons'
+    for (const [failure_reasons, failure] of [
+      [['private'], `enum@${failureReasons}/0`],
+      [['transient', 'transient'], `unique@${failureReasons}`],
+      [[1], `type@${failureReasons}/0`],
+      ['transient', `type@${failureReasons}`],
+      [Array(8).fill('transient'), `max_items@${failureReasons}`],
+      // An absent list is refused too: the decoder admits no default (T6).
+      [undefined, `required@${failureReasons}`],
+    ] as const)
+      await expect(
+        readActivity({ ...payload, provider_recovery: [{ ...recovery, failure_reasons }] }),
+      ).rejects.toMatchObject(refused(failure))
+    // The order is the one check the schema cannot state (ADR-0091).
+    await expect(
+      readActivity({
+        ...payload,
+        provider_recovery: [{ ...recovery, failure_reasons: ['transient', 'authentication'] }],
+      }),
+    ).rejects.toMatchObject(unnamed('invalid_provider_recovery_failure_reasons'))
+    const dispatchReasons = '/provider_recovery/0/dispatch_reasons'
+    for (const [dispatch_reasons, failure] of [
+      [['private-detail'], `enum@${dispatchReasons}/0`],
+      [['blanket_scan', 'blanket_scan'], `unique@${dispatchReasons}`],
+      ['blanket_scan', `type@${dispatchReasons}`],
+    ] as const)
+      await expect(
+        readActivity({ ...payload, provider_recovery: [{ ...recovery, dispatch_reasons }] }),
+      ).rejects.toMatchObject(refused(failure))
+    await expect(readActivity({ ...payload, waiting: { applying: 1 } })).rejects.toMatchObject(
+      refused('required@/waiting/awaiting_permission'),
+    )
     expect(activity.owner_action_required).toBe(2)
-    for (const owner_action_required of [undefined, -1, 1.5, '1'])
-      expect(() => mapActivity({ ...payload, owner_action_required })).toThrow(ApiError)
+    for (const [owner_action_required, failure] of [
+      [undefined, 'required@/owner_action_required'],
+      [-1, 'min@/owner_action_required'],
+      [1.5, 'type@/owner_action_required'],
+      ['1', 'type@/owner_action_required'],
+    ] as const)
+      await expect(readActivity({ ...payload, owner_action_required })).rejects.toMatchObject(
+        refused(failure),
+      )
     expect(activity.events[0]).toMatchObject({
       library: 'Fiction',
       state: 'verified',
@@ -1995,7 +1998,7 @@ describe('ReviewApiClient', () => {
       previous: 'Ask me',
       next: 'Automatic',
     })
-    const degraded = mapActivity({
+    const degraded = await readActivity({
       ...payload,
       events: [
         {
@@ -2011,8 +2014,8 @@ describe('ReviewApiClient', () => {
       event_class: 'automatic_decision',
       reason: 'automatic_authority_unavailable',
     })
-    expect(() =>
-      mapActivity({
+    await expect(
+      readActivity({
         ...payload,
         events: [
           {
@@ -2021,25 +2024,25 @@ describe('ReviewApiClient', () => {
           },
         ],
       }),
-    ).toThrow(ApiError)
-    expect(() => mapActivity({ ...payload, events: [{ ...event, category: 'review' }] })).toThrow(
-      ApiError,
-    )
+    ).rejects.toMatchObject(refused('const@/events/0/diagnostic/reason'))
+    await expect(
+      readActivity({ ...payload, events: [{ ...event, category: 'review' }] }),
+    ).rejects.toMatchObject(refused('enum@/events/0/category'))
     expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
     // A hold reason outside the closed set has no owner words, so it is refused.
-    expect(() =>
-      mapActivity({
+    await expect(
+      readActivity({
         ...payload,
         suspensions: [{ ...suspension, reason: 'recovery' }],
       }),
-    ).toThrow(new ApiError(502, 'invalid_activity_suspension_reason'))
+    ).rejects.toMatchObject(refused('enum@/suspensions/0/reason'))
     // A library's write state and each destination's state are closed sets
     // too; a code outside either has no owner words (#1286 C6).
-    expect(() =>
-      mapActivity({ ...payload, capabilities: [{ ...capability, state: 'partial' }] }),
-    ).toThrow(new ApiError(502, 'invalid_activity_state'))
-    expect(() =>
-      mapActivity({
+    await expect(
+      readActivity({ ...payload, capabilities: [{ ...capability, state: 'partial' }] }),
+    ).rejects.toMatchObject(refused('enum@/capabilities/0/state'))
+    await expect(
+      readActivity({
         ...payload,
         capabilities: [
           {
@@ -2048,9 +2051,9 @@ describe('ReviewApiClient', () => {
           },
         ],
       }),
-    ).toThrow(new ApiError(502, 'invalid_activity_destination_state'))
-    expect(() =>
-      mapActivity({
+    ).rejects.toMatchObject(refused('enum@/capabilities/0/destinations/0/state'))
+    await expect(
+      readActivity({
         ...payload,
         suspensions: [
           {
@@ -2062,8 +2065,10 @@ describe('ReviewApiClient', () => {
           },
         ],
       }),
-    ).toThrow(ApiError)
-    expect(() => mapActivity({ ...payload, example: { after: 'After' } })).toThrow(ApiError)
+    ).rejects.toMatchObject(refused('type@/suspensions/0/updated_at'))
+    await expect(readActivity({ ...payload, example: { after: 'After' } })).rejects.toMatchObject(
+      refused('type@/example'),
+    )
   })
 
   it('offers Automatic only for an audiobook tranche a record qualifies', () => {
@@ -3950,36 +3955,38 @@ describe('Activity check group (#1281)', () => {
     }),
   })
   it.each([
-    ['absent', undefined, null],
     ['null', null, null],
     ['a preparation key', key, key],
-  ])('maps %s to the event view', (_name, value, expected) => {
-    const events = mapActivity(withGroup(value)).events
+  ])('maps %s to the event view', async (_name, value, expected) => {
+    const { events } = await readActivity(withGroup(value))
     expect(events.length).toBeGreaterThan(0)
     expect(events.every((event) => event.check_group === expected)).toBe(true)
   })
-  it('refuses a key that is not a string', () => {
-    expect(() => mapActivity(withGroup(7))).toThrow(
-      new ApiError(502, 'invalid_activity_check_group'),
-    )
+  // The decoder admits no default, so an absent key is refused rather than
+  // read as null (T1, #1691).
+  it.each([
+    ['an absent key', undefined, 'required@/events/0/check_group'],
+    ['a key that is not a string', 7, 'type@/events/0/check_group'],
+  ])('refuses %s', async (_name, value, failure) => {
+    await expect(readActivity(withGroup(value))).rejects.toMatchObject(refused(failure))
   })
-  it('maps the captured fixture, whose events all carry the key', () => {
+  it('maps the captured fixture, whose events all carry the key', async () => {
     expect(currentActivity.events.every((event) => 'check_group' in event)).toBe(true)
-    const events = mapActivity(currentActivity).events
+    const { events } = await readActivity(currentActivity)
     expect(events.length).toBe(currentActivity.events.length)
   })
 })
 
 describe('deferred Activity permission contract', () => {
-  it('refuses a genuine earlier producer and requires both nullable fields', () => {
-    expect(() => mapActivity(activityV2Predecessor)).toThrow(ApiError)
-    expect(mapActivity(currentActivity).backup_ready).toBeNull()
-    expect(mapActivity(currentActivity).example).toBeNull()
+  it('refuses a genuine earlier producer and requires both nullable fields', async () => {
+    await expect(readActivity(activityV2Predecessor)).rejects.toBeInstanceOf(ResponseDecodeError)
+    expect((await readActivity(currentActivity)).backup_ready).toBeNull()
+    expect((await readActivity(currentActivity)).example).toBeNull()
     for (const field of ['backup_ready', 'example']) {
       const missing = Object.fromEntries(
         Object.entries(currentActivity).filter(([key]) => key !== field),
       )
-      expect(() => mapActivity(missing)).toThrow(ApiError)
+      await expect(readActivity(missing)).rejects.toMatchObject(refused(`required@/${field}`))
     }
   })
   it.each([
@@ -3995,8 +4002,10 @@ describe('deferred Activity permission contract', () => {
         work_id: 'work-1',
       },
     ],
-  ])('rejects non-null history %s', (field, value) => {
-    expect(() => mapActivity({ ...currentActivity, [field]: value })).toThrow(ApiError)
+  ])('rejects non-null history %s', async (field, value) => {
+    await expect(readActivity({ ...currentActivity, [field]: value })).rejects.toMatchObject(
+      refused(`type@/${field}`),
+    )
   })
   it.each([true, false, null])(
     'reads only the narrow permission response with readiness %s',
@@ -4014,15 +4023,17 @@ describe('deferred Activity permission contract', () => {
           work_id: 'work-1',
         },
       }
-      expect(mapActivityPermissionReadiness(response)).toEqual({
+      expect(await readPermissionReadiness(response)).toEqual({
         ...response,
         example: { ...response.example, work_label: 'Work details unavailable' },
       })
-      expect(mapActivityPermissionReadiness({ ...response, example: null }).example).toBeNull()
-      expect(() => mapActivityPermissionReadiness({ ...response, events: [] })).toThrow(ApiError)
-      expect(() =>
-        mapActivityPermissionReadiness({ ...response, backup_ready: undefined }),
-      ).toThrow(ApiError)
+      expect((await readPermissionReadiness({ ...response, example: null })).example).toBeNull()
+      await expect(readPermissionReadiness({ ...response, events: [] })).rejects.toMatchObject(
+        refused('unknown_key@/events'),
+      )
+      await expect(
+        readPermissionReadiness({ ...response, backup_ready: undefined }),
+      ).rejects.toMatchObject(refused('required@/backup_ready'))
     },
   )
 
@@ -4040,8 +4051,8 @@ describe('deferred Activity permission contract', () => {
       { connection: 'primary', library: 'Fiction', reason: 'destinations_changed' },
     ]
     const response = { backup_ready, capabilities, configured_libraries, lapsed_consents, waiting }
-    const history = mapActivity({ ...currentActivity, lapsed_consents, waiting })
-    expect(mapActivityConsent(response)).toEqual({
+    const history = await readActivity({ ...currentActivity, lapsed_consents, waiting })
+    expect(await readActivityConsent(response)).toEqual({
       backup_ready: history.backup_ready,
       capabilities: history.capabilities,
       configured_libraries: history.configured_libraries,
@@ -4050,37 +4061,51 @@ describe('deferred Activity permission contract', () => {
     })
     expect(history.lapsed_consents).toEqual(lapsed_consents)
     for (const key of Object.keys(response))
-      expect(() =>
-        mapActivityConsent(Object.fromEntries(Object.entries(response).filter(([k]) => k !== key))),
-      ).toThrow(ApiError)
-    for (const invalid of [
-      { ...response, events: [] },
-      { ...response, backup_ready: true },
-      { ...response, capabilities: {} },
-      { ...response, configured_libraries: [{ connection: 'primary' }] },
-      { ...response, waiting: { ...waiting, scheduled: -1 } },
-      { ...response, waiting: { ...waiting, applying: undefined } },
-      { ...response, waiting: null },
+      await expect(
+        readActivityConsent(
+          Object.fromEntries(Object.entries(response).filter(([k]) => k !== key)),
+        ),
+      ).rejects.toMatchObject(refused(`required@/${key}`))
+    for (const [invalid, failure] of [
+      [{ ...response, events: [] }, 'unknown_key@/events'],
+      [{ ...response, backup_ready: true }, 'type@/backup_ready'],
+      [{ ...response, capabilities: {} }, 'type@/capabilities'],
+      [
+        { ...response, configured_libraries: [{ connection: 'primary' }] },
+        'required@/configured_libraries/0/library',
+      ],
+      [{ ...response, waiting: { ...waiting, scheduled: -1 } }, 'min@/waiting/scheduled'],
+      [{ ...response, waiting: { ...waiting, applying: undefined } }, 'required@/waiting/applying'],
+      [{ ...response, waiting: null }, 'type@/waiting'],
       // A lapse is closed: three reasons, three keys, nothing else (#1370).
-      { ...response, lapsed_consents: null },
-      { ...response, lapsed_consents: [{ ...lapsed_consents[0], reason: 'expired' }] },
-      { ...response, lapsed_consents: [{ ...lapsed_consents[0], basis: 'owner_grant' }] },
-      { ...response, lapsed_consents: [{ connection: 'primary', library: 'Fiction' }] },
-    ])
-      expect(() => mapActivityConsent(invalid)).toThrow(ApiError)
-    expect(() => mapActivity({ ...currentActivity, lapsed_consents: undefined })).toThrow(
-      expect.objectContaining({ code: 'invalid_activity_lapsed_consents' }),
-    )
+      [{ ...response, lapsed_consents: null }, 'type@/lapsed_consents'],
+      [
+        { ...response, lapsed_consents: [{ ...lapsed_consents[0], reason: 'expired' }] },
+        'enum@/lapsed_consents/0/reason',
+      ],
+      [
+        { ...response, lapsed_consents: [{ ...lapsed_consents[0], basis: 'owner_grant' }] },
+        'unknown_key@/lapsed_consents/0/basis',
+      ],
+      [
+        { ...response, lapsed_consents: [{ connection: 'primary', library: 'Fiction' }] },
+        'required@/lapsed_consents/0/reason',
+      ],
+    ] as const)
+      await expect(readActivityConsent(invalid)).rejects.toMatchObject(refused(failure))
+    await expect(
+      readActivity({ ...currentActivity, lapsed_consents: undefined }),
+    ).rejects.toMatchObject(refused('required@/lapsed_consents'))
     // A waiting value that is not a record is refused as such by both reads.
     for (const waiting of [null, [], 'scheduled'])
       for (const read of [
-        () => mapActivity({ ...currentActivity, waiting }),
-        () => mapActivityConsent({ ...response, waiting }),
+        () => readActivity({ ...currentActivity, waiting }),
+        () => readActivityConsent({ ...response, waiting }),
       ])
-        expect(read).toThrow(expect.objectContaining({ code: 'invalid_activity_waiting' }))
+        await expect(read()).rejects.toMatchObject(refused('type@/waiting'))
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json(response))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
-    expect(await client.getActivityConsent()).toEqual(mapActivityConsent(response))
+    expect(await client.getActivityConsent()).toEqual(await readActivityConsent(response))
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/activity/consent-state')
   })
 })
@@ -4229,8 +4254,63 @@ describe('central response decoding (#1685)', () => {
       { verification_url: null, user_code: null, expires_in_seconds: null, failure: null },
       '/state',
     ],
+    [
+      'GET /api/v1/activity',
+      (client: ReviewApiClient) =>
+        client.getActivity({ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }),
+      activityResponse({ paused: undefined }),
+      '/paused',
+    ],
+    [
+      'GET /api/v1/activity/consent-state',
+      (client: ReviewApiClient) => client.getActivityConsent(),
+      {},
+      '/backup_ready',
+    ],
+    [
+      'GET /api/v1/activity/permission-readiness',
+      (client: ReviewApiClient) => client.getActivityPermissionReadiness(),
+      {},
+      '/backup_ready',
+    ],
+    [
+      'GET /api/v1/activity/{event_id}/transitions',
+      (client: ReviewApiClient) => client.getActivityTransitions('event-1', 3),
+      { events: [] },
+      '/has_more',
+    ],
+    [
+      'GET /api/v1/metadata-policy/state',
+      (client: ReviewApiClient) => client.getPolicyState(),
+      policyProfile({ policy_id: undefined }),
+      '/policy_id',
+    ],
+    [
+      'GET /api/v1/metadata-policy/shadow',
+      (client: ReviewApiClient) => client.getShadowPosture(),
+      { schema_version: 'shadow-posture-v1' },
+      '/authority',
+    ],
+    [
+      'GET /api/v1/metadata-policy/shadow/outcomes',
+      (client: ReviewApiClient) => client.getShadowSample(),
+      { schema_version: 'shadow-outcome-sample-v1' },
+      '/authority',
+    ],
+    [
+      'GET /api/v1/metadata-policy/transition',
+      (client: ReviewApiClient) => client.getPolicyTransition(),
+      { schema_version: 'metadata-policy-transition-v1' },
+      '/acknowledged',
+    ],
+    [
+      'GET /api/v1/metadata-policy/automatic-safety',
+      (client: ReviewApiClient) => client.getAutomaticSafety(),
+      {},
+      '/category_suspensions',
+    ],
   ] as const)(
-    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1690)',
+    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1692)',
     async (operation, read, document, at) => {
       const failure = await read(answering(document)).catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(ResponseDecodeError)
@@ -4463,12 +4543,24 @@ describe('central response decoding (#1685)', () => {
   it('marks only policy validate and preview as writing nothing', async () => {
     const client = answering({ ok: true })
     const spy = vi.spyOn(client as unknown as { mutate: Mutate }, 'mutate')
-    await client.policyCommand('validate', {})
-    await client.policyCommand('preview', {})
-    await client.policyCommand('drafts', {})
+    // Each answer is undecodable; only the flags each command sends matter here.
+    const ignore = () => undefined
+    await client.policyCommand('validate', {}).catch(ignore)
+    await client.policyCommand('preview', {}).catch(ignore)
+    await client.previewPolicy({ name: 'Draft', options: {}, destinations: {} }).catch(ignore)
+    await client.policyCommand('drafts', {}).catch(ignore)
+    await client
+      .activatePolicy({
+        policy_id: 'policy-2',
+        expected_active_policy_id: 'policy-1',
+        expected_active_generation: 1,
+      })
+      .catch(ignore)
     expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([
       [true, true],
       [true, true],
+      [true, true],
+      [false, false],
       [false, false],
     ])
     spy.mockClear()
@@ -4477,10 +4569,14 @@ describe('central response decoding (#1685)', () => {
     expect(spy.mock.calls.map((call) => [call[5], call[6]])).toEqual([[true, false]])
   })
 
+  // Every operation the client calls with a JSON answer is now gated (#1692);
+  // return to automatic documents only 204, so it stays outside the gate.
   it('passes an operation outside the decode gate through unchanged', async () => {
-    await expect(answering({ unexpected: true }, 201).policyCommand('drafts', {})).resolves.toEqual(
-      { unexpected: true },
-    )
+    await expect(
+      mutateOf(answering({ unexpected: true }))(
+        '/api/v1/review-cases/case-1/fields/title/return-to-automatic',
+      ),
+    ).resolves.toEqual({ unexpected: true })
   })
 })
 
@@ -5054,5 +5150,307 @@ describe('named cover and choice-context checks (#1688)', () => {
     const base = 'candidates' in overrides && (overrides.candidates as unknown[]).length === 2
     const document = base ? twoAlternatives(overrides) : payload(overrides)
     await expect(retryCover(document)).rejects.toMatchObject(uncertain(`invariant@${code}`))
+  })
+})
+
+describe('activity write decoding (#1691)', () => {
+  const answering = (body: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      body === undefined ? new Response(null, { status }) : Response.json(body, { status }),
+    )
+    return {
+      fetchMock,
+      client: new ReviewApiClient({ csrf, buildIdentity: 'c'.repeat(64), fetch: fetchMock }),
+    }
+  }
+  const consent = { grants: [{ library: 'Fiction', destinations: ['title'] }] }
+  type Command = readonly [operation: string, path: string, body: unknown]
+  const commands: readonly Command[] = [
+    ['POST /api/v1/activity/consent', 'activity/consent', consent],
+    [
+      'POST /api/v1/activity/{connection}/{library}/revoke',
+      'activity/primary/Fiction/revoke',
+      undefined,
+    ],
+  ]
+  const recovery = {
+    state: 'waiting',
+    affected_count: 1,
+    next_eligible_at: null,
+    dispatch_reasons: [],
+    failure_reasons: [],
+  }
+
+  it.each<Command>(commands)(
+    'accepts the documented answer to %s',
+    async (_operation, path, body) => {
+      const { client, fetchMock } = answering(activityResponse({ paused: true }))
+      expect((await client.activityCommand(path, body))?.paused).toBe(true)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/${path}`)
+    },
+  )
+
+  type Unreadable = readonly [Command[0], Command[1], Command[2], answer: unknown, failure: string]
+  it.each<Unreadable>(
+    commands.flatMap(([operation, path, body]): Unreadable[] => [
+      [operation, path, body, activityResponse({ invented: true }), 'unknown_key@/invented'],
+      [
+        operation,
+        path,
+        body,
+        activityResponse({ provider_recovery: [{ ...recovery, failure_reasons: undefined }] }),
+        'required@/provider_recovery/0/failure_reasons',
+      ],
+    ]),
+  )(
+    'reports an unreadable %s answer as uncertain (%#)',
+    async (operation, path, body, answer, failure) => {
+      const refusal = await answering(answer)
+        .client.activityCommand(path, body)
+        .catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UncertainMutationError)
+      expect(refusal).toBeInstanceOf(AmbiguousMutationError)
+      expect(refusal).toMatchObject({ ...uncertain(failure), operation, responseStatus: 200 })
+      expect((refusal as Error).message).not.toContain('/')
+      expect(uncertainWriteOutcome(refusal)).toBe(true)
+    },
+  )
+
+  it.each<Command>(commands)(
+    'reports a committed %s answer whose failure reasons are out of order as uncertain',
+    async (operation, path, body) => {
+      const answer = activityResponse({
+        provider_recovery: [{ ...recovery, failure_reasons: ['transient', 'authentication'] }],
+      })
+      const refusal = await answering(answer)
+        .client.activityCommand(path, body)
+        .catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UncertainMutationError)
+      expect(refusal).toMatchObject({
+        ...uncertain('invariant@invalid_provider_recovery_failure_reasons'),
+        operation,
+        responseStatus: 200,
+      })
+    },
+  )
+
+  it.each(['field-effects/pause', 'field-effects/resume'])(
+    'leaves the 204 answer to %s undecoded',
+    async (path) => {
+      const { client, fetchMock } = answering(undefined, 204)
+      await expect(client.activityCommand(path)).resolves.toBeUndefined()
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/${path}`)
+    },
+  )
+
+  it.each(['field-effects/pause', 'field-effects/resume'])(
+    'reports a body in answer to %s, which documents only 204, as uncertain',
+    async (path) => {
+      const refusal = await answering(activityResponse())
+        .client.activityCommand(path)
+        .catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UncertainMutationError)
+      expect(refusal).toMatchObject({
+        ...uncertain('invariant@invalid_activity_response'),
+        operation: `POST /api/v1/${path}`,
+        responseStatus: 200,
+      })
+    },
+  )
+
+  it('reads a documented transitions page and refuses one the schema does not allow', async () => {
+    const transition = {
+      event_id: 'event-1',
+      failure: null,
+      occurred_at: 1,
+      sequence: 1,
+      state: 'verified',
+    }
+    const read = (body: unknown) => answering(body).client.getActivityTransitions('event-1')
+    expect(await read({ events: [transition], has_more: false })).toEqual({
+      events: [transition],
+      has_more: false,
+    })
+    for (const [body, failure] of [
+      [{ events: Array(21).fill(transition), has_more: true }, 'max_items@/events'],
+      [{ events: [{ ...transition, sequence: 0 }], has_more: false }, 'min@/events/0/sequence'],
+      [{ events: [{ ...transition, event_id: 7 }], has_more: false }, 'type@/events/0/event_id'],
+      [{ events: [{ ...transition, failure: 1 }], has_more: false }, 'type@/events/0/failure'],
+    ] as const)
+      await expect(read(body)).rejects.toMatchObject(refused(failure))
+  })
+})
+
+describe('policy decoding (#1692)', () => {
+  const answering = (body: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(body, { status }))
+    return {
+      fetchMock,
+      client: new ReviewApiClient({ csrf, buildIdentity: 'c'.repeat(64), fetch: fetchMock }),
+    }
+  }
+  const draft = { name: 'Draft', options: {}, destinations: {} }
+  const capture = policyPreview()
+  // One sampled work whose comparison describes the same field on both sides.
+  const impact = {
+    current_value: 'Old tag',
+    desired_value: 'New tag',
+    field: 'tags',
+    narrowed_for_target: false,
+    option: 'fill_empty',
+    outcome: 'projected',
+    qualified_value: 'New tag',
+    reason: null,
+    target_state: 'available',
+  }
+  const sampled = (comparison: Record<string, unknown> = {}, cases = 1) =>
+    policyPreview({
+      libraries: [
+        {
+          ...capture.libraries[0],
+          affected_categories: ['tags'],
+          cases: Array.from({ length: cases }, (_, index) => ({
+            fields: [impact],
+            proposal_set_id: `proposal-${String(index)}`,
+            report_id: `report-${String(index)}`,
+            resolved_policy_id: 'resolved-policy',
+            work_label: `Work ${String(index)}`,
+          })),
+          cases_total: cases,
+          comparisons: [
+            {
+              media_kind: 'ebook',
+              fields: [
+                {
+                  active: { ...impact, desired_value: 'Old tag', qualified_value: 'Old tag' },
+                  draft: impact,
+                  active_destination: 'ask',
+                  draft_destination: 'automatic',
+                  changed: true,
+                  ...comparison,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  const activation = activationCapture.body
+  const request = {
+    policy_id: activation.policy_id,
+    expected_active_policy_id: 'policy-active',
+    expected_active_generation: 1,
+  }
+
+  it('reads an absent transition as none', async () => {
+    await expect(answering(null).client.getPolicyTransition()).resolves.toBeNull()
+  })
+
+  it('accepts a preview whose comparisons match its sampled works', async () => {
+    const { client, fetchMock } = answering(sampled())
+    expect((await client.previewPolicy(draft)).libraries[0]?.cases).toHaveLength(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/metadata-policy/preview')
+  })
+
+  // Validate and preview write nothing, so an answer they cannot read is a
+  // 502, never an uncertain write (Q4).
+  it.each([
+    [
+      'POST /api/v1/metadata-policy/validate',
+      (client: ReviewApiClient) => client.policyCommand('validate', draft),
+      'required@/audiobook_qualification',
+    ],
+    [
+      'POST /api/v1/metadata-policy/preview',
+      (client: ReviewApiClient) => client.previewPolicy(draft),
+      'required@/active_generation',
+    ],
+    [
+      'POST /api/v1/metadata-policy/preview',
+      (client: ReviewApiClient) => client.policyCommand('preview', draft),
+      'required@/active_generation',
+    ],
+  ] as const)(
+    'reports an undecodable %s answer as a 502 (%#)',
+    async (operation, send, failure) => {
+      const refusal = await send(answering({}).client).catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(ResponseDecodeError)
+      expect(refusal).not.toBeInstanceOf(AmbiguousMutationError)
+      expect(refusal).toMatchObject({ ...refused(failure), operation, responseStatus: 200 })
+      expect((refusal as Error).message).not.toContain('/')
+    },
+  )
+
+  it.each([
+    ['P-X1: a comparison per sampled work', sampled({}, 2), 'invalid_policy_preview_comparisons'],
+    [
+      'P-X2: both sides of a comparison name one field',
+      sampled({ active: { ...impact, field: 'genres' } }),
+      'invalid_policy_preview_field',
+    ],
+  ])('refuses a preview that fails %s as a 502', async (_check, answer, code) => {
+    const refusal = await answering(answer)
+      .client.previewPolicy(draft)
+      .catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(ApiError)
+    expect(refusal).not.toBeInstanceOf(AmbiguousMutationError)
+    expect(refusal).toMatchObject({ status: 502, code })
+  })
+
+  it('accepts an activation of the requested policy', async () => {
+    const { client, fetchMock } = answering(activation)
+    expect(await client.activatePolicy(request)).toEqual(activation)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/metadata-policy/activate')
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(JSON.stringify(request))
+  })
+
+  it('reports an activation of another policy as uncertain (P-X3)', async () => {
+    const refusal = await answering(activation)
+      .client.activatePolicy({ ...request, policy_id: 'policy-other' })
+      .catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(UncertainMutationError)
+    expect(refusal).toMatchObject({
+      ...uncertain('invariant@invalid_policy_activation_response'),
+      operation: 'POST /api/v1/metadata-policy/activate',
+      responseStatus: 200,
+    })
+    expect(uncertainWriteOutcome(refusal)).toBe(true)
+  })
+
+  type Unsafe = readonly [operation: string, send: (client: ReviewApiClient) => Promise<unknown>]
+  const policyPath = (operation: string) =>
+    operation
+      .slice('POST /api/v1/metadata-policy/'.length)
+      .replace('{transition_id}', 'transition-1')
+  const commands: readonly Unsafe[] = [
+    'POST /api/v1/metadata-policy/drafts',
+    'POST /api/v1/metadata-policy/automatic-safety/pause',
+    'POST /api/v1/metadata-policy/automatic-safety/recover',
+    'POST /api/v1/metadata-policy/automatic-safety/suspend',
+    'POST /api/v1/metadata-policy/shadow/enter',
+    'POST /api/v1/metadata-policy/shadow/confirm-automatic',
+    'POST /api/v1/metadata-policy/transitions/{transition_id}/acknowledge',
+    'POST /api/v1/metadata-policy/transitions/{transition_id}/retry',
+  ].map((operation): Unsafe => [
+    operation,
+    (client) => client.policyCommand(policyPath(operation), {}),
+  ])
+  it.each<Unsafe>([
+    ...commands,
+    ['POST /api/v1/metadata-policy/activate', (client) => client.activatePolicy(request)],
+  ])('reports an undecodable %s answer as uncertain', async (operation, send) => {
+    const status = operation.endsWith('/drafts') ? 201 : 200
+    const { client, fetchMock } = answering({ invented: true }, status)
+    const refusal = await send(client).catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(UncertainMutationError)
+    expect(refusal).toBeInstanceOf(AmbiguousMutationError)
+    expect(refusal).toMatchObject({
+      ...uncertain('unknown_key@/invented'),
+      operation,
+      responseStatus: status,
+    })
+    expect((refusal as Error).message).not.toContain('/')
+    expect(uncertainWriteOutcome(refusal)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 })

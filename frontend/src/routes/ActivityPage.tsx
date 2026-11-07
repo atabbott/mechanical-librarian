@@ -623,7 +623,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     (total, state) => total + (data.counts[state] ?? 0),
     0,
   )
-  const providerRecovery = data.provider_recovery ?? []
+  const providerRecovery = data.provider_recovery
   const dormantRecovery = providerRecovery
     .filter((item) => item.state === 'dormant')
     .reduce((total, item) => total + item.affected_count, 0)

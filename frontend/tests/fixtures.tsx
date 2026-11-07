@@ -15,13 +15,15 @@ import type {
   CaseDetailView,
   DecisionAcknowledgementView,
   LibraryView,
+  PolicyActivationView,
+  PolicyPreviewView,
   PolicyStateView,
   PreparationView,
   ReviewHttp,
   ShadowPostureView,
   ShadowSampleView,
 } from '../src/api/http'
-import { mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
+import { mapActivity, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
 import { responseDecoders } from '../src/generated/review-decoders'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { createApplicationRouter } from '../src/router'
@@ -39,6 +41,11 @@ export const readHistory = (document: unknown) =>
   mapHistory(
     responseDecoders['GET /api/v1/review-cases/{review_case_id}/history']['200'](document, ''),
   )
+
+// An Activity document as the client reads it: decoded, then the mapper's
+// named check (#1691).
+export const readActivity = (document: unknown) =>
+  mapActivity(responseDecoders['GET /api/v1/activity']['200'](document, ''))
 
 /** A synthetic committed owner decision and its exact postcommit readback. */
 export const recordedAcknowledgement = (
@@ -188,6 +195,7 @@ export const activity = (
       total: events.length,
     },
     prepared: { automatic: 0, human: 0, total: 0 },
+    provider_recovery: [],
     suspensions: [],
     ...rest,
     // Captured from the real projection in tests/support/activity_seed.py rather
@@ -215,11 +223,13 @@ export const activity = (
         ],
         author_label: 'Author details are not recorded',
         destination: 'isbn',
+        diagnostic: null,
         failure: null,
         library: 'books',
         occurred_at: 1785742465,
         origin: 'human',
         state: 'verified',
+        transition_id: null,
         work_id: 'book-1',
         work_label: 'Paper Moons: Larkspur',
         ...event,
@@ -406,6 +416,16 @@ export const createHttp = (): ReviewHttp => ({
   })),
   getPolicyTransition: vi.fn(async () => null),
   policyCommand: async <T,>() => ({}) as T,
+  // The page previews and activates through typed client methods; this fake
+  // sends both through `policyCommand`, so a test scripts every policy command
+  // by its path in one place. The named checks those methods make are the
+  // real client's and are tested through it.
+  previewPolicy(draft) {
+    return this.policyCommand<PolicyPreviewView>('preview', draft)
+  },
+  activatePolicy(request) {
+    return this.policyCommand<PolicyActivationView>('activate', request)
+  },
   getActivity: vi.fn(async () => activity()),
   getActivityPermissionReadiness: vi.fn(async () => {
     const data = activity()
