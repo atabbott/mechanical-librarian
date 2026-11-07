@@ -220,14 +220,23 @@ class Fixture:
             }
         )
 
-    def cover_candidate(self, outcome: str, identity: str) -> None:
+    def cover_candidate(
+        self, outcome: str, provider: int, work: str, identity: str | None
+    ) -> None:
+        """Add a cover candidate; ``identity`` None is a work-level cover."""
         artifact, reference = self.text(), self.text()
         cast("list[object]", self.report["covers"]).append(
             {
                 "kind": "hardcover",
                 "state": "retrieved",
                 "artifact": {"artifact_id": artifact},
-                "provenance": {"edition_identity": identity, "context": self.text()},
+                "provenance": {
+                    "provider": self.provider_names[provider],
+                    "designation": "work" if identity is None else "exact_edition",
+                    "work_identity": work,
+                    "edition_identity": identity,
+                    "context": self.text(),
+                },
             }
         )
         if self.consideration is None:
@@ -401,7 +410,8 @@ def _rich_fixture(text: Sentinels, profile: Profile) -> Fixture:
     work = text()
     accepted, accepted_claim = fixture.record(first, work)
     _sibling, sibling_claim = fixture.record(first, work, lane="work")
-    other, other_claim = fixture.record(first, text(), lane="work")
+    other_work = text()
+    other, other_claim = fixture.record(first, other_work, lane="work")
     fixture.bind(first, accepted, work, "accepted")
     fixture.bind(first, other, text(), "unrelated")
     claims = cast(
@@ -429,7 +439,7 @@ def _rich_fixture(text: Sentinels, profile: Profile) -> Fixture:
     )
     fixture.result("series", "keep", ["positive_preservation_evidence"])
     fixture.abstain("title", "insufficient_support")
-    fixture.cover_candidate("unknown", other)
+    fixture.cover_candidate("unknown", first, other_work, other)
     if profile == "v57-like":
         lanes = cast("list[dict[str, object]]", fixture._providers()[first]["lanes"])
         lanes[0]["diagnostics"] = [
@@ -463,6 +473,7 @@ def _test_vocabulary(labels: Sequence[str]) -> set[str]:
     vocabulary |= set(shadow_outcome._REASON_CODES) | set(shadow_decision._REASON_CODES)
     vocabulary |= {"audiobook", "ebook", "other_reason", "automatic_safety_suspended"}
     vocabulary |= {"measurable", "gate_postdates_source", "block_not_retained"}
+    vocabulary |= {"cause_not_separable", "informational"}
     vocabulary |= {"alternative", "cover_candidates", "not_identity", "not_retained"}
     vocabulary |= {ledger.LEDGER_SCHEMA, *labels}
     for gate in ledger.CATALOGUE:
@@ -673,7 +684,41 @@ def test_report_level_signals_block_their_destinations(tmp_path: Path) -> None:
     assert _snapshot(rows["W1"], "audio")["by_destination"] == lane_blocked
     assert _snapshot(rows["W6"], "audio")["by_destination"] == lane_blocked
     assert _snapshot(rows["B1"], "audio")["by_destination"] == {"description": 1}
-    assert _snapshot(rows["C3"], "audio")["fields"] == 1
+
+
+def test_rules_that_refuse_nothing_or_cannot_be_separated_count_nothing(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = _rich_fixture(text, "v57-like")
+    # Every persisted trace a deadline stop leaves, none of which says whether
+    # the provider share caused it.
+    provider = fixture._providers()[0]
+    provider["request_accounting"] = {"undispatched_incomplete": 2}
+    provider["diagnostics"] = [
+        {"stage": "request", "category": "timeout", "retryable": False, "count": 1}
+    ]
+    database = _database(tmp_path / "s.sqlite3", "v57-like", [fixture])
+    code, stdout, _ = _run(_arguments([("audio", database, AUDIO_REVISION)], tmp_path))
+    assert code == 0
+    rows = _rows(stdout)
+    deadline = _snapshot(rows["B6"], "audio")
+    assert deadline == {"label": "audio", "status": "cause_not_separable"}
+    assert rows["B6"]["ceiling"] == 0
+    # An unknown audiobook cover is not the corroboration rule's cost: the rule
+    # only adds reasons and the classifier never reads them.
+    corroboration = _snapshot(rows["C3"], "audio")
+    assert corroboration["status"] == "measurable"
+    assert (corroboration["fields"], corroboration["actionable_fields"]) == (0, None)
+    assert rows["C3"]["control"] == "informational"
+    assert _snapshot(rows["C1"], "audio")["fields"] == 1
+    markdown = _run(
+        _arguments(
+            [("audio", database, AUDIO_REVISION)], tmp_path, "--format", "markdown"
+        )
+    )[1]
+    assert "cause not separable" in markdown
+    assert "the rule adds reasons and refuses nothing" in markdown
 
 
 # --- 6. Precision ----------------------------------------------------------
@@ -751,11 +796,15 @@ def test_cover_candidates_reach_the_records_their_covers_show(tmp_path: Path) ->
     provider = fixture.provider()
     work = text()
     accepted, _ = fixture.record(provider, work)
-    other, _ = fixture.record(provider, text(), lane="work")
+    other_work = text()
+    other, _ = fixture.record(provider, other_work, lane="work")
     fixture.bind(provider, accepted, work, "accepted")
-    fixture.cover_candidate("unknown", accepted)
-    fixture.cover_candidate("conflict", other)
-    fixture.cover_candidate("verified_work_match", accepted)
+    fixture.cover_candidate("unknown", provider, work, accepted)
+    fixture.cover_candidate("conflict", provider, other_work, other)
+    fixture.cover_candidate("verified_work_match", provider, work, accepted)
+    # Provenance naming an edition of another work binds nothing, as in the
+    # classifier, which matches the work identity before the edition.
+    fixture.cover_candidate("unknown", provider, other_work, accepted)
     fixture.result(
         "cover",
         "unresolved_choice",
@@ -768,6 +817,38 @@ def test_cover_candidates_reach_the_records_their_covers_show(tmp_path: Path) ->
     assert (classifier["true_positive"], classifier["false_positive"]) == (1, 1)
     # Only the conflict record came through work search alone, and C2 asks for unknown.
     assert _snapshot(_rows(stdout)["C2"], "snap-a")["fields"] == 0
+
+
+def test_a_work_level_cover_reaches_every_record_of_its_work(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    second_provider = fixture.provider()
+    work = text()
+    accepted, _ = fixture.record(provider, work, lane="work")
+    fixture.record(provider, work, lane="work")
+    fixture.record(provider, text(), lane="work")
+    fixture.record(second_provider, work, lane="work")
+    fixture.bind(provider, accepted, work, "accepted")
+    # A default or work cover names its work and no edition.
+    fixture.cover_candidate("unknown", provider, work, None)
+    fixture.result(
+        "cover",
+        "unresolved_choice",
+        ["cover_gallery_incomplete", "owner_cover_choice_required"],
+    )
+    database = _database(tmp_path / "w.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    rows = _rows(stdout)
+    # Both records of that work at that provider are reached and positive;
+    # the other work and the other provider's record are not reached.
+    classifier = _snapshot(rows["C1"], "snap-a")
+    assert (classifier["true_positive"], classifier["false_positive"]) == (2, 0)
+    assert (classifier["unlabelled"], classifier["unreached_fields"]) == (0, 0)
+    # Every record it pictures came by work search alone, so C2 counts it.
+    work_search = _snapshot(rows["C2"], "snap-a")
+    assert (work_search["fields"], work_search["true_positive"]) == (1, 2)
 
 
 # --- 7. Ranking ------------------------------------------------------------

@@ -25,9 +25,12 @@ leave them.
   the snapshot's source revision is "not measurable on that snapshot: gate
   postdates source", and nothing is computed for it even where a similar
   signal exists. A gate the source had, but whose refused input it never
-  persisted or cannot separate from another gate's, is "not measurable on that
-  snapshot: block not retained". Ancestry is decided by
-  `git merge-base --is-ancestor`.
+  persisted, is "not measurable on that snapshot: block not retained". A gate
+  whose blocks the persisted record cannot tell apart from blocks with other
+  causes is "not measurable on that snapshot: cause not separable": B6's
+  request timeouts and undispatched requests do not say whether the provider
+  share, the aggregate deadline, a transport timeout or a sibling request's
+  failure stopped them. Ancestry is decided by `git merge-base --is-ancestor`.
 - **Blocked fields and works.** A field is one current review case and
   destination; a work is one current review case. A field is blocked by a gate
   when the gate's persisted signal is on the field, or on the report feeding a
@@ -44,7 +47,10 @@ leave them.
   whose work identity differs from the accepted work at the same provider.
   The loosened rule is applied to the records the gate reaches: the
   first-ranked alternative's evidence for a decision-level gate, or the
-  records whose covers a cover candidate shows. TP counts the positives it
+  records whose covers a cover candidate shows. A cover binds records as the
+  cover classifier binds them: same provider and work identity, narrowed to
+  the cover's edition when it names one, so a work-level cover binds every
+  record of its work at that provider. TP counts the positives it
   admits and FP the negatives; precision is TP / (TP + FP). n counts admitted
   records, not fields: a field whose alternative cites several records
   contributes each. Unlabelled records are counted, never assigned, and so are
@@ -57,7 +63,9 @@ leave them.
   admits evidence for the right work, not whether a value is well formed. A row
   whose risk is not identity (text bounds, checksums, cover source admission)
   is "not estimable from natural controls"; a row whose refused records were
-  never persisted is "not estimable" for that reason.
+  never persisted is "not estimable" for that reason. C3's cross-authority
+  cover-hash rule only adds reasons to a classified candidate and refuses
+  nothing, so it blocks no field.
 - **Actionable fields.** A blocked field is actionable when the loosened rule
   has something to admit for it: its result kept at least one alternative, or,
   for a cover row, a matching cover candidate exists. A field whose result
@@ -106,9 +114,9 @@ The origin ADRs are
 | 1 | T1 | Closed title and complete-creator agreement | title, subtitle, authors and other compared destinations | #414 (3586e1be), #815 (ce76c7fd); ADR-0018 | not recorded | 1,343 / 977 (1,343 actionable) | 191 / 125 (191 actionable) | admit the first-ranked of competing values | ebook-744 802/80/471 (523 fields reach no record); audiobook-1294 47/0/160 (44 fields reach no record); n = 929 | 0.914 (0.894) | 1,371.5 | filed as #1744 |
 | 2 | A6 | Automatic-decision abstention | every automatic destination | #442 (593e6198); ADR-0036 | development 159/172 correct at 100% precision; sealed 12/12 and 43/43 | 5,481 / 1,745 (830 actionable) | 6 / 6 (6 actionable) | admit the first-ranked alternative an automatic decision abstained on | ebook-744 808/43/411 (4,786 fields reach no record); audiobook-1294 1/0/9 (2 fields reach no record); n = 852 | 0.950 (0.933) | 779.7 | filed as #1745 |
 | 3 | A3 | Coherent bibliographic combination | bibliographic destinations | #429 (cef7644a); ADR-0021 | not recorded | 327 / 162 (327 actionable) | 6 / 3 (6 actionable) | admit the first-ranked alternative without a coherent combination | ebook-744 399/13/236 (32 fields reach no record); audiobook-1294 2/0/14 (0 fields reach no record); n = 414 | 0.969 (0.947) | 315.4 | filed as #1746 |
-| 4 | C1 | Classifier outcomes (unknown, conflict block election) | cover | #577 (f7e974d0), #588 (40a97a54); ADR-0046, ADR-0047, ADR-0059 | 96/99 exact agreement; plausible 18/21, none falsely plausible | 385 / 385 (385 actionable) | 97 / 97 (97 actionable) | admit unknown and conflict cover candidates | ebook-744 42/33/284 (73 fields reach no record); audiobook-1294 0/0/19 (80 fields reach no record); n = 75 | 0.560 (0.448) | 215.7 | already filed as #1355 |
+| 4 | C1 | Classifier outcomes (unknown, conflict block election) | cover | #577 (f7e974d0), #588 (40a97a54); ADR-0046, ADR-0047, ADR-0059 | 96/99 exact agreement; plausible 18/21, none falsely plausible | 385 / 385 (385 actionable) | 97 / 97 (97 actionable) | admit unknown and conflict cover candidates | ebook-744 42/45/343 (39 fields reach no record); audiobook-1294 0/0/24 (76 fields reach no record); n = 87 | 0.483 (0.381) | 183.5 | already filed as #1355 |
 | 5 | A2 | Independent corroboration required | every proposable destination | #351 (d35215e8) | as A1 | 50 / 49 (50 actionable) | 85 / 62 (85 actionable) | admit the first-ranked single-source alternative | ebook-744 37/0/10 (20 fields reach no record); audiobook-1294 8/0/79 (0 fields reach no record); n = 45 | 1.000 (0.921) | 124.4 | filed as #1747 |
-| 6 | C2 | Plausible only for ISBN-search records | cover | #577 (f7e974d0), #588 (40a97a54) | not measured at origin | 121 / 121 (121 actionable) | 15 / 15 (15 actionable) | admit unknown cover candidates reached only by work search | ebook-744 36/2/83 (0 fields reach no record); audiobook-1294 0/0/15 (0 fields reach no record); n = 38 | 0.947 (0.827) | 112.5 | already filed as #1380 |
+| 6 | C2 | Plausible only for ISBN-search records | cover | #577 (f7e974d0), #588 (40a97a54) | not measured at origin | 134 / 134 (134 actionable) | 19 / 19 (19 actionable) | admit unknown cover candidates reached only by work search | ebook-744 36/4/94 (0 fields reach no record); audiobook-1294 0/0/20 (0 fields reach no record); n = 40 | 0.900 (0.769) | 117.7 | already filed as #1380 |
 | 7 | I3 | Local ISBN acceptance classes; anything else stays unresolved | isbn | #333 (f1dd28f5) | accepted-evidence precision 38/40 (95%), recall 41/46 | 524 / 524 (25 actionable) | 36 / 36 (0 actionable) | admit the first-ranked alternative of an unresolved local ISBN | ebook-744 19/0/0 (511 fields reach no record); audiobook-1294 0/0/0 (36 fields reach no record); n = 19 | 1.000 (0.832) | 20.8 | already filed as #1356 (closed) |
 | 8 | W9 | Series identity match for series fill | series | #998 (dc8de6f5); ADR-0070 | not recorded | not measurable on that snapshot: gate postdates source | 5 / 5 (4 actionable) | admit the first-ranked series alternative | audiobook-1294 2/0/4 (1 fields reach no record); n = 2 | 1.000 (0.342) | 1.4 | filed as #1748 |
 | 9 | X1 | Candidate limit (an over-limit lane keeps no candidate) | every destination its provider lanes feed | #297 (f564e598) | not recorded | 5,841 / 677 | 371 / 35 | keep the first five candidates of an over-limit lane | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
@@ -122,20 +130,20 @@ The origin ADRs are
 | 17 | W1 | Exact work-identity admission (title and creators, transformation rules, decoration fail-closed) | every destination its provider lanes feed | #870/#916 (a0958ac2); diagnostic #1268 (a4315d6a); ADR-0018, ADR-0067, ADR-0068 | 89-case adjudicated corpus, zero false admissions | not measurable on that snapshot: gate postdates source | 354 / 32 | admit the refused work candidates | not estimable: the refused records were not retained | not estimable | 0.0 | already filed as #1355 |
 | 18 | I7 | Audiobook ISBN refusal | isbn (audiobook only) | #1059 (ed997a7f) | not recorded | not measurable on that snapshot: gate postdates source | 103 / 103 (0 actionable) | admit the first-ranked audiobook ISBN without a recording association | audiobook-1294 0/0/0 (103 fields reach no record); n = 0 | not estimable | 0.0 | kept |
 | 19 | I1 | ISBN form and checksum | isbn | #291 (b48aae94); identifier_validity_invalid #816 (e3df6c21) | not recorded | 84 / 84 | 13 / 13 | admit an ISBN whose form or checksum fails | not estimable from natural controls | not estimable | 0.0 | kept |
-| 20 | B6 | Provider deadline share (20 s) | every destination its provider lanes feed | #1273 (bcdee458) | not recorded | not measurable on that snapshot: gate postdates source | 96 / 12 | let a provider run past its share | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
-| 21 | C3 | Audiobook cross-authority perceptual-hash corroboration | cover (audiobook only) | #948 (6423552f); ADR-0064 | not recorded | not measurable on that snapshot: gate postdates source | 87 / 87 (87 actionable) | admit an audiobook cover candidate one authority pictures | audiobook-1294 0/0/7 (80 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 22 | X4 | Generic provider subtitle | subtitle | #817 (660fac2f) | not recorded (corpus private) | 73 / 73 (0 actionable) | 0 / 0 (0 actionable) | admit the first-ranked generic subtitle | ebook-744 0/0/0 (73 fields reach no record); audiobook-1294 0/0/0 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 23 | I5 | ISBN-first lane eligibility (opening-matter, ebook or unknown, no rear provenance, exactly one family) | every destination its provider lanes feed | #959 (9640228b) | not recorded | not measurable on that snapshot: gate postdates source | 51 / 6 | query by any valid local ISBN family | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
-| 24 | B3 | EPUB rear-resource budget | isbn | #329 (21506f7f) | not recorded | 7 / 7 | 0 / 0 | read every rear resource | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
-| 25 | C5 | Audiobook cover withheld | cover (audiobook only) | #985 (0ce358e9) | not recorded | not measurable on that snapshot: gate postdates source | 6 / 6 (0 actionable) | admit the first-ranked withheld audiobook cover | audiobook-1294 0/0/0 (6 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 26 | I6 | Competing ISBNs need a verified manifestation | isbn | #979 (8056f4d3); ADR-0080 | development 42/42, sealed holdout 30/30 | not measurable on that snapshot: gate postdates source | 3 / 3 (0 actionable) | admit the first-ranked competing ISBN | audiobook-1294 0/0/0 (3 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 27 | T2 | Evidence-led title identity key and ISBN-title material conflict | title | #1040 (c1963d97); ADR-0075 | constructor controls 50/50 and 75/75 | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the first-ranked title despite a material ISBN-title conflict | audiobook-1294 0/0/2 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 28 | T3 | Decoration-equivalence election and its dissent reasons | title, subtitle | #981 (c843ea7f); ADR-0067 | sealed 89-case admission corpus, 0 false admissions; 1,988-report archived replay | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the first-ranked title despite decoration dissent | audiobook-1294 0/0/1 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 29 | W5 | Target-work representation for work-scope fields | work-scope destinations | #972 (da35e6df) | 7 correct decisions per tag option, 100%, 49 works | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the first-ranked alternative without target-work proof | audiobook-1294 0/0/0 (1 fields reach no record); n = 0 | not estimable | 0.0 | already filed as #1355 |
-| 30 | A4 | Date refinement and year conflict need corroboration | publishedDate, publishedYear | #351 (d35215e8), #415 (0d0021d1); ADR-0019 | not recorded | 0 / 0 (0 actionable) | 0 / 0 (0 actionable) | admit the first-ranked uncorroborated date | ebook-744 0/0/0 (0 fields reach no record); audiobook-1294 0/0/0 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
-| 31 | B2 | Discovery fan-out caps (8 ISBN lanes, 9 queries, 4 ASIN lanes) | every destination its provider lanes feed | #388 (999edaf0), #916, #948 | not recorded | 0 / 0 | 0 / 0 | query every distinct local ISBN family | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
-| 32 | B4 | Audio chapter cap | every destination its provider lanes feed (audiobook only) | #931/#934 (c3214949) | not recorded | not measurable on that snapshot: gate postdates source | 0 / 0 | keep every chapter row | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
-| 33 | B5 | Cover packet preview cap | cover | #588 (40a97a54) | not recorded | 0 / 0 | 0 / 0 | keep every preview | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 20 | X4 | Generic provider subtitle | subtitle | #817 (660fac2f) | not recorded (corpus private) | 73 / 73 (0 actionable) | 0 / 0 (0 actionable) | admit the first-ranked generic subtitle | ebook-744 0/0/0 (73 fields reach no record); audiobook-1294 0/0/0 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
+| 21 | I5 | ISBN-first lane eligibility (opening-matter, ebook or unknown, no rear provenance, exactly one family) | every destination its provider lanes feed | #959 (9640228b) | not recorded | not measurable on that snapshot: gate postdates source | 51 / 6 | query by any valid local ISBN family | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 22 | B3 | EPUB rear-resource budget | isbn | #329 (21506f7f) | not recorded | 7 / 7 | 0 / 0 | read every rear resource | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 23 | C5 | Audiobook cover withheld | cover (audiobook only) | #985 (0ce358e9) | not recorded | not measurable on that snapshot: gate postdates source | 6 / 6 (0 actionable) | admit the first-ranked withheld audiobook cover | audiobook-1294 0/0/0 (6 fields reach no record); n = 0 | not estimable | 0.0 | kept |
+| 24 | I6 | Competing ISBNs need a verified manifestation | isbn | #979 (8056f4d3); ADR-0080 | development 42/42, sealed holdout 30/30 | not measurable on that snapshot: gate postdates source | 3 / 3 (0 actionable) | admit the first-ranked competing ISBN | audiobook-1294 0/0/0 (3 fields reach no record); n = 0 | not estimable | 0.0 | kept |
+| 25 | T2 | Evidence-led title identity key and ISBN-title material conflict | title | #1040 (c1963d97); ADR-0075 | constructor controls 50/50 and 75/75 | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the first-ranked title despite a material ISBN-title conflict | audiobook-1294 0/0/2 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
+| 26 | T3 | Decoration-equivalence election and its dissent reasons | title, subtitle | #981 (c843ea7f); ADR-0067 | sealed 89-case admission corpus, 0 false admissions; 1,988-report archived replay | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the first-ranked title despite decoration dissent | audiobook-1294 0/0/1 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
+| 27 | W5 | Target-work representation for work-scope fields | work-scope destinations | #972 (da35e6df) | 7 correct decisions per tag option, 100%, 49 works | not measurable on that snapshot: gate postdates source | 1 / 1 (1 actionable) | admit the first-ranked alternative without target-work proof | audiobook-1294 0/0/0 (1 fields reach no record); n = 0 | not estimable | 0.0 | already filed as #1355 |
+| 28 | A4 | Date refinement and year conflict need corroboration | publishedDate, publishedYear | #351 (d35215e8), #415 (0d0021d1); ADR-0019 | not recorded | 0 / 0 (0 actionable) | 0 / 0 (0 actionable) | admit the first-ranked uncorroborated date | ebook-744 0/0/0 (0 fields reach no record); audiobook-1294 0/0/0 (0 fields reach no record); n = 0 | not estimable | 0.0 | kept |
+| 29 | B2 | Discovery fan-out caps (8 ISBN lanes, 9 queries, 4 ASIN lanes) | every destination its provider lanes feed | #388 (999edaf0), #916, #948 | not recorded | 0 / 0 | 0 / 0 | query every distinct local ISBN family | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 30 | B4 | Audio chapter cap | every destination its provider lanes feed (audiobook only) | #931/#934 (c3214949) | not recorded | not measurable on that snapshot: gate postdates source | 0 / 0 | keep every chapter row | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 31 | B5 | Cover packet preview cap | cover | #588 (40a97a54) | not recorded | 0 / 0 | 0 / 0 | keep every preview | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 32 | B6 | Provider deadline share (20 s) | every destination its provider lanes feed | #1273 (bcdee458) | not recorded | not measurable on that snapshot: gate postdates source | not measurable on that snapshot: cause not separable | let a provider run past its share | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
+| 33 | C3 | Audiobook cross-authority perceptual-hash corroboration | cover (audiobook only) | #948 (6423552f); ADR-0064 | not recorded | not measurable on that snapshot: gate postdates source | 0 / 0 | admit an audiobook cover candidate one authority pictures | not estimable: the rule adds reasons and refuses nothing | not estimable | 0.0 | kept |
 | 34 | I2 | ISBN occurrence scoping (label-only, owned by another identifier) | isbn | #385 (a70791af) | not recorded | not measurable on that snapshot: block not retained | not measurable on that snapshot: block not retained | admit an ISBN occurrence another identifier owns | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
 | 35 | T4 | Latin combining-mark work identity | every destination its provider lanes feed | #982 (f9be2ca2); ADR-0068 | not recorded | not measurable on that snapshot: gate postdates source | not measurable on that snapshot: block not retained | admit a combining-mark variant work | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
 | 36 | W2 | Work-identity contradiction (edition against work, ISBN against target work) | every destination its provider lanes feed | #1014 (caba7b6e) | not recorded | not measurable on that snapshot: gate postdates source | not measurable on that snapshot: block not retained | admit a contradicted work candidate | not estimable: the refused records were not retained | not estimable | 0.0 | kept |
@@ -227,9 +235,14 @@ The origin ADRs are
     none) and X4 (73, none). Promoting one needs a loosened rule that first
     produces a candidate.
   - Other rows never persisted their refused records (X1 with 6,212 blocked,
-    W6, W1, I5, B2, B3, B4, B5, B6, X2), or carry a risk that is not identity
+    W6, W1, I5, B2, B3, B4, B5, X2), or carry a risk that is not identity
     (B1, C4, I1). Their ceilings stay in the table so a maintainer can promote
     one once a measurement for it exists.
+- **Rows with no count.** B6's blocks cannot be told apart from stops with
+  other causes, so it has no ceiling on either snapshot; measuring it needs a
+  persisted record of which deadline stopped a provider. C3 blocks no field:
+  an audiobook cover classified `unknown` is C1's cost, not the corroboration
+  rule's.
 - **Context.** The reviewer-free measurement (#1086) published a bounded
   18-work smoke with 10 works needing attention and 21 attention fields; its
   full-corpus attention denominator stayed unavailable. Those figures are

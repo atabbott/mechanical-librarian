@@ -69,8 +69,12 @@ _LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _GATE_ID = re.compile(r"^[A-Z][0-9]{1,2}$")
 
-Status = Literal["measurable", "gate_postdates_source", "block_not_retained"]
-Control = Literal["alternative", "cover_candidates", "not_identity", "not_retained"]
+Status = Literal[
+    "measurable", "gate_postdates_source", "block_not_retained", "cause_not_separable"
+]
+Control = Literal[
+    "alternative", "cover_candidates", "not_identity", "not_retained", "informational"
+]
 Ancestry = Callable[[str, str], bool]
 
 _UNBLOCKED_OUTCOMES = frozenset({"propose_change", "acceptable_choice", "keep"})
@@ -275,13 +279,40 @@ def _build_case(
 
 
 def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
-    """Bind each cover candidate to the provider records whose covers it shows."""
+    """Bind each cover candidate to the provider records whose covers it shows.
+
+    A cover's provenance binds the records the source revision's
+    ``_classify_sources`` matches: same provider and work identity, narrowed to
+    the stated edition when there is one. A work-level cover (a default, work
+    or related cover without an edition) binds every record of that work at
+    that provider.
+    """
+    works: dict[tuple[str, str], list[str]] = {}
+    for provider in case.providers():
+        name = _text(provider.get("provider"))
+        if name is None:
+            continue
+        for candidate in _dicts(provider.get("candidates")):
+            identity = _text(candidate.get("identity"))
+            work = _text(candidate.get("work_identity"))
+            if identity is not None and work is not None and identity in case.records:
+                works.setdefault((name, work), []).append(identity)
     editions: dict[str, set[str]] = {}
     for cover in _dicts(case.report.get("covers")):
         artifact = _text(_dict(cover.get("artifact")).get("artifact_id"))
-        edition = _text(_dict(cover.get("provenance")).get("edition_identity"))
-        if artifact is not None and edition is not None and edition in case.records:
-            editions.setdefault(artifact, set()).add(edition)
+        provenance = _dict(cover.get("provenance"))
+        name = _text(provenance.get("provider"))
+        work = _text(provenance.get("work_identity"))
+        if artifact is None or name is None or work is None:
+            continue
+        edition = _text(provenance.get("edition_identity"))
+        bound = {
+            identity
+            for identity in works.get((name, work), [])
+            if edition is None or identity == edition
+        }
+        if bound:
+            editions.setdefault(artifact, set()).update(bound)
     for candidate in _dicts(consideration.get("candidates")):
         reference = _text(candidate.get("reference"))
         artifact = _text(candidate.get("artifact_id"))
@@ -516,20 +547,6 @@ def _recording_refused(case: Case) -> bool:
     )
 
 
-def _deadline_starved(case: Case) -> bool:
-    accounted = any(
-        isinstance(
-            count := _dict(provider.get("request_accounting")).get(
-                "undispatched_incomplete"
-            ),
-            int,
-        )
-        and count > 0
-        for provider in case.providers()
-    )
-    return accounted or _diagnostic("request", "timeout")(case)
-
-
 def _rear_budget(case: Case) -> bool:
     return "rear_resource_limit" in _list(
         _dict(case.report.get("local")).get("reasons")
@@ -601,10 +618,6 @@ def _work_search_unknown(case: Case, candidate: dict[str, object]) -> bool:
     )
 
 
-def _audiobook_unknown(case: Case, candidate: dict[str, object]) -> bool:
-    return case.medium == "audiobook" and candidate.get("outcome") == "unknown"
-
-
 # ---------------------------------------------------------------------------
 # The gate catalogue. Every string here is a closed output string.
 
@@ -623,6 +636,9 @@ class Gate:
     control: Control
     signal: Signal = _never
     retained: bool = True
+    # False where the persisted record cannot tell this gate's blocks from
+    # blocks with other causes, so no count would be this gate's cost.
+    separable: bool = True
     cover_predicate: CoverPredicate | None = None
     medium: str | None = None
     disposition: str = "kept"
@@ -911,9 +927,9 @@ CATALOGUE: tuple[Gate, ...] = (
         "6423552fa6315ebae8fb632c437f56b8eaaa43ad",
         "cover",
         "admit an audiobook cover candidate one authority pictures",
-        "cover_candidates",
-        _cover(_audiobook_unknown),
-        cover_predicate=_audiobook_unknown,
+        # The rule only adds reasons to a classified candidate; the outcome
+        # comes from _classify_sources, which never reads them (ADR-0064).
+        "informational",
         medium="audiobook",
     ),
     Gate(
@@ -1244,17 +1260,22 @@ CATALOGUE: tuple[Gate, ...] = (
         _LANE,
         "let a provider run past its share",
         "not_retained",
-        _report(_deadline_starved, _ALL),
+        # The report keeps a non-retryable request timeout and an undispatched
+        # count, but not whether the share, the aggregate deadline, a
+        # transport timeout or a sibling's terminal failure caused them.
+        separable=False,
     ),
 )
 
 _CONTROL_TEXT: dict[str, str] = {
     "not_identity": "not estimable from natural controls",
     "not_retained": "not estimable: the refused records were not retained",
+    "informational": "not estimable: the rule adds reasons and refuses nothing",
 }
 _STATUS_TEXT: dict[str, str] = {
     "gate_postdates_source": "not measurable on that snapshot: gate postdates source",
     "block_not_retained": "not measurable on that snapshot: block not retained",
+    "cause_not_separable": "not measurable on that snapshot: cause not separable",
 }
 
 
@@ -1456,6 +1477,8 @@ def gate_statuses(revision: str, ancestry: Ancestry) -> dict[str, Status]:
             statuses[gate.gate_id] = "gate_postdates_source"
         elif not gate.retained:
             statuses[gate.gate_id] = "block_not_retained"
+        elif not gate.separable:
+            statuses[gate.gate_id] = "cause_not_separable"
         else:
             statuses[gate.gate_id] = "measurable"
     return statuses
@@ -1833,6 +1856,7 @@ def closed_vocabulary(labels: Iterable[str]) -> frozenset[str]:
     strings: set[str] = set(_STRUCTURAL_KEYS) | set(_ALL) | set(REASONS)
     strings |= {_OTHER_REASON, LEDGER_SCHEMA, *_MEDIA}
     strings |= {"measurable", "gate_postdates_source", "block_not_retained"}
+    strings |= {"cause_not_separable", "informational"}
     strings |= {"alternative", "cover_candidates", "not_identity", "not_retained"}
     for gate in CATALOGUE:
         strings |= {
