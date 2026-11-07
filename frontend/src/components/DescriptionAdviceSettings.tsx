@@ -130,7 +130,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
       if (error instanceof BuildMismatchError)
         setStaleLead(
           source === 'unconfirmed' || unconfirmed
-            ? 'It is not known whether description preferences were saved.'
+            ? 'No answer came back for the description preferences save.'
             : 'Saved preferences were not loaded.',
         )
       // A failure that replaces the message's Reload, or leaves focus on the

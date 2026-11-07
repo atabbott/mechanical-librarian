@@ -585,7 +585,7 @@ describe('owner settings route', () => {
 
   describe('an uncertain save on an earlier build (#1742)', () => {
     const reloadName = 'Reload'
-    const lead = 'It is not known whether Settings were saved.'
+    const lead = 'No answer came back for the Settings save.'
     const saveUncertain = async (http: ReturnType<typeof createHttp>) => {
       const user = userEvent.setup()
       http.writeSettings = vi.fn(async () => {

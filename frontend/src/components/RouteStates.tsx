@@ -7,6 +7,7 @@ import { Link, useRouter } from '@tanstack/react-router'
 import { BuildMismatchError, signInLocation } from '../api/http'
 import { ChunkRecoveryError, reloadCurrentApplication } from '../chunkRecovery'
 import { routeFailureCopy } from '../routeFailure'
+import { ReloadApplication } from './StaleBuildRead'
 
 export const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
   <section aria-busy="true" className="route-state">
@@ -30,7 +31,7 @@ export const RouteFailure = ({
     <section className="route-state">
       {/* The shell's build notice is the alert and says why; this only names the route. */}
       <h1>{title} was not loaded</h1>
-      <button onClick={() => reloadCurrentApplication()}>Reload</button>
+      <ReloadApplication />
     </section>
   ) : error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">

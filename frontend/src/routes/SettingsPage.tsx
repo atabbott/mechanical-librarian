@@ -12,7 +12,6 @@ import {
 } from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
 import { Button } from '../components/Button'
-import { reloadCurrentApplication } from '../chunkRecovery'
 import { ChangeCount } from '../components/ChangeCount'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
@@ -20,7 +19,7 @@ import { FieldInput, FieldRow } from '../components/FieldRow'
 import { FinishTray } from '../components/FinishTray'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { SegmentedControl } from '../components/SegmentedControl'
-import { StaleBuildRead } from '../components/StaleBuildRead'
+import { ReloadApplication, StaleBuildRead } from '../components/StaleBuildRead'
 import { StatusPill } from '../components/StatusPill'
 import { controlId, descriptionId, errorId, offOn, unitId } from '../fieldControls'
 import { focusAfterRetry } from '../focusAfterRetry'
@@ -342,9 +341,7 @@ export default function SettingsPage() {
     return (
       <section className="settings-state" data-route-focus tabIndex={-1}>
         <h1>Settings were not loaded</h1>
-        <button type="button" onClick={() => reloadCurrentApplication()}>
-          Reload
-        </button>
+        <ReloadApplication />
       </section>
     )
   if (query.isError && query.data === undefined)
@@ -363,7 +360,7 @@ export default function SettingsPage() {
       {saved ? <SavedNotice>Settings saved and in use.</SavedNotice> : null}
       {reconciliation === 'stale' ? (
         <div key="stale" className="settings-stale-recovery">
-          <StaleBuildRead lead="It is not known whether Settings were saved." ref={staleReload} />
+          <StaleBuildRead lead="No answer came back for the Settings save." ref={staleReload} />
         </div>
       ) : reconciliation !== 'idle' ? (
         <div

@@ -255,7 +255,13 @@ paragraph => {
   const lines = [...range.getClientRects()].filter(rect => rect.width > 0)
   const last = lines.reduce((lowest, rect) => (rect.bottom > lowest.bottom ? rect : lowest))
   const box = button.getBoundingClientRect()
-  return { wrapped: box.top >= last.bottom - 1, gap: box.top - last.bottom }
+  const outer = paragraph.getBoundingClientRect()
+  const start = outer.left + parseFloat(getComputedStyle(paragraph).paddingLeft)
+  return {
+    wrapped: box.top >= last.bottom - 1,
+    gap: box.top - last.bottom,
+    indent: box.left - start,
+  }
 }
 """
 
@@ -263,10 +269,11 @@ paragraph => {
 _FULL_STOP_CLEARANCE = """
 paragraph => {
   const button = paragraph.querySelector('button')
-  // React renders the lead and the sentences after it as separate text nodes.
-  const text = [...paragraph.childNodes].filter(
-    node => node.nodeType === Node.TEXT_NODE && node.textContent.includes('.'),
-  ).pop()
+  // The last text outside the button that holds a full stop.
+  const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT)
+  let text = null
+  for (let node = walker.nextNode(); node; node = walker.nextNode())
+    if (!button.contains(node) && node.textContent.includes('.')) text = node
   const stop = text.textContent.lastIndexOf('.')
   const range = document.createRange()
   range.setStart(text, stop)
@@ -317,6 +324,8 @@ def test_more_attention_try_again_focuses_the_added_row_and_reload_clears_its_se
         clearance = stale.evaluate(_SENTENCE_CLEARANCE)
         assert clearance["wrapped"], clearance
         assert clearance["gap"] >= 6, clearance
+        # A wrapped reload starts at the sentence's left edge, not indented.
+        assert abs(clearance["indent"]) < 1, clearance
 
 
 def test_review_current_comparison_keeps_focus_while_it_reads_then_focuses_reload() -> (
