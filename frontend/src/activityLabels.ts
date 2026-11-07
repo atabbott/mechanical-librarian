@@ -66,8 +66,9 @@ export const noteLabel: Record<ActivityNote, string> = {
   held_back: 'Held back',
 }
 export const noteSentence: Record<ActivityNote, string> = {
-  asked_again: 'Asked again: this choice no longer counts, so the field is asking you again.',
-  held_back: "Held: Automatic is off, so this won't be written unless you turn it back on.",
+  asked_again:
+    'Asked again: this choice was made before the book last came back for review, so it no longer counts and the field is asking you again.',
+  held_back: "Held back: Automatic is off, so this won't be written unless you turn it back on.",
 }
 // A ledger day heading; each row under it states only its time.
 export const dayHeading = (value: number | null) =>

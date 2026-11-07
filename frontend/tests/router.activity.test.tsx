@@ -124,13 +124,13 @@ describe('Activity route', () => {
     await user.click(within(held).getByRole('button', { name: /held back/u }))
     expect(
       within(held).getByText(
-        "Held: Automatic is off, so this won't be written unless you turn it back on.",
+        "Held back: Automatic is off, so this won't be written unless you turn it back on.",
       ),
     ).toBeVisible()
     await user.click(within(asked).getByRole('button', { name: /asked again/u }))
     expect(
       within(asked).getByText(
-        'Asked again: this choice no longer counts, so the field is asking you again.',
+        'Asked again: this choice was made before the book last came back for review, so it no longer counts and the field is asking you again.',
       ),
     ).toBeVisible()
     expect(
