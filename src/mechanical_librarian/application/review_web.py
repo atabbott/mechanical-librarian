@@ -79,6 +79,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
     TargetField,
+    field_evidence_providers,
     recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -2947,7 +2948,7 @@ def _review_unselectable_evidence(
                 + "not an eligible choice."
             ),
         }
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
             for claim in candidate.claims:
                 language = (

@@ -13,7 +13,7 @@ import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from mechanical_librarian.application.configuration import dispatch_adapters
+from mechanical_librarian.application.configuration import recovery_adapters
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
@@ -295,9 +295,10 @@ def record_provider_recovery_observations(
     prepared before its media kind's dispatch set can hold one, so a report can
     still name an adapter outside that set. That observation is no evidence
     about the provider's current health and records nothing, after an
-    unconfigured provider is refused as it always was (#1247, #1486).
+    unconfigured provider is refused as it always was (#1247, #1486). Nor does
+    a cover-only audiobook authority's failure (#1779).
     """
-    dispatched = dispatch_adapters(audio=report.audio is not None)
+    dispatched = recovery_adapters(audio=report.audio is not None)
     for observation in report.providers:
         decision = provider_recovery_decision(
             observation, now=now, google_burst_remaining=google_burst_remaining
@@ -334,10 +335,11 @@ def provider_recovery_jobs(
     (ADR-0061 clause 9, #1486). A retained report published before that set,
     or one a successor carried forward from it, can still hold such an
     observation, and retrying it would spend egress dispatch never sends. An unconfigured
-    provider is refused first, as it always was.
+    provider is refused first, as it always was. A cover-only audiobook
+    authority is dispatched but never retried (#1779).
     """
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
-    dispatched = dispatch_adapters(audio=report.audio is not None)
+    dispatched = recovery_adapters(audio=report.audio is not None)
     if proposal is not None and proposal.proposal_set_id != package[0]:
         raise ReviewPipelineError("projection")
     jobs = []

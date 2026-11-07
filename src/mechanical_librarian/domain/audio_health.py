@@ -60,6 +60,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderEvidenceKind,
+    field_evidence_providers,
 )
 
 
@@ -501,7 +502,7 @@ def _set_citations(
 def _retained_candidates(report: MetadataReport) -> tuple[ProviderCandidate, ...]:
     return tuple(
         candidate
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         for candidate in observation.candidates
     )
 

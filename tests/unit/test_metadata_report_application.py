@@ -42,6 +42,7 @@ from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
     ReportLimits,
     TargetConnectionConfiguration,
+    recovery_adapters,
 )
 from mechanical_librarian.application.metadata_report import (
     AudioItemInspectionError,
@@ -3374,7 +3375,7 @@ _EVERY_ADAPTER = (
     "itunes_search",
     "open_library",
 )
-_EXCLUDED_ON_AUDIOBOOKS = ("google_books", "inventaire", "itunes_search")
+_EXCLUDED_ON_AUDIOBOOKS = ("google_books", "inventaire")
 _EXCLUDED_ON_EBOOKS = ("audible_catalog", "audiosilo", "audnexus")
 
 
@@ -3492,7 +3493,11 @@ def _mixed_configuration() -> ApplicationConfiguration:
 
 
 def test_a_mixed_library_dispatches_each_media_kind_only_to_its_set() -> None:
-    """Of eight connected providers, each media kind reaches its own five."""
+    """Of eight connected providers, each media kind reaches its own set.
+
+    An audiobook's six include iTunes for its cover alone, which is never
+    retried (#1779).
+    """
     constructed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
     observed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
     reports: dict[str, MetadataReport] = {}
@@ -3541,7 +3546,12 @@ def test_a_mixed_library_dispatches_each_media_kind_only_to_its_set() -> None:
         for item, report in reports.items()
     }
     for item in ("audiobook", "ebook"):
-        assert dispatched[item] == [job.adapter for job in jobs[item]]
+        assert [
+            name
+            for name in dispatched[item]
+            if name in recovery_adapters(audio=item == "audiobook")
+        ] == [job.adapter for job in jobs[item]]
+    assert "itunes_search" not in [job.adapter for job in jobs["audiobook"]]
 
 
 @pytest.mark.parametrize(
@@ -3586,9 +3596,10 @@ def test_a_disabled_excluded_binding_records_nothing_on_an_audiobook() -> None:
 
     report = MetadataReport.from_json(_mixed_service(bindings).run("audiobook", 0))
 
-    assert [("hardcover", ProviderStatus.DISABLED)] == [
-        (value.provider, value.status) for value in report.providers
-    ]
+    assert [
+        ("hardcover", ProviderStatus.DISABLED),
+        ("itunes_search", ProviderStatus.DISABLED),
+    ] == [(value.provider, value.status) for value in report.providers]
 
 
 class _FaultingProvider:

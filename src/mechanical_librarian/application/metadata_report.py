@@ -4139,10 +4139,10 @@ class GenerateMetadataReport:
         An audiobook's identifier is an ASIN, so the plan is built by
         ``audiobook_discovery_plan`` rather than the ISBN one, and it runs
         through the same provider loop an ebook does. Its cover descriptors run
-        through the same bounded cover observer as well: the Audible catalog is
-        the one dispatched authority that states an audiobook cover asset of
-        its own (#1254), and its `cover_enabled` flag is consulted inside that
-        observer.
+        through the same bounded cover observer as well: the Audible catalog
+        and iTunes Search (#1779) are the dispatched authorities that state an
+        audiobook cover asset of their own, and each one's `cover_enabled` flag
+        is consulted inside that observer.
 
         Both media branches open one 60-second monotonic aggregate per
         preparation. The incumbent cover read, every provider observation (each

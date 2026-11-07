@@ -711,9 +711,11 @@ def test_a_report_records_health_only_for_its_dispatch_set(
 
     A retry successor copies its siblings forward, so a successor over a
     report published before its media kind's dispatch set can still hold a
-    failing excluded observation: Google Books, Inventaire or iTunes on an
-    audiobook (#1247), Audnexus on an ebook (#1486). Recording it would reset
-    that provider's library-wide health and delay its recovery elsewhere.
+    failing excluded observation: Google Books or Inventaire on an audiobook
+    (#1247), Audnexus on an ebook (#1486). Recording it would reset that
+    provider's library-wide health and delay its recovery elsewhere. iTunes is
+    asked an audiobook's cover alone, so its failure there records nothing
+    either (#1779).
     """
     observer = _Observer()
     record_provider_recovery_observations(
@@ -923,7 +925,8 @@ def test_a_report_enrolls_only_its_dispatch_set(
     """A retained observation outside the set is never retried (#1247, #1486).
 
     Such an observation comes from a report published before its media kind's
-    set, or one a successor carried forward from it.
+    set, or one a successor carried forward from it. iTunes is in the
+    audiobook set for its cover alone and is never retried there (#1779).
     """
     jobs = provider_recovery_jobs(
         _report(*_dispatch_set_observations(), audio=audio),
