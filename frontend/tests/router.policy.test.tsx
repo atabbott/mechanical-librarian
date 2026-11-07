@@ -2432,7 +2432,9 @@ it.each([
           ],
         },
       ],
-      configured_libraries: [{ connection: 'home', library: 'a-very_long-library-name' }],
+      configured_libraries: [
+        { connection: 'home', library: 'a-very_long-library-name', prepared: null },
+      ],
       lapsed_consents: [],
       waiting: {
         applying: 0,

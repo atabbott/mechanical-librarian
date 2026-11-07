@@ -8,7 +8,7 @@ import {
   ApiError,
   BuildMismatchError,
   CsrfRenewedError,
-  mapActivity,
+  UncertainMutationError,
 } from '../src/api/http'
 import type {
   ActivitySearch,
@@ -30,6 +30,7 @@ import {
   idlePreparation,
   openActivityAuthority,
   permissionReadiness,
+  readActivity,
   renderRoute,
 } from './fixtures'
 
@@ -71,7 +72,7 @@ it('keeps navigation available during initial Activity failure and retries the r
 describe('Activity route', () => {
   it('labels real description preparation results without relabeling policy records', async () => {
     const http = createHttp()
-    vi.mocked(http.getActivity).mockResolvedValue(mapActivity(descriptionAdviceActivityFixture))
+    vi.mocked(http.getActivity).mockResolvedValue(readActivity(descriptionAdviceActivityFixture))
     renderRoute('/activity', http)
     const failed = await screen.findByText('Description advice could not be prepared')
     const failedRow = failed.closest('article')
@@ -185,7 +186,7 @@ describe('Activity route', () => {
           prepared: { automatic: 1, human: 1, total: 2 },
         },
       ],
-      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         {
           connection: 'primary',
@@ -238,7 +239,7 @@ describe('Activity route', () => {
     async (_name, failure) => {
       const user = userEvent.setup()
       const initial: ActivityView = activity({
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       })
       let current = initial
       const http: ReviewHttp = {
@@ -274,7 +275,7 @@ describe('Activity route', () => {
   ])('reconciles an ambiguous pause as %s without resending it', async (_name, paused, message) => {
     const user = userEvent.setup()
     const initial: ActivityView = activity({
-      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
     })
     let current = initial
     const http: ReviewHttp = {
@@ -295,10 +296,57 @@ describe('Activity route', () => {
     expect(http.getActivity).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    [
+      'applied',
+      [],
+      'The requested activity change was applied, confirmed by the authoritative server.',
+    ],
+    [
+      'unconfirmed',
+      [{ connection: 'primary', library: 'fiction', prepared: null }],
+      'The activity outcome could not be confirmed. No command was resent.',
+    ],
+  ])(
+    'reconciles an undecodable revoke answer as %s without resending it (#1691)',
+    async (_name, enabledAfter, message) => {
+      const user = userEvent.setup()
+      const initial: ActivityView = activity({
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+      })
+      let current = initial
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () => current),
+        getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(current)),
+        activityCommand: vi.fn(async () => {
+          throw new UncertainMutationError({
+            operation: 'POST /api/v1/activity/{connection}/{library}/revoke',
+            responseStatus: 200,
+            at: '/invented',
+            reason: 'unknown_key',
+          })
+        }),
+      }
+      renderRoute('/activity', http)
+      await openActivityAuthority(user)
+      current = { ...initial, enabled_libraries: enabledAfter }
+      await user.click(screen.getByRole('button', { name: 'Remove write permission for fiction' }))
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(message))
+      expect(http.activityCommand).toHaveBeenCalledOnce()
+      expect(http.activityCommand).toHaveBeenCalledWith(
+        'activity/primary/fiction/revoke',
+        undefined,
+      )
+      expect(http.getActivity).toHaveBeenCalledTimes(2)
+    },
+  )
+
   it('reports an unresolved ambiguous pause without calling it safe or resending it', async () => {
     const user = userEvent.setup()
     const initial: ActivityView = activity({
-      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
     })
     let available = true
     const http: ReviewHttp = {
@@ -329,7 +377,9 @@ describe('Activity route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () =>
-        activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }),
+        activity({
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+        }),
       ),
       activityCommand: vi.fn(async () => {
         throw new CsrfRenewedError()
@@ -356,7 +406,9 @@ describe('Activity route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () =>
-        activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }),
+        activity({
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+        }),
       ),
       activityCommand: vi.fn(
         () =>
@@ -440,7 +492,19 @@ describe('Activity route', () => {
     ).toBeInTheDocument()
   })
 
-  it('keeps ambiguous consent unconfirmed without resending', async () => {
+  // A lost answer, and a committed answer the browser cannot read (#1691).
+  it.each([
+    ['a lost answer', new AmbiguousMutationError()],
+    [
+      'an undecodable answer',
+      new UncertainMutationError({
+        operation: 'POST /api/v1/activity/consent',
+        responseStatus: 200,
+        at: '/invented',
+        reason: 'unknown_key',
+      }),
+    ],
+  ])('keeps ambiguous consent unconfirmed without resending after %s', async (_name, failure) => {
     const user = userEvent.setup()
     const initial: ActivityView = activity({
       configured_libraries: [
@@ -467,7 +531,7 @@ describe('Activity route', () => {
       // The read on Confirm sees the reviewed basis, so the ambiguous POST is reached.
       getActivityConsent: vi.fn(async () => consentOf(initial)),
       activityCommand: vi.fn(async () => {
-        throw new AmbiguousMutationError()
+        throw failure
       }),
     }
     const { router } = renderRoute('/activity#activity-consent', http)
@@ -519,7 +583,7 @@ describe('Activity route', () => {
 
     current = {
       ...partial,
-      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       capabilities: [
         {
           connection: 'primary',
@@ -650,7 +714,7 @@ describe('Activity route', () => {
     [
       'prepared',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         prepared: { automatic: 1, human: 0, total: 1 },
         events: [{ work_label: 'Prepared work', state: 'planned' }],
       },
@@ -659,7 +723,7 @@ describe('Activity route', () => {
     [
       'applying',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Applying work', state: 'applying' }],
       },
       'Applying',
@@ -667,7 +731,7 @@ describe('Activity route', () => {
     [
       'waiting',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Waiting work', state: 'retryable' }],
       },
       'Waiting safely',
@@ -675,7 +739,7 @@ describe('Activity route', () => {
     [
       'stale',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Stale work', state: 'stale' }],
       },
       'Closed safely',
@@ -683,7 +747,7 @@ describe('Activity route', () => {
     [
       'item changed',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Changed work', state: 'stale', failure: 'target_changed' }],
       },
       'Item changed; closed safely',
@@ -691,7 +755,7 @@ describe('Activity route', () => {
     [
       'connection-waiting',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Unreached work', state: 'stale', failure: 'connection' }],
       },
       'Waiting safely',
@@ -699,7 +763,7 @@ describe('Activity route', () => {
     [
       'connection-exhausted',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Exhausted work', state: 'stale', failure: 'connection_exhausted' }],
       },
       'Closed safely',
@@ -707,7 +771,7 @@ describe('Activity route', () => {
     [
       'stopped',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Stopped work', state: 'abandoned' }],
       },
       'Stopped safely',
@@ -715,7 +779,7 @@ describe('Activity route', () => {
     [
       'verified',
       {
-        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Verified work', state: 'verified' }],
       },
       'Verified',
@@ -941,7 +1005,7 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () =>
         activity({
-          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
           suspensions: [
             {
               connection: 'primary',
@@ -985,16 +1049,41 @@ describe('Activity route', () => {
               next_eligible_at: 1,
               dispatch_reasons: ['missing_corroboration', 'blanket_scan'],
             },
-            { state: 'checking', affected_count: 1, next_eligible_at: null },
-            { state: 'fanout', affected_count: 3, next_eligible_at: null },
+            {
+              state: 'checking',
+              affected_count: 1,
+              next_eligible_at: null,
+              dispatch_reasons: [],
+              failure_reasons: [],
+            },
+            {
+              state: 'fanout',
+              affected_count: 3,
+              next_eligible_at: null,
+              dispatch_reasons: [],
+              failure_reasons: [],
+            },
             {
               state: 'recovered',
               affected_count: 1,
               next_eligible_at: null,
               dispatch_reasons: [],
+              failure_reasons: [],
             },
-            { state: 'dormant', affected_count: 2, next_eligible_at: null },
-            { state: 'exhausted', affected_count: 1, next_eligible_at: null },
+            {
+              state: 'dormant',
+              affected_count: 2,
+              next_eligible_at: null,
+              dispatch_reasons: [],
+              failure_reasons: [],
+            },
+            {
+              state: 'exhausted',
+              affected_count: 1,
+              next_eligible_at: null,
+              dispatch_reasons: [],
+              failure_reasons: [],
+            },
           ],
         }),
       ),
@@ -1037,7 +1126,7 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () =>
         activity({
-          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
           suspensions: [
             {
               connection: 'primary',
@@ -1168,7 +1257,7 @@ describe('Activity route', () => {
       getActivity: vi.fn(async () =>
         activity({
           paused: true,
-          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
           current_waiting: {
             destination: 'title',
             library: 'fiction',
@@ -1729,7 +1818,7 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () =>
         activity({
-          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
           configured_libraries: [
             {
               connection: 'primary',
@@ -1839,8 +1928,8 @@ describe('Activity route', () => {
           { destination: 'title', state: 'allowed', consented: library === 'fiction', prepared: 0 },
         ],
       })),
-      consented_libraries: [{ connection: 'primary', library: 'fiction' }],
-      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      consented_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
     })
     const http: ReviewHttp = {
@@ -1880,8 +1969,8 @@ describe('Activity route', () => {
           { destination: 'title', state: 'allowed', consented: library === 'fiction', prepared: 0 },
         ],
       })),
-      consented_libraries: [{ connection: 'primary', library: 'fiction' }],
-      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      consented_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
       lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
     })
     const http: ReviewHttp = {
@@ -1914,7 +2003,7 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () =>
         activity({
-          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
           ledger: {
             event_type: 'all',
             page: 1,
@@ -3423,7 +3512,7 @@ it('announces success through a page status already mounted and moves focus to i
   expect(page).toBeEmptyDOMElement()
   vi.mocked(http.getActivity).mockResolvedValue({
     ...grantedHistory,
-    enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+    enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
     waiting: { ...permissionHistory.waiting, scheduled: 1 },
   })
   await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -3492,7 +3581,7 @@ it('leaves focus on a shell control when the entry moves', async () => {
   const http = createHttp()
   vi.mocked(http.getActivity).mockResolvedValue({
     ...waitingFor({ scheduled: 1 }),
-    enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+    enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
   })
   const { queryClient } = renderRoute('/activity', http)
   const status = await screen.findByRole('button', { name: 'Review write permissions' })
@@ -3525,7 +3614,7 @@ it.each([
       ...history,
       enabled_libraries:
         name === 'enabled' || name === 'applying'
-          ? [{ connection: 'primary', library: 'fiction' }]
+          ? [{ connection: 'primary', library: 'fiction', prepared: null }]
           : [],
     })
     if (name === 'connection condition')
@@ -3570,7 +3659,7 @@ it('moves focus to the new entry when the focused one leaves', async () => {
   const http = createHttp()
   const enabled = {
     ...waitingFor({ scheduled: 1 }),
-    enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+    enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
   }
   vi.mocked(http.getActivity).mockResolvedValue(enabled)
   const { queryClient } = renderRoute('/activity', http)
@@ -4298,8 +4387,16 @@ describe('owner language in Activity (#1286)', () => {
           },
         ],
       })),
-      consented_libraries: consented.map((library) => ({ connection: 'primary', library })),
-      enabled_libraries: consented.map((library) => ({ connection: 'primary', library })),
+      consented_libraries: consented.map((library) => ({
+        connection: 'primary',
+        library,
+        prepared: null,
+      })),
+      enabled_libraries: consented.map((library) => ({
+        connection: 'primary',
+        library,
+        prepared: null,
+      })),
       waiting: {
         applying: 0,
         awaiting_permission: 1,
@@ -4727,7 +4824,7 @@ describe('owner language in Activity (#1286)', () => {
       ...createHttp(),
       getActivity: vi.fn(async () =>
         activity({
-          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
           suspensions: (['title', 'authors'] as const).slice(0, count).map((destination) => ({
             connection: 'primary',
             destination,
