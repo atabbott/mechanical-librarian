@@ -652,6 +652,9 @@ export interface ReviewFieldView {
     | ResponseSchema<'_CoverAutomaticDecisionProjection'>
     | null
   automaticWithheldReason: string | null
+  // In Preview, the value Automatic chose before the owner entered Preview
+  // mode on a field that now reads No change (#1575).
+  earlierAutomaticValue?: ResponseSchema<'_ProposedValue'> | null
   automaticSelectionSources?: readonly string[]
   notices: readonly string[]
   provenance: readonly string[]
@@ -3117,6 +3120,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   inventoryRole: field.inventory_role,
   automaticDecision: field.automatic_decision,
   automaticWithheldReason: field.automatic_withheld_reason,
+  earlierAutomaticValue: field.earlier_automatic_value,
   automaticSelectionSources: field.automatic_selection_sources,
   notices: field.notices,
   provenance: field.provenance,

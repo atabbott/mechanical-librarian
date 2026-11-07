@@ -344,6 +344,10 @@ brackets are GitHub issues.
   only automatic decisions are covers or descriptions, as it already did for
   other fields, and Turn on Automatic waits until that finishes. An automatic
   description counts even when the policy makes nothing automatic (#1574).
+- In Preview, a field Automatic chose before you entered Preview mode no
+  longer reads as having no other value: the case shows that earlier choice
+  beside the current value and says Automatic doesn’t write in Preview and
+  decides the field again when you turn it on (#1575).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

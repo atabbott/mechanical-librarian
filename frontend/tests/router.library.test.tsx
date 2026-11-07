@@ -10579,6 +10579,101 @@ describe('Library route', () => {
     ).toBeVisible()
   })
 
+  describe('a field Automatic chose before Preview (#1575)', () => {
+    const earlier =
+      'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const unchanged = (
+      destination: 'authors' | 'title',
+      overrides: Partial<CaseDetailView['fields'][number]> = {},
+    ) => ({
+      ...titleField,
+      classification: 'unsupported' as const,
+      classificationReason: 'There is nothing to decide for this field.',
+      decisionActions: [],
+      destination,
+      editable: false,
+      humanDecision: null,
+      automaticDecision: null,
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      proposalId: `proposal-${destination}`,
+      proposedValues: [],
+      targetFingerprint: `fingerprint-${destination}`,
+      ...overrides,
+    })
+    const open = async (field: string, fields: CaseDetailView['fields'][number][]) => {
+      renderRoute(`/library?lens=all&preview=case-1&field=${field}`, {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields,
+        })),
+      })
+      await screen.findByRole('navigation', { name: 'Review fields' })
+    }
+
+    it('says Automatic chose the value and shows it beside the current value', async () => {
+      await open('authors', [
+        unchanged('authors', {
+          currentValue: 'Current Writer',
+          earlierAutomaticValue: { kind: 'list', value: ['Ada Example'] },
+        }),
+        unchanged('title'),
+      ])
+      const rail = screen.getByRole('navigation', { name: 'Review fields' })
+      expect(within(rail).getByRole('button', { name: /^Authors/u })).toHaveTextContent('No change')
+      expect(screen.getByText(earlier)).toBeVisible()
+      expect(screen.queryByText('There’s no other value to choose from.')).toBeNull()
+      const values = screen.getByLabelText('Authors current value')
+      expect(values).toHaveTextContent(
+        'Current valueCurrent WriterEarlier automatic choiceAda Example',
+      )
+      expect([...values.querySelectorAll('dt, dd')].map((node) => node.textContent)).toEqual([
+        'Current value',
+        'Current Writer',
+        'Earlier automatic choice',
+        'Ada Example',
+      ])
+    })
+
+    it('shows the note on a field the owner can enter a value for', async () => {
+      await open('title', [
+        unchanged('title', {
+          earlierAutomaticValue: { kind: 'text', value: 'Earlier Title' },
+          ownerControl: {
+            entry: { maxCharacters: 512, suggestions: [] },
+            subset: null,
+            withdraw: null,
+          },
+        }),
+      ])
+      expect(screen.getByText(earlier)).toBeVisible()
+      expect(screen.getByLabelText('Title current value')).toHaveTextContent(
+        'Earlier automatic choiceEarlier Title',
+      )
+      expect(screen.queryByText('There’s no other value to choose from.')).toBeNull()
+    })
+
+    it('leaves an owner-entry field without an earlier choice as it was', async () => {
+      await open('title', [
+        unchanged('title', {
+          ownerControl: {
+            entry: { maxCharacters: 512, suggestions: [] },
+            subset: null,
+            withdraw: null,
+          },
+        }),
+      ])
+      expect(screen.getByLabelText('Title current value')).not.toHaveTextContent(
+        'Earlier automatic choice',
+      )
+      expect(screen.queryByText(earlier)).toBeNull()
+      expect(screen.queryByText('There’s no other value to choose from.')).toBeNull()
+    })
+  })
+
   describe('the fields with nothing to decide (#1514)', () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')

@@ -9636,6 +9636,16 @@
             "title": "Deterministic Disposition",
             "type": "string"
           },
+          "earlier_automatic_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "editable": {
             "title": "Editable",
             "type": "boolean"

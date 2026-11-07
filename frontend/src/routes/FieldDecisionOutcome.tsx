@@ -1,6 +1,7 @@
 // A Library field's settled reading: its current value, its recorded outcome
 // and the automatic statements beside it. Moved out of the Library route under
 // the route-size rule (#1571).
+import { displayValue } from '../api/http'
 import { completionOutcome, decisionValue, sameSelectedValue, valueText } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import {
@@ -39,6 +40,12 @@ export function ContextValue({
             )}
           </dd>
         </div>
+        {field.earlierAutomaticValue ? (
+          <div>
+            <dt>Earlier automatic choice</dt>
+            <dd>{valueText(field.destination, displayValue(field.earlierAutomaticValue.value))}</dd>
+          </div>
+        ) : null}
       </dl>
       <button
         type="button"

@@ -2756,13 +2756,17 @@ export default function LibraryPage({
                     />
                   ) : (
                     <>
-                      {selectedActionable || !selectedOwnerEntry ? (
+                      {selectedActionable ||
+                      !selectedOwnerEntry ||
+                      selected.earlierAutomaticValue ? (
                         <p
                           className={selectedActionable ? 'decision-recorded' : 'decision-context'}
                         >
                           {selectedActionable
                             ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
-                            : 'There’s no other value to choose from.'}
+                            : selected.earlierAutomaticValue
+                              ? 'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
+                              : 'There’s no other value to choose from.'}
                         </p>
                       ) : null}
                       {!selectedActionable ? (
