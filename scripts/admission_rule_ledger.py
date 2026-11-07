@@ -22,7 +22,8 @@ Every decision-level (alternative-control) row also splits its controls and
 its pick measure by destination and by medium (#1744), and classes its
 actionable fields: tied, decidable, contaminated, no right-work alternative or
 single alternative. ``--breakdown GATE`` renders one such row's split as an
-extra Markdown section.
+extra Markdown section. Where the snapshot stores automatic decisions, those
+rows also count the blocked fields one already settled (#1747).
 
 Attention per case (#1310) is read under each snapshot's own source: a child
 ``python -I`` process imports only that revision's tree and composes the
@@ -189,6 +190,8 @@ class Case:
     references: dict[str, str] = field(default_factory=dict)
     lane_kinds: dict[str, set[str]] = field(default_factory=dict)
     labels: dict[str, str] = field(default_factory=dict)
+    # destination -> (outcome, candidate) of the snapshot's automatic decision
+    automatic: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
 
     def applicable(self, destinations: frozenset[str]) -> frozenset[str]:
         present = destinations & frozenset(self.results)
@@ -1131,13 +1134,15 @@ CATALOGUE: tuple[Gate, ...] = (
         "Applicability and abstention",
         "Independent corroboration required",
         "domain/proposal_set.py",
-        "#351 (d35215e8)",
+        "#351 (d35215e8); narrators #966 (0ce358e9), #1642 (5558b7b3)",
         "as A1",
         "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
-        "every proposable destination",
-        "admit the lowest-identifier single-source alternative",
+        "a populated field other than genres, tags and description; "
+        "narrators also when empty",
+        "admit the only alternative, which one source states",
         "alternative",
         _reason({"insufficient_independent_corroboration"}),
+        disposition="kept (#1747)",
     ),
     Gate(
         "A3",
@@ -1349,6 +1354,12 @@ class Split:
     single_alternative: int = 0
     # actionable fields whose pick preserves the current value
     pick_preserves: int = 0
+    # Decision-level rows only: blocked fields one of the snapshot's automatic
+    # decisions already settled (#1747), by taking the pick, keeping the
+    # current value, or taking anything else
+    automatic_pick: int = 0
+    automatic_keep: int = 0
+    automatic_other: int = 0
 
     def add(self, other: Split) -> None:
         for item in fields(Split):
@@ -1367,6 +1378,8 @@ class Tally(Split):
     # decision-level rows only: the same counts per destination and per medium
     destinations: dict[str, Split] = field(default_factory=dict)
     media: dict[str, Split] = field(default_factory=dict)
+    # whether the snapshot stored automatic decisions at all
+    automatic_recorded: bool = False
 
 
 # Elections that decide competing values on these destinations on main. A
@@ -1474,6 +1487,23 @@ def _classify_pick(case: Case, result: Mapping[str, object], counts: Split) -> N
         counts.no_right_work += 1
 
 
+def _count_automatic(
+    case: Case, destination: str, result: Mapping[str, object], counts: Split
+) -> None:
+    """Count a blocked field the snapshot's automatic decision already settled."""
+    decision = case.automatic.get(destination)
+    if decision is None:
+        return
+    outcome, candidate = decision
+    picked = _text(_pick(result).get("alternative_id"))
+    if outcome == "keep_current":
+        counts.automatic_keep += 1
+    elif outcome == "candidate" and picked is not None and candidate == picked:
+        counts.automatic_pick += 1
+    else:
+        counts.automatic_other += 1
+
+
 def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
     if gate.control == "alternative":
         pick = _pick(case.results.get(destination, {}))
@@ -1521,6 +1551,7 @@ def _tally_case(
                 one.unlabelled += 1
         if gate.control == "alternative":
             _classify_pick(case, result, one)
+            _count_automatic(case, destination, result, one)
             tally.destinations.setdefault(destination, Split()).add(one)
             tally.media.setdefault(case.medium, Split()).add(one)
         tally.add(one)
@@ -1538,7 +1569,7 @@ def wilson_lower_bound(successes: int, total: int, z: float = WILSON_Z) -> float
 
 
 _CASES_SQL = (
-    "SELECT rc.document,mr.document,"
+    "SELECT rc.review_case_id,rc.document,mr.document,"
     "(SELECT shadow.document FROM shadow_decision_outcomes shadow "
     "WHERE shadow.review_case_id=rc.review_case_id "
     "ORDER BY shadow.evaluated_at DESC LIMIT 1),"
@@ -1578,6 +1609,32 @@ def _open_snapshot(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _automatic_decisions(
+    connection: sqlite3.Connection,
+) -> dict[str, dict[str, tuple[str | None, str | None]]] | None:
+    """Each case's stored automatic decisions, or None where none are recorded.
+
+    The table is optional: a source that predates it, or a copy without it,
+    reports "not recorded" rather than refusing.
+    """
+    present = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='automatic_decisions'"
+    ).fetchone()
+    if present is None:
+        return None
+    decisions: dict[str, dict[str, tuple[str | None, str | None]]] = {}
+    rows = connection.execute(
+        "SELECT review_case_id,destination,document FROM automatic_decisions"
+    )
+    for case_id, destination, document in rows:
+        stored = _document(document)
+        decisions.setdefault(case_id, {})[destination] = (
+            _text(stored.get("outcome")),
+            _text(stored.get("candidate_id")),
+        )
+    return decisions
+
+
 def measure_snapshot(
     connection: sqlite3.Connection,
     statuses: Mapping[str, Status],
@@ -1586,17 +1643,22 @@ def measure_snapshot(
     """Stream current cases once, tallying every measurable gate."""
     later = _election_destinations(elections)
     measurable = [gate for gate in CATALOGUE if statuses[gate.gate_id] == "measurable"]
-    tallies = {gate.gate_id: Tally() for gate in measurable}
     media: Counter[str] = Counter()
     try:
+        automatic = _automatic_decisions(connection)
+        tallies = {
+            gate.gate_id: Tally(automatic_recorded=automatic is not None)
+            for gate in measurable
+        }
         rows = connection.execute(_CASES_SQL)
-        for case_text, report_text, shadow_text, consideration_text in rows:
+        for case_id, case_text, report_text, shadow_text, consideration_text in rows:
             case = _build_case(
                 _document(case_text),
                 _document(report_text),
                 _document(shadow_text),
                 _document(consideration_text),
             )
+            case.automatic = (automatic or {}).get(case_id, {})
             media[case.medium] += 1
             for gate in measurable:
                 _tally_case(gate, case, tallies[gate.gate_id], later)
@@ -1867,6 +1929,7 @@ def _row(
     destinations: dict[str, Split] = {}
     media: dict[str, Split] = {}
     measurable_anywhere = False
+    automatic_recorded = True
     estimable_control = gate.control in ("alternative", "cover_candidates")
     picks = gate.control == "alternative"
     for label, statuses, tallies in snapshots:
@@ -1876,6 +1939,7 @@ def _row(
             measurable_anywhere = True
             tally = tallies[gate.gate_id]
             pooled.add(tally)
+            automatic_recorded &= tally.automatic_recorded
             for pool, split in (
                 (destinations, tally.destinations),
                 (media, tally.media),
@@ -1899,6 +1963,9 @@ def _row(
                     "pick_agrees": tally.pick_agrees if picks else None,
                     "tied_fields": tally.tied if picks else None,
                     "election_fields": tally.election_fields,
+                    "automatic": _automatic_entry(tally, tally.automatic_recorded)
+                    if picks
+                    else None,
                 }
             )
         per_snapshot.append(entry)
@@ -1939,13 +2006,14 @@ def _row(
         "pick": _pick_entry(pooled) if picks and measurable_anywhere else None,
         "split": {
             "by_destination": {
-                key: _split_entry(counts)
+                key: _split_entry(counts, automatic_recorded)
                 for key, counts in sorted(destinations.items())
             },
             "by_medium": {
-                key: _split_entry(counts) for key, counts in sorted(media.items())
+                key: _split_entry(counts, automatic_recorded)
+                for key, counts in sorted(media.items())
             },
-            "total": _split_entry(pooled),
+            "total": _split_entry(pooled, automatic_recorded),
         }
         if picks and measurable_anywhere
         else None,
@@ -1977,8 +2045,23 @@ def _pick_entry(counts: Split) -> dict[str, object]:
     }
 
 
-def _split_entry(counts: Split) -> dict[str, object]:
-    """One destination's or medium's controls and pick measure (#1744)."""
+def _automatic_entry(counts: Split, recorded: bool) -> dict[str, object] | None:
+    """Blocked fields automatic decisions settled (#1747); None if not recorded."""
+    if not recorded:
+        return None
+    return {
+        "takes_pick": counts.automatic_pick,
+        "keeps_current": counts.automatic_keep,
+        "takes_other": counts.automatic_other,
+    }
+
+
+def _split_entry(counts: Split, automatic_recorded: bool) -> dict[str, object]:
+    """One destination's or medium's controls and pick measure (#1744).
+
+    Its automatic-decision counts are pooled only when every snapshot behind
+    it recorded automatic decisions; otherwise they are "not recorded".
+    """
     total = counts.true_positive + counts.false_positive
     lower = wilson_lower_bound(counts.true_positive, total)
     return {
@@ -1992,6 +2075,7 @@ def _split_entry(counts: Split) -> dict[str, object]:
         "precision": round(counts.true_positive / total, 4) if total else None,
         "wilson_lower_bound": None if lower is None else round(lower, 4),
         "pick": _pick_entry(counts),
+        "automatic": _automatic_entry(counts, automatic_recorded),
     }
 
 
@@ -2090,6 +2174,10 @@ _STRUCTURAL_KEYS = frozenset(
         "single_alternative_fields",
         "pick_preserves",
         "breakdown",
+        "automatic",
+        "takes_pick",
+        "keeps_current",
+        "takes_other",
     }
 )
 
@@ -2219,6 +2307,11 @@ def _cell(entry: Mapping[str, object]) -> str:
         notes.append(f"{_number(entry['actionable_fields'])} actionable")
     if entry.get("election_fields"):
         notes.append(f"{_number(entry['election_fields'])} stale: later election")
+    automatic = entry.get("automatic")
+    if isinstance(automatic, dict) and (
+        decided := sum(cast("dict[str, int]", automatic).values())
+    ):
+        notes.append(f"{_number(decided)} decided automatically")
     return f"{cell} ({'; '.join(notes)})" if notes else cell
 
 
@@ -2274,8 +2367,8 @@ def _breakdown_section(row: Mapping[str, object]) -> list[str]:
     lines += [
         "| Split | Fields | Actionable | TP/FP/unlabelled | Reach no record | "
         "Identity precision (lower) | Pick agrees (lower) | Tied | Contaminated | "
-        "No right-work | Single | Pick preserves |",
-        "|" + "---|" * 12,
+        "No right-work | Single | Pick preserves | Automatic pick/keep/other |",
+        "|" + "---|" * 13,
     ]
     groups = [
         (key if basis == "destination" else f"medium: {key}", _dict(entry))
@@ -2285,6 +2378,15 @@ def _breakdown_section(row: Mapping[str, object]) -> list[str]:
     groups.append(("total", _dict(_dict(split)["total"])))
     for name, entry in groups:
         pick = _dict(entry["pick"])
+        automatic = entry.get("automatic")
+        settled = (
+            "/".join(
+                _number(cast("dict[str, object]", automatic)[key])
+                for key in ("takes_pick", "keeps_current", "takes_other")
+            )
+            if isinstance(automatic, dict)
+            else _NOT_RECORDED
+        )
         lines.append(
             f"| {name} | {_number(entry['fields'])} | "
             f"{_number(entry['actionable_fields'])} | "
@@ -2294,7 +2396,7 @@ def _breakdown_section(row: Mapping[str, object]) -> list[str]:
             f"{_number(pick['contaminated_fields'])} | "
             f"{_number(pick['no_right_work_fields'])} | "
             f"{_number(pick['single_alternative_fields'])} | "
-            f"{_number(pick['pick_preserves'])} |"
+            f"{_number(pick['pick_preserves'])} | {settled} |"
         )
     return lines
 
