@@ -124,10 +124,11 @@ leave them.
   declines to fill a field (#1745), are measured but not ranked.
   [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
   keeps that gate, and the [A6 analysis](automatic-decision-abstention.md)
-  measures what declining costs. Row A3 keeps its rank and score.
+  measures what declining costs. Row A3 stays ranked with its score.
   [ADR-0097](../architecture/decisions/0097-keep-the-bibliographic-combination-gate.md)
   keeps that gate, and the
-  [A3 analysis](bibliographic-combination-gate.md) says what it alone costs.
+  [A3 analysis](bibliographic-combination-gate.md) says what the gate alone
+  costs.
   A7 (owner-reserved and write-safety holds)
   is listed last and is out of scope.
 - **Attention per case.** Attention follows the
@@ -273,15 +274,15 @@ The origin ADRs are
 
 ## Reading the ledger
 
-- **Follow-ons.** Three rows are filed:
+- **Follow-ons.** Four rows were filed:
   A6 as [#1745](https://github.com/atabbott/mechanical-librarian/issues/1745),
+  A3 as [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333),
   A2 as [#1747](https://github.com/atabbott/mechanical-librarian/issues/1747) (135) and
   W9 as [#1748](https://github.com/atabbott/mechanical-librarian/issues/1748) (4). W9's bound rests on n = 2, so its follow-on is
   a measurement task rather than a loosening. #1745 kept the A6 gate
-  (ADR-0092) and its rows are unranked. A3 was measured under
-  [#1746](https://github.com/atabbott/mechanical-librarian/issues/1746) (333)
-  and kept (ADR-0097), so A2 and W9 are the only scored rows not filed under
-  an earlier issue. T1 was measured under
+  (ADR-0092) and its rows are unranked. #1746 kept the A3 gate (ADR-0097).
+  A2 and W9 are the only scored rows still open under a follow-on this
+  ledger filed. T1 was measured under
   [#1744](https://github.com/atabbott/mechanical-librarian/issues/1744)
   (1,332 actionable fields) and kept.
 - **Identity precision is not a case for loosening.** Where the controls can
@@ -292,8 +293,9 @@ The origin ADRs are
   destination's lower limit reaches 0.46. Most of T1's ebook fields (759 of 1,141) and all of A6a's
   (80) compete on destinations a later election decides on main, so those
   ceilings are stale.
-- **Dispositions.** `kept` rows stay as they are; `kept (#1744)` and
-  `kept (ADR-0097)` were decided after measurement under #1744 and #1746. Rows already covered by an
+- **Dispositions.** `kept` rows stay as they are. `kept (#1744)`,
+  `kept (ADR-0092)` and `kept (ADR-0097)` were decided after measurement
+  under #1744, #1745 and #1746. Rows already covered by an
   issue link it: W1, W5 and the cover-identity part of C1 (#1355), I3 (#1356,
   closed after measurement), C4's EPUB `invalid_declaration` part (#1357,
   closed) and C2's work-search records (#1380). A filed follow-on's row gets
