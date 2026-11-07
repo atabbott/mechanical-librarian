@@ -250,9 +250,9 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   no pattern operator (`_like`, `_ilike`, `_regex`, `_iregex`, `_similar`).
   It asks for eleven books, so an eleventh, or more than five after folding
   a book into the `canonical_id` it names in the same answer, is a candidate
-  limit. A request body over 16 KiB is never sent. An over-limit answer with
-  one stored author sends no retry; otherwise one retry sends the first
-  stored author alone. An
+  limit. A request body over 16 KiB is never sent. An over-limit answer
+  sends one retry with the first stored author alone, unless that is the
+  author list just sent. An
   audiobook WORK lane that admits one or two books also sends one constant
   audio-edition document per page, keyed by an integer book id: 100 rows a
   page, at most 2 pages per book, inside the same ceilings. A row naming
@@ -549,8 +549,10 @@ Reports, proposals and cases hold only bounded identities, digests, admitted
 claims with closed provenance and comparison facts, never a credential,
 private path, rejected provider value, response body or arbitrary EPUB text
 ([data privacy](data-privacy.md)). When Audiobookshelf names no author, an
-ebook's own EPUB creators may leave the host as Hardcover query text: one to
-four distinct package creators with no role or an author role.
+ebook's own EPUB creators may leave the host as query text: one to four
+distinct package creators with no role or an author role. The search sits on
+the shared ebook plan, so every enabled ebook metadata provider receives
+them: Google Books, Hardcover, Inventaire, iTunes and Open Library.
 
 ### Publication
 
