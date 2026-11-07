@@ -233,6 +233,27 @@ fields kept another alternative. Audnexus region misses get their own
 `region_unavailable` diagnostic category instead of `unknown`. The new status
 and category are `metadata-report-v67`, a clean rebuild under ADR-0013.
 
+**Clause 9 amendment (#1468).** An audiobook item that holds an EPUB beside
+its tracks (#1319) adds one lane from that companion EPUB's ISBN, when its
+ISBN claims name exactly one ISBN family. Only Hardcover is asked it
+(`COMPANION_ISBN_AUTHORITIES`), because the lane is useful only where the book
+an ISBN names lists audio editions to compare with the file. Open Library is
+in the audiobook set but lists no audio editions, so its answer could only
+repeat its own work lane; adding it back is a one-line change to that set if
+it ever lists them. Google Books and Inventaire were considered and are not
+asked, because they are outside the audiobook set (clause 9). The Audible
+family and iTunes are never asked it: an ebook ISBN names no recording. The
+lane follows any product lane, comes before the searches, never suppresses a
+search, and is added only where the query budget still has room. Hardcover
+keeps a book from it at work shape only, never the ebook edition, and only
+when the book is this work by the target's title and authors or lists an audio
+edition counted against the file ([ADR-0090](0090-hardcover-audio-edition-witness.md)).
+The companion's title is the first alternative search title, ahead of the
+folder leaf and the title tag, and when the target names no complete work, the
+companion's title and author creators are the search. None of it is a local
+claim or a proposed value. This is `metadata-report-v69`, a clean rebuild
+under ADR-0013.
+
 ## Ebook dispatch set (#1486)
 
 Ebook preparation dispatches only to the connected providers named in

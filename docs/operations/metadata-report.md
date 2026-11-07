@@ -146,6 +146,20 @@ EPUB inspector read. These corroborate the work but are never the recording's
 own claims. An unreadable EPUB keeps only its identity, and changing the EPUB
 makes the report stale. Other reports have a null `companion`.
 
+The companion helps find the book, never states a value (#1468). When its ISBN
+claims name exactly one ISBN family, the report plans one ISBN lane from them,
+asked of Hardcover only, which keeps the book at work shape and reads that
+book's audio editions against the file
+([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md),
+[ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
+An Audible product listed as one of those counted editions is that book's work
+even when its title differs, and is kept only as the recording the running
+time and narrators corroborate. The companion's title is the first
+alternative search title, with basis `companion_title`, unless it folds to the
+target's own title. When the target has no complete title and author set, the
+companion's title and author creators are the search, basis `companion_work`.
+Validation replays each of these lanes from the stored companion.
+
 ### Media health
 
 Media health is a set of typed observations, separate from claims. None names

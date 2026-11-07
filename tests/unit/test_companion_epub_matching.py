@@ -294,9 +294,7 @@ def test_the_audiobook_plan_adds_the_isbn_lane_before_its_search() -> None:
     target = _target("Asserted Title", ("Ada Author",))
     claims = (_target_title_claim("Asserted Title"),)
     companion = _companion(title=None)
-    without = audiobook_discovery_plan(
-        target, claims, audio=single_track_audio_facts()
-    )
+    without = audiobook_discovery_plan(target, claims, audio=single_track_audio_facts())
     plan = audiobook_discovery_plan(
         target, claims, audio=single_track_audio_facts(), companion=companion
     )
@@ -352,7 +350,11 @@ def test_only_hardcover_is_asked_the_companion_isbn(
     )
     handed = companion_binding_plan(plan, authority)
     assert asked == any(lane.kind is ProviderQueryKind.ISBN for lane in handed.lanes)
-    assert {lane.identity for lane in handed.lanes if lane.kind is not ProviderQueryKind.ISBN} == {
+    assert {
+        lane.identity
+        for lane in handed.lanes
+        if lane.kind is not ProviderQueryKind.ISBN
+    } == {
         lane.identity for lane in plan.lanes if lane.kind is not ProviderQueryKind.ISBN
     }
 
@@ -762,3 +764,31 @@ def test_a_linked_product_in_another_language_is_refused() -> None:
             local=(language,),
         )
     )
+
+
+# --- Measurement ----------------------------------------------------------------
+
+
+def test_the_cold_start_report_counts_what_the_companion_did() -> None:
+    import scripts.cold_start_report as cold_start
+
+    report = _companion_report(
+        _companion(),
+        (_edition(1, _LOCAL_SECONDS, "Nia Narrator"),),
+        book=_book("A Different Title"),
+    )
+    use = cold_start._companion_use(report)
+    # This report states no target title claim, so it planned no search.
+    assert use == ("read", True, True, None)
+    counts = cold_start._companion_counts(
+        [(None,) * 3 + ("recording_admitted",) + (None,) * 4 + (use,)]
+    )
+    assert counts == {
+        "reports": 1,
+        "unreadable": 0,
+        "isbn_lane_kept_book": 1,
+        "linked_edition": 1,
+        "title_alternative": 0,
+        "work_fallback": 0,
+        "recording_admitted": 1,
+    }

@@ -3,7 +3,7 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v6`` JSON document to stdout.
+prints one ``cold-start-report-v7`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -84,6 +84,7 @@ from mechanical_librarian.application.operations import OperationsError, StageTi
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
     HardcoverEditionWitness,
+    companion_linked_asins,
     hardcover_edition_witness,
     lane_band,
     local_claim_runtime_seconds,
@@ -93,11 +94,14 @@ from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    COMPANION_TITLE_BASIS,
+    COMPANION_WORK_BASIS,
     AudioFacts,
     MetadataReport,
     ProviderLaneDispatch,
     ProviderQueryKind,
     ProviderStatus,
+    companion_isbn_lane,
     provider_dispatch_class,
     work_discovery_lane_payloads,
 )
@@ -108,7 +112,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v6"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v7"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -509,7 +513,10 @@ def _audiobook_rows(
         alternatives = {
             payload.identity
             for payload in work_discovery_lane_payloads(
-                report.target.fields, report.local_claims, audio.discovery_titles
+                report.target.fields,
+                report.local_claims,
+                audio.discovery_titles,
+                report.companion,
             )
             if payload.title_basis is not None
         }
@@ -587,9 +594,51 @@ def _audiobook_rows(
                 reason,
                 bool(has_case),
                 hardcover_edition_witness(report).value,
+                _companion_use(report),
             )
         )
     return rows
+
+
+def _companion_use(report: MetadataReport) -> tuple[str, bool, bool, str | None]:
+    """What an audiobook's companion EPUB did for its report (#1468).
+
+    (state, ISBN lane kept a book, its book linked an edition ASIN, the search
+    basis it supplied): closed vocabulary and flags only, never a value.
+    """
+    companion = report.companion
+    if companion is None:
+        return ("none", False, False, None)
+    lane = companion_isbn_lane(companion)
+    kept = lane is not None and any(
+        value.identity == lane.identity and value.status is ProviderStatus.CANDIDATES
+        for provider in report.providers
+        for value in provider.lanes
+    )
+    linked = bool(
+        companion_linked_asins(
+            report.local_claims, report.audio, report.providers, companion
+        )
+    )
+    basis = next(
+        (
+            payload.title_basis
+            for payload in work_discovery_lane_payloads(
+                report.target.fields,
+                report.local_claims,
+                cast("AudioFacts", report.audio).discovery_titles,
+                companion,
+            )
+            if payload.title_basis in {COMPANION_TITLE_BASIS, COMPANION_WORK_BASIS}
+        ),
+        None,
+    )
+    return (
+        "unreadable" if companion.content_digest is None else "read",
+        kept,
+        linked,
+        basis,
+    )
 
 
 def _dispatch_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -974,6 +1023,28 @@ def _audiobook_outcomes(rows: list[tuple[object, ...]]) -> dict[str, object]:
             witness.value: sum(1 for row in rows if row[7] == witness.value)
             for witness in HardcoverEditionWitness
         },
+        # What a companion EPUB did (#1468), so every run measures it.
+        "companion": _companion_counts(rows),
+    }
+
+
+def _companion_counts(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    uses = [
+        (cast("tuple[str, bool, bool, str | None]", row[8]), row[3]) for row in rows
+    ]
+    present = [(use, outcome) for use, outcome in uses if use[0] != "none"]
+    return {
+        "reports": len(present),
+        "unreadable": sum(1 for use, _ in present if use[0] == "unreadable"),
+        "isbn_lane_kept_book": sum(1 for use, _ in present if use[1]),
+        "linked_edition": sum(1 for use, _ in present if use[2]),
+        "title_alternative": sum(
+            1 for use, _ in present if use[3] == COMPANION_TITLE_BASIS
+        ),
+        "work_fallback": sum(1 for use, _ in present if use[3] == COMPANION_WORK_BASIS),
+        "recording_admitted": sum(
+            1 for _, outcome in present if outcome == "recording_admitted"
+        ),
     }
 
 
@@ -1295,7 +1366,7 @@ def assemble_cold_start_report(
     stage_timings: tuple[StageTiming, ...] | None = None,
     recovery: dict[str, list[tuple[object, ...]]] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v6`` document from persisted aggregates.
+    """Build the ``cold-start-report-v7`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
