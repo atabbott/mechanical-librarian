@@ -26,8 +26,9 @@ records the decision they support: keep the gate.
   alternatives the field kept.
 - **Upstream echo and rich residual.** An `evidence_sufficiency_manual`
   abstention repeats the proposal set's refusal; it is counted only here,
-  never in the ledger, and never scored. The rich residual is `no_eligible_action` on a destination outside
-  the scalar engine, over all fields. It is separable only where the source
+  never in the ledger, and never scored. The rich residual is
+  `no_eligible_action` on a destination outside the scalar engine, over all
+  fields. It is separable only where the source
   keeps rich refusals' own reasons.
 - **Replay.** For every current case a child process imports only the
   snapshot's source tree. It rebuilds the decision packet from the stored
@@ -52,6 +53,10 @@ records the decision they support: keep the gate.
   - **What it refuses.** Zero or several such candidates, a language policy
     conflict, and a candidate this checkout already passes ("checkout passes
     already"). No ordering is used.
+  - **Authors, as measured.** `authors_one_correlation` checks one
+    independent correlation only. It omits the identity-bound record the
+    contract's relaxation requires; a domain predicate would add #1355's
+    predicate once it lands.
 - **Screens.** An admitted candidate is screened four ways:
   - **Identity precision** of its cited records, with the ledger's natural
     controls and Wilson lower limit. n = 0 is "not estimable".
@@ -132,16 +137,26 @@ records the decision they support: keep the gate.
   title, which later elections decide on main.
 - **The real cost is small.** The proposable population is 23 fields on
   ebook-744 (authors 9, publisher 14) and 6 on audiobook-1294 (language).
-- **Only support refuses.** The replay is exact on both snapshots, and the
+- **Support, or no eligible action, refuses.** The replay is exact on both snapshots, and the
   mirror agrees with every source verdict. Every abstention fails local or
   correlation support, has no candidate action, or is a language policy
   conflict.
-- **No relaxation is ready.** Over both populations the relaxations admit 51
-  fields. Their records give 72 positives, no negative and 84 unlabelled.
-  The strongest pooled lower limit is title's 0.924, below the proposed 0.95
-  pass mark, and that is identity, not value. Only one admitted field could
-  be compared for value agreement, and it disagreed. Hence ADR-0092: keep
-  the gate, and let #1418's owner labels decide any later relaxation.
+- **No relaxation can be activated.** Only owner-labelled value precision
+  can qualify a relaxation, and both snapshots hold no owner label. The one
+  admitted field that could be compared for value agreement disagreed (0
+  of 1). Identity is a screen at any level, never the bound.
+  - **Identity counts records.** Over both populations the relaxations
+    admit 51 fields, whose cited records give 72 positives, no negative and
+    84 unlabelled. Per field, the controls decide title on 16 of 37
+    admitted fields, authors on 6 of 9, publisher on 3 of 4 (plus 1 tied)
+    and language on 1 of 1; the admitted candidate is the right-work one in
+    each decided field.
+  - **Title is stale.** Every title figure comes from ebook-744 fields
+    decided by its v9 engine, before the title elections on main.
+
+  The pass mark is not set. It is the owner's, and it would apply to
+  owner-labelled values, not to identity. Hence ADR-0092: keep the gate,
+  and let #1418's owner labels decide any later relaxation.
 
 ## Reproduce
 

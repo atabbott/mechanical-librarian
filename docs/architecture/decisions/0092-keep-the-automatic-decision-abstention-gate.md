@@ -51,7 +51,7 @@ decision, and attributes each candidate to the first failing named check of
 - **The replay is exact.** Every current case rebuilt and replayed, and
   every replayed reason equals the stored one. The mirrored checks agree
   with the source's verdict for all 202 candidates compared.
-- **Support is the only check that fails.** On ebook-744 the abstentions
+- **Support, or no eligible action, refuses.** On ebook-744 the abstentions
   fail local support (83 candidates of blocked fields, 29 of proposable
   ones) or correlation support (89 of blocked fields). On audiobook-1294
   the abstentions are 3 language policy conflicts, 7 candidates without a
@@ -76,6 +76,16 @@ that record disagreed. Both snapshots hold 0 human decisions.
 Identity precision says whether an admitted value's records belong to the
 work, not whether the value is right. Value correctness needs owner labels,
 and none exist yet.
+
+- **Identity n counts records, not fields.** Per field, the controls decide
+  title on 16 of its 37 admitted fields, authors on 6 of 9, publisher on 3
+  of 4 (plus 1 tied) and language on 1 of 1. In each decided field the
+  admitted candidate is the right-work one. The other 21 title fields have
+  no right-work alternative.
+- **Title is stale.** Every title figure comes from ebook-744 fields decided
+  by its v9 engine, before the title elections on main. That engine's
+  summaries also lack the independent-title and recording features, which
+  the analysis reads as absent.
 
 ## Decision
 
@@ -106,6 +116,10 @@ and none exist yet.
    - `publisher_two_correlations_without_local`;
    - `language_two_correlations_without_local`;
    - `published_date_day_one_correlation`.
+
+   As measured, `authors_one_correlation` has no identity-bound record
+   check: it counts one independent correlation only. A PR 2 relaxation for
+   authors would add #1355's identity-bound record predicate.
 
    Narrators, degraded candidates, `target_only_preservation`, every
    conflict code, the language `field_policy_conflict`, publication event
@@ -148,8 +162,9 @@ and none exist yet.
 - The ledger no longer charges A6 with 5,239 rich refusals and 162 upstream
   echoes it does not own. The abstention's own cost is now visible as a
   population: 29 proposable fields across both snapshots.
-- The measurement replays each source's own decision, verified case by case,
-  so the attribution is the engine's own and not a reconstruction.
+- The measurement replays each source's own decision, verified case by
+  case. The first failing check is the mirror's attribution, checked
+  against the engine's own eligibility verdict for every candidate.
 - Any later loosening has closed predicates, a shared would-admit shape and a
   stated bound to meet.
 
@@ -180,9 +195,13 @@ is mostly not this gate's.
 
 ### Loosen a relaxation now on identity precision
 
-Rejected. Even the strongest screen fails the proposed pass mark: title's
-lower limit is 0.924 and every other relaxation's is lower. Identity
-precision is not value precision, and both snapshots hold no owner label.
+Rejected (Decision 5). Only owner-labelled value precision can qualify a
+relaxation. Both snapshots hold 0 human decisions, so no owner label exists,
+and the one admitted field comparable for value agreement disagreed (0 of
+1). Identity cannot qualify a relaxation at any level: its n counts records,
+and title's records come from stale ebook-744 fields. The pass mark is not
+set; it is the owner's, and it would apply to owner-labelled values, not to
+identity.
 
 ### Record the keep as an issue comment
 
@@ -196,7 +215,12 @@ adopt.
   - the first-failing-check attribution;
   - mirror disagreement;
   - each relaxation's admission and its refusals (none, several, degraded,
-    target-only preservation, conflict codes, the language conflict);
+    target-only preservation, conflict codes, the language conflict), and
+    a candidate outside its one step (another failing check, local
+    evidence, month precision);
+  - the screen's false positives and preserved values, and AO's tied,
+    discriminable and no-right-work classes;
+  - the echo and the rich residual kept to their own fields;
   - value agreement that never counts a cited record;
   - the proposable population kept apart from the blocked one, and the
     alternatives classes;
