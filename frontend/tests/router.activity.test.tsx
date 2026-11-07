@@ -233,7 +233,7 @@ describe('Activity route', () => {
   it.each([
     ['a build mismatch', new BuildMismatchError()],
     ['a gateway failure', new ApiError(504, 'gateway_timeout')],
-    ['an invalid authoritative response', new ApiError(502, 'invalid_activity_response')],
+    ['a bad gateway', new ApiError(502, 'bad_gateway')],
   ])(
     'reconciles %s after a committed pause without claiming it failed safely',
     async (_name, failure) => {

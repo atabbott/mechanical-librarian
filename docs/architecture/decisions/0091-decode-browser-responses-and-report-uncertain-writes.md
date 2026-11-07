@@ -52,8 +52,8 @@ told:
    from an operation that documents no JSON answer, and any other 2xx answer
    its operation does not document fails the same way. An answer that is not
    JSON is a lost acknowledgement, or a 502 for a command that writes nothing.
-   Only a lost network call is a plain lost acknowledgement; a defect in a
-   decoder or mapper is not converted.
+   Only a lost network call or an unreadable answer is a plain lost
+   acknowledgement; a defect in a decoder or mapper is not converted.
    The server half is that no failure after a committed write is answered
    with a 4xx. `tests/unit/test_unsafe_outcome_inventory.py` pins, for every
    unsafe `/api/v1` route, each error status and code and the latest point it
