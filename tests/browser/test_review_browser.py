@@ -648,6 +648,7 @@ def _server(
                     state=CoverSourceState.TIMEOUT,
                     artifact=None,
                     timeout_scope="attempted",
+                    final_host=None,
                 ),
             )
             if sole_cover_timeout
@@ -3999,7 +4000,7 @@ def test_activity_checks_open_onto_one_row_per_field() -> None:
             )
             expect(fields).to_have_count(2)
             expect(fields.locator(":scope > b")).to_have_text(
-                ["No change required", "No change required"]
+                ["No change needed", "No change needed"]
             )
             expect(
                 page.locator(".cm-activity-checks").get_by_text("Recorded")
@@ -4396,7 +4397,7 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         exact=True,
                     ).click()
                     expect(page.locator("#choice-evidence-current")).to_contain_text(
-                        "Local library recordLocal presence"
+                        "Local library recordAlready in the library"
                     )
                 for width, size in (
                     (1440, "100%"),
@@ -9744,9 +9745,9 @@ def test_isbn_title_reaches_real_library_with_retained_sources(mode):
                         re.compile(
                             "^"
                             + re.escape(
-                                "The sources disagree about the work or title; choose the title yourself"
+                                "The sources disagree about the work or title. Choose the title yourself"
                                 if mode == "conflict"
-                                else "ISBN and author evidence support this title"
+                                else "The ISBN and author support this title"
                             )
                             + r"\.?$"
                         )
@@ -11836,7 +11837,7 @@ def test_audiobook_work_series_title_owner_journey():
                 page.get_by_text("Series membership: Example Saga", exact=False).first
             ).to_be_visible()
             expect(
-                page.get_by_text("Audnexus · External corroboration").first
+                page.get_by_text("Audnexus · Confirms this value").first
             ).to_be_visible()
             expect(
                 page.get_by_role("region", name="Book-level evidence")

@@ -3143,13 +3143,13 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['candidates', 'Candidates found'],
+    ['candidates', 'Matches found'],
     ['no_match', 'No match'],
     ['rate_limited', 'Rate limited'],
     ['unavailable', 'Unavailable'],
-    ['candidate_limit_exceeded', 'Too many candidates'],
-    ['authentication', 'Authentication failed'],
-    ['malformed', 'Malformed evidence'],
+    ['candidate_limit_exceeded', 'Too many matches'],
+    ['authentication', 'Credentials refused'],
+    ['malformed', 'Unreadable answer'],
     ['insufficient_input', 'Too little to search with'],
     // A status outside the closed set is refused at the transport (#1286).
   ] as const)('names the %s source status for an owner as %s', (status, label) => {
@@ -3674,18 +3674,18 @@ describe('Library route', () => {
     ).toHaveTextContent('Hide evidence')
     expect(await screen.findByText('Local library record')).toBeVisible()
     expect(screen.getByText('Title: Old title')).toBeVisible()
-    expect(screen.getByText('Local presence')).toBeVisible()
+    expect(screen.getByText('Already in the library')).toBeVisible()
     expect(screen.queryByText('No recommendation retained')).toBeNull()
     expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
     await user.click(proposedEvidence)
     expect(await screen.findByText('Open Library')).toBeVisible()
     expect(screen.getByText('Title: New title')).toBeVisible()
-    expect(screen.getByText('External corroboration')).toBeVisible()
+    expect(screen.getByText('Confirms this value')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(
-      screen.getAllByText(/^The sources disagree; choose the value yourself\.?$/u).length,
+      screen.getAllByText(/^The sources disagree\. Choose the value yourself\.?$/u).length,
     ).toBeGreaterThan(0)
-    expect(screen.queryByText('Different source tag lists')).toBeNull()
+    expect(screen.queryByText('Different source tag lists.')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(within(fieldRail).getByRole('button', { name: /Series.*Automatic/u })).toBeVisible()
   })
@@ -3861,13 +3861,13 @@ describe('Library route', () => {
         await screen.findByText(
           neutral
             ? 'Different source descriptions.'
-            : 'The sources disagree; choose the value yourself.',
+            : 'The sources disagree. Choose the value yourself.',
         ),
       ).toBeVisible()
       expect(
         screen.queryByText(
           neutral
-            ? /^The sources disagree; choose the value yourself\.?$/u
+            ? /^The sources disagree\. Choose the value yourself\.?$/u
             : /^Different source descriptions\.?$/u,
         ),
       ).toBeNull()
@@ -4030,7 +4030,7 @@ describe('Library route', () => {
       name: 'Comparison condition',
     })
     expect(notice).toHaveTextContent(
-      'Independent providers agree after removing the bracketed source tag',
+      'Independent sources agree once the tag in square brackets is removed',
     )
     const canvas = notice.closest<HTMLElement>('.decision-canvas')
     if (!canvas) throw new Error('provider-consensus notice is outside its selected field')
@@ -4074,7 +4074,7 @@ describe('Library route', () => {
       name: 'Comparison condition',
     })
     expect(notice).toHaveTextContent(
-      'Providers agree once the bracketed source tag is removed; the current title is tidied to the plain form',
+      'Sources agree once the tag in square brackets is removed. The current title is tidied to match',
     )
   })
 
@@ -4113,7 +4113,7 @@ describe('Library route', () => {
       name: 'Comparison condition',
     })
     expect(notice).toHaveTextContent(
-      'Providers agree once the colon subtitle is removed; the current title is kept',
+      'Sources agree once the part after the colon is removed. The current title is kept',
     )
   })
 
@@ -4139,13 +4139,13 @@ describe('Library route', () => {
     // rest and never says it again (#1519).
     expect(
       await screen.findByText(
-        'Another provider states a different subtitle; choose the subtitle yourself.',
+        'Another source gives a different subtitle. Choose the subtitle yourself.',
       ),
     ).toBeVisible()
     const notice = screen.getByRole('complementary', { name: 'Comparison condition' })
-    expect(notice).not.toHaveTextContent('Another provider states a different subtitle')
+    expect(notice).not.toHaveTextContent('Another source gives a different subtitle')
     expect(notice).toHaveTextContent(
-      'The colon segment reads as title text: no provider carries it, or no more providers state the plain title than carry the decorated form',
+      'The part after the colon reads as part of the title: no source has it, or at least as many sources include it as leave it out',
     )
   })
 
@@ -4288,8 +4288,8 @@ describe('Library route', () => {
       ).toBeVisible()
       if (['epub', 'unknown', 'audio'].includes(mediaKind)) {
         expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
-        expect(screen.getByText('The sources disagree; choose the value yourself')).toBeVisible()
-        expect(screen.queryByText('Different source tag lists')).toBeNull()
+        expect(screen.getByText('The sources disagree. Choose the value yourself.')).toBeVisible()
+        expect(screen.queryByText('Different source tag lists.')).toBeNull()
         expect(
           screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
         ).toBeNull()
@@ -4299,8 +4299,8 @@ describe('Library route', () => {
       expect(recorded).toHaveTextContent('First · Shared · Second')
       if (ownerTags.length) expect(recorded).toHaveTextContent('Owner tag')
       expect(recorded).toHaveTextContent('Compatible source tags were combined')
-      expect(screen.getByText('Different source tag lists')).toBeVisible()
-      expect(screen.queryByText('The sources disagree; choose the value yourself')).toBeNull()
+      expect(screen.getByText('Different source tag lists.')).toBeVisible()
+      expect(screen.queryByText('The sources disagree. Choose the value yourself.')).toBeNull()
       await userEvent.click(within(recorded).getByRole('button', { name: 'Evidence' }))
       expect(recorded).toHaveTextContent('Source record 1')
       expect(recorded).toHaveTextContent('Source record 2')
@@ -4367,7 +4367,9 @@ describe('Library route', () => {
           )
         ).length,
       ).toBe(1)
-      expect(screen.queryByText(/^The sources disagree; choose the value yourself\.?$/u)).toBeNull()
+      expect(
+        screen.queryByText(/^The sources disagree\. Choose the value yourself\.?$/u),
+      ).toBeNull()
     },
   )
 
@@ -5487,7 +5489,7 @@ describe('Library route', () => {
         expect(screen.queryByText(/Regenerate the profile for the current contract/u)).toBeNull()
         const failureCopy = {
           data_policy_refused:
-            /Change your privacy settings on OpenRouter, or choose a model with a compliant provider in Settings → Reviewer\./u,
+            /Change your privacy settings on OpenRouter, or choose another model in Settings → Reviewer\./u,
           image_limit_exceeded: /Choose another vision model in Settings → Reviewer\./u,
           timed_out: /Retry, or choose a faster model in Settings → Reviewer\./u,
         } as const
@@ -5498,7 +5500,7 @@ describe('Library route', () => {
           expect(detail.previousElementSibling).toHaveTextContent(
             'Visual review is unavailable. Only the eligible choices shown below can be selected.',
           )
-        } else expect(screen.queryByText(/The configured reviewer/u)).toBeNull()
+        } else expect(screen.queryByText(/The reviewer|No provider for this model/u)).toBeNull()
       } else {
         expect(
           screen.getByText(
@@ -5520,7 +5522,7 @@ describe('Library route', () => {
       expect(screen.getByRole('button', { name: 'Evidence for Current cover' })).toHaveTextContent(
         'Hide evidence',
       )
-      expect(screen.getByText('Local presence')).toBeVisible()
+      expect(screen.getByText('Already in the library')).toBeVisible()
       expect(screen.getByText('Preview unavailable for this retained cover.')).toBeVisible()
       expect(screen.getByRole('radio', { name: 'Keep current cover' })).toHaveAttribute(
         'aria-checked',
@@ -7701,7 +7703,7 @@ describe('Library route', () => {
       expect(
         within(canvas).queryByRole('complementary', { name: 'Comparison condition' }),
       ).toBeNull()
-      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toMatch(/choose the value yourself/iu)
       expect(canvas.textContent).not.toContain('so a change needs you')
       expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
     })
@@ -7764,7 +7766,7 @@ describe('Library route', () => {
       const box = within(canvas).getByRole('complementary', { name: 'Comparison condition' })
       expect(box).toHaveTextContent('Not enough independent sources agree on this value')
       // The respelling notice is what explains an optional language choice (#1496).
-      expect(box).toHaveTextContent(/accepting only changes how it is written/u)
+      expect(box).toHaveTextContent(/Accepting only changes how it is written/u)
       // Its evidence does not ask either (#1557).
       for (const evidence of within(canvas).getAllByRole('button', { name: /Evidence/u })) {
         await user.click(evidence)
@@ -7772,7 +7774,7 @@ describe('Library route', () => {
       expect(
         await within(canvas).findByText('Description: A voyage reveals a hidden city.'),
       ).toBeVisible()
-      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toMatch(/choose the value yourself/iu)
       expect(canvas.textContent).not.toContain('so a change needs you')
       expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
     })
@@ -12327,19 +12329,19 @@ describe('Provider evidence rail', () => {
   )
 
   it.each([
-    ['candidates', 'Candidates found', 'complete'],
+    ['candidates', 'Matches found', 'complete'],
     ['no_match', 'No match', 'complete'],
     ['disabled', 'Not enabled', 'complete'],
     ['insufficient_input', 'Too little to search with', 'complete'],
-    ['authentication', 'Authentication failed', 'limited'],
+    ['authentication', 'Credentials refused', 'limited'],
     ['authorization', 'Access denied', 'limited'],
     ['rate_limited', 'Rate limited', 'limited'],
     ['unavailable', 'Unavailable', 'limited'],
-    ['incomplete', 'Incomplete evidence', 'limited'],
-    ['malformed', 'Malformed evidence', 'limited'],
-    ['oversized', 'Response too large', 'limited'],
-    ['candidate_limit_exceeded', 'Too many candidates', 'limited'],
-    ['query_limit_exceeded', 'Query allowance reached', 'limited'],
+    ['incomplete', 'Incomplete answer', 'limited'],
+    ['malformed', 'Unreadable answer', 'limited'],
+    ['oversized', 'Answer too large', 'limited'],
+    ['candidate_limit_exceeded', 'Too many matches', 'limited'],
+    ['query_limit_exceeded', 'Lookup limit reached', 'limited'],
   ])(
     'names %s visibly and accessibly on a page starting within a group',
     async (status, label, group) => {
@@ -12373,7 +12375,7 @@ describe('Provider evidence rail', () => {
   )
 
   it('shows a recorded refusal for an actionless contextual field', async () => {
-    const reason = 'No eligible value was found in the retained evidence.'
+    const reason = 'No source offered a value that can be used here.'
     const http = createHttp()
     http.getCaseDetail = vi.fn(async () => ({
       ...detail,
@@ -13614,7 +13616,7 @@ it('counts linked corroborating authorities once and keeps observations separate
   await user.click(await screen.findByRole('button', { name: /^Evidence for Current value:/u }))
   expect(screen.getByText('1 source corroborates this choice.')).toBeVisible()
   expect(screen.getByText('Title: Other title')).toBeVisible()
-  expect(screen.getByText('External observation')).toBeVisible()
+  expect(screen.getByText('Reports this value')).toBeVisible()
   expect(http.recordDecision).not.toHaveBeenCalled()
 })
 
@@ -15097,7 +15099,7 @@ describe('a focused field decision (#1519)', () => {
     open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
     expect(await screen.findByText(reason)).toBeVisible()
     expect(screen.getByLabelText('Comparison condition')).toHaveTextContent(
-      /accepting only changes how it is written/u,
+      /Accepting only changes how it is written/u,
     )
   })
 

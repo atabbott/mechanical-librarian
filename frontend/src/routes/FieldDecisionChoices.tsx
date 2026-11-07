@@ -12,6 +12,13 @@ import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labe
 import { useReviewContext } from '../router'
 
 import type { ReviewField } from '../fieldDecision'
+// A limitation is a comparison condition, which reads as a sentence, or the
+// server's own sentence; an unnamed condition code is never shown.
+const limitationText = (limitation: string) => {
+  const label = materialReasonLabel(limitation)
+  if (label !== undefined) return `${label}.`
+  return /^[a-z0-9_]+$/u.test(limitation) ? 'Another comparison condition applies.' : limitation
+}
 export function ChoiceEvidencePanel({
   context,
   evidenceId,
@@ -51,14 +58,7 @@ export function ChoiceEvidencePanel({
         <aside>
           <strong>Limitation</strong>
           {context.limitations.map((limitation) => (
-            <p key={limitation}>
-              {materialReasonLabel(limitation) ??
-                // A limitation is a comparison condition or the server's own
-                // sentence; an unnamed condition code is never shown.
-                (/^[a-z0-9_]+$/u.test(limitation)
-                  ? 'Another comparison condition applies'
-                  : limitation)}
-            </p>
+            <p key={limitation}>{limitationText(limitation)}</p>
           ))}
         </aside>
       ) : null}

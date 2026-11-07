@@ -80,11 +80,11 @@ describe('Activity route', () => {
       .getByText('Description advice prepared for review')
       .closest('article')
     if (!failedRow || !completedRow) throw new Error('Expected preparation rows')
-    expect(within(failedRow).getByText('Description advice failed safely')).toBeVisible()
+    expect(within(failedRow).getByText('Description advice failed')).toBeVisible()
     expect(within(completedRow).getByText('Description advice completed')).toBeVisible()
     expect(screen.getAllByText('Completed')).toHaveLength(2)
     expect(screen.queryByText('Cover advice completed')).toBeNull()
-    expect(screen.queryByText('Cover advice failed safely')).toBeNull()
+    expect(screen.queryByText('Cover advice failed')).toBeNull()
   })
 
   it('notes beside a row what current state adds to its result (#1711)', async () => {
@@ -785,7 +785,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Waiting work', state: 'retryable' }],
       },
-      'Waiting safely',
+      'Waiting to retry',
     ],
     [
       'stale',
@@ -793,7 +793,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Stale work', state: 'stale' }],
       },
-      'Closed safely',
+      'Closed',
     ],
     [
       'item changed',
@@ -801,7 +801,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Changed work', state: 'stale', failure: 'target_changed' }],
       },
-      'Item changed; closed safely',
+      'Closed because the item changed',
     ],
     [
       'connection-waiting',
@@ -809,7 +809,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Unreached work', state: 'stale', failure: 'connection' }],
       },
-      'Waiting safely',
+      'Waiting to retry',
     ],
     [
       'connection-exhausted',
@@ -817,7 +817,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Exhausted work', state: 'stale', failure: 'connection_exhausted' }],
       },
-      'Closed safely',
+      'Closed',
     ],
     [
       'stopped',
@@ -825,7 +825,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
         events: [{ work_label: 'Stopped work', state: 'abandoned' }],
       },
-      'Stopped safely',
+      'Stopped',
     ],
     [
       'verified',
@@ -842,7 +842,7 @@ describe('Activity route', () => {
           { work_label: 'Unchanged work', state: 'no_change_required', origin: 'automatic_policy' },
         ],
       },
-      'No change required',
+      'No change needed',
     ],
     [
       'accepted',
@@ -920,7 +920,7 @@ describe('Activity route', () => {
           },
         ],
       },
-      'Cover advice failed safely',
+      'Cover advice failed',
     ],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = {
@@ -1015,7 +1015,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findAllByText('Stopped safely')).toHaveLength(failures.length)
+    expect(await screen.findAllByText('Stopped')).toHaveLength(failures.length)
     for (const failure of failures) expect(document.body.textContent).not.toContain(failure)
   })
 
@@ -1764,15 +1764,15 @@ describe('Activity route', () => {
     const lines = [...lifecycle.querySelectorAll('li')].map((item) => item.textContent)
     expect(lines).toHaveLength(2)
     // One recorded time, in the one format (#1286), then the state.
-    expect(lines[0]).toMatch(/^[^·\s][^·]*\u00a0· Cover advice failed safely$/u)
+    expect(lines[0]).toMatch(/^[^·\s][^·]*\u00a0· Cover advice failed$/u)
     expect(lines[1]).toMatch(/^[^·\s][^·]*\u00a0· Cover advice completed$/u)
     for (const line of lines) expect(line).not.toMatch(/(?:^|[ \n])·/u)
   })
 
   it.each([
-    ['connection', 'Waiting safely'],
-    ['connection_exhausted', 'Closed safely'],
-    ['target_changed', 'Item changed; closed safely'],
+    ['connection', 'Waiting to retry'],
+    ['connection_exhausted', 'Closed'],
+    ['target_changed', 'Closed because the item changed'],
   ])('labels each lifecycle stale from its own %s failure', async (failure, latest) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
@@ -1813,7 +1813,7 @@ describe('Activity route', () => {
       item.textContent.split('\u00a0· ').at(-1),
     )
     // Each recorded stale reads from the failure it was recorded with (#1402).
-    expect(lines).toEqual(['Planned', 'Waiting safely', 'Planned', latest])
+    expect(lines).toEqual(['Planned', 'Waiting to retry', 'Planned', latest])
   })
 
   it('keeps an open lifecycle disclosure through a refreshed latest event', async () => {
@@ -2243,7 +2243,7 @@ describe('Activity route', () => {
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
     // The single ambiguous number is gone: waiting is now stated as the four
     // different next steps an owner has (#639).
-    expect(screen.queryByText('Waiting safely')).toBeNull()
+    expect(screen.queryByText('Waiting to retry')).toBeNull()
     for (const reason of ['Awaiting permission', 'Scheduled', 'Retrying', 'Held for recovery'])
       expect(screen.getByText(reason)).toBeVisible()
     // The row reads work, field, exact change, result -- and the disclosure
@@ -4093,7 +4093,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(within(row).getByText('Automatic choice')).toBeVisible()
     expect(within(row).getByText('Synthetic checked work')).toBeVisible()
     expect(within(row).getByText('fiction')).toBeVisible()
-    expect(within(row).getByText('No change required')).toBeVisible()
+    expect(within(row).getByText('No change needed')).toBeVisible()
     // The sentence is the row's own text in the accessibility tree, with no
     // label on a generic element: only the disclosure button carries a name,
     // and that name starts with its visible text (#1286).
@@ -4197,7 +4197,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     if (!title) throw new Error('Expected the Title row')
     // The field leads with what the check found; its recorded decision is not
     // a row of its own until that field's Details opens.
-    expect(within(title).getByText('No change required')).toBeVisible()
+    expect(within(title).getByText('No change needed')).toBeVisible()
     expect(within(title).queryByText('Automatic decision')).toBeNull()
     expect(
       document.querySelector('[aria-controls="activity-evidence-check-title-kept"]'),
@@ -4273,7 +4273,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
       ':scope > li > article',
     )
     if (!title) throw new Error('Expected the Title row')
-    expect(title.querySelector(':scope > b')).toHaveTextContent('No change required')
+    expect(title.querySelector(':scope > b')).toHaveTextContent('No change needed')
     const details = within(title).getByRole('button', { name: /^Details for /u })
     expect(details).toHaveAttribute('aria-controls', 'activity-evidence-check-title')
     await user.click(details)

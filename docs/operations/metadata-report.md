@@ -448,6 +448,16 @@ API marks an offered cover from the matched book with `match_reason`
 changes only the wording. A work cover still pending keeps the gallery
 incomplete.
 
+Open Library serves its older covers from the Internet Archive. Its cover
+request follows only that fixed two-redirect route (the boundary is in
+[security](../architecture/security.md#provider-cover-admission)), and an
+off-route redirect is `unsafe_remote`. Every cover source carries
+`final_host`: for a retrieved Open Library cover, the closed host family that
+served it (`covers.openlibrary.org`, `archive.org` or `us.archive.org`), and
+null for every other source. A `-1` in an Open Library cover list is its "no
+cover" marker and is ignored. Any other entry that is not a cover id still
+makes the list `rejected`.
+
 An EPUB whose cover declaration is malformed keeps an `absent` cover source.
 When it declares a cover another way, `local.cover_recovery` records the
 attempt as shadow evidence: `authority` is `shadow`, `fallbacks` names the
