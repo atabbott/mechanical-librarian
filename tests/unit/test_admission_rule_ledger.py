@@ -1744,6 +1744,25 @@ def test_every_catalogue_row_has_an_origin_and_a_full_introducing_commit() -> No
     ] == ["A6a", "A6b"]
 
 
+def test_a3_stays_ranked_and_kept_with_its_corrected_text() -> None:
+    gate = next(gate for gate in ledger.CATALOGUE if gate.gate_id == "A3")
+    assert gate.destinations == "title, subtitle and series"
+    assert gate.origin == (
+        "#429 (cef7644a); ADR-0021; same-name series #1099 (79dbbf4c); "
+        "withheld titles #1497 (ce3a172d)"
+    )
+    assert gate.loosened == (
+        "none: the lowest-identifier rule is rejected; closed relaxations in the "
+        "A3 analysis"
+    )
+    assert gate.disposition == "kept (ADR-0097)"
+    assert gate.ranked and gate.unranked_note is None
+    # A kept row keeps its score but is never proposed as a follow-on.
+    row = {**_ranking_row("A3", 315.1, 333), "disposition": gate.disposition}
+    (ranked,) = ledger.rank_rows([row])
+    assert (ranked["rank"], ranked["proposed_follow_on"]) == (1, False)
+
+
 def test_mirrored_bounds_match_the_product() -> None:
     assert (
         ledger.MAX_ISBN_DISCOVERY_LANES == application_report.MAX_ISBN_DISCOVERY_LANES
