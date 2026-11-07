@@ -356,7 +356,7 @@ image byte reaches a report, log, diagnostic, status or support bundle.
 ([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
 inherited `PATH`, a minimal environment, its own session, and CPU, memory,
 file, output and wall-clock limits installed before exec. Its output and
-sidecars are read in the EPUB child under a closed recognition grammar, never
+sidecars are read in the audio child under a closed recognition grammar, never
 an XML or container parser.
 
 - An over-long, unreadable or non-UTF-8 sidecar is dropped whole; a badly
@@ -371,6 +371,28 @@ an XML or container parser.
 - A folder name or title tag over 255 characters, or holding a control,
   format, surrogate or bidirectional code point, is refused whole. It is only
   ever query text, never a claim.
+- Sidecars (#1481) are opened `O_NOFOLLOW` and `O_NONBLOCK`, regular files
+  only, at most 8 per item and 1 MiB each, track-bound documents first.
+  Audiobookshelf's own `metadata.json` and `metadata.abs` are digested and
+  never handed to a child. A folder-level document beside another item's audio
+  or ebook file, or beside an item whose file list is unknown, is never handed
+  to a child either. No archive member is opened.
+- The OPF reader is two linear scanners: each tag closes within 4 KiB, names
+  within 64 characters, at most 64 matches, and no DTD or entity beyond the
+  five XML escapes is resolved. A JSON document is parsed whole within 1 MiB;
+  deep nesting or an over-long integer drops it. Every remaining pattern is
+  anchored and bounded, and the child's CPU and wall limits still contain it.
+- A sidecar's title, creators and CUE `FILE` value are association text: each
+  at most 255 characters and 16 creators, refused whole on a forbidden code
+  point, used only to decide whether the document belongs to the item, and
+  never a claim, persisted, logged or query text.
+- Refusals are closed codes in the report's sidecar manifest only. No sidecar
+  name, path or text reaches an operational event, diagnostic, status or
+  support bundle. A sidecar fault means that one document is absent; it never
+  denies the item.
+- Currentness re-derives each document's kind, binding and parent-side refusal
+  from the listing and the re-read target file list, so an added foreign file
+  or an edited refused document makes the report stale.
 
 **Text.** Every value entering a report passes the shared projection grammar:
 forbidden code points, private paths and credentials are refused, never

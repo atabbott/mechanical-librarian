@@ -27,7 +27,8 @@ paths, or an ASIN carried forward from an earlier admission of the same track
 set. It has a stable content-derived reference and a bounded occurrence
 ordinal, so duplicate occurrences survive replay. Its field state is one of
 `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped` or
-`inapplicable`.
+`inapplicable`. Audiobookshelf's own `metadata.json` is its record, not a
+sidecar.
 
 **Neutral provider observation**
 One provider's own status and complete bounded candidate set. It has no

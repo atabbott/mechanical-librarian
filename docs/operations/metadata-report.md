@@ -109,6 +109,8 @@ time, performance type, language, description, embedded chapters, and whether
 embedded cover art exists. Each claim names its surface: embedded tag, sidecar,
 or file and folder names. Chapters are a structured section, not claims.
 Embedded cover art is a presence fact with no cover authority.
+Audiobookshelf's own `metadata.json` and `metadata.abs` are recorded as present
+and yield no claim.
 
 - A description over 512 characters keeps its first 512 as `oversized`, with
   no canonical value, and is never proposed.
@@ -135,8 +137,9 @@ tracks keep both values; disagreeing ASINs each get a discovery lane.
 - File names are safe projections: refused characters become U+FFFD, names are
   cut at 255 characters, and an empty result becomes `track-<ordinal>`. Nothing
   is decided from a name.
-- Sidecars and folder names are item-level; an item spanning directories gets
-  none.
+- A sidecar named for a track belongs to that track. Other sidecars and folder
+  names belong to the whole item, and only when no other item's audio or ebook
+  file shares the folder. An item spanning directories gets none.
 - Adding, removing, reordering, editing or renumbering a track makes the report
   stale. Playing an audiobook does not.
 
@@ -223,10 +226,10 @@ Library, never to Google Books, Inventaire or iTunes Search
 ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)).
 Discovery has two phases:
 
-1. **The item's own plan.** One lane per ASIN in the tags, sidecars or path, or
-   a title-and-author search when there is none. An item with no ASIN whose
-   previous report for the same tracks admitted an edition carries that ASIN as
-   a `prior_admission` claim, which Audible looks up first
+1. **The item's own plan.** One lane per ASIN in the tags, associated sidecars
+   or path, or a title-and-author search when there is none. An item with no
+   ASIN whose previous report for the same tracks admitted an edition carries
+   that ASIN as a `prior_admission` claim, which Audible looks up first
    ([ADR-0088](../architecture/decisions/0088-carried-recording-admission.md)).
 2. **The ASIN feed.** Only for an item with no ASIN of its own: providers
    that answered no lane are fed unnamed ASINs in order — carried, promoted
@@ -249,10 +252,10 @@ Audible catalog or Audnexus already admitted a recording by stated runtime
 plan still records `insufficient_input`. Open Library asks an audiobook
 title-and-author lane one search and no narrowing retry (#1309).
 
-An ASIN from the item's own tags, sidecar or path is this recording's
-identifier, so its answers keep edition scope as returned. Every fed ASIN
-(carried, promoted, asserted, Hardcover lead or hint) obtains evidence but
-never settles identity by itself: it admits only through the runtime gate
+An ASIN from the item's own tags, associated sidecar or path is this
+recording's identifier, so its answers keep edition scope as returned. Every
+fed ASIN (carried, promoted, asserted, Hardcover lead or hint) obtains evidence
+but never settles identity by itself: it admits only through the runtime gate
 below, and an answer naming another work keeps only its ASIN and leaves no
 proposal.
 

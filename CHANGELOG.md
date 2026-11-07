@@ -104,6 +104,20 @@ brackets are GitHub issues.
   own sentence; source statuses, preview outcomes, evidence roles and reviewer
   errors drop internal words; and the policy preview gives each automatic
   refusal the same sentence the review case gives it (#1765).
+- **Clean rebuild required.** An audiobook's sidecar files now count only when
+  they belong to it. Audiobookshelf's own `metadata.json` or `metadata.abs` is a
+  copy of its record, so nothing is taken from it, and its ASIN no longer
+  identifies the recording. A sidecar file is set aside when its folder also
+  holds audio or ebook files that are not part of the audiobook. It is also set
+  aside when it does not give the audiobook's title with one of its authors or
+  narrators. A sidecar describing a collection the audiobook is part of is set
+  aside too. So is a CUE sheet that names another audio file. When a sidecar's
+  ASIN differs from the audio file's own, its ASIN, narrator, abridgement and
+  language are set aside, and the rest still counts. When two sidecars give
+  different values for a field, neither is used for it. An `.opf` or `.nfo`
+  value that matches Audiobookshelf's record no longer counts as a second
+  source, because Audiobookshelf reads those files itself. A per-track
+  `metadata.json` is now read only for what Libation writes (#1481).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
