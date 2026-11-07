@@ -115,6 +115,7 @@ TERMINAL_LIBRARY_WORK = _work(
     },
     preparation_outcomes=[
         {
+            "companion_isbn": False,
             "provider_requests": 1,
             "lane_kind": "work",
             "provider": "hardcover-main",
@@ -230,6 +231,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         dispositions=["pre_admission"],
         preparation_outcomes=[
             {
+                "companion_isbn": False,
                 "provider_requests": 2,
                 "lane_kind": "work",
                 "provider": "hardcover-main",
@@ -237,6 +239,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
                 "status": "candidates",
             },
             {
+                "companion_isbn": False,
                 "provider_requests": 0,
                 "lane_kind": "work",
                 "provider": "google-books",
@@ -549,8 +552,9 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-detail-v6",
+            "schema_version": "review-case-detail-v7",
             "recording_identity_basis": None,
+            "recording_admission_basis": None,
             "audiobook_review_scope": None,
             "media_health": [],
             "writes_consented": False,
@@ -1059,8 +1063,9 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-detail-v6",
+        "schema_version": "review-case-detail-v7",
         "recording_identity_basis": None,
+        "recording_admission_basis": None,
         "audiobook_review_scope": None,
         "media_health": [],
         "writes_consented": False,
@@ -1867,6 +1872,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 ],
                 "source_ledger": [
                     {
+                        "companion_isbn": False,
                         "provider_requests": 1,
                         "lane_kind": "work",
                         "provider": "Open Library",
@@ -1874,6 +1880,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                         "status": "candidates",
                     },
                     {
+                        "companion_isbn": False,
                         "provider_requests": 2,
                         "lane_kind": "isbn",
                         "provider": "Hardcover",
