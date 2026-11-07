@@ -46,10 +46,12 @@ import math
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import cast
 
 from mechanical_librarian.domain.validation import (
     boolean,
     bounded_integer,
+    closed_document,
     matching,
     non_negative_integer,
     nonempty_text,
@@ -102,6 +104,7 @@ _identity = one_of(*_IDENTITY_TIERS)
 _medium = one_of(*MEDIA)
 _dimension = bounded_integer(1)
 _layout_value = bounded_integer(0, 255)
+_measures_document = closed_document("colour", "dhash", "layout", "phash")
 
 
 class CoverProtection(Enum):
@@ -172,6 +175,31 @@ class CoverMeasures:
             or not all(_layout_value(value) for value in self.layout)
         ):
             raise ValueError("cover measures are invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "colour": list(self.colour),
+            "dhash": self.dhash,
+            "layout": list(self.layout),
+            "phash": self.phash,
+        }
+
+    @classmethod
+    def from_data(cls, value: object) -> "CoverMeasures":
+        """Read the exact ``to_data`` shape; anything else is a ``ValueError``."""
+        if not _measures_document(value):
+            raise ValueError("cover measures are invalid")
+        data = cast("dict[str, object]", value)
+        colour, layout = data["colour"], data["layout"]
+        if type(colour) is not list or type(layout) is not list:
+            raise ValueError("cover measures are invalid")
+        # The field types are checked by ``__post_init__``.
+        return cls(
+            data["phash"],  # type: ignore[arg-type]  # reason: __post_init__ refuses a non-str
+            data["dhash"],  # type: ignore[arg-type]  # reason: __post_init__ refuses a non-str
+            tuple(colour),
+            tuple(layout),
+        )
 
 
 def _valid_dimensions(width: object, height: object) -> bool:

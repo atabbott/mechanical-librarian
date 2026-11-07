@@ -1,18 +1,24 @@
 import io
+import json
 import struct
 import subprocess
 import sys
 import zlib
 from collections.abc import Callable
+from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
-from PIL import Image, features
+from PIL import Image, ImageDraw, PngImagePlugin, features
 
+from mechanical_librarian.adapters import cover_artifacts
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
     decode_cover,
 )
+from mechanical_librarian.bootstrap import cover_child
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
+from mechanical_librarian.domain.cover_rules import CoverMeasures, same_art
 from tests.support.cover_images import synthetic_image as _image
 
 
@@ -173,3 +179,153 @@ def test_decoder_child_main_starts_with_network_isolation() -> None:
     )
     assert 0 == result.returncode
     assert b'{"state":"oversized"}' == result.stdout
+
+
+class _AnsweringChild:
+    """A decoder child that answers with a fixed protocol document."""
+
+    returncode = 0
+    pid = 0
+
+    def __init__(self, document: dict[str, object]) -> None:
+        self._stdout = json.dumps(document).encode()
+
+    def communicate(self, *_: object, **__: object) -> tuple[bytes, bytes]:
+        return self._stdout, b""
+
+
+def _design(size: tuple[int, int], palette: int = 0) -> Image.Image:
+    """A cover-like design of flat shapes, drawn in proportion to its size."""
+    width, height = size
+    image = Image.new("RGB", size, ((40 + palette * 90) % 256, 60, 110))
+    draw = ImageDraw.Draw(image)
+    for index in range(6):
+        left = (index * 37 + palette * 53) % 70 / 100 * width
+        top = (index * 23 + palette * 29) % 80 / 100 * height
+        colour = ((index * 70 + palette * 40) % 256, (index * 110) % 256, 200)
+        box = (left, top, left + width * 0.3, top + height * 0.15)
+        if (index + palette) % 2:
+            draw.ellipse(box, fill=colour)
+        else:
+            draw.rectangle(box, fill=colour)
+    return image
+
+
+def _measured(payload: bytes) -> tuple[CoverMeasures, tuple[int, int]]:
+    artifact = decode_cover(payload).artifact
+    assert artifact.measures is not None
+    return artifact.measures, (artifact.width, artifact.height)
+
+
+def test_the_child_measures_its_own_preview_from_decoded_pixels() -> None:
+    decoded = decode_cover(_gradient((480, 720)))
+    measures = decoded.artifact.measures
+    preview = Image.open(io.BytesIO(decoded.preview))
+
+    assert measures is not None
+    # The colour histogram counts every preview pixel, so the measures were
+    # read from the 320x480 preview, not from the 480x720 original.
+    assert (320, 480) == preview.size
+    assert 320 * 480 == sum(measures.colour)
+    assert 48 == len(measures.layout)
+    assert 16 == len(measures.phash) == len(measures.dhash)
+
+
+def test_one_design_measures_as_the_same_art_across_encodings_and_scales() -> None:
+    image = _design((960, 1440))
+    large = io.BytesIO()
+    image.save(large, "PNG")
+    small = io.BytesIO()
+    image.resize((320, 480), Image.Resampling.LANCZOS).save(small, "JPEG", quality=80)
+
+    assert same_art(*_measured(large.getvalue()), *_measured(small.getvalue()))
+
+
+def test_two_different_designs_are_not_the_same_art() -> None:
+    assert not same_art(*_measured(_gradient()), *_measured(_image("PNG", (240, 360))))
+
+
+def test_a_rotated_original_measures_as_its_upright_twin() -> None:
+    upright = Image.open(io.BytesIO(_gradient((240, 360))))
+    straight = io.BytesIO()
+    upright.save(straight, "PNG")
+    turned = io.BytesIO()
+    exif = Image.Exif()
+    exif[0x0112] = 6  # Rotate 90 CW to display, so the stored pixels lie on their side.
+    upright.transpose(Image.Transpose.ROTATE_90).save(turned, "PNG", exif=exif)
+
+    # The stated width and height stay the stored ones; only the pixels turn.
+    assert _measured(straight.getvalue())[0] == _measured(turned.getvalue())[0]
+
+
+def test_stated_metadata_never_feeds_the_measures() -> None:
+    image = Image.open(io.BytesIO(_gradient((240, 360))))
+    plain = io.BytesIO()
+    image.save(plain, "PNG")
+    stated = PngImagePlugin.PngInfo()
+    stated.add_text("width", "9999")
+    stated.add_text("height", "9999")
+    claimed = io.BytesIO()
+    image.save(claimed, "PNG", pnginfo=stated, dpi=(10, 10))
+
+    assert plain.getvalue() != claimed.getvalue()
+    assert _measured(plain.getvalue()) == _measured(claimed.getvalue())
+
+
+def _bad_hash(measures: dict[str, Any]) -> None:
+    measures["phash"] = "0" * 15
+
+
+def _short_histogram(measures: dict[str, Any]) -> None:
+    measures["colour"] = measures["colour"][:-1]
+
+
+def _layout_overflow(measures: dict[str, Any]) -> None:
+    measures["layout"] = [256, *measures["layout"][1:]]
+
+
+def _missing_dhash(measures: dict[str, Any]) -> None:
+    del measures["dhash"]
+
+
+def _empty_histogram(measures: dict[str, Any]) -> None:
+    measures["colour"] = [0] * 64
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        pytest.param(_bad_hash, id="bad_hash"),
+        pytest.param(_short_histogram, id="short_histogram"),
+        pytest.param(_layout_overflow, id="layout_overflow"),
+        pytest.param(_missing_dhash, id="missing_dhash"),
+        pytest.param(_empty_histogram, id="empty_histogram"),
+    ),
+)
+def test_malformed_child_measures_are_a_rejected_decode(
+    tamper: Callable[[dict[str, Any]], None],
+) -> None:
+    payload = _gradient()
+    document = cover_child._decode(payload)
+    tamper(cast("dict[str, Any]", document["measures"]))
+
+    with (
+        patch.object(
+            cover_artifacts.subprocess,
+            "Popen",
+            return_value=_AnsweringChild(document),
+        ),
+        pytest.raises(CoverDecodeRejected) as raised,
+    ):
+        decode_cover(payload)
+    assert CoverSourceState.DECODE_FAILED == raised.value.state
+
+
+def test_the_unaltered_child_document_is_accepted_through_the_same_seam() -> None:
+    payload = _gradient()
+    with patch.object(
+        cover_artifacts.subprocess,
+        "Popen",
+        return_value=_AnsweringChild(cover_child._decode(payload)),
+    ):
+        assert decode_cover(payload).artifact == decode_cover(payload).artifact
