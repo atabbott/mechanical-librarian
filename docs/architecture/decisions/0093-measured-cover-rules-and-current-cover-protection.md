@@ -26,8 +26,11 @@ measured facts came out of it:
 - **Duplicates.** Lower-resolution copies of art that was available sharper
   are 4% of chosen covers and 34% of rejected ones.
 - **Resolution.** The median short edge is 526 px for chosen covers and
-  333 px for rejected ones. Between different arts, size predicted little: the
-  owner's six chosen edition covers measured 304 to 415 px.
+  333 px for rejected ones.
+
+Between different arts, size predicted little: in labelling on 2026-10-25,
+the owner's six chosen edition covers measured 304 to 415 px, and a 999×1500
+alternative was at best a maybe.
 
 On a pre-registered one-shot holdout of 57 decisive cases, the rule "exclude
 the wrong shape, collapse the same art, keep the current cover, then
@@ -38,8 +41,8 @@ them out of attention at current admission.
 
 A 2026-10-30 synthetic-mix library showed the cost of having no default: 16 of
 17 cover attention items came from one branch that asks the owner whenever a
-verified current cover has any other retrieved image, including 18 works whose
-alternative has the same perceptual hash as the current cover.
+verified current cover has any other retrieved image. Separately, 18 of its 24
+works had an alternative with the same perceptual hash as the current cover.
 
 Switching covers automatically over a populated target needs a way back.
 Today the product keeps prior cover bytes only for recovery and removes them
@@ -187,8 +190,8 @@ audit.
 - Retaining replaced originals is new retention of library content, bounded
   by the review list and up to 8 MiB each, the existing cover byte bound.
 - More candidate sources mean more distinct arts per field. With #1380's wider
-  pool the stage takes only 47% of fields out of attention, because the
-  remainder has no default without ADR-0095.
+  candidate pool the stage takes only 47% of fields out of attention, because
+  more fields hold several distinct arts.
 - `unprotected` can replace a cover the owner set by hand in Audiobookshelf,
   which the product cannot tell apart from a provider default.
 
@@ -197,6 +200,10 @@ audit.
 - The ADR-0059 seven-part strictly-better replacement test and the ADR-0073
   audiobook small-incumbent test stop applying to replacements once this is
   accepted. Fill of a known-empty target keeps the first-ranked rule.
+- Decision reasons, protection modes and counts are closed values. No cover
+  bytes, retained-artifact path, URL or title reaches a log line, diagnostic,
+  status or support bundle. The stage adds no disclosure to any provider or
+  reviewer.
 - Clean rebuild required under ADR-0013: the proposal and decision policy
   versions, the successor of `config-v9` and the retained-cover bindings
   change persisted state. The bindings are append-only with immutable-row
@@ -244,8 +251,8 @@ decisions.
   revert through the #1078 path succeeds and one after the field changed is
   refused; a protection change makes pending automatic decisions stale; a
   stale item in the review section is refused without failing others.
-- A redaction test feeds cover bytes, a retained-artifact path and a URL in
-  and asserts none comes out.
+- A redaction test feeds cover bytes, a retained-artifact path, a URL and a
+  title in and asserts none comes out.
 - An offline, read-only replay over the #744 and #1294 snapshots reports per
   rule, as aggregates, which current covers would change. A rule whose input a
   snapshot does not persist is reported as not replayable, never inferred.

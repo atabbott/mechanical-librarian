@@ -61,6 +61,15 @@ automatic setting, as an automatic decision. It never admits a candidate,
 crosses identity or widens the set. Reviewer observations remain advisory and
 still cannot rank (ADR-0059, #1417).
 
+The judge decides only where ADR-0093 leaves the choice open: a readable,
+fault-free current cover beside other eligible arts, which ADR-0093 keeps, and
+a field that would otherwise be an open choice for the owner. Where ADR-0093
+makes a deterministic switch or fills a known-empty target, its result stands
+and the judge is not asked.
+
+A verdict is advisory evidence, persisted and published before it can
+influence a proposal or a decision.
+
 ### The taste profile
 
 - **Structured data, never instructions.** Four fixed sections of numbered
@@ -116,10 +125,13 @@ decisions are judged again.
 
 ### The judge
 
-- A new closed request kind with the bound profile version and the candidates
-  left after ADR-0093's stage: at most 13 (the current cover plus 12
-  alternatives), shuffled per request under opaque references, with the
-  current marker. Nothing else from the provider or the library.
+- A new closed request kind, created only by the full cover packet parser,
+  with the bound profile version and the candidates left after ADR-0093's
+  stage: at most 13 (the current cover plus 12 alternatives), each as its
+  320×480 preview, shuffled per request under opaque references, with the
+  current marker. Nothing else from the provider or the library: no original,
+  URL, provider title or text, stated dimension, title, author, series,
+  identifier, path or service identity.
 - **Verdict.** Exactly
   `{decision: keep_current | choose | abstain, candidate: opaque reference | null, confidence: integer 0-100, rules: 1-3 rule numbers}`,
   with no free text and no extra members, in at most 512 output tokens.
@@ -152,11 +164,12 @@ defaults, never as a gate.
   Origin-bound with an optimistic revision. No measured accuracy floor or
   confirmation rate unlocks or locks it; the live confirmation rate is shown
   beside it as information.
-- **Qualification.** Like every automatic cover option, it can be Automatic
-  only once the owner-run qualification held by #1418 admits it: the builder
-  and judge on the selected live models, a smoke with instruction-like text
-  printed on a synthetic cover, the measured cost per build and per judged
-  field, and zero false admissions. Until then the judge only proposes.
+- **Qualification.** Like every automatic cover option, it can decide
+  automatically only once an owner-run qualification in the milestone's
+  closing unit admits it: the builder and judge on the selected live models, a
+  smoke with instruction-like text printed on a synthetic cover, the measured
+  cost per build and per judged field, and zero false admissions. Until then
+  the setting can be chosen, but the judge only proposes.
 - **Protection.** It follows ADR-0093's setting. Under `protected`, a
   judge-preferred switch away from a fault-free current cover is a proposal;
   under `unprotected` it may be automatic; under `proposals_only` nothing is.
@@ -223,7 +236,7 @@ actions. The list filters by profile version.
 | Builder output | closed schema; at most 4,096 tokens, inside the 8,192 cover ceiling |
 | Rebuild cadence | one in flight; at most one per 10 new owner cover decisions; at most 4 a day |
 | Judge | one request per field per profile version; at most 13 candidates; at most 512 output tokens |
-| Daily request ceilings | per task, durable, owner-visible: builder 8 and judge 5,000 by default |
+| Daily request ceilings | per task, durable, owner-visible: builder 8 and judge 5,000 by default; counted before dispatch; stop at the ceiling or on an unknown charge |
 | Automatic switches | no daily limit |
 | Preview | stops at 5 would-be switches or 100 covers checked |
 | Profile edit body | at most 32 KiB, closed map, session, CSRF and Origin bound |
@@ -305,6 +318,7 @@ They cost more at this size and scored 3.6 points lower than a full rebuild.
   preview's stop conditions; and put-back through the retained cover.
 - A redaction test feeds profile text, rule text, decisions, references,
   verdicts, prompts and model output in and asserts none comes out.
-- The owner-run qualification held by #1418 before Automatic is available.
+- The owner-run qualification in the milestone's closing unit before
+  Automatic can decide.
 - Live switch precision per medium, from confirmations and reviewed automatic
   decisions, is shown to the owner.
