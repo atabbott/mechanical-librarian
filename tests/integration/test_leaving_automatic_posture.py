@@ -67,7 +67,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -1030,3 +1030,115 @@ def test_an_owner_decision_after_confirming_holds_the_current_generation(
         "AND decision_id IN (?,?)",
         (library.automatic(2).decision_id, fresh.decision_id),
     ).fetchall() == [(fresh.decision_id,)]
+
+
+@pytest.mark.parametrize("state", ["claimed", "applying", "reconciling"])
+def test_an_earlier_generation_write_in_flight_still_refuses_an_owner_answer(
+    library: _Library, tmp_path: Path, state: str
+) -> None:
+    """An earlier generation decides nothing, but its write is still out (#1573).
+
+    Leaving Automatic readmits the case while the authors write is claimed,
+    applying or reconciling. The owner cannot replace the decision until that
+    service request is reconciled, as before generations were recorded.
+    """
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, _, _ = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    root.claim_field_effect(plan.plan_id, "planned", "c" * 64, 14)
+    if state != "claimed":
+        root.transition_field_effect(plan.plan_id, "claimed", "applying", 15)
+    if state == "reconciling":
+        root.transition_field_effect(plan.plan_id, "applying", "reconciling", 16)
+
+    library.leave_automatic()
+
+    assert library.generation() == 3
+    assert library.case_id() == automatic.review_case_id
+    assert root.get_field_effect(plan.plan_id).state == state
+    owner = _accept(library.case(), "authors", "owner-while-writing", 40)
+    with pytest.raises(HumanDecisionError, match="already_decided"):
+        root.record_human_decision(owner)
+    assert (
+        root._connection.execute(
+            "SELECT count(*) FROM human_decisions WHERE review_case_id=?",
+            (automatic.review_case_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert root.get_field_effect(plan.plan_id).state == state
+
+
+def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A settled earlier-generation write no longer stands in the owner's way."""
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    target.seed(plan)
+    assert service.apply(plan.plan_id).state == "verified"
+
+    library.leave_automatic()
+
+    owner = _accept(library.case(), "authors", "owner-after-writing", 40)
+    root.record_human_decision(owner)
+    assert root._connection.execute(
+        "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
+        (automatic.review_case_id,),
+    ).fetchall() == [(owner.decision_id,)]
+
+
+def test_a_new_generation_write_waits_for_an_earlier_write_still_out(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A later generation never writes over an unreconciled request (#1573).
+
+    One automatic decision per field used to make a second write for the
+    field impossible; with one per generation, the newer write waits until the
+    earlier one is settled.
+    """
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    earlier = _planned(library)[automatic.decision_id].plan
+    root.claim_field_effect(earlier.plan_id, "planned", "c" * 64, 14)
+    root.transition_field_effect(earlier.plan_id, "claimed", "applying", 15)
+    library.leave_automatic()
+    root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+    fresh = library.automatic(3)
+    library.now[0] = 42
+    scheduler.schedule()
+    renewed = _planned(library)[fresh.decision_id].plan
+    target.seed(renewed)
+    before = target.read(renewed).value
+
+    # While the earlier request is out, the new plan is not selected, Activity
+    # counts nothing as ready (it names the earlier write still in progress),
+    # and applying the new plan defers without consuming it.
+    assert root.field_effect_deferred(renewed.plan_id)
+    assert root.next_field_effect_plan_id(None) is None
+    assert _waiting(scheduler) == (0, "authors")
+    with pytest.raises(GuardedApplicationError, match="deferred"):
+        service.apply(renewed.plan_id)
+    assert root.get_field_effect(renewed.plan_id).state == "planned"
+    assert target.read(renewed).value == before
+
+    # Once the earlier request is settled, the new plan writes.
+    root.transition_field_effect(earlier.plan_id, "applying", "stale", 43, "authority")
+    assert not root.field_effect_deferred(renewed.plan_id)
+    assert root.next_field_effect_plan_id(None) == (renewed.plan_id, "ebooks")
+    assert service.apply(renewed.plan_id).state == "verified"

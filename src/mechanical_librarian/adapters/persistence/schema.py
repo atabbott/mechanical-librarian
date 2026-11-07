@@ -947,8 +947,18 @@ def _same_policy_retirement_sql(connection: str, library: str, item: str) -> str
 # A malformed or origin-less document is never deferred, so the readers that
 # validate it refuse it as before. CASE guards json_extract, which SQLite's AND
 # may evaluate on a malformed document, and COALESCE keeps it two-valued.
+# A ready effect also waits while another effect on the same field may still
+# be reaching the service: a decision of a later generation never writes over
+# an earlier generation's unreconciled request (#1573).
+_FIELD_EFFECT_TARGET_BUSY_SQL = (
+    "EXISTS (SELECT 1 FROM field_effects busy "
+    "WHERE busy.connection_name=effect.connection_name "
+    "AND busy.library_name=effect.library_name AND busy.work_id=effect.work_id "
+    "AND busy.destination=effect.destination AND busy.plan_id<>effect.plan_id "
+    "AND busy.state IN ('claimed','applying','reconciling'))"
+)
 _FIELD_EFFECT_DEFERRED_SQL = (
-    "CASE WHEN json_valid(effect.document) THEN COALESCE(("
+    "(CASE WHEN json_valid(effect.document) THEN COALESCE(("
     "(json_extract(effect.document,'$.plan.authority.origin')='automatic_policy' "
     "AND NOT " + _AUTOMATIC_POSTURE_SQL + ") OR "
     "(json_extract(effect.document,'$.plan.authority.origin')='human' "
@@ -965,7 +975,9 @@ _FIELD_EFFECT_DEFERRED_SQL = (
     + _same_policy_retirement_sql(
         "awaiting.connection_name", "awaiting.library_name", "awaiting.item_id"
     )
-    + "))),0) ELSE 0 END"
+    + "))),0) ELSE 0 END OR "
+    + _FIELD_EFFECT_TARGET_BUSY_SQL
+    + ")"
 )
 
 # The scheduler's claim, the Activity page's waiting effect and description

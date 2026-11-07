@@ -565,6 +565,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     previous = authored
             if cover_automatic is not None:
                 previous = cover_automatic
+            # Without an owner, authored or cover decision, the decisions
+            # being replaced are automatic. Only the active generation's
+            # decides the field, but a write any generation's decision still
+            # has out with the service blocks replacement until it is
+            # reconciled (#1573).
+            replaced_automatic: tuple[str, ...] = ()
             if previous is None:
                 previous = self._connection.execute(
                     "SELECT decision_id,'automatic' FROM automatic_decisions "
@@ -572,6 +578,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     + _active_generation_automatic_sql("automatic_decisions"),
                     (decision.review_case_id, decision.destination),
                 ).fetchone()
+                replaced_automatic = tuple(
+                    str(row[0])
+                    for row in self._connection.execute(
+                        "SELECT decision_id FROM automatic_decisions "
+                        "WHERE review_case_id=? AND destination=? "
+                        "ORDER BY policy_generation",
+                        (decision.review_case_id, decision.destination),
+                    )
+                    if previous is None or row[0] != previous[0]
+                )
             automatic = self._connection.execute(
                 "SELECT decision_id FROM automatic_decisions "
                 "WHERE review_case_id=? AND destination=? AND "
@@ -591,6 +607,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     (previous[0], previous[0], decision.destination == "cover"),
                 ).fetchone()
                 if effect is not None:
+                    raise HumanDecisionError("already_decided")
+            for earlier in replaced_automatic:
+                if self._connection.execute(
+                    "SELECT 1 FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects "
+                    "WHERE decision_id=? UNION ALL SELECT rowid FROM field_effects WHERE "
+                    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                    + "=?) AND "
+                    + _REPLACEMENT_BLOCKING_EFFECT_SQL
+                    + " LIMIT 1",
+                    (earlier, earlier, decision.destination == "cover"),
+                ).fetchone():
                     raise HumanDecisionError("already_decided")
             selected = _canonical_json(decision.selected_value)
             self._connection.execute(
