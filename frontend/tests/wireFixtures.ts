@@ -418,6 +418,7 @@ export const activityEvent = (overrides: Overrides = {}) => ({
   failure: null,
   field_label: 'Title',
   library: 'Fiction',
+  note: null,
   occurred_at: 1,
   origin: 'human',
   policy_changes: [],

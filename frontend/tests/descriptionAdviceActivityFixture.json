@@ -143,16 +143,17 @@
         },
         {
           "label": "Provenance",
-          "value": "Advised · Authored content"
+          "value": "Advised \u00b7 Authored content"
         },
         {
           "label": "Adviser",
-          "value": "codex · gpt-5.6-sol"
+          "value": "codex \u00b7 gpt-5.6-sol"
         }
       ],
       "failure": "unavailable",
       "field_label": "Description",
       "library": "ebooks",
+      "note": null,
       "occurred_at": 1002,
       "origin": "adviser",
       "policy_changes": [],
@@ -179,16 +180,17 @@
         },
         {
           "label": "Provenance",
-          "value": "Advised · Authored content"
+          "value": "Advised \u00b7 Authored content"
         },
         {
           "label": "Adviser",
-          "value": "codex · gpt-5.6-sol"
+          "value": "codex \u00b7 gpt-5.6-sol"
         }
       ],
       "failure": null,
       "field_label": "Description",
       "library": "ebooks",
+      "note": null,
       "occurred_at": 10,
       "origin": "adviser",
       "policy_changes": [],
@@ -233,6 +235,7 @@
       "failure": null,
       "field_label": "Description",
       "library": "ebooks",
+      "note": null,
       "occurred_at": 4,
       "origin": "automatic_policy",
       "policy_changes": [],
@@ -269,6 +272,7 @@
       "failure": null,
       "field_label": "Policy",
       "library": "Library policy",
+      "note": null,
       "occurred_at": 2,
       "origin": "policy",
       "policy_changes": [
@@ -366,6 +370,7 @@
       "failure": null,
       "field_label": "Policy",
       "library": "Library policy",
+      "note": null,
       "occurred_at": 0,
       "origin": "policy",
       "policy_changes": [],
