@@ -53,6 +53,10 @@ def test_held_case_carries_a_manual_hold() -> None:
     held = rich_payload("/api/v1/review-cases/case-4")
     assert isinstance(held, dict)
     assert any(field["manual_hold"] for field in held["fields"])
+    # The hold waits for the owner: no return to automatic is requested yet,
+    # so the journey can request one (#1755).
+    assert not any(field["manual_return_requested"] for field in held["fields"])
+    assert not any(field["manual_return_failed"] for field in held["fields"])
 
 
 def test_activity_carries_a_future_origin_and_every_cover_state() -> None:

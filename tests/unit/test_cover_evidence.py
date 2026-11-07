@@ -7,10 +7,12 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverContextField,
     CoverDesignation,
     CoverEvidenceError,
+    CoverFinalHost,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
+    CoverTruncationReason,
     EpubCoverFallback,
     EpubCoverRecovery,
     EpubCoverRecoveryRefusal,
@@ -332,3 +334,81 @@ def test_epub_cover_recovery_refuses_an_open_shape(
 def test_epub_cover_recovery_parse_is_closed(value: object) -> None:
     with pytest.raises(CoverEvidenceError):
         EpubCoverRecovery.from_data(value)
+
+
+def _open_library_source(
+    state: CoverSourceState = CoverSourceState.RETRIEVED,
+    final_host: object = None,
+    kind: CoverSourceKind = CoverSourceKind.OPEN_LIBRARY,
+) -> CoverSource:
+    return CoverSource(
+        cover_source_id(kind, "catalogue:edition:/books/OL1M"),
+        kind,
+        state,
+        artifact=CoverArtifact.create(b"original", b"preview", "image/jpeg", 2, 3)
+        if state is CoverSourceState.RETRIEVED
+        else None,
+        timeout_scope="attempted" if state is CoverSourceState.TIMEOUT else None,
+        provenance=CoverProvenance(
+            "catalogue",
+            CoverDesignation.TRUNCATION,
+            truncation_reason=CoverTruncationReason.PROVIDER_LIMIT,
+        )
+        if state is CoverSourceState.TRUNCATED
+        else CoverProvenance("catalogue", CoverDesignation.WORK, "work-1"),
+        final_host=final_host,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize("family", tuple(CoverFinalHost))
+def test_a_retrieved_open_library_source_records_its_closed_host_family(
+    family: CoverFinalHost,
+) -> None:
+    source = _open_library_source(final_host=family)
+    assert source.to_data()["final_host"] == family.value
+    assert {"covers.openlibrary.org", "archive.org", "us.archive.org"} == {
+        value.value for value in CoverFinalHost
+    }
+
+
+def test_a_retrieved_open_library_source_requires_a_final_host() -> None:
+    with pytest.raises(CoverEvidenceError, match="final host is inconsistent"):
+        _open_library_source()
+
+
+@pytest.mark.parametrize(
+    "state",
+    tuple(
+        value for value in CoverSourceState if value is not CoverSourceState.RETRIEVED
+    ),
+)
+def test_only_a_retrieved_open_library_source_states_a_final_host(
+    state: CoverSourceState,
+) -> None:
+    assert _open_library_source(state).to_data()["final_host"] is None
+    with pytest.raises(CoverEvidenceError, match="final host is inconsistent"):
+        _open_library_source(state, CoverFinalHost.US_ARCHIVE)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    tuple(
+        value
+        for value in CoverSourceKind
+        if value not in {CoverSourceKind.OPEN_LIBRARY, *LOCAL_COVER_SOURCE_KINDS}
+    ),
+)
+def test_other_provider_kinds_never_state_a_final_host(kind: CoverSourceKind) -> None:
+    assert _open_library_source(kind=kind).final_host is None
+    with pytest.raises(CoverEvidenceError, match="final host is inconsistent"):
+        _open_library_source(final_host=CoverFinalHost.ARCHIVE, kind=kind)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("us.archive.org", "ia800100.us.archive.org", 1),
+    ids=("plain_string", "raw_datanode", "integer"),
+)
+def test_a_final_host_outside_the_closed_family_is_refused(value: object) -> None:
+    with pytest.raises(CoverEvidenceError, match="final host is inconsistent"):
+        _open_library_source(final_host=value)

@@ -1161,6 +1161,7 @@ def test_ask_retains_and_records_the_sole_cover_choice_after_timeout(
             state=CoverSourceState.TIMEOUT,
             artifact=None,
             timeout_scope="attempted",
+            final_host=None,
         )
         base = _cover_report((candidate, timeout) if source_timeout else (candidate,))
         report = MetadataReport.create(

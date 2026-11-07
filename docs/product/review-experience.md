@@ -109,8 +109,9 @@ marked, and Library stays current while a review or Attention is open.
 
 Navigation mounts without waiting for data, and loading reads as one small
 line beside a dot that pulses only when motion is welcome. A pending or failed
-count is never shown as zero, and a failed read keeps a retry. An older
-response never replaces a newer selection. While a newer read is pending, the last content
+count is never shown as zero, and a failed read keeps a retry. A page that
+cannot load says why and what to do; the status and code are under Technical
+detail. An older response never replaces a newer selection. While a newer read is pending, the last content
 stays, marked busy with its controls inert, and the route is announced only
 when the read settles. Owner actions take priority over background refreshes.
 While preparation publishes works, an active tab refreshes Library and
@@ -278,7 +279,9 @@ separately; each row gives its value and why nothing changed.
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An
 unknown recorded reason reads as unknown. A hold from an earlier case says an
-earlier owner decision is pausing automatic handling.
+earlier owner decision is pausing automatic handling. Until requested fresh
+checks finish, the field says they were requested, also after a reload. An
+unconfirmed request reloads the case and says whether it shows the request.
 
 ### Choosing
 

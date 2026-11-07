@@ -648,6 +648,7 @@ def _server(
                     state=CoverSourceState.TIMEOUT,
                     artifact=None,
                     timeout_scope="attempted",
+                    final_host=None,
                 ),
             )
             if sole_cover_timeout
@@ -2737,8 +2738,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert "Draft is separate from the active policy" not in policy_body
                 assert page.locator(".policy-cutover").count() == 0
                 page.locator(".cm-finish-tray").get_by_text(
-                    "Change any field to create a new draft \u2014 validation always "
-                    "covers the whole policy.",
+                    "Change any field to create a new draft.",
                     exact=True,
                 ).wait_for()
                 policy_chapters = page.get_by_role("navigation", name="Policy chapters")
@@ -2757,10 +2757,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     ).get_attribute("aria-describedby")
                     is None
                 )
-                page.get_by_text(
-                    "Choose how metadata is stored and when you want to review it.",
-                    exact=True,
-                ).wait_for()
+                # #1760: the heading needs no intro line.
+                assert (
+                    page.get_by_text(
+                        "Choose how metadata is stored and when you want to review it.",
+                        exact=True,
+                    ).count()
+                    == 0
+                )
                 unsupported_description = policy_chapters.get_by_role(
                     "button", name="Additional fields"
                 ).get_by_text(

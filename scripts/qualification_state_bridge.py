@@ -44,6 +44,11 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.cover_evidence import (
+    CoverFinalHost,
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
@@ -516,7 +521,22 @@ def _reconstruct_report(document: str) -> _ReconstructedReport:
                     "timeout_scope",
                 },
             )
-            cover = _cover_source_from_data(cover_data)
+            # v26 predates the closed `final_host` family. Its producer
+            # followed no Open Library redirect, so a retrieved Open Library
+            # cover was served by `covers.openlibrary.org` itself; every other
+            # source states none. A retrieved source's artifact is invalidated
+            # below in any case, so no family is ever kept.
+            cover = _cover_source_from_data(
+                {
+                    **cover_data,
+                    "final_host": (
+                        CoverFinalHost.COVERS_OPEN_LIBRARY.value
+                        if cover_data["kind"] == CoverSourceKind.OPEN_LIBRARY.value
+                        and cover_data["state"] == CoverSourceState.RETRIEVED.value
+                        else None
+                    ),
+                }
+            )
             if (
                 cover.provenance is not None
                 and cover.provenance.provider in invalidated_providers

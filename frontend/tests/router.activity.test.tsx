@@ -8,6 +8,8 @@ import {
   ApiError,
   BuildMismatchError,
   CsrfRenewedError,
+  NetworkUnavailableError,
+  SessionExpiredError,
   UncertainMutationError,
 } from '../src/api/http'
 import type {
@@ -55,17 +57,76 @@ it('keeps navigation available during initial Activity failure and retries the r
   expect(await screen.findByRole('heading', { name: 'Loading activity…' })).toBeVisible()
   expect(screen.getByRole('navigation', { name: 'Primary workspace' })).toBeVisible()
   await act(async () => rejectRead(new ApiError(503, 'unavailable')))
-  expect(await screen.findByRole('heading', { name: 'Activity could not be loaded' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
   expect(screen.getByRole('link', { name: 'Library' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   await waitFor(() => {
     expect(http.getActivity).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('heading', { name: 'Activity could not be loaded' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
   })
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(3)
 })
+
+// #1756: a lost read says the server could not be reached, keeps the code out
+// of the sentence, and Try again reads again.
+it('explains a lost Activity read in plain words and retries it', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getActivity = vi
+    .fn<ReviewHttp['getActivity']>()
+    .mockRejectedValueOnce(new NetworkUnavailableError())
+    .mockResolvedValue(activity())
+  renderRoute('/activity', http)
+  expect(await screen.findByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    "Couldn't reach the server. Check that Mechanical Librarian is running, then try again.",
+  )
+  expect(screen.queryByText(/Failed to fetch|Review API request failed/u)).toBeNull()
+  expect(screen.getByText('network_unavailable').closest('details')).not.toHaveAttribute('open')
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(http.getActivity).toHaveBeenCalledTimes(2)
+})
+
+// #1756: a signed-out failure offers Sign in again, back to this page, and a
+// refusal offers nothing to retry.
+it.each([
+  [
+    'signed out',
+    new SessionExpiredError(),
+    'Your session ended.',
+    '401 · session_expired',
+    'sign-in',
+  ],
+  [
+    'refused',
+    new ApiError(404, 'not_found'),
+    "This page isn't available.",
+    '404 · not_found',
+    'none',
+  ],
+] as const)(
+  'shows the %s Activity failure with the right next step',
+  async (_name, error, message, detail, action) => {
+    // The real app's router uses the browser location; sign-in returns there.
+    window.history.pushState({}, '', '/activity')
+    const http = createHttp()
+    http.getActivity = vi.fn<ReviewHttp['getActivity']>().mockRejectedValue(error)
+    renderRoute('/activity', http)
+    expect(
+      await screen.findByRole('heading', { name: "Activity couldn't be loaded" }),
+    ).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent(message)
+    expect(screen.getByText(detail).closest('details')).not.toHaveAttribute('open')
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    const signIn = screen.queryByRole('link', { name: 'Sign in again' })
+    if (action === 'sign-in') expect(signIn).toHaveAttribute('href', '/login?next=%2Factivity')
+    else expect(signIn).toBeNull()
+    window.history.pushState({}, '', '/')
+  },
+)
 
 describe('Activity route', () => {
   it('labels real description preparation results without relabeling policy records', async () => {
