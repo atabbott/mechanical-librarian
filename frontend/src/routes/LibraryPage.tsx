@@ -10,6 +10,7 @@ import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
 import { StaleBuildRead } from '../components/StaleBuildRead'
+import { retryInPlace } from '../focusAfterRetry'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -233,7 +234,8 @@ export default function LibraryPage({
   failed: boolean
   /** The works read's failure, which a build mismatch makes unrecoverable by another try. */
   error: unknown
-  retry: () => void
+  /** Reads the works again; settles when the read does. */
+  retry: () => Promise<unknown>
   /** Reports whether the attention rail is showing a retained queue. */
   onRailRetaining?: (retaining: boolean) => void
 }) {
@@ -275,6 +277,10 @@ export default function LibraryPage({
   const expectedSearchIdentity = useRef<string | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const lensRow = useRef<HTMLElement>(null)
+  // The works list's Try again, or Reload once the tab is on an earlier build.
+  const worksRetry = useRef<HTMLButtonElement>(null)
+  const worksStatus = useRef<HTMLDivElement>(null)
+  const worksHeading = useRef<HTMLHeadingElement>(null)
   // The lenses scroll sideways in one row. An edge with more lenses beyond it
   // fades, so a row that happens to end between two lenses still shows it
   // continues. The current lens is brought into the row's view, clear of the
@@ -1836,7 +1842,9 @@ export default function LibraryPage({
             />
           ) : null}
           <div className="library-works-heading">
-            <h2 id="library-works-title">Works</h2>
+            <h2 id="library-works-title" tabIndex={-1} ref={worksHeading}>
+              Works
+            </h2>
             <span role="status" aria-live="polite" aria-busy={retained || undefined}>
               {data ? (
                 search.q ? (
@@ -1937,13 +1945,27 @@ export default function LibraryPage({
           </form>
           <div className="library-work-list" aria-busy={retained || undefined}>
             {!data ? (
-              <div className="empty-copy" aria-busy={!failed}>
+              // The loading line, failure and Reload share this region, which
+              // holds focus while a Try again reads.
+              <div className="empty-copy" aria-busy={!failed} tabIndex={-1} ref={worksStatus}>
                 {failed && error instanceof BuildMismatchError ? (
-                  <StaleBuildRead lead="Works were not loaded." />
+                  <StaleBuildRead lead="Works were not loaded." ref={worksRetry} />
                 ) : failed ? (
                   <>
                     <p role="alert">Works are unavailable.</p>
-                    <button type="button" onClick={retry}>
+                    <button
+                      type="button"
+                      ref={worksRetry}
+                      onClick={() =>
+                        retryInPlace(
+                          () => worksStatus.current,
+                          retry,
+                          // A read that failed again renders Try again or Reload;
+                          // one that succeeded shows the works under the heading.
+                          () => worksRetry.current ?? worksHeading.current,
+                        )
+                      }
+                    >
                       Try again
                     </button>
                   </>
@@ -2188,7 +2210,7 @@ export default function LibraryPage({
                   ref={selectedDetailRetryButton}
                   onClick={() => {
                     selectedDetailRetry.current = search.preview ?? null
-                    retry()
+                    void retry()
                     void attention.refetch()
                     // The case read names the work too, so it is read again (#1365).
                     if (detail.isError) void detail.refetch()

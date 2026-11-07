@@ -190,6 +190,46 @@ it('retries unavailable Works while the Library shell remains usable', async () 
   await waitFor(() => expect(screen.queryByText('Works are unavailable.')).toBeNull())
 })
 
+it.each(['mismatch', 'success', 'held read'] as const)(
+  'moves focus to what replaces the Works Try again after a %s (#1742)',
+  async (outcome) => {
+    const user = userEvent.setup()
+    let pressed = false
+    let release: () => void = () => undefined
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => {
+      if (!pressed) throw new ApiError(503, 'unavailable')
+      if (outcome === 'mismatch') throw new BuildMismatchError()
+      if (outcome === 'held read')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return library
+    })
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    const list = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('.library-work-list')
+      if (!found) throw new Error('the works list is required')
+      return found
+    })
+    await within(list).findByText('Works are unavailable.')
+    pressed = true
+    await user.click(within(list).getByRole('button', { name: 'Try again' }))
+    if (outcome === 'held read') {
+      // A first-read retry renders the loading line in place of Try again.
+      const loading = await within(list).findByText('Loading works…')
+      expect(document.body).not.toHaveFocus()
+      expect(document.activeElement).toContainElement(loading)
+      release()
+    }
+    const target =
+      outcome === 'mismatch'
+        ? await within(list).findByRole('button', { name: 'Reload the current application' })
+        : await screen.findByRole('heading', { name: 'Works', level: 2 })
+    await waitFor(() => expect(target).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  },
+)
+
 it.each(['/library?lens=all', '/library?lens=all&q=needle'])(
   'offers a reload, not another try, when Works meet a newer build at %s',
   async (path) => {
