@@ -270,7 +270,7 @@
                 "alternative_id": null,
                 "evidence": [
                   {
-                    "observation": "This value is currently present in the local library.",
+                    "observation": "Audiobookshelf’s current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
@@ -405,7 +405,7 @@
                 "alternative_id": null,
                 "evidence": [
                   {
-                    "observation": "This value is currently present in the local library.",
+                    "observation": "Audiobookshelf’s current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
@@ -490,7 +490,7 @@
               }
             ],
             "classification": "unsupported",
-            "classification_reason": "There is nothing to decide for this field.",
+            "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
             "current": {
@@ -540,7 +540,7 @@
               }
             ],
             "classification": "unsupported",
-            "classification_reason": "There is nothing to decide for this field.",
+            "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
             "current": {
@@ -583,7 +583,7 @@
                 "alternative_id": null,
                 "evidence": [
                   {
-                    "observation": "This value is currently present in the local library.",
+                    "observation": "Audiobookshelf’s current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   }
@@ -761,7 +761,7 @@
               }
             ],
             "classification": "unsupported",
-            "classification_reason": "There is nothing to decide for this field.",
+            "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
             "current": {
@@ -811,7 +811,7 @@
               }
             ],
             "classification": "unsupported",
-            "classification_reason": "There is nothing to decide for this field.",
+            "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
             "current": {
@@ -933,7 +933,7 @@
               }
             ],
             "classification": "unsupported",
-            "classification_reason": "There is nothing to decide for this field.",
+            "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
             "current": {

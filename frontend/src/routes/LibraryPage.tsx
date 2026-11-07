@@ -161,8 +161,8 @@ const fieldStatus = (field: ReviewField) =>
 // so the two reasons for an unchanged field are named here (#1514).
 const unchangedReasons = new Set([
   '',
-  'There is nothing to decide for this field.',
-  'There is no other value to choose from. You can enter your own.',
+  'Nothing to decide for this field.',
+  'No source offered a different value. You can enter your own.',
 ])
 const contextKind = (field: ReviewField) =>
   field.manualHold || !unchangedReasons.has(field.classificationReason)
@@ -2754,10 +2754,10 @@ export default function LibraryPage({
                     </button>
                   ) : null}
                   {selectedChoiceMode && effect ? (
-                    <aside className="field-apply-context" aria-label="External update status">
+                    <aside className="field-apply-context" aria-label="Writing to the library">
                       <span className="activity-state-mark" aria-hidden="true"></span>
                       <span>
-                        <small>External library</small>
+                        <small>Writing to the library</small>
                         <strong>{effect.state}</strong>
                         <em>{effect.detail}</em>
                       </span>

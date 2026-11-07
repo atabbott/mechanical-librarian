@@ -250,8 +250,8 @@ proposed card shows its value and, when known, the sources it came from, and
 cards carry no `Alternative N` label. Each card's Evidence control sits
 directly under its value. `Recommended` and its reason appear only for an
 authoritative deterministic selection; nothing says when there is none.
-Recorded observations appear only when the field has some or they could not be
-read, and the external-library card only when a change for the field is
+Other source values appear only when the field has some or they could not be
+read, and the writing-to-the-library box only when a change for the field is
 recorded. A notice never restates the reason already shown, and a decision
 carries no reminder that writes are protected. A disclosure never chooses a
 value.
@@ -380,8 +380,9 @@ a small set, or the current cover pinned beside a larger gallery. At 1024 pixels
 and below they form one scrolling row. Each image sits whole in a 5:8 frame.
 Excluded candidates stay subordinate with their reason.
 
-Each candidate summarises its defect checks (clean, named defects, uncertain
-or no reviewer evidence); other notes and sources sit in disclosures. None of
+Each candidate summarises its defect checks (clean, named defects, uncertain,
+or no result when the visual review ran); other notes and sources sit in
+disclosures. None of
 this confirms a match, changes order or earns automatic authority.
 
 The owner may choose any intact retained alternative, even of lower quality or

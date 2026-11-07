@@ -242,7 +242,7 @@
             "alternative_id": null,
             "evidence": [
               {
-                "observation": "This value is currently present in the local library.",
+                "observation": "Audiobookshelf’s current value.",
                 "role": "local_presence",
                 "source": "Local library record"
               },
@@ -381,7 +381,7 @@
             "alternative_id": null,
             "evidence": [
               {
-                "observation": "This value is currently present in the local library.",
+                "observation": "Audiobookshelf’s current value.",
                 "role": "local_presence",
                 "source": "Local library record"
               },
@@ -489,7 +489,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "genres",
           "state": "missing",
@@ -539,7 +539,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "publishedDate",
           "state": "missing",
@@ -589,7 +589,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "publisher",
           "state": "missing",
@@ -639,7 +639,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "description",
           "state": "missing",
@@ -739,7 +739,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "language",
           "state": "missing",
@@ -789,7 +789,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "explicit",
           "state": "missing",
@@ -839,7 +839,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "tags",
           "state": "missing",
@@ -889,7 +889,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "cover",
           "state": "missing",

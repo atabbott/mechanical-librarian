@@ -231,7 +231,7 @@ def test_an_ebooks_single_source_title_is_choosable_and_asks_only_under_ask(
             selected_destinations={"title_layout": title_layout},
         )
     read = _read_field(database, case_id, "title")
-    assert "nothing to decide" not in read["field"]["classification_reason"]
+    assert "nothing to decide" not in read["field"]["classification_reason"].casefold()
     assert read["queued"] is (title_layout == "ask")
     if title_layout == "automatic":
         assert read["field"]["classification"] == "owner_choosable"

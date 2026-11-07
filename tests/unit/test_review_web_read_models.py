@@ -284,7 +284,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "alternative_id": None,
                 "evidence": [
                     {
-                        "observation": "Local library cover retained.",
+                        "observation": "Audiobookshelf’s current cover.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -1788,7 +1788,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
                 "source": "provider_claim",
             }
         )
-        == "Retained observation (provider name unavailable)"
+        == "Unnamed source"
     )
     # A choice names its known sources once each, never a local record or an
     # unnamed provider, and says nothing when no source is known (#1519).
@@ -1801,7 +1801,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
                 {"role": "local_presence", "source": "Local library record"},
                 {
                     "role": "external_observation",
-                    "source": "Retained observation (provider name unavailable)",
+                    "source": "Unnamed source",
                 },
             ]
         )
@@ -2183,7 +2183,7 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(
         item["destination"]: item["classification_reason"]
         for item in response.json()["items"]
     }
-    assert reasons["title"] == "Changes made for you are waiting for a safety recovery."
+    assert reasons["title"] == "Automatic is paused, so this field is waiting for you."
     assert reasons["series"] == "This field needs your choice."
     # The third row carries neither column, so the two above prove the
     # reader read them rather than a constant the double always emits.
@@ -3866,7 +3866,7 @@ def test_unknown_choice_authority_is_observation_not_corroboration(
     assert projected == {
         "observation": "ISBN: 9780593135204",
         "role": "external_observation",
-        "source": "Retained observation (provider name unavailable)",
+        "source": "Unnamed source",
     }
 
 

@@ -122,6 +122,10 @@ brackets are GitHub issues.
   "Safely paused", waiting source lookups are "waiting" rather than
   "deferred", and a page that failed to load no longer shows the raw request
   error (#1765).
+- Library's field decisions read plainly. Evidence, automatic statements,
+  cover checks and decision failures drop internal words, a lost answer says
+  what to check, and the writing box says whether a change was written
+  (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

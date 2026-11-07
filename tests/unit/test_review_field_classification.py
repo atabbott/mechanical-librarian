@@ -294,19 +294,19 @@ def test_a_choice_the_policy_settles_says_the_value_is_kept(
         ),
         (
             "automatic_safety_suspended",
-            "Changes made for you are waiting for a safety recovery.",
+            "Automatic is paused, so this field is waiting for you.",
         ),
         (
             "external_field_failure",
-            "This field is waiting for an outside service to recover.",
+            "This field is waiting for the library to accept changes to it again.",
         ),
         (
             "external_connection_failure",
-            "This connection is waiting for an outside service to recover.",
+            "This field is waiting for the library connection to recover.",
         ),
         (
             "external_recovered",
-            "The outside service recovered; you can review this field again.",
+            "The library connection recovered. You can review this field again.",
         ),
     ),
 )

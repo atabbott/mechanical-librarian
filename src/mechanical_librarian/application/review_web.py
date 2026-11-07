@@ -2438,8 +2438,8 @@ def _report_title(report: dict[str, object]) -> str:
 # value it disagrees with is not offered, such as one in another language
 # (#1497).
 _UNOFFERED_DISSENT_TEXT = (
-    "Another source gave a value that isn\u2019t offered here; "
-    "choose whether to use this one."
+    "Another source gave a value that isn\u2019t offered here. "
+    "Choose whether to use this one."
 )
 
 
@@ -2643,7 +2643,7 @@ def _choice_contexts(
             "evidence": (
                 [
                     {
-                        "observation": "This value is currently present in the local library.",
+                        "observation": "Audiobookshelf\u2019s current value.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -2811,7 +2811,7 @@ def _choice_source_label(evidence: dict[str, str | None]) -> str:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
         return "Local library record"
-    return "Retained observation (provider name unavailable)"
+    return "Unnamed source"
 
 
 def _choice_is_local(evidence: dict[str, str | None]) -> bool:
@@ -2856,11 +2856,11 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
     try:
         fact = json.loads(evidence["fact"] or "{}")
     except (TypeError, ValueError):
-        return "The retained observation has no readable value."
+        return "This source\u2019s value could not be read."
     if type(fact) is not dict:
-        return "The retained observation has no readable value."
+        return "This source\u2019s value could not be read."
     if evidence["source"] == "identifier" and "relation" in fact:
-        return "Identifier relationship retained; no value observation is available."
+        return "Checks an ISBN against this book. It gives no value of its own."
     # Every claim kind is named as the Library's recorded evidence names it
     # (#1286); a narrator's credit keeps its own name.
     claim_kind = fact.get("kind")
@@ -2890,7 +2890,7 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         if text.casefold().startswith(kind.casefold() + ":"):
             text = text[len(kind) + 1 :].strip() or text
         return f"{kind}: {text}"
-    return f"{kind} observation retained."
+    return f"{kind}: the value cannot be shown."
 
 
 def _duration_seconds(value: object) -> int | None:
