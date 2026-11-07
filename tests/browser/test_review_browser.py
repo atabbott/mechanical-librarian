@@ -11640,11 +11640,23 @@ def test_audiobook_work_series_title_owner_journey():
             ) as recorded:
                 series.press("Space")
             assert 200 == recorded.value.status
+            # Only one catalogue suggests the shorter title, so it does not ask
+            # and the case advances past it to the description (#1310).
             expect(
                 page.get_by_role(
-                    "heading", name="Which title should this work use?", exact=True
+                    "heading",
+                    name="Which description should this work use?",
+                    exact=True,
                 )
             ).to_be_visible()
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+            expect(
+                page.get_by_text(
+                    "Only one source suggests this, and nothing else confirms it",
+                    exact=False,
+                ).first
+            ).to_be_visible()
+            # It stays the owner's to choose.
             title = page.get_by_role(
                 "radio", name="Choose proposed value: Synthetic Journey", exact=True
             )
@@ -11654,13 +11666,6 @@ def test_audiobook_work_series_title_owner_journey():
             ) as recorded:
                 title.press("Enter")
             assert 200 == recorded.value.status
-            expect(
-                page.get_by_role(
-                    "heading",
-                    name="Which description should this work use?",
-                    exact=True,
-                )
-            ).to_be_visible()
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
             expect(title).to_have_attribute("aria-checked", "true")
             # Only the book's own fields are offered; the subtitle, cover and
