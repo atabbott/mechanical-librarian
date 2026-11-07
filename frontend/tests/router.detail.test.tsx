@@ -966,9 +966,7 @@ describe('Library review ownership', () => {
     expect(screen.getByRole('button', { name: 'Requesting fresh checks…' })).toBeDisabled()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     settleRequest?.()
-    expect(
-      await screen.findByText('Fresh checks requested.'),
-    ).toBeVisible()
+    expect(await screen.findByText('Fresh checks requested.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
     expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
       'aria-disabled',
@@ -1340,14 +1338,10 @@ describe('Library review ownership', () => {
     await user.click(screen.getByRole('button', { name: /^Authors/u }))
     await screen.findByRole('heading', { name: 'Which authors should this work use?' })
     await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
-    expect(
-      screen.queryByText('Fresh checks requested.'),
-    ).toBeNull()
+    expect(screen.queryByText('Fresh checks requested.')).toBeNull()
     resolveRequest?.()
     await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
-    expect(
-      screen.queryByText('Fresh checks requested.'),
-    ).toBeNull()
+    expect(screen.queryByText('Fresh checks requested.')).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Title/u }))
     await screen.findByRole('heading', { name: 'Which title should this work use?' })
     expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
