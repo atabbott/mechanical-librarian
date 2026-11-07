@@ -852,9 +852,9 @@ export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
 // The policy family is decoded centrally (#1692): its views are the
 // response-truth types. Request bodies stay on the request schema.
 export type PolicyStateView = ResponseSchema<'_PolicyProfileResponse'>
-export type ShadowPostureView = ResponseSchema<'_ShadowPostureResponse'>
+export type ShadowPostureView = ResponseSchema<'_PreviewPostureResponse'>
 export type AutomaticSafetyView = ResponseSchema<'_AutomaticSafetyResponse'>
-export type ShadowSampleView = ResponseSchema<'_ShadowSampleResponse'>
+export type ShadowSampleView = ResponseSchema<'_PreviewSampleResponse'>
 export type PolicyTransitionView = ResponseSchema<'_PolicyTransitionResponse'>
 // The answer `read` and `mutate` return is the one the operation their path
 // names decodes to (#1730). `OperationOf` resolves a path in types the way
@@ -947,8 +947,8 @@ export type PolicyCommandPath =
   | 'automatic-safety/pause'
   | 'automatic-safety/recover'
   | 'automatic-safety/suspend'
-  | 'shadow/enter'
-  | 'shadow/confirm-automatic'
+  | 'preview-mode/enter'
+  | 'preview-mode/confirm-automatic'
   | `transitions/${string}/acknowledge`
   | `transitions/${string}/retry`
 // Each command's body comes from its operation in the generated `paths`, and
@@ -1801,13 +1801,17 @@ export class ReviewApiClient implements ReviewHttp {
     return await this.read('/api/v1/metadata-policy/state', signal, workClass)
   }
   async getShadowPosture(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return await this.read('/api/v1/metadata-policy/shadow', signal, workClass)
+    return await this.read('/api/v1/metadata-policy/preview-mode', signal, workClass)
   }
   async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return await this.read('/api/v1/metadata-policy/automatic-safety', signal, workClass)
   }
   async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
-    return await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal, workClass)
+    return await this.read(
+      '/api/v1/metadata-policy/preview-mode/outcomes?limit=10',
+      signal,
+      workClass,
+    )
   }
   async getPolicyTransition(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     // The decoder accepts `null`: no transition has run.
@@ -2748,7 +2752,7 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       previousValue: item.previous_value,
       selectedValue: item.selected_value,
     }
-  if (item.schema_version === 'shadow-preview-history-event-v1')
+  if (item.schema_version === 'preview-history-event-v1')
     return {
       category: 'preview',
       occurredAt,

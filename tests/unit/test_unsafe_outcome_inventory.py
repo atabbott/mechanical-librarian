@@ -310,10 +310,10 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (422, "policy_transition_is_invalid"): "pre-commit",
         (503, "policy_transition_is_unavailable"): "post-commit",
     },
-    ("POST", "/api/v1/metadata-policy/shadow/enter"): {
+    ("POST", "/api/v1/metadata-policy/preview-mode/enter"): {
         (503, "persistence"): "post-commit",
     },
-    ("POST", "/api/v1/metadata-policy/shadow/confirm-automatic"): {
+    ("POST", "/api/v1/metadata-policy/preview-mode/confirm-automatic"): {
         # "automatic posture is unavailable" rolls back, except a
         # scope-release invariant failure after `connection.commit()` (B-78,
         # `adapters/persistence/transactions.py` `commit`), bug-only.

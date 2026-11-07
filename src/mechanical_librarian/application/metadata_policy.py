@@ -873,7 +873,7 @@ class PolicyNotebook:
                 "authority": "decision_only" if posture == "automatic" else "none",
                 "can_leave_preview": False,
                 "posture": posture,
-                "schema_version": "shadow-posture-v1",
+                "schema_version": "preview-posture-v1",
             }
         except Exception as error:
             raise MetadataPolicyApplicationError(
@@ -944,7 +944,7 @@ class PolicyNotebook:
             "libraries": impacts,
             "posture": self.shadow_state()["posture"],
             "requested_posture": "qualified_decision_only_unavailable",
-            "schema_version": "shadow-posture-leave-preview-v1",
+            "schema_version": "preview-posture-leave-preview-v1",
         }
 
     def shadow_sample(self, limit: object = 20) -> dict[str, object]:
@@ -961,7 +961,7 @@ class PolicyNotebook:
                     "authority": "none",
                     "items": [*items, candidate],
                     "next_cursor": None,
-                    "schema_version": "shadow-outcome-sample-v1",
+                    "schema_version": "preview-outcome-sample-v1",
                 }
                 if (
                     len(
@@ -982,7 +982,7 @@ class PolicyNotebook:
                 "authority": "none",
                 "items": items,
                 "next_cursor": None,
-                "schema_version": "shadow-outcome-sample-v1",
+                "schema_version": "preview-outcome-sample-v1",
             }
         except Exception as error:
             raise MetadataPolicyApplicationError(

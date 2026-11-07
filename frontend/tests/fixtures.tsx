@@ -400,7 +400,7 @@ export const createHttp = (): ReviewHttp => ({
     audiobook_qualification: inertAudiobookQualification,
   })),
   getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
-    schema_version: 'shadow-posture-v1',
+    schema_version: 'preview-posture-v1',
     posture: 'review',
     authority: 'none',
     can_leave_preview: false,
@@ -411,7 +411,7 @@ export const createHttp = (): ReviewHttp => ({
     category_suspensions: {},
   })),
   getShadowSample: vi.fn(async (): Promise<ShadowSampleView> => ({
-    schema_version: 'shadow-outcome-sample-v1',
+    schema_version: 'preview-outcome-sample-v1',
     authority: 'none',
     items: [],
     next_cursor: null,
