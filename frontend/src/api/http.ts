@@ -2037,7 +2037,9 @@ export class ReviewApiClient implements ReviewHttp {
     sideEffectFree = false,
     writesNothing = false,
     map?: (value: RequestAnswer<M, P>) => T,
-  ): Promise<T> {
+    // `NoInfer`: without `map`, `T` stays the path's answer; a caller's
+    // expected type cannot widen it (#1730).
+  ): Promise<NoInfer<T>> {
     if (!this.buildIdentity) {
       this.onBuildMismatch()
       throw new BuildMismatchError()
@@ -2175,7 +2177,8 @@ export class ReviewApiClient implements ReviewHttp {
     // `OperationOf` resolves the path to, which is the operation `matchOperation`
     // picked above (a test holds the two together for every operation). So the
     // decoder that just ran returned `V`; an operation with no decoder has the
-    // answer `unknown`. Without `map`, `R` is `V`.
+    // answer `unknown`. Without `map`, `R` is `V`: `read` names no `R`, and
+    // `mutate`'s `T` defaults to `V` and cannot be inferred from its caller.
     if (!map) return value as R
     try {
       return map(value as V)

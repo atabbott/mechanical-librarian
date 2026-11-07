@@ -5452,6 +5452,17 @@ describe('policy command types (#1729)', () => {
 })
 
 describe('answer types of read and mutate (#1730)', () => {
+  it('does not let a caller choose the answer of a mutate without a map', () => {
+    type Mutate = ReviewApiClient['mutate']
+    const typed = (mutate: Mutate) => {
+      // @ts-expect-error logout's answer is not the caller's expected type
+      const wrong: Promise<{ totally: 'wrong' }> = mutate('/api/v1/session/logout')
+      // @ts-expect-error a settings write answers settings, not a number
+      const number: Promise<number> = mutate('/api/v1/settings', {}, undefined, undefined, 'PATCH')
+      return [wrong, number]
+    }
+    expect(typed).toBeTypeOf('function')
+  })
   type Answer<Name extends keyof responseComponents['schemas']> =
     responseComponents['schemas'][Name]
   type Method<K extends string> = K extends `${infer M} ${string}` ? M : never
