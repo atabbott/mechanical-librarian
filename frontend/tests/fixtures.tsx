@@ -124,6 +124,7 @@ export const detail: CaseDetailView = {
       needsAttention: true,
       navigationRole: 'attention',
       manualHold: false,
+      manualReturnRequested: false,
       currentValue: 'Old title',
       currentRaw: 'Old title',
       proposedValues: [{ kind: 'text', value: 'New title' }],

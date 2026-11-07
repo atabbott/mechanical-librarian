@@ -280,7 +280,10 @@ separately; each row gives its value and why nothing changed.
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An
 unknown recorded reason reads as unknown. A hold from an earlier case says an
-earlier owner decision is pausing automatic handling.
+earlier owner decision is pausing automatic handling. Resume automatic
+handling requests fresh checks first; until they finish, the field says they
+were requested. A request that cannot be confirmed reloads the case, says what
+it shows, and says requesting again is safe.
 
 ### Choosing
 

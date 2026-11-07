@@ -453,6 +453,11 @@ export default function LibraryPage({
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error' | 'refreshed' | 'uncertain'>>
   >({})
+  // How often the case read had answered when a request could not be
+  // confirmed, so only a reread after it settles the uncertainty (#1755).
+  const [automaticReloadBaselines, setAutomaticReloadBaselines] = useState<
+    Readonly<Record<string, number>>
+  >({})
   const staleCoverRecoveryButton = useRef<HTMLButtonElement>(null)
   const [staleCoverReview, setStaleCoverReview] = useState<{
     caseId: string
@@ -1189,7 +1194,24 @@ export default function LibraryPage({
   const automaticResult = selectedAutomaticKey
     ? (automaticResults[selectedAutomaticKey] ?? null)
     : null
-  const automaticCompletedForSelected = automaticResult === 'success'
+  // A requested return keeps the hold until its checks finish; the case says
+  // so, so a reload still reads as requested (#1755).
+  const automaticCompletedForSelected =
+    automaticResult === 'success' || selected?.manualReturnRequested === true
+  // An unconfirmed request resolves from the case reread after it: requested
+  // or not. Until then it is reloading. A reread that fails replaces the work
+  // with its own failure and Try again (#1288), whose reread settles it.
+  const automaticReload = (() => {
+    if (automaticResult !== 'uncertain' || !selectedAutomaticKey) return null
+    const baseline = automaticReloadBaselines[selectedAutomaticKey]
+    const answered = queryClient.getQueryState(
+      detailQuery(http, selectedReviewCaseId).queryKey,
+    )?.dataUpdateCount
+    if (baseline === undefined || answered === undefined || detail.isFetching) return 'reloading'
+    if (answered <= baseline) return 'reloading'
+    return selected?.manualReturnRequested === true ? 'requested' : 'not-requested'
+  })()
+  const automaticShown = automaticReload === 'requested' ? 'success' : automaticResult
   const returnAutomatic = useMutation({
     mutationFn: ({ destination }: { destination: string; key: string }) =>
       http.returnToAutomatic(selectedReviewCaseId, destination),
@@ -1210,11 +1232,16 @@ export default function LibraryPage({
       // The checks may have been requested: show the case as it now stands.
       // Not awaited, so the panel's controls are enabled again (and Keep
       // manual handling can take focus) while the case reloads.
-      if (uncertain)
+      if (uncertain) {
+        const answered =
+          queryClient.getQueryState(detailQuery(http, selectedReviewCaseId).queryKey)
+            ?.dataUpdateCount ?? 0
+        setAutomaticReloadBaselines((current) => ({ ...current, [request.key]: answered }))
         void invalidateForegroundQueries(queryClient, {
           queryKey: ['review-case', selectedReviewCaseId],
           exact: true,
         })
+      }
     },
   })
 
@@ -2803,21 +2830,25 @@ export default function LibraryPage({
                             The recorded value remains. Fresh checks are requested first; automatic
                             policy may manage later qualified changes.
                           </p>
-                          {automaticResult === 'success' ? (
-                            <p role="status">
+                          {automaticShown === 'success' ? (
+                            <p className="automatic-handling-result is-success" role="status">
                               Fresh checks requested. Manual handling remains until they complete.
                             </p>
-                          ) : automaticResult === 'error' ? (
-                            <p role="alert">
+                          ) : automaticShown === 'error' ? (
+                            <p className="automatic-handling-result is-error" role="alert">
                               Fresh checks could not be requested. Manual handling is unchanged.
                             </p>
-                          ) : automaticResult === 'uncertain' ? (
-                            <p role="alert">
-                              Fresh checks could not be confirmed. They may have been requested; the
-                              current case was reloaded. Check it before trying again.
+                          ) : automaticShown === 'uncertain' ? (
+                            // A warning, not an error: requesting again is safe (#1755).
+                            <p className="automatic-handling-result is-uncertain" role="status">
+                              {automaticReload === 'not-requested'
+                                ? 'Fresh checks could not be confirmed, and this work does not show them as requested. Requesting them again is safe: the recorded value stays until they finish.'
+                                : 'Fresh checks could not be confirmed. Reloading this work to see whether they were requested…'}
                             </p>
-                          ) : automaticResult === 'refreshed' ? (
-                            <p role="alert">{sessionRefreshedCopy}</p>
+                          ) : automaticShown === 'refreshed' ? (
+                            <p className="automatic-handling-result is-refreshed" role="alert">
+                              {sessionRefreshedCopy}
+                            </p>
                           ) : null}
                           <div className="automatic-handling-actions">
                             <button

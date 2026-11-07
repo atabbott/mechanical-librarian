@@ -10081,6 +10081,10 @@
             "title": "Manual Required",
             "type": "boolean"
           },
+          "manual_return_requested": {
+            "title": "Manual Return Requested",
+            "type": "boolean"
+          },
           "navigation_role": {
             "enum": [
               "attention",
@@ -10158,6 +10162,7 @@
           "automatic_decision",
           "automatic_selection_sources",
           "manual_hold",
+          "manual_return_requested",
           "manual_required",
           "needs_attention",
           "navigation_role",

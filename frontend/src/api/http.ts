@@ -639,6 +639,9 @@ export interface ReviewFieldView {
   needsAttention: boolean
   navigationRole: string
   manualHold: boolean
+  // A return to automatic handling was requested; the hold stays until the
+  // requested checks finish (#1755).
+  manualReturnRequested: boolean
   currentValue: string
   currentRaw: unknown
   proposedValues: readonly ResponseSchema<'_ProposedValue'>[]
@@ -2663,6 +2666,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   effectCapability: field.effect_capability,
   needsAttention: field.needs_attention,
   manualHold: field.manual_hold,
+  manualReturnRequested: field.manual_return_requested,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
   // name, rather than one word for both (#1286).

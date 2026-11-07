@@ -566,6 +566,80 @@ def test_returning_the_holding_case_to_automatic_clears_its_held_flag(
     assert _field(store, "genres")["manual_hold"] is False
 
 
+def _request_return(store: OwnerStore, token: str) -> tuple[str, int]:
+    scan = store.repository.request_review_scan(
+        "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
+    )
+    at = store.clock()
+    assert store.repository.request_field_effect_manual_return(
+        store.case.review_case_id, "genres", token, scan.scan_id, at, at
+    )
+    return scan.scan_id, at
+
+
+def _held_and_requested(store: OwnerStore) -> tuple[object, object]:
+    field = _field(store, "genres")
+    return field["manual_hold"], field["manual_return_requested"]
+
+
+# #1755: the case shows a requested return while the hold waits for its
+# checks, so a reload can tell whether "Resume automatic handling" landed.
+def test_the_holding_case_shows_a_requested_return_until_it_is_released(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    assert _held_and_requested(store) == (True, False)
+    _request_return(store, token)
+    assert _held_and_requested(store) == (True, True)
+    assert store.repository.clear_field_effect_manual_hold(
+        store.case.review_case_id, "genres", store.clock(), token
+    )
+    assert _held_and_requested(store) == (False, False)
+
+
+def test_a_requested_return_shows_on_a_successor_and_on_a_case_that_recurs(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = store.case.review_case_id
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert store.case.review_case_id != first
+    assert _held_and_requested(store) == (True, False)
+    _request_return(store, token)
+    assert _held_and_requested(store) == (True, True)
+    store.publish(_HELD)
+    assert store.case.review_case_id == first
+    assert _held_and_requested(store) == (True, True)
+    store.repository.close()
+    store.repository = open_repository(store.root / "owner.sqlite")
+    assert _held_and_requested(store) == (True, True)
+
+
+# The copy for an unconfirmed request says requesting again is safe: a second
+# request on the same hold is accepted, keeps one active row and re-points it.
+def test_requesting_a_return_again_on_the_same_hold_is_safe(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = _request_return(store, token)
+    second = _request_return(store, token)
+    assert second[1] > first[1]
+    rows = store.repository._connection.execute(
+        "SELECT document FROM field_effect_manual_holds "
+        "WHERE review_case_id=? AND destination='genres' AND active=1",
+        (store.case.review_case_id,),
+    ).fetchall()
+    assert len(rows) == 1
+    document = json.loads(rows[0][0])
+    assert document["pending_return"] == {
+        "requested_at": second[1],
+        "scan_id": second[0],
+    }
+    assert document["decision_id"] == token
+    assert _hold(store) == token
+    assert _held_and_requested(store) == (True, True)
+
+
 def test_a_pending_return_reaches_an_earlier_case_that_recurs(
     held: tuple[OwnerStore, str],
 ) -> None:

@@ -329,6 +329,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (review_case_id,),
                     )
                 ),
+                return_requested_destinations=tuple(
+                    row[0]
+                    for row in self._connection.execute(
+                        "SELECT destination FROM field_effect_manual_holds "
+                        "WHERE review_case_id=? AND active=1 AND "
+                        "json_type(document,'$.pending_return')='object' "
+                        "ORDER BY destination",
+                        (review_case_id,),
+                    )
+                ),
                 previous_values=self._previous_field_values(
                     report.target.connection,
                     report.target.library,
