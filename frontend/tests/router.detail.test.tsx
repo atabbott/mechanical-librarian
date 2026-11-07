@@ -378,7 +378,7 @@ describe('Library review ownership', () => {
     await user.click(screen.getByText('Sources'))
     expect(screen.getByText('No match')).toBeVisible()
     expect(screen.getByText('ISBN lookup')).toBeVisible()
-    expect(screen.getByText('Response too large')).toBeVisible()
+    expect(screen.getByText('Answer too large')).toBeVisible()
     expect(document.querySelector('pre')).toBeNull()
     expect(document.body).not.toHaveTextContent('evidence_')
     await user.click(screen.getByRole('button', { name: 'Load more evidence' }))
@@ -417,7 +417,7 @@ describe('Library review ownership', () => {
       )
       for (const fact of rendered) expect(fact).toBeVisible()
     }
-    expect(screen.getAllByText(/External observation/u)).toHaveLength(observations.length)
+    expect(screen.getAllByText(/Reports this value/u)).toHaveLength(observations.length)
     expect(screen.queryByRole('button', { name: /Choose|Accept|Apply/u })).toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
     expect(current.fields.find((field) => field.destination === 'isbn')?.proposedValues).toEqual([])
@@ -642,8 +642,8 @@ describe('Library review ownership', () => {
     expect(screen.getByText('Policy outcome: a cover is recommended.')).toBeVisible()
     expect(screen.getByText('Confirmed covers are ranked in a fixed order')).toBeVisible()
     const preview = screen.getByRole('list', { name: 'Preview outcomes' })
-    expect(preview).toHaveTextContent('Owner review7')
-    expect(preview).toHaveTextContent('Unsupported1')
+    expect(preview).toHaveTextContent('Needs you7')
+    expect(preview).toHaveTextContent('Not supported1')
     expect(screen.getByRole('heading', { name: 'Entered review' })).toBeVisible()
     expect(screen.getByText('Automatic policy selected this cover.')).toBeVisible()
     expect(
@@ -1377,9 +1377,7 @@ it.each(['evidence', 'history'])(
         await screen.findByText('Applied and verified in the library.', { exact: false }),
       ).toBeVisible()
       // The store's "stale" reads in the owner's words (#1542).
-      expect(
-        screen.getByText('Guarded application: closed safely.', { exact: false }),
-      ).toBeVisible()
+      expect(screen.getByText('Guarded application: closed.', { exact: false })).toBeVisible()
       expect(document.body.textContent).not.toMatch(/\bstale\b/iu)
       expect(
         screen.getByText('This authored selection was superseded by a later decision.', {
