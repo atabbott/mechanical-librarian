@@ -657,9 +657,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 "/activity",
             }:
                 page.get_by_text(
-                    "Library connection needs attention", exact=True
+                    "Library connection failed", exact=True
                 ).first.wait_for()
-                notice = page.get_by_label("Shared library connection status")
+                notice = page.get_by_label("Library connection", exact=True)
                 check = notice.get_by_role("button", name="Check connection again")
                 expect(check).to_be_visible()
                 assert "primary" not in notice.inner_text()
@@ -712,7 +712,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.get_by_text(
                         "Library connection recovered", exact=True
                     ).wait_for()
-                    recovered = page.get_by_label("Shared library connection status")
+                    recovered = page.get_by_label("Library connection", exact=True)
                     capture_visual_proof("connection-recovered")
                     for width in (1440, 900, 390):
                         page.set_viewport_size({"width": width, "height": 900})
@@ -725,14 +725,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.goto("https://react-platform.invalid/library?lens=all")
                     page.get_by_label("Library controls").wait_for()
                     expect(
-                        page.get_by_label("Shared library connection status")
+                        page.get_by_label("Library connection", exact=True)
                     ).to_have_count(0)
 
                     connection_state = "paused"
                     page.goto("https://react-platform.invalid/library?lens=all")
                     page.get_by_label("Library controls").wait_for()
                     page.get_by_text(
-                        "Library connection needs attention", exact=True
+                        "Library connection failed", exact=True
                     ).first.wait_for()
                     # These two fresh documents prove recovered state is not
                     # restored after a restart; keep the route's navigation
@@ -847,7 +847,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     controls = ledger.locator(".cm-activity-tools")
                     filters = controls.locator(".cm-activity-filters")
                     first_row = ledger.locator("article").first
-                    notice = page.get_by_label("Shared library connection status")
+                    notice = page.get_by_label("Library connection", exact=True)
                     for locator in (
                         heading,
                         ledger_heading,
@@ -986,7 +986,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     connection_state = "paused"
                     page.reload()
                     page.get_by_role("heading", name="Activity ledger").wait_for()
-                    page.get_by_label("Shared library connection status").get_by_role(
+                    page.get_by_label("Library connection", exact=True).get_by_role(
                         "button", name="Check connection again"
                     ).click()
                     page.get_by_text(
@@ -1765,7 +1765,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text("Unicode shelves:", exact=False).wait_for()
         page.get_by_role("button", name="\u2190 Previous").click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
-        assert page.get_by_text("Library could not be loaded", exact=False).count() == 0
+        assert page.get_by_text("Library couldn't be loaded", exact=False).count() == 0
         search_box = page.get_by_label(
             "Search title, author, identifier, library, or format"
         )
@@ -2253,9 +2253,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/review/case-stale?lens=no_attention_needed&subview=history&field=cover"
         )
-        page.get_by_role(
-            "heading", name="This diagnostic case is no longer current."
-        ).wait_for()
+        page.get_by_role("heading", name="This review case is out of date").wait_for()
         stale_route = page.locator(".diagnostic-route")
         stale_back = page.get_by_role("link", name="Back to work", exact=True)
         assert stale_route.locator(":scope > *").first.evaluate(
@@ -2270,7 +2268,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/review/missing-case?lens=needs_attention&subview=evidence&field=authors"
         )
-        page.get_by_role("heading", name="Work diagnostics are unavailable.").wait_for()
+        page.get_by_role(
+            "heading", name="The review case could not be opened"
+        ).wait_for()
         failed_route = page.locator(".diagnostic-route")
         failed_back = page.get_by_role("link", name="Back to work", exact=True)
         assert failed_route.locator(":scope > *").first.evaluate(
@@ -2655,17 +2655,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).click()
         assert projected_context.evaluate("node => node.open") is False
         page.get_by_role("button", name="Sign out").click()
-        page.get_by_text("Writes are blocked", exact=False).wait_for()
+        page.get_by_text("This tab cannot save changes", exact=False).wait_for()
         fail_policy_persistently = True
         stage[0] = "policy:asset-failure-recovery"
         page.goto("https://react-platform.invalid/policy?section=identity")
         page.get_by_role(
-            "heading", name="The current workspace assets could not be loaded."
+            "heading", name="The new version could not be loaded"
         ).wait_for()
         assert documents == (before_navigation + 2)
-        page.get_by_role("button", name="Reload the current application").click()
+        page.get_by_role("button", name="Reload", exact=True).click()
         page.get_by_role(
-            "heading", name="The current workspace assets could not be loaded."
+            "heading", name="The new version could not be loaded"
         ).wait_for()
         assert documents == (before_navigation + 3)
         expected_chunk_errors = [
@@ -3231,24 +3231,24 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
         page.route("**/*", fulfill)
         page.goto("https://react-platform.invalid/library?lens=all")
-        notice = page.get_by_role("region", name="Provider lookups waiting to retry")
+        notice = page.get_by_role("region", name="Source lookups waiting to retry")
         entries = notice.get_by_role("listitem")
         expect(entries).to_have_count(3)
         expect(entries.nth(0)).to_contain_text(
             "Google Books · Synthetic ebooks: It is limiting requests. "
-            "214 deferred lookups. Next automatic retry "
+            "214 lookups waiting. Next automatic retry "
         )
         # The burst resets on the next day, so the time names the day.
         expect(entries.nth(0).locator(":scope > span")).to_have_text(
             re.compile(r"Next automatic retry [^.]+, [^.]+\.$")
         )
         expect(entries.nth(1)).to_contain_text(
-            "Hardcover · Synthetic ebooks: It refused the configured API key. "
-            "1 deferred lookup. Waits for Retry now after the source is fixed."
+            "Hardcover · Synthetic ebooks: It refused the API key. "
+            "1 lookup waiting. No automatic retry. Fix the source, then retry."
         )
         expect(entries.nth(2)).to_contain_text(
             "Open Library · Synthetic audiobooks with a long library name: It did "
-            "not answer. 10,000 deferred lookups. No automatic retry remains."
+            "not answer. 10,000 lookups waiting. No automatic retry remains."
         )
         expect(
             entries.nth(1).get_by_role("link", name="Check the source’s API key")
@@ -3279,9 +3279,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         )
         settings["document"] |= {"revision": 2, "provider_recovery_generation": 2}
         held.pop().fulfill(content_type="application/json", body=json.dumps(settings))
-        expect(status).to_have_text(
-            "Retry now accepted. Every deferred lookup will retry now."
-        )
+        expect(status).to_have_text("Every waiting lookup is retrying now.")
         expect(retry).to_be_focused()
         assert not page.evaluate(_FOCUS_ON_BODY)
         accepted = page.evaluate(_RETRY_OUTCOME)
@@ -3292,10 +3290,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
 
         # The second press is stale: the alert says so and nothing moves focus.
         page.keyboard.press("Enter")
-        expect(alert).to_have_text(
-            "Retry now was already pressed elsewhere. The notice now shows the "
-            "current state."
-        )
+        expect(alert).to_have_text("Retry now was already pressed elsewhere.")
         assert len(retries) == 2, retries
         expect(status).to_have_text("")
         expect(retry).to_be_focused()

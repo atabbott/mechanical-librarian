@@ -674,7 +674,7 @@ describe('Library review ownership', () => {
 
       expect(
         await screen.findByRole('heading', {
-          name: 'This diagnostic case is no longer current.',
+          name: 'This review case is out of date',
         }),
       ).toBeVisible()
       expect(screen.queryByRole('heading', { name: 'Evidence' })).toBeNull()
@@ -702,12 +702,12 @@ describe('Library review ownership', () => {
     expect(document.querySelector('#main-content .diagnostic-route > :first-child')).toBe(
       loadingBack,
     )
-    expect(screen.getByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Loading the review case…' })).toBeVisible()
     renderRoute('/review/case-failed?lens=no_attention_needed&field=authors&subview=history', {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => Promise.reject(new ApiError(503, 'unavailable'))),
     })
-    expect(await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }))
+    expect(await screen.findByRole('heading', { name: 'The review case could not be opened' }))
     expect(screen.getAllByRole('link', { name: 'Back to work' }).at(-1)).toHaveAttribute(
       'href',
       '/library?lens=no_attention_needed&preview=case-failed&field=authors',
@@ -768,14 +768,14 @@ describe('Library review ownership', () => {
 
     await open('case-3')
     expect(
-      await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }),
+      await screen.findByRole('heading', { name: 'The review case could not be opened' }),
     ).toBeVisible()
     expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
     expect(document.querySelector('.diagnostic-route')).not.toHaveAttribute('aria-busy')
 
     // The failure cleared the case, so the next pending read cannot revive it.
     await open('case-4')
-    expect(await screen.findByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Loading the review case…' })).toBeVisible()
     expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
   })
 
@@ -1518,7 +1518,7 @@ describe('bounded diagnostic return context', () => {
       )
       await screen.findByRole('heading', {
         name:
-          state === 'loading' ? 'Loading work diagnostics…' : 'Work diagnostics are unavailable.',
+          state === 'loading' ? 'Loading the review case…' : 'The review case could not be opened',
       })
       expect(
         Object.fromEntries(

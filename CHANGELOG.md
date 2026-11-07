@@ -121,6 +121,12 @@ brackets are GitHub issues.
   sections no longer show, and a failed load says to try again or restart the
   service. An empty Library with no library connected links to Settings to add
   one. The Sources heading wraps on a phone with large text (#1765).
+- The masthead's status notices, the newer-build notice and the page-failure
+  states say what happened in plain words. The library connection notice names
+  Audiobookshelf and what it refused, paused work is "Paused" rather than
+  "Safely paused", waiting source lookups are "waiting" rather than
+  "deferred", and a page that failed to load no longer shows the raw request
+  error (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

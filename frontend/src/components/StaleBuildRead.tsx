@@ -11,9 +11,9 @@ import { reloadCurrentApplication } from '../chunkRecovery'
  */
 export const StaleBuildRead = ({ lead, ref }: { lead: string; ref?: Ref<HTMLButtonElement> }) => (
   <p className="stale-build-read">
-    {lead} This tab is running an earlier build. Reload to open it in the current application.{' '}
+    {lead}{' '}
     <button ref={ref} type="button" onClick={() => reloadCurrentApplication()}>
-      Reload the current application
+      Reload
     </button>
   </p>
 )

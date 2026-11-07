@@ -87,12 +87,10 @@ def test_an_old_tab_reloads_on_its_next_read_and_an_expired_one_signs_in() -> No
                 notice = page.locator(".build-mismatch")
                 notice.wait_for()
                 assert notice.get_by_text(
-                    "This page is from a different application build."
+                    "Mechanical Librarian was updated."
                 ).is_visible()
-                page.get_by_role("heading", name="Activity was not loaded.").wait_for()
-                page.get_by_role(
-                    "button", name="Reload the current application"
-                ).wait_for()
+                page.get_by_role("heading", name="Activity was not loaded").wait_for()
+                page.get_by_role("button", name="Reload", exact=True).wait_for()
                 assert page.get_by_role("button", name="Try again").count() == 0
 
                 # An expired session names no build, so the tab signs in again

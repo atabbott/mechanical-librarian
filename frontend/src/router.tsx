@@ -386,10 +386,12 @@ export const usePreparation = () => {
 
 const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') =>
   ({
-    tls: 'The library connection needs its secure connection settings checked by its owner.',
-    authentication: 'The library connection needs its sign-in settings checked by its owner.',
-    authorization: 'The library connection needs its access permission checked by its owner.',
-    unavailable: 'The library connection is unavailable and needs an owner check.',
+    tls: 'Audiobookshelf’s secure connection failed. Check its address and certificate in Settings → Audiobookshelf.',
+    authentication:
+      'Audiobookshelf refused the access key. Replace it in Settings → Audiobookshelf.',
+    authorization:
+      'Audiobookshelf refused access to this library. Check the access key’s permissions in Audiobookshelf.',
+    unavailable: 'Audiobookshelf did not answer.',
   })[code]
 
 export const ConnectionNotice = ({
@@ -415,26 +417,27 @@ export const ConnectionNotice = ({
   const condition = data?.connections.find((item) => item.state !== 'recovered') ?? recovered
   if (!condition) return null
   const paused = condition.state === 'recovered' ? 0 : condition.affected
-  const title =
-    condition.state === 'checking'
+  const title = data?.recovery_required
+    ? 'Preparation stopped'
+    : condition.state === 'checking'
       ? 'Checking library connection'
       : condition.state === 'recovered'
         ? 'Library connection recovered'
-        : 'Library connection needs attention'
+        : 'Library connection failed'
   const copy = data?.recovery_required
-    ? 'Preparation stopped. Restart the Mechanical Librarian service to resume. Completed reviews remain available.'
+    ? 'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
     : condition.state === 'checking'
-      ? 'Preparation remains safely paused while the configured connection is checked.'
+      ? 'Preparation is paused until the check finishes.'
       : condition.state === 'recovered'
-        ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.'
-        : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
+        ? 'Preparation resumed where it stopped.'
+        : `${connectionCopy(condition.code)} ${String(paused)} ${paused === 1 ? 'work is' : 'works are'} paused.`
   const canCheck = condition.state === 'paused' && !checking && !data?.recovery_required
   const action = condition.state === 'paused' ? 'Check connection again' : 'Checking connection…'
   return (
     <section
       className={`connection-notice is-${condition.state}`}
       aria-live="polite"
-      aria-label="Shared library connection status"
+      aria-label="Library connection"
     >
       <div>
         <strong>{title}</strong>
@@ -446,7 +449,7 @@ export const ConnectionNotice = ({
           <dd>{works === undefined ? '…' : String(works)}</dd>
         </div>
         <div>
-          <dt>Safely paused</dt>
+          <dt>Paused</dt>
           <dd>{String(paused)}</dd>
         </div>
       </dl>
@@ -467,11 +470,8 @@ export const ConnectionNotice = ({
       {error ? (
         <p>
           {uncertainWriteOutcome(error)
-            ? 'Connection checking could not be confirmed. It may have started; the current state is shown. Check it before pressing again.'
-            : refusalCopy(
-                error,
-                'Connection checking could not be completed. Preparation remains safely paused.',
-              )}
+            ? 'No answer came back. Check whether the connection check started before checking again.'
+            : refusalCopy(error, 'The connection check did not finish. Try again.')}
         </p>
       ) : null}
     </section>
@@ -586,8 +586,8 @@ const throttleReasonCopy: readonly (readonly [ProviderThrottleEntry['reasons'][n
     ['quota_exhausted', 'Its request quota is used up.'],
     ['burst_throttled', 'It is limiting requests.'],
     ['rate_limited', 'It is limiting requests.'],
-    ['authentication', 'It refused the configured API key.'],
-    ['authorization', 'It refused access for the configured API key.'],
+    ['authentication', 'It refused the API key.'],
+    ['authorization', 'It refused access for this API key.'],
     ['configuration', 'Its settings need checking.'],
     ['transient', 'It did not answer.'],
   ]
@@ -596,24 +596,24 @@ const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
   entry.state === 'checking'
     ? 'Retrying now.'
     : entry.state === 'dormant'
-      ? 'Waits for Retry now after the source is fixed.'
+      ? 'No automatic retry. Fix the source, then retry.'
       : entry.state === 'exhausted'
         ? 'No automatic retry remains.'
         : entry.next_retry_at === null || entry.next_retry_at * 1000 <= now.getTime()
           ? 'Retry due now.'
           : `Next automatic retry ${formatWhen(entry.next_retry_at, now)}.`
 const fileManagedRetry =
-  'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.'
+  'To retry, raise provider_recovery_generation by one in /data/config.json and restart the service.'
 const retryRefusal = (error: unknown) =>
   error instanceof ApiError && error.code === 'provider_recovery_stale'
-    ? 'Retry now was already pressed elsewhere. The notice now shows the current state.'
+    ? 'Retry now was already pressed elsewhere.'
     : error instanceof ApiError && error.code === 'settings_managed_by_file'
       ? fileManagedRetry
       : error instanceof ApiError && error.code === 'settings_stale'
         ? 'Settings changed elsewhere. Check the notice, then press Retry now again.'
         : refusalCopy(
             error,
-            'Retry now could not be confirmed. Check the notice before pressing it again.',
+            'No answer came back. Check whether the lookups are retrying before pressing Retry now again.',
           )
 
 /**
@@ -645,7 +645,7 @@ export const ProviderThrottleNotice = () => {
     onSuccess: (value) => {
       // A Retry now moves the settings revision; an open draft rebases over it.
       queryClient.setQueryData<SettingsView>(['settings'], value)
-      setStatus('Retry now accepted. Every deferred lookup will retry now.')
+      setStatus('Every waiting lookup is retrying now.')
     },
     onError: (error) => setRefusal(retryRefusal(error)),
     onSettled: async () => {
@@ -696,7 +696,7 @@ export const ProviderThrottleNotice = () => {
     <section
       ref={container}
       className={`provider-throttle-notice${entries.length || status || refusal ? '' : ' is-empty'}`}
-      aria-label={entries.length ? 'Provider lookups waiting to retry' : undefined}
+      aria-label={entries.length ? 'Source lookups waiting to retry' : undefined}
       onFocus={() => {
         controlFocused.current = true
       }}
@@ -716,8 +716,8 @@ export const ProviderThrottleNotice = () => {
                     {providerLabels[entry.adapter]} · {names.name(entry.library)}:
                   </strong>{' '}
                   {reason ? `${reason[1]} ` : ''}
-                  {entry.deferred.toLocaleString()} deferred{' '}
-                  {entry.deferred === 1 ? 'lookup' : 'lookups'}. {throttleWhen(entry, now)}
+                  {entry.deferred.toLocaleString()} {entry.deferred === 1 ? 'lookup' : 'lookups'}{' '}
+                  waiting. {throttleWhen(entry, now)}
                 </span>
                 {entry.remedy ? (
                   <>
@@ -754,10 +754,7 @@ export const ProviderThrottleNotice = () => {
               >
                 {busy ? 'Retrying…' : 'Retry now'}
               </button>
-              <small>
-                Retry now retries every deferred lookup in every library; a provider still limiting
-                requests may defer them again.
-              </small>
+              <small>Retries the waiting lookups in every library.</small>
             </div>
           ) : entries.length > 0 && throttling.retry === 'managed_by_file' ? (
             <p className="provider-throttle-file">{fileManagedRetry}</p>
@@ -786,9 +783,9 @@ export const ProviderThrottleNotice = () => {
 const stageLabels: Readonly<Record<string, string>> = {
   queued: 'Not started',
   extracting: 'Reading your files',
-  providers: 'Asking providers',
+  providers: 'Asking sources',
   proposals: 'Comparing sources',
-  admission: 'Finding safe automatic choices',
+  admission: 'Checking automatic choices',
   projection: 'Preparing the review',
   ready: 'Ready to browse',
   recorded: 'Recorded, nothing to decide',
@@ -887,8 +884,8 @@ export const PreparationActivity = () => {
           <h2>{data.recovery_required ? 'Preparation stopped' : 'Background activity'}</h2>
           {data.recovery_required ? (
             <p role="status">
-              Restart the Mechanical Librarian service to resume preparation. Refreshing this page
-              or scanning again cannot recover it. Prepared books remain available.
+              Restart the Mechanical Librarian service to resume preparation. Prepared books can
+              still be reviewed.
             </p>
           ) : null}
           {data.libraries.map((item) => (
@@ -973,22 +970,19 @@ export const PreparationActivity = () => {
                   Retry
                 </button>
               ) : null}
-              {/*
-               * Both controls call the same operation -- a new library cycle --
-               * and the recovery schedule they do not control is documented in
-               * `docs/operations/provider-recovery.md`. This states what they
-               * do; it decides nothing.
-               */}
-              {!data.recovery_required ? (
-                <small className="activity-backup-note">
-                  Scan now — and Retry after a run with failures — start a new preparation cycle for
-                  this library; books that could not finish are prepared again; provider lookups
-                  that hit limits recover automatically on the documented schedule; a failure before
-                  a report has no automatic retry.
-                </small>
-              ) : null}
             </article>
           ))}
+          {/*
+           * Scan now and Retry call the same operation, a new library cycle; the
+           * recovery schedule they do not control is documented in
+           * `docs/operations/provider-recovery.md`. Said once, below the list,
+           * because Retry shows only on a library whose run had failures.
+           */}
+          {!data.recovery_required ? (
+            <small className="activity-backup-note">
+              Scan now prepares a library again, including the books that could not finish.
+            </small>
+          ) : null}
           <button
             type="button"
             aria-disabled={data.recovery_required || action.isPending}
@@ -1000,14 +994,13 @@ export const PreparationActivity = () => {
           {action.isError ? (
             <p role="alert">
               {uncertainWriteOutcome(action.error)
-                ? 'The preparation change could not be confirmed. It may have been saved; the current state is shown. Check it before pressing again.'
-                : refusalCopy(action.error, 'Preparation control failed safely. Try again.')}
+                ? 'No answer came back. Check whether the change took effect before pressing again.'
+                : refusalCopy(action.error, 'Preparation did not change. Try again.')}
             </p>
           ) : null}
           {!data.recovery_required ? (
             <small className="activity-backup-note">
-              Pause stops new library scans. Provider lookups that are already deferred still retry
-              on their schedule.
+              Pause stops new scans. Lookups already waiting still retry on schedule.
             </small>
           ) : null}
           <button type="button" onClick={close}>
@@ -1181,7 +1174,7 @@ const Shell = () => {
       setShellUncertain(uncertain)
       setShellError(
         uncertain
-          ? 'Sign out could not be confirmed. Reload the page; if you are still signed in, sign out again.'
+          ? 'No answer came back. Reload the page, and sign out again if you are still signed in.'
           : refusalCopy(failure, 'Sign out failed. Try again.'),
       )
     }
@@ -1257,9 +1250,9 @@ const Shell = () => {
       ) : null}
       {mismatch ? (
         <section className="build-mismatch" role="alert">
-          <strong>This page is from a different application build.</strong>
-          <span>Writes are blocked. Reload once to continue safely.</span>
-          <button onClick={() => window.location.reload()}>Reload application</button>
+          <strong>Mechanical Librarian was updated.</strong>
+          <span>Reload to keep working. This tab cannot save changes until it reloads.</span>
+          <button onClick={() => window.location.reload()}>Reload now</button>
         </section>
       ) : null}
       <main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}>
@@ -1275,14 +1268,13 @@ const Shell = () => {
 
 export const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
   <section aria-busy="true" className="route-state">
-    <p className="eyebrow">Private workspace</p>
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )
 const RouteFailure = ({
   error,
   reset,
-  title = 'This workspace',
+  title = 'This page',
 }: {
   error: unknown
   reset: () => void
@@ -1294,22 +1286,19 @@ const RouteFailure = ({
   // reload brings this tab onto the build the server is running.
   return error instanceof BuildMismatchError ? (
     <section className="route-state">
-      <p className="eyebrow">Application updated</p>
-      <h1>{title} was not loaded.</h1>
-      {/* The shell's build notice is the alert; this only names the route. */}
-      <p>This tab is running an earlier build. Reload to open it in the current application.</p>
-      <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
+      {/* The shell's build notice is the alert and says why; this only names the route. */}
+      <h1>{title} was not loaded</h1>
+      <button onClick={() => reloadCurrentApplication()}>Reload</button>
     </section>
   ) : error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
-      <p className="eyebrow">Application update unavailable</p>
-      <h1>The current workspace assets could not be loaded.</h1>
+      <h1>The new version could not be loaded</h1>
       <p role="alert">{error.message}</p>
-      <button onClick={() => reloadCurrentApplication()}>Reload the current application</button>
+      <button onClick={() => reloadCurrentApplication()}>Reload</button>
     </section>
   ) : (
     <section className="route-state">
-      <h1>{title} couldn't be loaded.</h1>
+      <h1>{title} couldn't be loaded</h1>
       {/* Plain words only; the status and code stay under Technical detail (#1756). */}
       <p role="alert">{copy.message}</p>
       {copy.detail ? (
@@ -1328,10 +1317,9 @@ const RouteFailure = ({
 }
 const DirectEntryFallback = () => (
   <section className="route-state">
-    <p className="eyebrow">Page unavailable</p>
-    <h1>This review route does not exist.</h1>
+    <h1>This page does not exist</h1>
     <Link to="/library" search={{ lens: 'all' }}>
-      Open review library
+      Open Library
     </Link>
   </section>
 )
@@ -1385,10 +1373,10 @@ const DiagnosticRouteComponent = () => {
   const backSearch = normalizeLibrarySearch({ ...search, preview: reviewCaseId })
   const problem =
     detail.error instanceof ApiError && detail.error.code === 'not_found'
-      ? 'No retained diagnostic was found for this work.'
+      ? 'This work has no review case.'
       : detail.error instanceof ApiError && detail.error.code === 'stale'
-        ? 'This diagnostic is no longer current.'
-        : 'The retained diagnostic could not be read safely.'
+        ? 'This review case is out of date. Go back to the work to open the current one.'
+        : 'Reload the page. If it still fails, restart the Mechanical Librarian service.'
   return (
     <div className="diagnostic-route" aria-busy={detail.isPlaceholderData || undefined}>
       <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
@@ -1396,20 +1384,18 @@ const DiagnosticRouteComponent = () => {
       </Link>
       {detail.isPending ? (
         <section aria-busy="true" className="diagnostic-state" data-route-focus tabIndex={-1}>
-          <h1>Loading work diagnostics…</h1>
-          <p>The retained review record is being opened.</p>
+          <h1>Loading the review case…</h1>
         </section>
       ) : detail.isError ? (
         <section className="diagnostic-state diagnostic-failure" data-route-focus tabIndex={-1}>
-          <h1>Work diagnostics are unavailable.</h1>
+          <h1>The review case could not be opened</h1>
           <p role="alert">{problem}</p>
         </section>
       ) : (
         <Suspense
           fallback={
             <section aria-busy="true" className="diagnostic-state" data-route-focus tabIndex={-1}>
-              <h1>Loading work diagnostics…</h1>
-              <p>The retained review record is being opened.</p>
+              <h1>Loading the review case…</h1>
             </section>
           }
         >
