@@ -59,7 +59,7 @@ from mechanical_librarian.domain import shadow_decision, shadow_outcome
 from mechanical_librarian.domain.metadata_report import TargetDestination, isbn_family
 from mechanical_librarian.domain.proposal_set import _OUTCOME_REASON_SETS
 
-LEDGER_SCHEMA = "admission-rule-ledger-v1"
+LEDGER_SCHEMA = "admission-rule-ledger-v2"
 WILSON_Z = 1.959964
 # Mirrors of product bounds the replay compares against; a unit test pins each
 # to the product constant so neither can drift silently.
@@ -176,6 +176,8 @@ class Case:
     cover_omissions: set[str]
     # cover identity candidate reference -> the provider records it pictures
     cover_records: dict[str, frozenset[str]] = field(default_factory=dict)
+    # report cover source id -> the provider records its provenance binds
+    cover_sources: dict[str, frozenset[str]] = field(default_factory=dict)
     # provider record identity -> (provider ordinal, work identity, contradicted)
     records: dict[str, tuple[int, str, bool]] = field(default_factory=dict)
     references: dict[str, str] = field(default_factory=dict)
@@ -234,6 +236,9 @@ class Case:
                 found.add(reference)
             elif reference in self.references:
                 found.add(self.references[reference])
+            elif reference in self.cover_sources:
+                # A cover alternative cites its report cover sources.
+                found |= self.cover_sources[reference]
         return frozenset(found)
 
 
@@ -311,6 +316,9 @@ def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
             for identity in works.get((name, work), [])
             if edition is None or identity == edition
         }
+        source = _text(cover.get("source_id"))
+        if source is not None:
+            case.cover_sources[source] = frozenset(bound)
         if bound:
             editions.setdefault(artifact, set()).update(bound)
     for candidate in _dicts(consideration.get("candidates")):
@@ -318,6 +326,18 @@ def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
         artifact = _text(candidate.get("artifact_id"))
         if reference is not None and artifact is not None:
             case.cover_records[reference] = frozenset(editions.get(artifact, set()))
+
+
+# Providers without a work authority (Google Books, Audnexus and others) state
+# this sentinel; it names no work, so the source's identifier evidence never
+# treats it as one (derive_identifier_evidence).
+_UNRESOLVED_WORK = "unresolved"
+
+
+def _work(value: object) -> str:
+    """A record's work identity for control labelling; "" when it names none."""
+    work = _text(value)
+    return "" if work is None or work == _UNRESOLVED_WORK else work
 
 
 def _index_records(case: Case) -> None:
@@ -337,7 +357,7 @@ def _index_records(case: Case) -> None:
             )
             case.records[identity] = (
                 ordinal,
-                _text(candidate.get("work_identity")) or "",
+                _work(candidate.get("work_identity")),
                 contradicted,
             )
             for claim in _dicts(candidate.get("claims")):
@@ -364,7 +384,7 @@ def _index_records(case: Case) -> None:
             if bound is not None:
                 positive.add(bound)
             owner = names.get(_text(evidence.get("provider")) or "")
-            work = _text(evidence.get("work_identity"))
+            work = _work(evidence.get("work_identity"))
             if owner is not None and work:
                 positive_works.setdefault(owner, set()).add(work)
         elif relation == "unrelated" and bound is not None:
@@ -540,13 +560,6 @@ def _enrichment_overflow(case: Case) -> bool:
     )
 
 
-def _recording_refused(case: Case) -> bool:
-    return any(
-        _dict(lane.get("dispatch")).get("outcome") in {"refused", "empty_or_refused"}
-        for lane in case.lanes()
-    )
-
-
 def _rear_budget(case: Case) -> bool:
     return "rear_resource_limit" in _list(
         _dict(case.report.get("local")).get("reasons")
@@ -689,7 +702,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "accepted-evidence precision 38/40 (95%), recall 41/46",
         "f1dd28f5055df774c3127a0b56b313aae80a1387",
         "isbn",
-        "admit the first-ranked alternative of an unresolved local ISBN",
+        "admit the lowest-identifier alternative of an unresolved local ISBN",
         "alternative",
         _either(
             _reason({"identifier_applicability_unresolved"}, _ISBN),
@@ -706,7 +719,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "999edaf0169ddf2734473423a3a5d5ce31a8a15a",
         "isbn",
-        "admit the first-ranked alternative where only a print, ambiguous or unknown-scope "
+        "admit the lowest-identifier alternative where only a print, ambiguous or unknown-scope "
         "local ISBN exists",
         "alternative",
         _report(_unscoped_isbn, _ISBN),
@@ -734,7 +747,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "development 42/42, sealed holdout 30/30",
         "8056f4d34500e1fab196be29dda290aba7a563cd",
         "isbn",
-        "admit the first-ranked competing ISBN",
+        "admit the lowest-identifier competing ISBN",
         "alternative",
         _reason({"manifestation_verification_required"}, _ISBN),
     ),
@@ -747,7 +760,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "ed997a7f5606e9e58f790d3be291d790513fcb79",
         "isbn",
-        "admit the first-ranked audiobook ISBN without a recording association",
+        "admit the lowest-identifier audiobook ISBN without a recording association",
         "alternative",
         _reason(
             {
@@ -824,7 +837,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "7 correct decisions per tag option, 100%, 49 works",
         "da35e6df4d56c975d496efffeb20df3a76e82289",
         "work-scope destinations",
-        "admit the first-ranked alternative without target-work proof",
+        "admit the lowest-identifier alternative without target-work proof",
         "alternative",
         _reason({"target_work_applicability_unproved", "target_work_contradicted"}),
         disposition="already filed as #1355",
@@ -840,7 +853,10 @@ CATALOGUE: tuple[Gate, ...] = (
         _LANE,
         "admit the products a recording ladder refused",
         "not_retained",
-        _report(_recording_refused, _ALL),
+        # A lane's "refused" is W1's work_identity_refused diagnostic and
+        # "empty_or_refused" covers empty searches too; the runtime veto and
+        # band act at proposal time and leave no per-lane trace.
+        separable=False,
         medium="audiobook",
     ),
     Gate(
@@ -880,7 +896,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "dc8de6f51417c209aa95941864273a9fe8ebbac9",
         "series",
-        "admit the first-ranked series alternative",
+        "admit the lowest-identifier series alternative",
         "alternative",
         _reason(
             {"series_conflicting_membership", "series_membership_incomplete"},
@@ -955,7 +971,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "0ce358e9d4796fbab26aab771850d2e76ade05d6",
         "cover",
-        "admit the first-ranked withheld audiobook cover",
+        "admit the lowest-identifier withheld audiobook cover",
         "alternative",
         _reason({"audiobook_cover_withheld"}, _COVER),
         medium="audiobook",
@@ -1008,7 +1024,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "not recorded (corpus private)",
         "660fac2f11f01028f3a9b8ca407efc799209951a",
         "subtitle",
-        "admit the first-ranked generic subtitle",
+        "admit the lowest-identifier generic subtitle",
         "alternative",
         _reason({"generic_provider_subtitle"}),
     ),
@@ -1021,22 +1037,27 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "e28584e6fa36fd280e7321452646fa824e7a761b",
         "publication destinations",
-        "admit the first-ranked redundant publication value",
+        "admit the lowest-identifier redundant publication value",
         "alternative",
         _reason({"redundant_publication_context"}),
     ),
     Gate(
         "T1",
         "Title and creator comparison",
-        "Closed title and complete-creator agreement",
-        "domain/field_value_comparison.py canonical_text, values_match",
-        "#414 (3586e1be), #815 (ce76c7fd); ADR-0018",
+        "More than one value group is an unresolved choice (equality by closed title "
+        "and complete-creator agreement)",
+        "domain/proposal_set.py _evaluate; domain/field_value_comparison.py "
+        "canonical_text, values_match",
+        "#351 (d35215e8); ADR-0020; equality forms #414 (3586e1be), #815 (ce76c7fd), "
+        "ADR-0018",
         _NOT_RECORDED,
-        "3586e1be7beb8bb413d4eabcec7e15c389c8645c",
-        "title, subtitle, authors and other compared destinations",
-        "admit the first-ranked of competing values",
+        "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
+        "every compared destination except cover",
+        "admit the lowest-identifier of the competing values",
         "alternative",
-        _reason({"competing_evidence"}),
+        # A cover's competing_evidence is _cover_result's multi-candidate
+        # branch, which cover election (C1) governs, not value comparison.
+        _reason({"competing_evidence"}, _ALL - _COVER),
     ),
     Gate(
         "T2",
@@ -1047,7 +1068,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "constructor controls 50/50 and 75/75",
         "c1963d9714cc04d9e22db0c137e4685d2e55ecf6",
         "title",
-        "admit the first-ranked title despite a material ISBN-title conflict",
+        "admit the lowest-identifier title despite a material ISBN-title conflict",
         "alternative",
         _reason({"isbn_title_material_conflict"}),
     ),
@@ -1060,7 +1081,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "sealed 89-case admission corpus, 0 false admissions; 1,988-report archived replay",
         "c843ea7fb8be5a97dd6414410d4a30089ee7fc57",
         "title, subtitle",
-        "admit the first-ranked title despite decoration dissent",
+        "admit the lowest-identifier title despite decoration dissent",
         "alternative",
         _reason(
             {
@@ -1092,7 +1113,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "54 exact replays, zero measured systemic false positives",
         "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
         "every proposable destination",
-        "admit the first-ranked alternative without preservation evidence",
+        "admit the lowest-identifier alternative without preservation evidence",
         "alternative",
         _reason({"no_positive_preservation_evidence"}),
     ),
@@ -1105,7 +1126,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "as A1",
         "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
         "every proposable destination",
-        "admit the first-ranked single-source alternative",
+        "admit the lowest-identifier single-source alternative",
         "alternative",
         _reason({"insufficient_independent_corroboration"}),
     ),
@@ -1118,7 +1139,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "cef7644a89bc98ac1d9dca037dfb6d535fb28dd8",
         "bibliographic destinations",
-        "admit the first-ranked alternative without a coherent combination",
+        "admit the lowest-identifier alternative without a coherent combination",
         "alternative",
         _reason({"no_safe_bibliographic_combination"}),
     ),
@@ -1131,7 +1152,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
         "publishedDate, publishedYear",
-        "admit the first-ranked uncorroborated date",
+        "admit the lowest-identifier uncorroborated date",
         "alternative",
         _reason({"date_refinement_requires_corroboration", "date_year_conflict"}),
     ),
@@ -1144,7 +1165,7 @@ CATALOGUE: tuple[Gate, ...] = (
         _NOT_RECORDED,
         "d35215e8cc3ceef1d194d38fd2a48a0084f29fb2",
         "cover",
-        "admit the first-ranked cover of an incomplete gallery",
+        "admit the lowest-identifier cover of an incomplete gallery",
         "alternative",
         _reason({"cover_gallery_incomplete"}, _COVER),
     ),
@@ -1157,7 +1178,7 @@ CATALOGUE: tuple[Gate, ...] = (
         "development 159/172 correct at 100% precision; sealed 12/12 and 43/43",
         "593e619821175655dd15c24e4717104eca0d722f",
         "every automatic destination",
-        "admit the first-ranked alternative an automatic decision abstained on",
+        "admit the lowest-identifier alternative an automatic decision abstained on",
         "alternative",
         _shadow_disposition(
             "abstention",
@@ -1296,13 +1317,59 @@ class Tally:
     unreached: int = 0
     # blocked fields the loosened rule has something to admit for
     actionable: int = 0
+    # fields with two or more alternatives where exactly one alternative's
+    # evidence is bound to this work and clean (the controls decide) ...
+    decidable: int = 0
+    # ... and of those, the fields where the lowest-identifier pick is it
+    pick_agrees: int = 0
+    # fields where two or more alternatives are bound to this work
+    tied: int = 0
+    # blocked fields competing on a destination a later election decides
+    election_fields: int = 0
+
+
+# Elections that decide competing values on these destinations on main. A
+# snapshot whose source predates one left those fields to the bare evaluator,
+# so its ceiling there is stale for main.
+LATER_ELECTIONS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("#974", "1a3878197cde7b06c215b15e51d1fd316a1e9fc7", frozenset({"title"})),
+    (
+        "#978",
+        "68bda99a5813e5f1de1fe3d7ef3d64e9dc29a4d6",
+        frozenset({"authors", "narrators"}),
+    ),
+    ("#979", "8056f4d34500e1fab196be29dda290aba7a563cd", frozenset({"isbn"})),
+    ("#981", "c843ea7fb8be5a97dd6414410d4a30089ee7fc57", frozenset({"title"})),
+    ("#1040", "c1963d9714cc04d9e22db0c137e4685d2e55ecf6", frozenset({"title"})),
+)
+_COMPETING = "competing_evidence"
+
+
+def later_elections(revision: str, ancestry: Ancestry) -> tuple[str, ...]:
+    """The elections on main that the snapshot's source revision predates."""
+    return tuple(
+        label
+        for label, commit, _destinations in LATER_ELECTIONS
+        if not ancestry(commit, revision)
+    )
+
+
+def _election_destinations(labels: Iterable[str]) -> frozenset[str]:
+    wanted = set(labels)
+    return frozenset().union(
+        *(
+            destinations
+            for label, _commit, destinations in LATER_ELECTIONS
+            if label in wanted
+        )
+    )
 
 
 def _actionable(gate: Gate, case: Case, destination: str) -> bool:
     """Whether loosening the gate could unblock the field at all.
 
-    A decision-level rule admits the first-ranked alternative, so a field whose
-    result kept no alternative stays blocked however the rule is loosened. A
+    A decision-level rule admits one alternative, so a field whose result
+    kept no alternative stays blocked however the rule is loosened. A
     cover field is blocked here only because a matching candidate exists.
     """
     if gate.control == "alternative":
@@ -1310,16 +1377,52 @@ def _actionable(gate: Gate, case: Case, destination: str) -> bool:
     return gate.control == "cover_candidates"
 
 
+def _pick(result: Mapping[str, object]) -> dict[str, object]:
+    """The alternative a loosened decision-level rule would admit.
+
+    The product ranks nothing: a result's alternatives are ordered by
+    ``alternative_id``, a SHA-256 digest. The pick is the selected alternative
+    where the result names one, otherwise the lowest identifier, which is an
+    arbitrary choice among the competitors.
+    """
+    alternatives = _dicts(result.get("alternatives"))
+    selected = _text(result.get("selected_alternative_id"))
+    for item in alternatives:
+        if selected is not None and item.get("alternative_id") == selected:
+            return item
+    return min(
+        alternatives,
+        key=lambda item: _text(item.get("alternative_id")) or "",
+        default={},
+    )
+
+
+def _right_work(case: Case, alternative: Mapping[str, object]) -> bool:
+    """Whether the alternative's evidence is bound to this work and only to it."""
+    labels = {
+        case.labels.get(record, "unlabelled")
+        for record in case.resolve(_list(alternative.get("evidence_references")))
+    }
+    return "positive" in labels and "negative" not in labels
+
+
+def _classify_pick(case: Case, result: Mapping[str, object], tally: Tally) -> None:
+    alternatives = _dicts(result.get("alternatives"))
+    if len(alternatives) < 2:
+        return
+    right = [item for item in alternatives if _right_work(case, item)]
+    if len(right) == 1:
+        tally.decidable += 1
+        if _pick(result) is right[0]:
+            tally.pick_agrees += 1
+    elif len(right) > 1:
+        tally.tied += 1
+
+
 def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
     if gate.control == "alternative":
-        result = case.results.get(destination, {})
-        alternatives = _dicts(result.get("alternatives"))
-        selected = _text(result.get("selected_alternative_id"))
-        first = next(
-            (item for item in alternatives if item.get("alternative_id") == selected),
-            alternatives[0] if alternatives else {},
-        )
-        return case.resolve(_list(first.get("evidence_references")))
+        pick = _pick(case.results.get(destination, {}))
+        return case.resolve(_list(pick.get("evidence_references")))
     if gate.control == "cover_candidates" and gate.cover_predicate is not None:
         predicate = gate.cover_predicate
         return frozenset().union(
@@ -1332,7 +1435,9 @@ def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
     return frozenset()
 
 
-def _tally_case(gate: Gate, case: Case, tally: Tally) -> None:
+def _tally_case(
+    gate: Gate, case: Case, tally: Tally, elections: frozenset[str] = frozenset()
+) -> None:
     if gate.medium is not None and case.medium != gate.medium:
         return
     blocked = sorted(
@@ -1347,6 +1452,11 @@ def _tally_case(gate: Gate, case: Case, tally: Tally) -> None:
         tally.by_medium[case.medium] += 1
         if _actionable(gate, case, destination):
             tally.actionable += 1
+        result = case.results.get(destination, {})
+        if destination in elections and _COMPETING in _list(result.get("reasons")):
+            tally.election_fields += 1
+        if gate.control == "alternative":
+            _classify_pick(case, result, tally)
         reached = _reached(gate, case, destination)
         if not reached and gate.control in ("alternative", "cover_candidates"):
             tally.unreached += 1
@@ -1413,9 +1523,12 @@ def _open_snapshot(path: Path) -> sqlite3.Connection:
 
 
 def measure_snapshot(
-    connection: sqlite3.Connection, statuses: Mapping[str, Status]
+    connection: sqlite3.Connection,
+    statuses: Mapping[str, Status],
+    elections: Iterable[str] = (),
 ) -> tuple[dict[str, Tally], Counter[str]]:
     """Stream current cases once, tallying every measurable gate."""
+    later = _election_destinations(elections)
     measurable = [gate for gate in CATALOGUE if statuses[gate.gate_id] == "measurable"]
     tallies = {gate.gate_id: Tally() for gate in measurable}
     media: Counter[str] = Counter()
@@ -1430,7 +1543,7 @@ def measure_snapshot(
             )
             media[case.medium] += 1
             for gate in measurable:
-                _tally_case(gate, case, tallies[gate.gate_id])
+                _tally_case(gate, case, tallies[gate.gate_id], later)
     except sqlite3.Error:
         raise Refusal("snapshot schema unrecognised") from None
     return tallies, media
@@ -1695,10 +1808,12 @@ def _row(
 ) -> dict[str, object]:
     per_snapshot: list[dict[str, object]] = []
     pooled_tp = pooled_fp = pooled_unlabelled = 0
+    pooled_decidable = pooled_agrees = pooled_tied = 0
     fields_blocked = 0
     fields_actionable = 0
     measurable_anywhere = False
     estimable_control = gate.control in ("alternative", "cover_candidates")
+    picks = gate.control == "alternative"
     for label, statuses, tallies in snapshots:
         status = statuses[gate.gate_id]
         entry: dict[str, object] = {"label": label, "status": status}
@@ -1710,6 +1825,9 @@ def _row(
             pooled_tp += tally.true_positive
             pooled_fp += tally.false_positive
             pooled_unlabelled += tally.unlabelled
+            pooled_decidable += tally.decidable
+            pooled_agrees += tally.pick_agrees
+            pooled_tied += tally.tied
             entry.update(
                 {
                     "fields": tally.fields,
@@ -1723,6 +1841,10 @@ def _row(
                     "actionable_fields": tally.actionable
                     if estimable_control
                     else None,
+                    "decidable_fields": tally.decidable if picks else None,
+                    "pick_agrees": tally.pick_agrees if picks else None,
+                    "tied_fields": tally.tied if picks else None,
+                    "election_fields": tally.election_fields,
                 }
             )
         per_snapshot.append(entry)
@@ -1758,6 +1880,19 @@ def _row(
             "precision": None if precision is None else round(precision, 4),
             "wilson_lower_bound": None if lower is None else round(lower, 4),
         },
+        "pick": {
+            "decidable_fields": pooled_decidable,
+            "pick_agrees": pooled_agrees,
+            "tied_fields": pooled_tied,
+            "rate": round(pooled_agrees / pooled_decidable, 4)
+            if pooled_decidable
+            else None,
+            "wilson_lower_bound": None
+            if (bound := wilson_lower_bound(pooled_agrees, pooled_decidable)) is None
+            else round(bound, 4),
+        }
+        if picks and measurable_anywhere
+        else None,
         "ceiling": fields_blocked,
         "actionable": fields_actionable if estimable_control else None,
         "score": score,
@@ -1847,6 +1982,13 @@ _STRUCTURAL_KEYS = frozenset(
         "source_report_reconciled",
         "current_cases",
         "wilson_z",
+        "later_elections",
+        "decidable_fields",
+        "pick_agrees",
+        "tied_fields",
+        "election_fields",
+        "pick",
+        "rate",
     }
 )
 
@@ -1857,6 +1999,7 @@ def closed_vocabulary(labels: Iterable[str]) -> frozenset[str]:
     strings |= {_OTHER_REASON, LEDGER_SCHEMA, *_MEDIA}
     strings |= {"measurable", "gate_postdates_source", "block_not_retained"}
     strings |= {"cause_not_separable", "informational"}
+    strings |= {label for label, _commit, _destinations in LATER_ELECTIONS}
     strings |= {"alternative", "cover_candidates", "not_identity", "not_retained"}
     for gate in CATALOGUE:
         strings |= {
@@ -1908,9 +2051,10 @@ def build_ledger(
     snapshot_entries: list[dict[str, object]] = []
     for item in inputs:
         statuses = gate_statuses(item.revision, ancestry)
+        elections = later_elections(item.revision, ancestry)
         connection = _open_snapshot(item.database)
         try:
-            tallies, media = measure_snapshot(connection, statuses)
+            tallies, media = measure_snapshot(connection, statuses, elections)
         finally:
             connection.close()
         probe = attention(item.source_root, item.database)
@@ -1935,6 +2079,7 @@ def build_ledger(
                 "label": item.label,
                 "source_revision": item.revision,
                 "current_cases": dict(sorted(media.items())),
+                "later_elections": list(elections),
                 "attention": summary,
                 "source_report_reconciled": reconciled,
             }
@@ -1964,9 +2109,12 @@ def _cell(entry: Mapping[str, object]) -> str:
     if status != "measurable":
         return _STATUS_TEXT[status]
     cell = f"{_number(entry['fields'])} / {_number(entry['works'])}"
-    if entry.get("actionable_fields") is None:
-        return cell
-    return f"{cell} ({_number(entry['actionable_fields'])} actionable)"
+    notes = []
+    if entry.get("actionable_fields") is not None:
+        notes.append(f"{_number(entry['actionable_fields'])} actionable")
+    if entry.get("election_fields"):
+        notes.append(f"{_number(entry['election_fields'])} stale: later election")
+    return f"{cell} ({'; '.join(notes)})" if notes else cell
 
 
 def _controls(row: Mapping[str, object]) -> str:
@@ -1992,20 +2140,35 @@ def _precision(row: Mapping[str, object]) -> str:
     return f"{cast('float', pooled['precision']):.3f} ({cast('float', pooled['wilson_lower_bound']):.3f})"
 
 
+def _pick_cell(row: Mapping[str, object]) -> str:
+    pick = row.get("pick")
+    if not isinstance(pick, dict):
+        return "not applicable"
+    tied = f"; {_number(pick['tied_fields'])} tied"
+    if pick["rate"] is None or pick["wilson_lower_bound"] is None:
+        return f"not estimable (0 decidable{tied})"
+    return (
+        f"{_number(pick['pick_agrees'])}/{_number(pick['decidable_fields'])} "
+        f"{cast('float', pick['rate']):.3f} "
+        f"({cast('float', pick['wilson_lower_bound']):.3f}){tied}"
+    )
+
+
 def render_markdown(ledger: Mapping[str, object]) -> str:
     snapshots = cast("list[dict[str, object]]", ledger["snapshots"])
     labels = [cast("str", entry["label"]) for entry in snapshots]
     header = (
         "| Rank | ID | Gate | Fields | Origin | Origin corpus / precision | "
         + " | ".join(f"{label} fields / works" for label in labels)
-        + " | Loosened rule | Controls TP/FP/unlabelled | Precision (Wilson 95% lower) "
-        "| Score | Disposition |"
+        + " | Loosened rule | Controls TP/FP/unlabelled | "
+        "Identity precision (Wilson 95% lower) | "
+        "Pick agrees where controls decide (Wilson 95% lower) | Score | Disposition |"
     )
     lines = [
         "### Ranked gates",
         "",
         header,
-        "|" + "---|" * (11 + len(labels)),
+        "|" + "---|" * (12 + len(labels)),
     ]
     for row in cast("list[dict[str, object]]", ledger["rows"]):
         rank = row.get("rank")
@@ -2027,10 +2190,19 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
             cast("str", row["loosened_rule"]),
             _controls(row),
             _precision(row),
+            _pick_cell(row),
             f"{cast('float', row['score']):,.1f}",
             disposition,
         ]
         lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    for entry in snapshots:
+        elections = cast("list[str]", entry["later_elections"])
+        lines.append(
+            f"- {entry['label']}: source predates "
+            + (", ".join(elections) if elections else "no later election")
+            + "."
+        )
     lines += [
         "",
         "### Attention per case",

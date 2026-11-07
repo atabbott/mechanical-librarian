@@ -222,11 +222,15 @@ class Fixture:
 
     def cover_candidate(
         self, outcome: str, provider: int, work: str, identity: str | None
-    ) -> None:
-        """Add a cover candidate; ``identity`` None is a work-level cover."""
-        artifact, reference = self.text(), self.text()
+    ) -> str:
+        """Add a cover candidate; return its report cover source id.
+
+        ``identity`` None is a work-level cover.
+        """
+        artifact, reference, source = self.text(), self.text(), self.text()
         cast("list[object]", self.report["covers"]).append(
             {
+                "source_id": source,
                 "kind": "hardcover",
                 "state": "retrieved",
                 "artifact": {"artifact_id": artifact},
@@ -259,6 +263,7 @@ class Fixture:
         cast("list[object]", self.consideration["candidates"]).append(
             {"reference": reference, "artifact_id": artifact, "url": self.text()}
         )
+        return source
 
 
 def _database(path: Path, profile: Profile, fixtures: Sequence[Fixture]) -> Path:
@@ -682,7 +687,10 @@ def test_report_level_signals_block_their_destinations(tmp_path: Path) -> None:
     assert _snapshot(rows["I1"], "audio")["by_destination"] == {"isbn": 1}
     lane_blocked = {"cover": 1, "description": 1, "isbn": 1, "subtitle": 1, "title": 1}
     assert _snapshot(rows["W1"], "audio")["by_destination"] == lane_blocked
-    assert _snapshot(rows["W6"], "audio")["by_destination"] == lane_blocked
+    assert _snapshot(rows["W6"], "audio") == {
+        "label": "audio",
+        "status": "cause_not_separable",
+    }
     assert _snapshot(rows["B1"], "audio")["by_destination"] == {"description": 1}
 
 
@@ -778,6 +786,119 @@ def test_controls_give_precision_and_the_wilson_lower_limit(tmp_path: Path) -> N
     assert row["score"] == round(1 * _wilson_reference(3, 4), 1)
 
 
+def _competing(
+    fixture: Fixture, destination: str, cited: Sequence[tuple[str, str]]
+) -> None:
+    """A competing result whose alternatives are (alternative_id, claim) pairs,
+    stored in the given order."""
+    fixture.results.append(
+        {
+            "destination": destination,
+            "outcome": "unresolved_choice",
+            "reasons": ["competing_evidence"],
+            "alternatives": [
+                {
+                    "alternative_id": alternative,
+                    "value": fixture.text(),
+                    "evidence_references": [claim],
+                }
+                for alternative, claim in cited
+            ],
+            "selected_alternative_id": None,
+        }
+    )
+
+
+def test_the_pick_is_the_lowest_identifier_and_is_judged_per_field(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, right_claim = fixture.record(provider, work)
+    _same, same_claim = fixture.record(provider, work)
+    _wrong, wrong_claim = fixture.record(provider, text())
+    fixture.bind(provider, accepted, work, "accepted")
+    # Stored out of identifier order: the pick is still the lowest identifier,
+    # here the wrong-work alternative, so the controls decide against it.
+    _competing(
+        fixture,
+        "title",
+        [("alternative_b" + text(), right_claim), ("alternative_a", wrong_claim)],
+    )
+    # The lowest identifier is the one right-work alternative: the pick agrees.
+    _competing(
+        fixture,
+        "series",
+        [("alternative_a", right_claim), ("alternative_b", wrong_claim)],
+    )
+    # Two right-work alternatives: the controls cannot choose between them.
+    _competing(
+        fixture,
+        "description",
+        [("alternative_a", right_claim), ("alternative_b", same_claim)],
+    )
+    database = _database(tmp_path / "k.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    row = _rows(stdout)["T1"]
+    entry = _snapshot(row, "snap-a")
+    # Identity precision counts the picked records: wrong, right, right.
+    assert (entry["true_positive"], entry["false_positive"]) == (2, 1)
+    assert (entry["decidable_fields"], entry["pick_agrees"], entry["tied_fields"]) == (
+        2,
+        1,
+        1,
+    )
+    pick = cast("dict[str, object]", row["pick"])
+    assert pick["rate"] == 0.5
+    assert pick["wilson_lower_bound"] == round(_wilson_reference(1, 2), 4)
+
+
+def test_t1_leaves_competing_covers_to_cover_election(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    _competing(fixture, "cover", [("alternative_a", text()), ("alternative_b", text())])
+    _competing(fixture, "title", [("alternative_a", text()), ("alternative_b", text())])
+    database = _database(tmp_path / "t.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    assert _snapshot(_rows(stdout)["T1"], "snap-a")["by_destination"] == {"title": 1}
+
+
+def test_fields_a_later_election_decides_are_marked_stale(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    _competing(fixture, "title", [("alternative_a", text()), ("alternative_b", text())])
+    _competing(
+        fixture, "series", [("alternative_a", text()), ("alternative_b", text())]
+    )
+    database = _database(tmp_path / "e.sqlite3", "v26-like", [fixture])
+    title_elections = {
+        commit
+        for label, commit, destinations in ledger.LATER_ELECTIONS
+        if "title" in destinations
+    }
+
+    def ancestry(commit: str, _revision: str) -> bool:
+        return commit not in title_elections
+
+    arguments = _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path)
+    code, stdout, _ = _run(arguments, ancestry=ancestry)
+    assert code == 0
+    loaded = json.loads(stdout)
+    assert loaded["snapshots"][0]["later_elections"] == ["#974", "#981", "#1040"]
+    entry = _snapshot(_rows(stdout)["T1"], "snap-a")
+    assert (entry["fields"], entry["election_fields"]) == (2, 1)
+    markdown = _run([*arguments, "--format", "markdown"], ancestry=ancestry)[1]
+    assert "2 / 1 (2 actionable; 1 stale: later election)" in markdown
+    assert "- snap-a: source predates #974, #981, #1040." in markdown
+    # Every election is in the source by default: nothing is marked.
+    default = _snapshot(_rows(_run(arguments)[1])["T1"], "snap-a")
+    assert default["election_fields"] == 0
+
+
 def test_wilson_lower_bound_matches_the_closed_form() -> None:
     for successes, total in ((3, 4), (19, 19), (808, 851), (0, 5)):
         bound = ledger.wilson_lower_bound(successes, total)
@@ -788,6 +909,53 @@ def test_wilson_lower_bound_matches_the_closed_form() -> None:
     assert ledger.wilson_lower_bound(0, 0) is None
     # Two-sided 95%: z is the 97.5th percentile, not the one-sided 95th.
     assert math.isclose(ledger.WILSON_Z, NormalDist().inv_cdf(0.975), abs_tol=1e-6)
+
+
+def test_the_unresolved_work_sentinel_names_no_shared_work(tmp_path: Path) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    accepted, accepted_claim = fixture.record(provider, "unresolved")
+    _sibling, sibling_claim = fixture.record(provider, "unresolved")
+    _named, named_claim = fixture.record(provider, text())
+    # An explicit binding still labels its own record.
+    fixture.bind(provider, accepted, "unresolved", "accepted")
+    fixture.result(
+        "title",
+        "unresolved_choice",
+        ["competing_evidence"],
+        [accepted_claim, sibling_claim, named_claim],
+    )
+    database = _database(tmp_path / "u.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    entry = _snapshot(_rows(stdout)["T1"], "snap-a")
+    # The other sentinel record is not the accepted work, and a named work is
+    # not a different one: both stay unlabelled.
+    assert (entry["true_positive"], entry["false_positive"], entry["unlabelled"]) == (
+        1,
+        0,
+        2,
+    )
+
+
+def test_a_cover_alternative_reaches_records_through_its_cover_sources(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, _ = fixture.record(provider, work)
+    fixture.bind(provider, accepted, work, "accepted")
+    source = fixture.cover_candidate("unknown", provider, work, accepted)
+    # The proposal's cover alternative cites report cover source ids.
+    fixture.result("cover", "unresolved_choice", ["cover_gallery_incomplete"], [source])
+    database = _database(tmp_path / "a.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    gallery = _snapshot(_rows(stdout)["A5"], "snap-a")
+    assert (gallery["true_positive"], gallery["unreached_fields"]) == (1, 0)
 
 
 def test_cover_candidates_reach_the_records_their_covers_show(tmp_path: Path) -> None:
@@ -1243,7 +1411,8 @@ def test_markdown_renders_rows_in_rank_order(tmp_path: Path) -> None:
     lines = markdown.splitlines()
     header = next(line for line in lines if line.startswith("| Rank |"))
     assert "| ebook fields / works | audio fields / works |" in header
-    assert "Precision (Wilson 95% lower)" in header
+    assert "| Identity precision (Wilson 95% lower) |" in header
+    assert "| Pick agrees where controls decide (Wilson 95% lower) |" in header
     table = [
         line
         for line in lines
