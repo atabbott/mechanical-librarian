@@ -694,6 +694,17 @@ describe('owner settings route', () => {
       'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
       true,
     ],
+    // An answer the decoder refuses may follow a committed write (#1690).
+    [
+      new UncertainMutationError({
+        operation: 'PUT /api/v1/reviewer-access/openrouter',
+        responseStatus: 200,
+        at: '/codex',
+        reason: 'required',
+      }),
+      'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+      true,
+    ],
     [
       new ApiError(503, 'unreachable'),
       'OpenRouter could not be reached. Check network access, then retry.',
@@ -957,10 +968,10 @@ describe('owner settings route', () => {
       ...reviewerView,
       codex: { ...reviewerView.codex, state: 'waiting' as const },
     }))
-    http.getCodexDevice = vi.fn(async () => ({
-      state: 'issued' as const,
+    http.getCodexDevice = vi.fn(async (): Promise<CodexDeviceAuthState> => ({
+      state: 'issued',
       failure: null,
-      verification_url: 'https://example.invalid/device',
+      verification_url: 'https://auth.openai.com/codex/device',
       user_code: 'ABCD-EFGH',
       expires_in_seconds: 900,
     }))
@@ -999,7 +1010,7 @@ describe('owner settings route', () => {
   ): CodexDeviceAuthState => ({
     state,
     failure,
-    verification_url: state === 'waiting' ? 'https://example.invalid/device' : null,
+    verification_url: state === 'waiting' ? 'https://auth.openai.com/codex/device' : null,
     user_code: state === 'waiting' ? 'ABCD-1234' : null,
     expires_in_seconds: state === 'waiting' ? 900 : null,
   })
@@ -2452,47 +2463,70 @@ it('offers a reload, not another try, when reviewer access meets a newer build',
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
 
-it('replaces an unconfirmed description adviser change with a later inspection failure', async () => {
-  const http = createHttp()
-  http.getSettings = vi.fn(async () => view())
-  http.getReviewerAccess = vi.fn(async () => ({
-    ...reviewerView,
-    codex: { ...reviewerView.codex, state: 'usable' as const },
-  }))
-  http.describeContainedDescription = vi
-    .fn()
-    .mockResolvedValueOnce({ model: 'contained-model', profile_sha256: 'a'.repeat(64) })
-    .mockRejectedValue(new ApiError(503, 'unreachable'))
-  http.selectReviewer = vi.fn(async () => {
-    throw new ApiError(503, 'reviewer_access_unavailable')
-  })
-  renderRoute('/settings?group=reviewer', http)
-  const user = userEvent.setup()
-  const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
-  const inspect = screen.getByRole('button', { name: 'Inspect contained description model' })
-  await user.click(inspect)
-  await waitFor(() => expect(use).toBeEnabled())
-  await user.click(use)
-  const description = screen.getByRole('region', { name: 'Optional description adviser' })
-  const unconfirmed = await within(description).findByRole('alert')
-  expect(unconfirmed).toHaveTextContent('The description adviser change could not be confirmed.')
-  expect(unconfirmed.previousElementSibling).toBe(use)
+// The disclosure writes nothing: an answer it cannot read keeps the setup
+// copy, though the client reports it as uncertain (#1690).
+it.each([
+  new ApiError(503, 'unreachable'),
+  new UncertainMutationError({
+    operation: 'POST /api/v1/reviewer-access/description-model/contained',
+    responseStatus: 200,
+    at: '/profile_sha256',
+    reason: 'pattern',
+  }),
+])(
+  'replaces an unconfirmed description adviser change with a later inspection failure (%s)',
+  async (inspectionFailure) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: { ...reviewerView.codex, state: 'usable' as const },
+    }))
+    http.describeContainedDescription = vi
+      .fn()
+      .mockResolvedValueOnce({ model: 'contained-model', profile_sha256: 'a'.repeat(64) })
+      .mockRejectedValue(inspectionFailure)
+    http.selectReviewer = vi.fn(async () => {
+      throw new ApiError(503, 'reviewer_access_unavailable')
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+    const inspect = screen.getByRole('button', { name: 'Inspect contained description model' })
+    await user.click(inspect)
+    await waitFor(() => expect(use).toBeEnabled())
+    await user.click(use)
+    const description = screen.getByRole('region', { name: 'Optional description adviser' })
+    const unconfirmed = await within(description).findByRole('alert')
+    expect(unconfirmed).toHaveTextContent('The description adviser change could not be confirmed.')
+    expect(unconfirmed.previousElementSibling).toBe(use)
 
-  // Pending is aria-disabled now, so the native state no longer shows settling (#1663).
-  await waitFor(() => expect(inspect).not.toHaveAttribute('aria-disabled'))
-  await user.click(inspect)
-  await waitFor(() =>
-    expect(within(description).getByRole('alert')).toHaveTextContent(
-      'Description adviser setup could not complete.',
-    ),
-  )
-  expect(within(description).getAllByRole('alert')).toHaveLength(1)
-  expect(within(description).getByRole('alert')).not.toHaveTextContent('could not be confirmed')
-  expect(within(description).getByRole('alert').previousElementSibling).toBe(inspect)
-  expect(http.describeContainedDescription).toHaveBeenCalledTimes(2)
-})
+    // Pending is aria-disabled now, so the native state no longer shows settling (#1663).
+    await waitFor(() => expect(inspect).not.toHaveAttribute('aria-disabled'))
+    await user.click(inspect)
+    await waitFor(() =>
+      expect(within(description).getByRole('alert')).toHaveTextContent(
+        'Description adviser setup could not complete.',
+      ),
+    )
+    expect(within(description).getAllByRole('alert')).toHaveLength(1)
+    expect(within(description).getByRole('alert')).not.toHaveTextContent('could not be confirmed')
+    expect(within(description).getByRole('alert').previousElementSibling).toBe(inspect)
+    expect(http.describeContainedDescription).toHaveBeenCalledTimes(2)
+  },
+)
 
-it('keeps the setup copy when a description model test is unreachable', async () => {
+// The model test writes nothing either: an unreadable answer keeps the setup
+// copy and reloads nothing (#1690).
+it.each([
+  new ApiError(503, 'unreachable'),
+  new UncertainMutationError({
+    operation: 'POST /api/v1/reviewer-access/description-model/test',
+    responseStatus: 200,
+    at: 'invalid_description_metadata',
+    reason: 'invariant',
+  }),
+])('keeps the setup copy when a description model test fails (%s)', async (testFailure) => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => view())
   http.getReviewerAccess = vi.fn(async () => ({
@@ -2501,7 +2535,7 @@ it('keeps the setup copy when a description model test is unreachable', async ()
     openrouter_key_configured: true,
   }))
   http.testDescriptionModel = vi.fn(async () => {
-    throw new ApiError(503, 'unreachable')
+    throw testFailure
   })
   renderRoute('/settings?group=reviewer', http)
   const user = userEvent.setup()
@@ -3151,6 +3185,18 @@ it.each([
     'an unconfirmed failure',
     async () => {
       throw new ApiError(503, 'reviewer_access_unavailable')
+    },
+    'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+  ],
+  [
+    'an answer the browser cannot read',
+    async () => {
+      throw new UncertainMutationError({
+        operation: 'PUT /api/v1/reviewer-access/selection',
+        responseStatus: 200,
+        at: '/revision',
+        reason: 'required',
+      })
     },
     'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
   ],
