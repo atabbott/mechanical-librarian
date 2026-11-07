@@ -2953,10 +2953,16 @@ def test_an_automatic_no_change_reopens_after_leaving_automatic(
     open_repository(tmp_path / "reports.sqlite").close()
 
 
+@pytest.mark.parametrize("descriptions_only", [False, True])
 def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
-    tmp_path: Path,
+    tmp_path: Path, descriptions_only: bool
 ) -> None:
-    """An earlier generation's automatic description never waits again (#1573)."""
+    """An earlier generation's automatic description never waits again (#1573).
+
+    A store whose only automatic record is the description reconciles on
+    leaving Automatic too, so it ends with a current-generation automatic
+    description that resolves (#1574).
+    """
     import hashlib
     from types import SimpleNamespace
     from typing import Any
@@ -2984,7 +2990,15 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     def probe(repository, report, deterministic, access, calls):
         captured["access"] = access
 
-    repository, store, binding, _, _ = _prepared(tmp_path, pipeline_probe=probe)
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        pipeline_probe=probe,
+        automatic_policy=(
+            ("cover_order", "fixed_source_order") if descriptions_only else None
+        ),
+    )
+    # The field decisions a descriptions-only store never has.
+    fields = set() if descriptions_only else {2}
     report, *_ = _automatic_no_change_inputs("description_preserved")
     target = report.target
     connection = repository._connection
@@ -3135,11 +3149,19 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     drain()
     ((earlier, earlier_generation, earlier_current),) = automatic_descriptions()
     assert (earlier_generation, earlier_current) == (2, True)
-    assert field_generations() == {2}
+    assert field_generations() == fields
+    assert connection.execute(
+        "SELECT count(*) FROM current_cover_selection_authorities"
+    ).fetchone() == (0,)
     assert [item.decision_id for item in pending_descriptions()] == [earlier]
 
     now[0] = 20
     assert repository.enter_shadow_preview(20, (target.library,)) == "preview"
+    # Leaving reactivates the unchanged policy whatever the store's automatic
+    # records are (#1574).
+    assert connection.execute(
+        "SELECT generation,posture FROM metadata_policy_state"
+    ).fetchone() == (3, "preview")
     now[0] = 30
     drain()
     assert pending_descriptions() == [] and automatic_counted() == 0
@@ -3157,7 +3179,7 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     assert descriptions[0] == (earlier, 2, False)
     ((current, current_generation, is_current),) = descriptions[1:]
     assert (current_generation, is_current) == (3, True)
-    assert field_generations() == {2, 3}
+    assert field_generations() == ({2, 3} if fields else set())
     (decision,) = pending_descriptions()
     assert decision.decision_id == current
     assert PersistedFieldEffectAuthority(repository).resolve(decision).decision_value
