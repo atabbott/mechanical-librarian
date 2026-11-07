@@ -127,7 +127,7 @@ const components: readonly (readonly [Builder, D<unknown>])[] = [
   ['coverAutomaticDecision', d__CoverAutomaticDecisionProjection],
   ['historyDecisionItem', d__HistoryDecisionItem],
   ['historyCoverItem', d__HistoryCoverItem],
-  ['historyShadowItem', d__HistoryPreviewItem],
+  ['historyPreviewItem', d__HistoryPreviewItem],
   ['preparationPresentation', d__PreparationPresentation],
   ['libraryWork', d__LibraryWork],
   ['activityEvent', d__ActivityEvent],

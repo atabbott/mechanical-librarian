@@ -5,7 +5,9 @@
 - Owners: project maintainers
 - Issues: #1577 (stage 1), #1571 (client half of uncertain outcomes), #1669
   (stage 2b, the schema states every single-field check), #1684 (stage 3, the
-  decoders replace the hand-written checks)
+  decoders replace the hand-written checks), #1728 (stage 4, every JSON answer
+  is decoded and the decode gate is retired), #1738 (stage 5, the policy
+  preview-mode API and browser names say "preview" instead of "shadow")
 - Amends: ADR-0043 (HTTP module and drift), ADR-0044 (build identity delivery)
 - Supersedes: none
 - Superseded by: none

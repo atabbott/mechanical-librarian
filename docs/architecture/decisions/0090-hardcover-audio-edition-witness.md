@@ -211,3 +211,9 @@ Rejected: it would measure Audible against itself.
   and its single authority, the books it keeps, the editions it links, the
   witness challenging a match from them, and each refusal of a linked product:
   outside the band, another cast and another language (#1468).
+  It also covers replay requiring that lane on every Hardcover observation
+  where the plan had room for it, and only there (#1724).
+- `tests/unit/test_hardcover_companion_isbn.py` and
+  `tests/unit/test_provider_retry_successor.py` cover a retry refitting the
+  companion books against what its merge keeps, each failing without the
+  refit (#1468, #1724).

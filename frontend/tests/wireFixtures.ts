@@ -273,7 +273,7 @@ export const historyCoverItem = (overrides: Overrides = {}) => ({
 })
 
 // `_HistoryPreviewItem`.
-export const historyShadowItem = (overrides: Overrides = {}) => ({
+export const historyPreviewItem = (overrides: Overrides = {}) => ({
   authority: 'none',
   dispositions: {},
   kind: 'preview_recorded',
