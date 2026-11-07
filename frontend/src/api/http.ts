@@ -413,7 +413,7 @@ export const SCAN_STATES = [
   'completed_with_failures',
 ] as const
 export type ScanState = (typeof SCAN_STATES)[number]
-export const SHADOW_DISPOSITIONS = [
+export const PREVIEW_DISPOSITIONS = [
   'abstention',
   'candidate',
   'conflict',
@@ -422,7 +422,7 @@ export const SHADOW_DISPOSITIONS = [
   'manual',
   'unsupported',
 ] as const
-export type ShadowDisposition = (typeof SHADOW_DISPOSITIONS)[number]
+export type PreviewDisposition = (typeof PREVIEW_DISPOSITIONS)[number]
 export const TRANSITION_OUTCOMES = [
   'admitted',
   'superseded',
@@ -811,7 +811,7 @@ export type HistoryItemView = (
     }
   | {
       category: 'preview'
-      dispositions: readonly { count: number; outcome: ShadowDisposition }[]
+      dispositions: readonly { count: number; outcome: PreviewDisposition }[]
     }
   | {
       category: 'cover'
@@ -852,9 +852,9 @@ export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
 // The policy family is decoded centrally (#1692): its views are the
 // response-truth types. Request bodies stay on the request schema.
 export type PolicyStateView = ResponseSchema<'_PolicyProfileResponse'>
-export type ShadowPostureView = ResponseSchema<'_PreviewPostureResponse'>
+export type PreviewPostureView = ResponseSchema<'_PreviewPostureResponse'>
 export type AutomaticSafetyView = ResponseSchema<'_AutomaticSafetyResponse'>
-export type ShadowSampleView = ResponseSchema<'_PreviewSampleResponse'>
+export type PreviewSampleView = ResponseSchema<'_PreviewSampleResponse'>
 export type PolicyTransitionView = ResponseSchema<'_PolicyTransitionResponse'>
 // The answer `read` and `mutate` return is the one the operation their path
 // names decodes to (#1730). `OperationOf` resolves a path in types the way
@@ -1211,9 +1211,9 @@ export interface ReviewHttp {
   retryDescriptionAdvice(reviewCaseId: string, signal?: AbortSignal): Promise<void>
   returnToAutomatic(reviewCaseId: string, destination: string, signal?: AbortSignal): Promise<void>
   getPolicyState(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<PolicyStateView>
-  getShadowPosture(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ShadowPostureView>
+  getPreviewPosture(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<PreviewPostureView>
   getAutomaticSafety(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<AutomaticSafetyView>
-  getShadowSample(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ShadowSampleView>
+  getPreviewSample(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<PreviewSampleView>
   getPolicyTransition(
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
@@ -1800,13 +1800,13 @@ export class ReviewApiClient implements ReviewHttp {
   async getPolicyState(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return await this.read('/api/v1/metadata-policy/state', signal, workClass)
   }
-  async getShadowPosture(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+  async getPreviewPosture(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return await this.read('/api/v1/metadata-policy/preview-mode', signal, workClass)
   }
   async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return await this.read('/api/v1/metadata-policy/automatic-safety', signal, workClass)
   }
-  async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+  async getPreviewSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return await this.read(
       '/api/v1/metadata-policy/preview-mode/outcomes?limit=10',
       signal,
@@ -2759,7 +2759,7 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       // The decoder holds each key to the disposition names (propertyNames).
       dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
         count,
-        outcome: outcome as ShadowDisposition,
+        outcome: outcome as PreviewDisposition,
       })),
     }
   const { consideration, decision } = item
