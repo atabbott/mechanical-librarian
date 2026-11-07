@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import math
+import shutil
 import sqlite3
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -698,6 +699,9 @@ def test_controls_give_precision_and_the_wilson_lower_limit(tmp_path: Path) -> N
     _third, third_claim = fixture.record(bound, work)
     _other, other_claim = fixture.record(bound, text())
     _unknown, unknown_claim = fixture.record(unbound, text())
+    # No work identity at a provider with an accepted work: unlabelled, not
+    # negative, because nothing says it is a different work.
+    _workless, workless_claim = fixture.record(bound, "")
     fixture.bind(bound, accepted, work, "accepted")
     fixture.result(
         "title",
@@ -709,6 +713,7 @@ def test_controls_give_precision_and_the_wilson_lower_limit(tmp_path: Path) -> N
             third_claim,
             other_claim,
             unknown_claim,
+            workless_claim,
             "local_" + text(),
         ],
     )
@@ -720,7 +725,7 @@ def test_controls_give_precision_and_the_wilson_lower_limit(tmp_path: Path) -> N
     assert (entry["true_positive"], entry["false_positive"], entry["unlabelled"]) == (
         3,
         1,
-        1,
+        2,
     )
     pooled = cast("dict[str, object]", row["pooled"])
     assert pooled["n"] == 4 and pooled["precision"] == 0.75
@@ -1201,3 +1206,82 @@ def test_mirrored_bounds_match_the_product() -> None:
     assert (
         ledger.MAX_ISBN_DISCOVERY_LANES == application_report.MAX_ISBN_DISCOVERY_LANES
     )
+
+
+# --- Review fixes ----------------------------------------------------------
+
+
+def test_a_blocked_field_without_an_alternative_is_not_actionable(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, accepted_claim = fixture.record(provider, work)
+    fixture.bind(provider, accepted, work, "accepted")
+    fixture.result(
+        "title", "unresolved_choice", ["competing_evidence"], [accepted_claim]
+    )
+    # Blocked by the same gate, but its result kept nothing to admit.
+    fixture.result("authors", "unresolved_choice", ["competing_evidence"])
+    database = _database(tmp_path / "act.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    row = _rows(stdout)["T1"]
+    entry = _snapshot(row, "snap-a")
+    assert (entry["fields"], entry["actionable_fields"], entry["unreached_fields"]) == (
+        2,
+        1,
+        1,
+    )
+    assert (row["ceiling"], row["actionable"]) == (2, 1)
+    # The ceiling stays the gate's measured cost; the score counts only the
+    # field loosening could unblock.
+    assert row["score"] == round(1 * _wilson_reference(1, 1), 1)
+    # A row whose refused records were never retained has no actionable count.
+    assert _rows(stdout)["X1"]["actionable"] is None
+    code, markdown, _ = _run(
+        _arguments(
+            [("snap-a", database, EBOOK_REVISION)], tmp_path, "--format", "markdown"
+        )
+    )
+    t1 = next(line for line in markdown.splitlines() if line.startswith("| 1 | T1 |"))
+    assert "| 2 / 1 (1 actionable) |" in t1
+
+
+def test_the_attention_child_writes_no_bytecode_into_the_source_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "source"
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+    shutil.copytree(REPOSITORY / "src", root / "src", ignore=ignore)
+    shutil.copytree(REPOSITORY / "scripts", root / "scripts", ignore=ignore)
+    database = tmp_path / "application.sqlite3"
+    open_repository(database).close()
+    probe = ledger.child_attention(root, database)
+    assert probe.report_rows == 0
+    assert not list(root.rglob("__pycache__")) and not list(root.rglob("*.pyc"))
+
+
+def test_bad_arguments_refuse_without_echoing_them(tmp_path: Path) -> None:
+    for arguments in (
+        ["--format", f"{_SENTINEL}0001"],
+        ["--snapshot", "a", "b", EBOOK_REVISION, f"--{_SENTINEL}0001", str(tmp_path)],
+    ):
+        code, stdout, stderr = _run(arguments)
+        assert (code, stdout) == (2, "")
+        assert stderr == "admission-rule-ledger: invalid arguments\n"
+
+
+def test_an_unexpected_failure_is_a_fixed_line(tmp_path: Path) -> None:
+    database = _database(tmp_path / "boom.sqlite3", "v26-like", [])
+
+    def broken(_root: Path, _database: Path) -> ledger.AttentionProbe:
+        raise TypeError(f"{_SENTINEL}0002 {tmp_path}")
+
+    code, stdout, stderr = _run(
+        _arguments([("snap-a", database, EBOOK_REVISION)], tmp_path), attention=broken
+    )
+    assert (code, stdout) == (2, "")
+    assert stderr == "admission-rule-ledger: replay failed\n"

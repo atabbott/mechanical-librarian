@@ -15,7 +15,8 @@ blocked (per gate and non-exclusive, so each count is a ceiling), and the
 identity precision of loosening the gate, from natural controls: provider
 records the report itself bound to the work (positives) or to another work
 (negatives). Each precision carries the lower limit of a two-sided 95% Wilson
-interval. Rows rank by fields unblocked times that lower limit.
+interval. Rows rank by actionable fields (blocked fields with something the
+loosened rule could admit) times that lower limit.
 
 Attention per case (#1310) is read under each snapshot's own source: a child
 ``python -I`` process imports only that revision's tree and composes the
@@ -51,7 +52,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, TextIO, cast
+from typing import Literal, NoReturn, TextIO, cast
 from urllib.parse import quote
 
 from mechanical_librarian.domain import shadow_decision, shadow_outcome
@@ -347,7 +348,7 @@ def _index_records(case: Case) -> None:
             label = "negative"
         elif identity in positive or (work and work in works):
             label = "positive"
-        elif works:
+        elif works and work:
             label = "negative"
         else:
             label = "unlabelled"
@@ -1272,6 +1273,20 @@ class Tally:
     unlabelled: int = 0
     # blocked fields whose loosened rule reaches no provider record at all
     unreached: int = 0
+    # blocked fields the loosened rule has something to admit for
+    actionable: int = 0
+
+
+def _actionable(gate: Gate, case: Case, destination: str) -> bool:
+    """Whether loosening the gate could unblock the field at all.
+
+    A decision-level rule admits the first-ranked alternative, so a field whose
+    result kept no alternative stays blocked however the rule is loosened. A
+    cover field is blocked here only because a matching candidate exists.
+    """
+    if gate.control == "alternative":
+        return bool(_dicts(case.results.get(destination, {}).get("alternatives")))
+    return gate.control == "cover_candidates"
 
 
 def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
@@ -1309,6 +1324,8 @@ def _tally_case(gate: Gate, case: Case, tally: Tally) -> None:
         tally.fields += 1
         tally.by_destination[destination] += 1
         tally.by_medium[case.medium] += 1
+        if _actionable(gate, case, destination):
+            tally.actionable += 1
         reached = _reached(gate, case, destination)
         if not reached and gate.control in ("alternative", "cover_candidates"):
             tally.unreached += 1
@@ -1527,6 +1544,7 @@ def child_attention(source_root: Path, database: Path) -> AttentionProbe:
             [
                 sys.executable,
                 "-I",
+                "-B",
                 "-c",
                 _ATTENTION_CHILD,
                 str(source_root),
@@ -1654,15 +1672,18 @@ def _row(
 ) -> dict[str, object]:
     per_snapshot: list[dict[str, object]] = []
     pooled_tp = pooled_fp = pooled_unlabelled = 0
-    fields_unblocked = 0
+    fields_blocked = 0
+    fields_actionable = 0
     measurable_anywhere = False
+    estimable_control = gate.control in ("alternative", "cover_candidates")
     for label, statuses, tallies in snapshots:
         status = statuses[gate.gate_id]
         entry: dict[str, object] = {"label": label, "status": status}
         if status == "measurable":
             measurable_anywhere = True
             tally = tallies[gate.gate_id]
-            fields_unblocked += tally.fields
+            fields_blocked += tally.fields
+            fields_actionable += tally.actionable
             pooled_tp += tally.true_positive
             pooled_fp += tally.false_positive
             pooled_unlabelled += tally.unlabelled
@@ -1676,15 +1697,17 @@ def _row(
                     "false_positive": tally.false_positive,
                     "unlabelled": tally.unlabelled,
                     "unreached_fields": tally.unreached,
+                    "actionable_fields": tally.actionable
+                    if estimable_control
+                    else None,
                 }
             )
         per_snapshot.append(entry)
-    estimable_control = gate.control in ("alternative", "cover_candidates")
     total = pooled_tp + pooled_fp
     precision = pooled_tp / total if estimable_control and total else None
     lower = wilson_lower_bound(pooled_tp, total) if estimable_control else None
     score = (
-        round(fields_unblocked * lower, 1)
+        round(fields_actionable * lower, 1)
         if gate.ranked and measurable_anywhere and lower is not None
         else 0.0
     )
@@ -1712,7 +1735,8 @@ def _row(
             "precision": None if precision is None else round(precision, 4),
             "wilson_lower_bound": None if lower is None else round(lower, 4),
         },
-        "ceiling": fields_unblocked,
+        "ceiling": fields_blocked,
+        "actionable": fields_actionable if estimable_control else None,
         "score": score,
         "ranked": gate.ranked,
         "disposition": disposition,
@@ -1768,6 +1792,8 @@ _STRUCTURAL_KEYS = frozenset(
         "false_positive",
         "unlabelled",
         "unreached_fields",
+        "actionable_fields",
+        "actionable",
         "gate_id",
         "family",
         "gate",
@@ -1913,7 +1939,10 @@ def _cell(entry: Mapping[str, object]) -> str:
     status = cast("str", entry["status"])
     if status != "measurable":
         return _STATUS_TEXT[status]
-    return f"{_number(entry['fields'])} / {_number(entry['works'])}"
+    cell = f"{_number(entry['fields'])} / {_number(entry['works'])}"
+    if entry.get("actionable_fields") is None:
+        return cell
+    return f"{cell} ({_number(entry['actionable_fields'])} actionable)"
 
 
 def _controls(row: Mapping[str, object]) -> str:
@@ -2016,8 +2045,16 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
 # Command line.
 
 
+class _Parser(argparse.ArgumentParser):
+    """Refuses bad arguments with a fixed line; never echoes what was passed."""
+
+    def error(self, message: str) -> NoReturn:
+        del message
+        raise Refusal("invalid arguments")
+
+
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _Parser(description=__doc__)
     parser.add_argument(
         "--snapshot",
         action="append",
@@ -2104,8 +2141,8 @@ def main(
 ) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
-    arguments = _parse(argv)
     try:
+        arguments = _parse(argv)
         inputs = _inputs(arguments)
         follow_ons = _follow_ons(cast("list[str]", arguments.follow_on))
         for item in inputs:
@@ -2119,13 +2156,17 @@ def main(
             attention=child_attention if attention is None else attention,
             follow_ons=follow_ons,
         )
+        if arguments.format == "markdown":
+            rendered = render_markdown(ledger)
+        else:
+            rendered = json.dumps(ledger, indent=2, sort_keys=True) + "\n"
     except Refusal as refusal:
         errors.write(f"admission-rule-ledger: {refusal.message}\n")
         return refusal.code
-    if arguments.format == "markdown":
-        output.write(render_markdown(ledger))
-    else:
-        output.write(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+    except Exception:  # A surprising document shape: no traceback, no value.
+        errors.write("admission-rule-ledger: replay failed\n")
+        return 2
+    output.write(rendered)
     return 0
 
 
