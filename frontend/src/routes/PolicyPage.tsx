@@ -257,7 +257,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'error',
           message:
-            "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
+            "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
         })
       else if (phase === 'drafts')
         setStatus({
@@ -453,13 +453,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     const available = entries.filter((entry) => entry.automatic_available)
     // Each value is a sentence with no label of its own, so it reads
     // plainly after "Ebooks:" and "Automatic." (#1760).
-    if (!available.length) return 'No automatic effect. You review each change.'
+    if (!available.length) return 'No automatic effect. Needs you.'
     if (media === 'ebook' && field.key === 'cover_order')
       return option === 'replace_if_strictly_better'
         ? 'Fill empty only. Confirmed covers are kept.'
         : 'Fill empty, or replace only with a confirmed better cover.'
     if (media === 'audiobook' && field.key === 'cover_order')
-      return 'Replace a small cover only with a confirmed, much larger one.'
+      return 'Replace a small current cover only with a clearly larger confirmed one.'
     if (field.key === 'language_rendering') return `${operationScopeLabels.fill_or_respell}.`
     const grouped = new Map<TargetDestination, string[]>()
     for (const entry of available) {
@@ -501,7 +501,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       destination === 'ignore'
         ? 'Ignored. This field is left alone.'
         : destination === 'ask'
-          ? 'Ask me. You choose each value.'
+          ? 'Ask me. Your choice.'
           : 'Unavailable. This field is left alone.'
     return `${selected} If set to Automatic: ${eligibility}`
   }

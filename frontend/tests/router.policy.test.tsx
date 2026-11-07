@@ -403,7 +403,7 @@ describe('Policy route', () => {
       const { policyCommand, previewPolicy } = await run('preview')
       expect(
         await screen.findByText(
-          "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
+          "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
         ),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
@@ -417,7 +417,7 @@ describe('Policy route', () => {
       ['validate', "The draft couldn't be validated. Nothing was saved. Try again."],
       [
         'preview',
-        "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
+        "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
       ],
     ] as const)("that is not JSON, to %s, shows that phase's copy", async (failing, copy) => {
       await run(failing, 'text')
@@ -436,7 +436,7 @@ describe('Policy route', () => {
       ],
       [
         'preview',
-        "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
+        "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
         ['validate', 'drafts'],
         1,
       ],
@@ -503,7 +503,7 @@ describe('Policy route', () => {
 
     expect(
       await screen.findByText(
-        "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
+        "The preview didn't load. Nothing was changed. Choose Validate and preview to try again.",
       ),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
@@ -567,10 +567,10 @@ describe('Policy route', () => {
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. You choose each value. If set to Automatic: No automatic effect. You review each change.',
+      'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me. You choose each value. If set to Automatic: Fill an empty ASIN.',
+      'Audiobooks: Ask me. Your choice. If set to Automatic: Fill an empty ASIN.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field\. Automatic available\./u)).toBeVisible()
@@ -585,7 +585,7 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. You choose each value. If set to Automatic: No automatic effect. You review each change.',
+      'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
     )
   })
 
@@ -2610,7 +2610,7 @@ it.each([
 
 it.each([
   ['ignore', 'Ignored. This field is left alone.'],
-  ['ask', 'Ask me. You choose each value.'],
+  ['ask', 'Ask me. Your choice.'],
   ['automatic', 'Automatic.'],
 ])(
   'states selected %s behavior before eligibility in cards and activation',

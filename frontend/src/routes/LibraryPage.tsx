@@ -2825,11 +2825,11 @@ export default function LibraryPage({
                               Fresh checks could not be requested. Manual handling is unchanged.
                             </p>
                           ) : automaticShown === 'uncertain' ? (
-                            // A warning, not an error: requesting again is safe (#1755).
+                            // A warning, not an error: requesting again does no harm (#1755).
                             <p className="automatic-handling-result is-uncertain" role="status">
                               {automaticReload === 'not-requested'
-                                ? "The request wasn't confirmed, and this work doesn't show fresh checks as requested. Requesting again is safe."
-                                : "The request wasn't confirmed. Reloading this work to check…"}
+                                ? "No answer came back. This work doesn't show fresh checks as requested. Request them again."
+                                : 'No answer came back. Reloading this work to check…'}
                             </p>
                           ) : automaticShown === 'refreshed' ? (
                             <p className="automatic-handling-result is-refreshed" role="alert">

@@ -1005,9 +1005,9 @@ describe('Library review ownership', () => {
 
   // #1755: an unconfirmed request is a warning that resolves from the case
   // reread after it, and focus stays on the safe button throughout.
-  const U1 = "The request wasn't confirmed. Reloading this work to check…"
+  const U1 = 'No answer came back. Reloading this work to check…'
   const U2 =
-    "The request wasn't confirmed, and this work doesn't show fresh checks as requested. Requesting again is safe."
+    "No answer came back. This work doesn't show fresh checks as requested. Request them again."
   const S0 = 'Fresh checks requested. Manual handling remains until they complete.'
   const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]
@@ -1068,7 +1068,7 @@ describe('Library review ownership', () => {
     expect(resolved).toHaveClass('is-uncertain')
     expect(screen.queryByText(U1)).toBeNull()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
-    // Requesting again is safe, so it stays offered.
+    // Requesting again does no harm, so it stays offered.
     expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeEnabled()
     await user.keyboard('{Escape}')
     expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toHaveFocus()
@@ -1089,7 +1089,7 @@ describe('Library review ownership', () => {
     const done = await screen.findByText(S0)
     expect(done).toHaveAttribute('role', 'status')
     expect(done).toHaveClass('is-success')
-    expect(screen.queryByText(/wasn't confirmed/u)).toBeNull()
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
     expect(screen.getByRole('button', { name: 'Resume after fresh checks' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
     expect(run.returnToAutomatic).toHaveBeenCalledOnce()
@@ -1143,7 +1143,7 @@ describe('Library review ownership', () => {
     run.finishReload()
     const retry = await screen.findByRole('button', { name: 'Try again' })
     expect(screen.getByRole('alert')).toHaveTextContent('Selected work could not be loaded.')
-    expect(screen.queryByText(/wasn't confirmed/u)).toBeNull()
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
     const readsBefore = run.getCaseDetail.mock.calls.length
     await user.click(retry)
     await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
