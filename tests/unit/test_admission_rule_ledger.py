@@ -973,6 +973,31 @@ def test_the_unresolved_work_sentinel_names_no_shared_work(tmp_path: Path) -> No
     )
 
 
+def test_a_cover_binds_its_edition_under_the_unresolved_work_sentinel(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    edition, _ = fixture.record(provider, "unresolved")
+    fixture.record(provider, "unresolved")
+    fixture.bind(provider, edition, "unresolved", "accepted")
+    # The classifier matches the provenance's work identity by equality, the
+    # sentinel included, so the cover binds the edition it names (#1350 R2-1).
+    fixture.cover_candidate("unknown", provider, "unresolved", edition)
+    fixture.result(
+        "cover",
+        "unresolved_choice",
+        ["cover_gallery_incomplete", "owner_cover_choice_required"],
+    )
+    database = _database(tmp_path / "s.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    classifier = _snapshot(_rows(stdout)["C1"], "snap-a")
+    assert (classifier["true_positive"], classifier["false_positive"]) == (1, 0)
+    assert (classifier["unlabelled"], classifier["unreached_fields"]) == (0, 0)
+
+
 def test_a_cover_alternative_reaches_records_through_its_cover_sources(
     tmp_path: Path,
 ) -> None:
