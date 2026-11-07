@@ -5418,6 +5418,52 @@ def test_audiobook_pair_recovery_preserves_remaining_guards(audiobook_pair, boun
     ).fetchone() == (0,)
 
 
+def test_audiobook_pair_binds_the_subtitle_of_its_own_generation(audiobook_pair):
+    """An earlier generation's pair is history; the current pair writes (#1573)."""
+    pair = audiobook_pair
+    connection = pair.repo._connection
+    for destination in ("title", "subtitle"):
+        current = pair.decisions[destination]
+        assert current.policy_generation >= 2
+        earlier = AutomaticDecision.create(
+            review_case_id=current.review_case_id,
+            report_id=current.report_id,
+            proposal_set_id=current.proposal_set_id,
+            proposal_id=current.proposal_id,
+            target_fingerprint=current.target_fingerprint,
+            destination=current.destination,
+            outcome=current.outcome,
+            candidate_id=current.candidate_id,
+            resolved_policy_id=current.resolved_policy_id,
+            policy_generation=current.policy_generation - 1,
+            rule_id=current.rule_id,
+            policy_category=current.policy_category,
+            policy_option=current.policy_option,
+            qualification_manifest_sha256=current.qualification_manifest_sha256,
+            source_outcome_id="shadow_outcome_" + "e" * 64,
+            bundle_id=current.bundle_id,
+            occurred_at=current.occurred_at,
+        )
+        connection.execute(
+            "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+            "idempotency_digest,occurred_at,document,policy_generation) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                earlier.decision_id,
+                earlier.review_case_id,
+                earlier.destination,
+                earlier.idempotency_digest,
+                earlier.occurred_at,
+                earlier.to_json(),
+                earlier.policy_generation,
+            ),
+        )
+    connection.commit()
+    operation = pair.plan()
+    assert pair.repo.field_effect_authority_is_current(operation.plan.authority)
+    assert pair.service.apply(operation.plan.plan_id).state == "verified"
+
+
 def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair):
     lane = ContinuousGuardedApplication(
         audiobook_pair.repo,

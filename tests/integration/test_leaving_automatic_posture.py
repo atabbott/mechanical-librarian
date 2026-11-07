@@ -5,6 +5,10 @@ current case for its successor. With the policy unchanged that successor is
 the same proposal set, so preparation admits the same case again, and it
 continues its episode with the owner's answers (#1568). An automatic decision recorded under Automatic stays on
 that case and plans and writes nothing outside the Automatic posture.
+It decides only in the generation it was recorded under: confirming Automatic
+requeues the prepared works, so each is decided again from what Preview
+showed (#1573), and an earlier decision keeps no field out of Attention
+(#1601).
 
 The harness drives a real SQLite repository and the real
 ``ReviewPreparationPipeline`` with stages that call the real report, proposal,
@@ -14,7 +18,9 @@ admission and projection seams.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -46,6 +52,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineRepository,
@@ -60,7 +67,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -110,11 +117,30 @@ class _Library:
             json.loads(self.root.get_review_case(self.case_id()))["case"]
         )
 
-    def automatic(self) -> AutomaticDecision:
+    def automatic(self, generation: int = 2) -> AutomaticDecision:
+        """The authors decision recorded under `generation`."""
         (document,) = self.root._connection.execute(
-            "SELECT document FROM automatic_decisions WHERE destination='authors'"
+            "SELECT document FROM automatic_decisions WHERE destination='authors' "
+            "AND policy_generation=?",
+            (generation,),
         ).fetchone()
         return AutomaticDecision.from_json(document)
+
+    def decisions(self) -> list[tuple[str, int]]:
+        """Every automatic decision, as (field, generation), in recorded order."""
+        return [
+            (str(destination), int(generation))
+            for destination, generation in self.root._connection.execute(
+                "SELECT destination,policy_generation FROM automatic_decisions "
+                "ORDER BY policy_generation,destination"
+            )
+        ]
+
+    def generation(self) -> int:
+        (generation,) = self.root._connection.execute(
+            "SELECT generation FROM metadata_policy_state"
+        ).fetchone()
+        return int(generation)
 
     def pending(self) -> list[str]:
         return [
@@ -151,9 +177,13 @@ def _resolved(
     return ResolvedMetadataPolicy.from_data(json.loads(document))
 
 
-@pytest.fixture
-def library(tmp_path: Path) -> Iterator[_Library]:
-    """One work prepared under a qualified Automatic contributor-names policy."""
+@contextmanager
+def _prepared(tmp_path: Path, *, automatic: bool) -> Iterator[_Library]:
+    """One work prepared under a qualified Automatic contributor-names policy.
+
+    With `automatic` false the owner stays in Preview, so the work is first
+    prepared there and nothing is decided automatically.
+    """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
     root = open_repository(database, cross_thread=True)
@@ -175,7 +205,8 @@ def library(tmp_path: Path) -> Iterator[_Library]:
         2,
         expected_active_generation=1,
     )
-    root.activate_qualified_automatic(3)
+    if automatic:
+        root.activate_qualified_automatic(3)
     root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 4)
     discovery = root.claim_review_pipeline_action(5)
     assert discovery is not None
@@ -258,11 +289,28 @@ def library(tmp_path: Path) -> Iterator[_Library]:
     value = _Library(root, pipeline, report, admissions, evaluations, now)
     try:
         value.drain()
-        assert root.shadow_posture() == "automatic"
-        assert value.automatic().outcome == "candidate"
+        if automatic:
+            assert root.shadow_posture() == "automatic"
+            assert value.automatic().outcome == "candidate"
+        else:
+            assert root.shadow_posture() == "preview"
         yield value
     finally:
         root.close()
+
+
+@pytest.fixture
+def library(tmp_path: Path) -> Iterator[_Library]:
+    """One work prepared and decided in the Automatic posture."""
+    with _prepared(tmp_path, automatic=True) as value:
+        yield value
+
+
+@pytest.fixture
+def preview_library(tmp_path: Path) -> Iterator[_Library]:
+    """One work first prepared in Preview, before Automatic is confirmed."""
+    with _prepared(tmp_path, automatic=False) as value:
+        yield value
 
 
 def _accept(case: ReviewCase, destination: str, key: str, at: int) -> HumanDecision:
@@ -457,6 +505,60 @@ def test_owner_answers_from_before_leaving_automatic_are_kept(
         )
     }
 
+    # Confirming Automatic decides the work again, and the owner's answers
+    # stay: no automatic decision is recorded on a field the owner decided,
+    # and the waiting answer still plans and writes (#1573).
+    library.root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+    assert library.decisions() == [("authors", 2), ("authors", 3)]
+    assert not answered & set(library.attention())
+    read = _read(library, scheduler)
+    for destination, recorded in (
+        (planned_destination, decision),
+        (waiting_destination, waiting),
+    ):
+        field = read["fields"][destination]
+        assert field["human_decision"]["decision_id"] == recorded.decision_id
+        assert field["classification"] == "human_recorded"
+    assert waiting.decision_id in library.pending()
+    library.root.grant_field_effect_consents(
+        "primary", ("ebooks",), (waiting_destination,), 42
+    )
+    library.now[0] = 43
+    scheduler.schedule()
+    later = _planned(library)[waiting.decision_id].plan
+    target.seed(later)
+    assert service.apply(later.plan_id).state == "verified"
+
+
+def test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic(
+    library: _Library, tmp_path: Path
+) -> None:
+    """An owner decision blocks a fresh automatic decision in any generation."""
+    automatic = library.automatic()
+    owner = _accept(library.case(), "authors", "override-before-leaving", 11)
+    library.root.record_human_decision(owner)
+    library.root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+
+    library.leave_automatic()
+    library.root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+
+    assert library.decisions() == [("authors", 2)]
+    assert automatic.decision_id not in library.pending()
+    field = _read_fields(library)["authors"]
+    assert field["human_decision"]["decision_id"] == owner.decision_id
+    assert field["classification"] == "human_recorded"
+    assert owner.decision_id in library.pending()
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 42
+    scheduler.schedule()
+    plan = _planned(library)[owner.decision_id].plan
+    target.seed(plan)
+    assert service.apply(plan.plan_id).state == "verified"
+
 
 def test_an_owner_plan_waits_while_its_case_is_retired_for_reconciliation(
     library: _Library, tmp_path: Path
@@ -535,16 +637,39 @@ def test_an_automatic_decision_writes_only_in_the_automatic_posture(
     target.seed(planned[owner.decision_id].plan)
     assert service.apply(planned[owner.decision_id].plan.plan_id).state == "verified"
 
-    # Confirming Automatic again makes the unchanged decision pending again,
-    # but it is bound to its own generation's outcome set, not the case's
-    # newest, so it still authorizes no write.
+    # Confirming Automatic again leaves the earlier decision as history: it
+    # decides nothing in this generation, so it is not pending and still
+    # authorizes no write (#1573).
     library.root.activate_qualified_automatic(40)
-    assert automatic.decision_id in library.pending()
+    assert automatic.decision_id not in library.pending()
     with pytest.raises(FieldEffectError, match="authority_binding"):
         PersistedFieldEffectAuthority(library.root).resolve(automatic)
     library.now[0] = 41
     scheduler.schedule()
     assert automatic.decision_id not in _planned(library)
+
+    # Confirming requeued the work, and projecting it in Automatic decides the
+    # field again in this generation from the outcome Preview showed.
+    library.drain()
+    assert library.decisions() == [("authors", 2), ("authors", 3)]
+    fresh = library.automatic(3)
+    assert fresh.review_case_id == automatic.review_case_id
+    assert fresh.decision_id in library.pending()
+    PersistedFieldEffectAuthority(library.root).resolve(fresh)
+    library.now[0] = 42
+    scheduler.schedule()
+    planned = _planned(library)
+    assert automatic.decision_id not in planned
+    renewed = planned[fresh.decision_id].plan
+    target.seed(renewed)
+    assert service.apply(renewed.plan_id).state == "verified"
+    assert fresh.decision_id not in library.pending()
+    assert (renewed.plan_id, "verified", "authors") in {
+        (event["change_id"], event["state"], event["destination"])
+        for event in cast(
+            list[dict[str, Any]], _read(library, scheduler)["activity"]["events"]
+        )
+    }
 
 
 @pytest.mark.parametrize("confirm_automatic", [False, True])
@@ -596,6 +721,19 @@ def test_an_automatic_plan_from_before_leaving_automatic_writes_nothing(
     applied = service.apply(plan.plan_id)
     assert (applied.state, applied.failure) == ("stale", "authority")
     assert target.read(plan).value == before
+
+    # Confirming requeued the work, so it is decided again in this generation
+    # and that decision plans and writes; the earlier plan stays stale (#1573).
+    library.now[0] = 50
+    library.drain()
+    fresh = library.automatic(3)
+    scheduler.schedule()
+    operations = _planned(library)
+    assert operations[automatic.decision_id].state == "stale"
+    renewed = operations[fresh.decision_id].plan
+    assert renewed.plan_id != plan.plan_id
+    target.seed(renewed)
+    assert service.apply(renewed.plan_id).state == "verified"
 
 
 def _waiting(scheduler: ContinuousGuardedApplication) -> tuple[int, object]:
@@ -658,6 +796,349 @@ def test_the_case_and_activity_read_after_leaving_automatic(
             if event["event_id"] == automatic.decision_id
         )
         assert (recorded["state"], recorded["failure"]) == ("recorded", None)
-        if posture == "preview":
-            (configured,) = cast(list[dict[str, Any]], activity["configured_libraries"])
-            assert configured["prepared"]["automatic"] == 0
+        (configured,) = cast(list[dict[str, Any]], activity["configured_libraries"])
+        assert configured["prepared"]["automatic"] == 0
+
+    # Confirming requeued the work: projecting it in Automatic decides authors
+    # in this generation, and the case, Attention and Activity agree (#1573).
+    library.drain()
+    fresh = library.automatic(3)
+    read = _read(library, scheduler)
+    fields = read["fields"]
+    assert fields["authors"]["automatic_decision"]["decision_id"] == fresh.decision_id
+    assert fields["authors"]["classification"] == "automatic_recorded"
+    assert fields["authors"]["needs_attention"] is False
+    assert {
+        destination for destination, field in fields.items() if field["needs_attention"]
+    } == {destination for _, destination in library.attention()}
+    (configured,) = cast(list[dict[str, Any]], read["activity"]["configured_libraries"])
+    assert configured["prepared"]["automatic"] == 1
+
+
+def _asked(library: _Library) -> tuple[set[str], set[str]]:
+    """The fields the case page asks for, and the ones Attention lists."""
+    fields = _read_fields(library)
+    return (
+        {
+            destination
+            for destination, field in fields.items()
+            if field["needs_attention"]
+        },
+        {str(destination) for _, destination in library.attention()},
+    )
+
+
+def _read_fields(library: _Library) -> dict[str, dict[str, Any]]:
+    detail = InspectCurrentReviewCase(library.root).run(library.case_id())
+    return {
+        str(field["destination"]): field
+        for field in cast(list[dict[str, Any]], detail["fields"])
+    }
+
+
+def test_pausing_after_leaving_automatic_lists_every_field_the_case_asks_for(
+    library: _Library,
+) -> None:
+    """An earlier generation's decision keeps no field out of Attention (#1601)."""
+    library.leave_automatic()
+    assert library.root.shadow_posture() == "preview"
+
+    library.root.pause_automatic_safety(True, 31)
+
+    case_needs, attention = _asked(library)
+    assert case_needs == attention == {"authors", "language", "title"}
+    (row,) = library.library("all")
+    assert row["attention_count"] == 3
+
+    # Resuming in Preview: an Automatic field without abstention is never
+    # asked for, so authors leaves both again.
+    library.root.pause_automatic_safety(False, 32)
+    case_needs, attention = _asked(library)
+    assert case_needs == attention == {"language", "title"}
+    (row,) = library.library("all")
+    assert row["attention_count"] == 2
+
+
+def test_pausing_in_automatic_keeps_a_decided_field_out_of_attention(
+    library: _Library,
+) -> None:
+    """The current generation's decision settles its field while paused."""
+    library.root.pause_automatic_safety(True, 31)
+    case_needs, attention = _asked(library)
+    assert case_needs == attention == {"language", "title"}
+
+
+def test_returning_to_a_policy_decides_its_case_again_in_the_new_generation(
+    library: _Library,
+) -> None:
+    """Policy A, then B, then A again, all in Automatic (#1573)."""
+    root = library.root
+    automatic = library.automatic()
+    options = dict(DEFAULT_OPTIONS)
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    options["contributor_names"] = "canonical"
+    destinations["contributor_names"] = "automatic"
+    destinations["series"] = "ignore"
+    other = MetadataPolicyProfile.create("Other policy", options, destinations)
+    other_resolved = resolve_policy(other, "ebooks")
+    root.create_metadata_policy_draft(other.canonical_json)
+    (first_policy,) = root._connection.execute(
+        "SELECT active_policy_id FROM metadata_policy_state"
+    ).fetchone()
+    first_resolution = root._connection.execute(
+        "SELECT resolved_policy_id,document FROM metadata_policy_resolutions "
+        "WHERE generation=2 AND library_name='ebooks'"
+    ).fetchone()
+    root.activate_metadata_policy(
+        other.policy_id,
+        first_policy,
+        (("ebooks", other_resolved.resolved_id, other_resolved.canonical_json),),
+        20,
+        expected_active_generation=2,
+    )
+    library.now[0] = 21
+    library.drain()
+    assert library.case_id() != automatic.review_case_id
+    assert library.decisions() == [("authors", 2), ("authors", 3)]
+
+    root.activate_metadata_policy(
+        first_policy,
+        other.policy_id,
+        (("ebooks", *first_resolution),),
+        30,
+        expected_active_generation=3,
+    )
+    library.now[0] = 31
+    library.drain()
+
+    assert root.shadow_posture() == "automatic"
+    assert library.case_id() == automatic.review_case_id
+    assert library.generation() == 4
+    assert library.decisions() == [("authors", 2), ("authors", 3), ("authors", 4)]
+    fresh = library.automatic(4)
+    assert fresh.review_case_id == automatic.review_case_id
+    PersistedFieldEffectAuthority(root).resolve(fresh)
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        PersistedFieldEffectAuthority(root).resolve(automatic)
+    assert fresh.decision_id in library.pending()
+    assert automatic.decision_id not in library.pending()
+    case_needs, attention = _asked(library)
+    assert "authors" not in case_needs
+    assert case_needs == attention
+
+
+def test_confirming_automatic_decides_the_works_first_prepared_in_preview(
+    preview_library: _Library, tmp_path: Path
+) -> None:
+    """Start in Preview and confirm Automatic later (#1573)."""
+    library = preview_library
+    root = library.root
+    assert root._connection.execute(
+        "SELECT count(*) FROM shadow_decision_outcomes"
+    ).fetchone() == (1,)
+    assert library.decisions() == []
+
+    root.activate_qualified_automatic(40)
+    # The confirm transaction requeued the prepared work to projection.
+    assert root._connection.execute(
+        "SELECT stage,state FROM review_preparation_work WHERE item_id='item-1'"
+    ).fetchone() == ("projection", "queued")
+    library.now[0] = 41
+    library.drain()
+
+    # Projection is content-addressed: the outcome Preview showed decides.
+    assert library.decisions() == [("authors", 2)]
+    assert root._connection.execute(
+        "SELECT count(*) FROM shadow_decision_outcomes"
+    ).fetchone() == (1,)
+    decided = library.automatic(2)
+    PersistedFieldEffectAuthority(root).resolve(decided)
+    fields = _read_fields(library)
+    assert fields["authors"]["classification"] == "automatic_recorded"
+    case_needs, attention = _asked(library)
+    assert "authors" not in case_needs
+    assert case_needs == attention
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 42)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 43
+    scheduler.schedule()
+    plan = _planned(library)[decided.decision_id].plan
+    target.seed(plan)
+    assert service.apply(plan.plan_id).state == "verified"
+
+
+def test_a_failed_requeue_leaves_confirm_automatic_undone(library: _Library) -> None:
+    library.leave_automatic()
+    with (
+        patch.object(
+            library.root._review_preparation,
+            "_requeue_current_case_projections",
+            side_effect=sqlite3.OperationalError("injected"),
+        ),
+        pytest.raises(
+            MetadataReportError, match="automatic posture persistence failed"
+        ),
+    ):
+        library.root.activate_qualified_automatic(40)
+    assert library.root.shadow_posture() == "preview"
+    assert library.root._connection.execute(
+        "SELECT stage,state FROM review_preparation_work WHERE item_id='item-1'"
+    ).fetchone() == ("complete", "complete")
+
+
+def test_an_owner_decision_after_confirming_holds_the_current_generation(
+    library: _Library, tmp_path: Path
+) -> None:
+    """The owner overrides and releases the decision that decides now (#1573)."""
+    root = library.root
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    library.leave_automatic()
+    root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+    fresh = library.automatic(3)
+    scheduler, _, _ = _applier(library, tmp_path)
+    library.now[0] = 42
+    scheduler.schedule()
+    plan = _planned(library)[fresh.decision_id].plan
+    assert root.field_effect_authority_is_current(plan.authority)
+
+    owner = _accept(library.case(), "authors", "after-confirming-automatic", 43)
+    root.record_human_decision(owner)
+
+    # The owner's decision supersedes this generation's plan and holds its
+    # decision, not the earlier generation's.
+    assert not root.field_effect_authority_is_current(plan.authority)
+    (held,) = root._connection.execute(
+        "SELECT json_extract(document,'$.decision_id') FROM field_effect_manual_holds "
+        "WHERE review_case_id=? AND destination='authors' AND active=1",
+        (fresh.review_case_id,),
+    ).fetchone()
+    assert held == owner.decision_id
+    assert root.field_effect_manual_override(fresh.review_case_id, "authors", 44) == 0
+
+    # Releasing the hold makes this generation's decision current again.
+    assert (
+        root.clear_field_effect_manual_hold(fresh.review_case_id, "authors", 45)
+        is not None
+    )
+    assert root._connection.execute(
+        "SELECT decision_id FROM field_effect_authorities WHERE current=1 "
+        "AND decision_id IN (?,?)",
+        (library.automatic(2).decision_id, fresh.decision_id),
+    ).fetchall() == [(fresh.decision_id,)]
+
+
+@pytest.mark.parametrize("state", ["claimed", "applying", "reconciling"])
+def test_an_earlier_generation_write_in_flight_still_refuses_an_owner_answer(
+    library: _Library, tmp_path: Path, state: str
+) -> None:
+    """An earlier generation decides nothing, but its write is still out (#1573).
+
+    Leaving Automatic readmits the case while the authors write is claimed,
+    applying or reconciling. The owner cannot replace the decision until that
+    service request is reconciled, as before generations were recorded.
+    """
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, _, _ = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    root.claim_field_effect(plan.plan_id, "planned", "c" * 64, 14)
+    if state != "claimed":
+        root.transition_field_effect(plan.plan_id, "claimed", "applying", 15)
+    if state == "reconciling":
+        root.transition_field_effect(plan.plan_id, "applying", "reconciling", 16)
+
+    library.leave_automatic()
+
+    assert library.generation() == 3
+    assert library.case_id() == automatic.review_case_id
+    assert root.get_field_effect(plan.plan_id).state == state
+    owner = _accept(library.case(), "authors", "owner-while-writing", 40)
+    with pytest.raises(HumanDecisionError, match="already_decided"):
+        root.record_human_decision(owner)
+    assert (
+        root._connection.execute(
+            "SELECT count(*) FROM human_decisions WHERE review_case_id=?",
+            (automatic.review_case_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert root.get_field_effect(plan.plan_id).state == state
+
+
+def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A settled earlier-generation write no longer stands in the owner's way."""
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    target.seed(plan)
+    assert service.apply(plan.plan_id).state == "verified"
+
+    library.leave_automatic()
+
+    owner = _accept(library.case(), "authors", "owner-after-writing", 40)
+    root.record_human_decision(owner)
+    assert root._connection.execute(
+        "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
+        (automatic.review_case_id,),
+    ).fetchall() == [(owner.decision_id,)]
+
+
+def test_a_new_generation_write_waits_for_an_earlier_write_still_out(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A later generation never writes over an unreconciled request (#1573).
+
+    One automatic decision per field used to make a second write for the
+    field impossible; with one per generation, the newer write waits until the
+    earlier one is settled.
+    """
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    earlier = _planned(library)[automatic.decision_id].plan
+    root.claim_field_effect(earlier.plan_id, "planned", "c" * 64, 14)
+    root.transition_field_effect(earlier.plan_id, "claimed", "applying", 15)
+    library.leave_automatic()
+    root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+    fresh = library.automatic(3)
+    library.now[0] = 42
+    scheduler.schedule()
+    renewed = _planned(library)[fresh.decision_id].plan
+    target.seed(renewed)
+    before = target.read(renewed).value
+
+    # While the earlier request is out, the new plan is not selected, Activity
+    # counts nothing as ready (it names the earlier write still in progress),
+    # and applying the new plan defers without consuming it.
+    assert root.field_effect_deferred(renewed.plan_id)
+    assert root.next_field_effect_plan_id(None) is None
+    assert _waiting(scheduler) == (0, "authors")
+    with pytest.raises(GuardedApplicationError, match="deferred"):
+        service.apply(renewed.plan_id)
+    assert root.get_field_effect(renewed.plan_id).state == "planned"
+    assert target.read(renewed).value == before
+
+    # Once the earlier request is settled, the new plan writes.
+    root.transition_field_effect(earlier.plan_id, "applying", "stale", 43, "authority")
+    assert not root.field_effect_deferred(renewed.plan_id)
+    assert root.next_field_effect_plan_id(None) == (renewed.plan_id, "ebooks")
+    assert service.apply(renewed.plan_id).state == "verified"

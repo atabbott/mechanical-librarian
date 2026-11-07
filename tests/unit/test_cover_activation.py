@@ -572,6 +572,12 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
                         break
                 else:
                     pytest.fail("cover pipeline did not reach a terminal state")
+            # Confirming Automatic requeues the prepared work (#1573), so the
+            # posture changes follow the scan the pipeline requested on its
+            # own clock.
+            (later,) = repository._connection.execute(
+                "SELECT max(requested_at) FROM review_preparation_scans"
+            ).fetchone()
             ((document,),) = repository._connection.execute(
                 "SELECT json_extract(selection.document,'$.decision_document') "
                 "FROM current_cover_selection_authorities current "
@@ -593,18 +599,21 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
             assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
             # A store whose only automatic records are covers keeps its case
             # current in Preview; posture alone keeps the selection unwritten.
-            assert repository.enter_shadow_preview(4, ("ebooks",)) == "preview"
+            assert repository.enter_shadow_preview(later + 4, ("ebooks",)) == "preview"
             assert repository.current_cover_consideration_document(
                 automatic.review_case_id
             )
             assert (pending(), counted()) == ((), [])
-            repository.activate_qualified_automatic(5)
+            repository.activate_qualified_automatic(later + 5)
             assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
 
             authority = PersistedFieldEffectAuthority(repository)
             snapshot = authority.resolve(automatic)
             repository.grant_field_effect_consents(
-                snapshot.connection, (snapshot.library,), (snapshot.destination,), 6
+                snapshot.connection,
+                (snapshot.library,),
+                (snapshot.destination,),
+                later + 6,
             )
             target = FakeTargetService()
             capabilities = FakeCapabilityObserver(CAPABILITY)
@@ -663,10 +672,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
                             resolved.canonical_json,
                         ),
                     ),
-                    # After the scan the pipeline requested on its own clock.
-                    repository._connection.execute(
-                        "SELECT max(requested_at)+1 FROM review_preparation_scans"
-                    ).fetchone()[0],
+                    later + 7,
                     expected_active_generation=state[1],
                     reconcile_current=True,
                 )
@@ -681,7 +687,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
                     "SELECT count(*) FROM field_effect_cleanups"
                 ).fetchone() == (0,)
                 return
-            assert repository.enter_shadow_preview(7, ("ebooks",)) == "preview"
+            assert repository.enter_shadow_preview(later + 7, ("ebooks",)) == "preview"
             assert not authority.current(operation.plan.authority)
             # Outside Automatic the planned cover waits: it is not selected,
             # and applying it directly defers without consuming it.
@@ -701,7 +707,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
             assert (
                 repository.get_field_effect(operation.plan.plan_id).state == "planned"
             )
-            repository.activate_qualified_automatic(8)
+            repository.activate_qualified_automatic(later + 8)
             assert authority.current(operation.plan.authority)
             assert ready() == 1
             assert repository.next_field_effect_plan_id(None) == (

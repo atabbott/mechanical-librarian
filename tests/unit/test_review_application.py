@@ -21,6 +21,7 @@ from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
     AutomaticSafetyRepository,
+    MetadataPolicyApplicationError,
     PolicyImpactRepository,
 )
 from mechanical_librarian.application.owner_settings import (
@@ -627,6 +628,58 @@ def test_published_preparation_work_wakes_the_guarded_scheduler(
     preparation.announce("preparation", None)
     assert field_application.wakes == 0
     preparation.announce("library", "review_case")
+    assert field_application.wakes == 1
+
+
+def test_confirming_automatic_wakes_the_guarded_scheduler_once(
+    repository: FakeReviewRepository,
+) -> None:
+    """Confirm decides prepared works again, so the applier looks (#1573)."""
+
+    class FieldApplication(ContinuousGuardedApplication):
+        def __init__(self) -> None:
+            self.wakes = 0
+
+        def attach_timing(self, _timing) -> None:
+            return None
+
+        def attach_serialization(self, _serialize) -> None:
+            return None
+
+        def attach_updates(self, _announce) -> None:
+            return None
+
+        def wake(self) -> None:
+            self.wakes += 1
+
+    field_application = FieldApplication()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        field_application=field_application,
+    )
+
+    # The double seals no qualification, so confirmation is refused.
+    with pytest.raises(MetadataPolicyApplicationError):
+        application.policy.confirm_automatic(_NOW)
+    assert field_application.wakes == 0
+
+    def confirmed(_updated_at: int) -> str:
+        repository.shadow_mode = "automatic"
+        return "automatic"
+
+    repository.activate_qualified_automatic = confirmed  # type: ignore[method-assign]
+    assert application.policy.confirm_automatic(_NOW)["posture"] == "automatic"
     assert field_application.wakes == 1
 
 

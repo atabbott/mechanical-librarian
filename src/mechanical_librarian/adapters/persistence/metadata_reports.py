@@ -81,6 +81,9 @@ from mechanical_librarian.adapters.persistence.review_projections import (
 from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _active_generation_automatic_sql,
+)
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
     ReviewerAccessStoreError,
@@ -297,6 +300,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda retired, reactivation, changed_at: (
                     self._field_effects._supersede_retired_case_waiting_plans(
                         retired, reactivation, changed_at
+                    )
+                )
+            ),
+            requeue_current_case_projections=(
+                lambda updated_at: (
+                    self._review_preparation._requeue_current_case_projections(
+                        updated_at
                     )
                 )
             ),
@@ -908,7 +918,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 "AND human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
                 "current.destination=human.destination) "
-                "WHERE automatic.review_case_id=? AND automatic.destination=?",
+                "WHERE automatic.review_case_id=? AND automatic.destination=? AND "
+                # Only the active generation's decision is superseded (#1573).
+                + _active_generation_automatic_sql("automatic"),
                 (review_case_id, destination),
             ).fetchall()
             if rows:

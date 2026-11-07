@@ -64,7 +64,11 @@ option while the field is Automatic visibly changes it to Ask me.
 The global posture is Review, Preview or Automatic. Automatic decisions are
 recorded only in the Automatic posture, and write only there. Preview records
 what policy would do without deciding or writing, so an owner can start there
-and confirm Automatic later.
+and confirm Automatic later. Confirming Automatic reprocesses the works already
+prepared and decides each from what Preview showed, then writes those decisions
+under the owner's write permission. A decision recorded before the owner left
+Automatic decides nothing after a change of policy generation, so it keeps no
+field out of Attention.
 
 Automatic fails closed. While the owner has paused automation, or a global or
 category suspension is active, would-be automatic work stays in Attention for
