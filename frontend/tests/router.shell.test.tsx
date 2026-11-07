@@ -448,7 +448,7 @@ describe('Application shell', () => {
     expect(summaryText.textContent).toBe(`This run: ${runLine}`)
     fireEvent.click(summary)
     expect(
-      await screen.findByText(wholeText(`Finished · ${runLine}`), {
+      await screen.findByText(/^Finished \S/u, {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()

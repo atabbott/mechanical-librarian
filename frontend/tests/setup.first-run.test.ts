@@ -2237,14 +2237,7 @@ describe('shipped first-run setup script', () => {
       'Open the workspace to browse works as they are prepared.',
       false,
     ],
-    [
-      'Preparation paused',
-      0,
-      false,
-      true,
-      'Open the workspace to review recovery while preparation remains safely paused.',
-      false,
-    ],
+    ['Preparation paused', 0, false, true, 'Open the workspace to review recovery.', false],
     [
       'Preparation is complete',
       1,

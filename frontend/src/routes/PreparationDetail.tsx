@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router'
 
 import { BookMark } from '../components/BookMark'
 import { CountPhrases } from '../components/CountPhrases'
+import { RecordedTime } from '../components/RecordedTime'
 import { preparationOutcomes } from '../labels'
 import type { PreparationPresentation } from '../libraryPreparation'
 
@@ -24,9 +25,13 @@ const preparationStateLine = (presentation: PreparationPresentation) => {
       return 'Prepared works can still be reviewed.'
     case 'completed_clean':
     case 'completed_with_failures':
-      return (
+      // The heading says how it finished and the counts are below; this line
+      // says when (#1765).
+      return presentation.completed_at === null ? (
+        'Finished'
+      ) : (
         <>
-          Finished · <CountPhrases phrases={runOutcomes(presentation)} />
+          Finished <RecordedTime seconds={presentation.completed_at} />
         </>
       )
     case 'dismissed':
@@ -89,7 +94,7 @@ const preparationScope = (presentation: PreparationPresentation, recoveryRequire
   <CountPhrases
     phrases={[
       ...runOutcomes(presentation),
-      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'waiting' : 'in progress'}`,
+      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'still to prepare' : 'in progress'}`,
     ]}
     separator={'\u00a0· '}
   />
@@ -215,6 +220,17 @@ export const PreparationDetail = ({
       break
   }
   if (recoveryRequired) heading = 'Preparation stopped'
+  // A section with nothing in it is left out rather than captioned "none"
+  // (#1765). Now preparing stays while the run is moving or stopped, because
+  // nothing in flight is news then; Recent completions stays once a book has
+  // finished or could not.
+  const showActive =
+    presentation.active_books.length > 0 ||
+    recoveryRequired ||
+    presentation.state === 'running' ||
+    presentation.state === 'blocked'
+  const showCompletions =
+    presentation.recent_completions.length > 0 || presentation.passage.failed > 0
   return (
     <div className="preparation-detail">
       <header>
@@ -232,7 +248,7 @@ export const PreparationDetail = ({
         role="status"
       >
         {recoveryRequired
-          ? 'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
+          ? 'Restart the Mechanical Librarian service to resume preparation. Prepared works can still be reviewed.'
           : reconnecting
             ? 'Reconnecting… The progress shown is from before the connection dropped.'
             : preparationStateLine(presentation)}
@@ -240,47 +256,49 @@ export const PreparationDetail = ({
       <p className="preparation-provenance">
         {presentation.triggers.map(preparationTriggerLine).join(' · ')}
       </p>
-      <section aria-labelledby="now-preparing-title">
-        <div className="preparation-section-heading">
-          <h3 id="now-preparing-title">
-            {recoveryRequired ? 'Waiting for restart' : 'Now preparing'}
-          </h3>
-          <span>
-            {String(presentation.active_books.length + presentation.active_overflow)}{' '}
-            {recoveryRequired ? 'waiting' : 'active'}
-          </span>
-        </div>
-        {presentation.active_books.length ? (
-          <ol className="preparation-active-books">
-            {presentation.active_books.map((book, index) => (
-              <li key={`${book.name}:${String(index)}`}>
-                <BookMark title={book.name} cover={undefined} />
-                <span>
-                  <strong>{book.name}</strong>
-                  <small>{book.stage}</small>
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p>
-            {recoveryRequired
-              ? 'No book was in progress when preparation stopped.'
-              : 'No book is being prepared right now.'}
-          </p>
-        )}
-        {presentation.active_overflow ? (
-          <p>
-            {String(presentation.active_overflow)} more{' '}
-            {recoveryRequired ? 'are waiting.' : 'are being prepared.'}
-          </p>
-        ) : null}
-        {presentation.active_books.length ? (
-          <small className="activity-backup-note">
-            A book appears in Works once it is prepared.
-          </small>
-        ) : null}
-      </section>
+      {showActive ? (
+        <section aria-labelledby="now-preparing-title">
+          <div className="preparation-section-heading">
+            <h3 id="now-preparing-title">
+              {recoveryRequired ? 'Waiting for restart' : 'Now preparing'}
+            </h3>
+            <span>
+              {String(presentation.active_books.length + presentation.active_overflow)}{' '}
+              {recoveryRequired ? 'waiting' : 'active'}
+            </span>
+          </div>
+          {presentation.active_books.length ? (
+            <ol className="preparation-active-books">
+              {presentation.active_books.map((book, index) => (
+                <li key={`${book.name}:${String(index)}`}>
+                  <BookMark title={book.name} cover={undefined} />
+                  <span>
+                    <strong>{book.name}</strong>
+                    <small>{book.stage}</small>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>
+              {recoveryRequired
+                ? 'No book was in progress when preparation stopped.'
+                : 'No book is being prepared right now.'}
+            </p>
+          )}
+          {presentation.active_overflow ? (
+            <p>
+              {String(presentation.active_overflow)} more{' '}
+              {recoveryRequired ? 'are waiting.' : 'are being prepared.'}
+            </p>
+          ) : null}
+          {presentation.active_books.length ? (
+            <small className="activity-backup-note">
+              A book appears in Works once it is prepared.
+            </small>
+          ) : null}
+        </section>
+      ) : null}
       <section aria-labelledby="preparation-progress-title">
         <div className="preparation-section-heading">
           {/* How the stages count is said in the product page, not here (#1765). */}
@@ -291,9 +309,7 @@ export const PreparationDetail = ({
            * no current anything -- printing 0.0 books/min there read as a
            * performance fault rather than as silence.
            */}
-          {!recoveryRequired &&
-          !reconnecting &&
-          (presentation.state === 'starting' || presentation.state === 'running') ? (
+          {!recoveryRequired && !reconnecting && presentation.state === 'running' ? (
             <strong>
               {presentation.throughput_per_minute > 0
                 ? `${presentation.throughput_per_minute.toFixed(1)} books/min over the last five minutes`
@@ -325,43 +341,48 @@ export const PreparationDetail = ({
           </div>
         </dl>
       </section>
-      <section aria-labelledby="recent-completions-title">
-        <div className="preparation-section-heading">
-          <h3 id="recent-completions-title">Recent completions</h3>
-          <span>{String(outcomeTotal)} books</span>
-        </div>
-        {presentation.recent_completions.length ? (
-          <ul className="preparation-completions">
-            {presentation.recent_completions.map((completion, index) => (
-              <li key={`${completion.name}:${String(completion.completed_at)}:${String(index)}`}>
-                <span>
-                  {completion.name}{' '}
-                  {/*
-                   * The link sits inside the name so it wraps with it, and the
-                   * name shown is the only thing this row has to search with.
-                   */}
-                  <Link
-                    to="/library"
-                    search={{ lens: 'all', q: boundedSearchName(completion.name) }}
-                  >
-                    Find in Works
-                  </Link>
-                </span>
-                <strong>
-                  {completion.outcome === 'ready' ? 'Prepared' : 'Stopped before finishing'}
-                </strong>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No book has finished yet.</p>
-        )}
-        {presentation.passage.failed > 0 ? (
-          <small className="activity-backup-note">
-            Books that could not finish are listed in Works.
-          </small>
-        ) : null}
-      </section>
+      {/*
+       * An empty list in a populated detail is removed, not captioned (#1765).
+       */}
+      {showCompletions ? (
+        <section aria-labelledby="recent-completions-title">
+          <div className="preparation-section-heading">
+            <h3 id="recent-completions-title">Recent completions</h3>
+            <span>{String(outcomeTotal)} books</span>
+          </div>
+          {presentation.recent_completions.length ? (
+            <ul className="preparation-completions">
+              {presentation.recent_completions.map((completion, index) => (
+                <li key={`${completion.name}:${String(completion.completed_at)}:${String(index)}`}>
+                  <span>
+                    {completion.name}{' '}
+                    {/*
+                     * The link sits inside the name so it wraps with it, and the
+                     * name shown is the only thing this row has to search with.
+                     */}
+                    <Link
+                      to="/library"
+                      search={{ lens: 'all', q: boundedSearchName(completion.name) }}
+                    >
+                      Find in Works
+                    </Link>
+                  </span>
+                  <strong>
+                    {completion.outcome === 'ready' ? 'Prepared' : 'Stopped before finishing'}
+                  </strong>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No book has finished yet.</p>
+          )}
+          {presentation.passage.failed > 0 ? (
+            <small className="activity-backup-note">
+              Books that could not finish are listed in Works.
+            </small>
+          ) : null}
+        </section>
+      ) : null}
       {presentation.dismissible ? (
         // A pending dismissal is aria-disabled, not disabled, so focus stays on it
         // while the command settles; recovery disables it outright.

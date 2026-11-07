@@ -10640,8 +10640,9 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 expect(page.locator(".preparation-detail")).to_contain_text(
                     "Restart the Mechanical Librarian service"
                 )
-                expect(page.locator(".preparation-detail")).to_contain_text(
-                    "last saved progress"
+                expect(page.locator(".preparation-run-state")).to_have_text(
+                    "Restart the Mechanical Librarian service to resume preparation."
+                    " Prepared works can still be reviewed."
                 )
                 expect(page.locator(".preparation-detail")).not_to_contain_text(
                     "in progress"

@@ -554,7 +554,7 @@ describe('Library route', () => {
 
     await act(async () => release(confirmed))
     expect(
-      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
+      await screen.findByText(/^Finished \S/u, {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -574,10 +574,7 @@ describe('Library route', () => {
       .fn<ReviewHttp['getPreparation']>()
       .mockResolvedValue(terminalPreparation(runId))
     renderRoute(`/library?lens=all&preparation=${runId}`, http)
-    const state = await screen.findByText(
-      wholeText('Finished · 1 ready to browse · 1 could not finish'),
-      { selector: '.preparation-run-state' },
-    )
+    const state = await screen.findByText(/^Finished \S/u, { selector: '.preparation-run-state' })
     expect(state).toHaveAttribute('role', 'status')
     const detail = state.closest('.workspace-detail')
     expect(detail).not.toBeNull()
@@ -926,12 +923,9 @@ describe('Library route', () => {
       'Prepared works can be reviewed while the rest of the run finishes.',
     ],
     ['blocked', 'Preparation paused', 'Prepared works can still be reviewed.'],
-    ['completed_clean', 'Preparation complete', 'Finished · 1 ready to browse'],
-    [
-      'completed_with_failures',
-      'Preparation completed with failures',
-      'Finished · 1 ready to browse · 1 could not finish',
-    ],
+    // A finished run's line says when it finished (#1765).
+    ['completed_clean', 'Preparation complete', /^Finished \S/u],
+    ['completed_with_failures', 'Preparation completed with failures', /^Finished \S/u],
   ] as const)(
     'describes the %s preparation detail truthfully',
     async (state, heading, runState) => {
@@ -973,7 +967,9 @@ describe('Library route', () => {
       // introduction repeats either (#1765).
       expect(document.querySelector('.preparation-detail header p')).toBeNull()
       expect(
-        screen.getByText(wholeText(runState), { selector: '.preparation-run-state' }),
+        screen.getByText(typeof runState === 'string' ? wholeText(runState) : runState, {
+          selector: '.preparation-run-state',
+        }),
       ).toBeVisible()
       await waitFor(() => expect(detailHeading).toHaveFocus())
     },
@@ -1247,7 +1243,7 @@ describe('Library route', () => {
         },
       })
     })
-    await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
+    await screen.findByText(/^Finished \S/u, {
       selector: '.preparation-run-state',
     })
     expect(screen.queryByText(/books\/min/u)).toBeNull()
@@ -1385,7 +1381,7 @@ describe('Library route', () => {
       })
       await user.click(screen.getByRole('button', { name: /Preparation completed with failures/u }))
       expect(
-        await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
+        await screen.findByText(/^Finished \S/u, {
           selector: '.preparation-run-state',
         }),
       ).toBeVisible()
@@ -1461,7 +1457,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
+      await screen.findByText(/^Finished \S/u, {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1507,7 +1503,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
+      await screen.findByText(/^Finished \S/u, {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1619,7 +1615,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
+      await screen.findByText(/^Finished \S/u, {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1875,7 +1871,9 @@ describe('Library route', () => {
     const summary = await screen.findByRole('button', { name: /Preparation is starting/u })
     expect(summary).toBeVisible()
     await userEvent.click(summary)
-    expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Preparation is starting' })).toBeVisible()
+    // A starting run has nothing in flight, so Now preparing is left out (#1765).
+    expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
     // Mount the actual panel before controlling the fallback sampling cadence.
     vi.useFakeTimers()
     onTestFinished(() => {
@@ -1981,7 +1979,7 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     fireEvent.click(summary)
     expect(
-      await screen.findByText(wholeText('Finished · 0 ready to browse · 1 could not finish'), {
+      await screen.findByText(/^Finished \S/u, {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()

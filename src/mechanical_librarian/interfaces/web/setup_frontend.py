@@ -1177,7 +1177,7 @@ const renderKickoff=async()=>{
         pollDelay=terminal?5000:1500;
         // The state line below says how the run stands; the heading and copy do not repeat it.
         heading.textContent=visible.state==='blocked'?'Preparation paused':terminal?'Preparation is complete':'Preparing your library';
-        copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery while preparation remains safely paused.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace to browse works as they are prepared.';
+        copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace to browse works as they are prepared.';
         if(confirmed!==announcedState){
           announcedState=confirmed;
           announce(confirmed)

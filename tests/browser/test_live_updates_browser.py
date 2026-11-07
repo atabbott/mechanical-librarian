@@ -500,7 +500,9 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
             ):
                 _login(page, origin)
                 works = page.get_by_role("heading", name="Works", exact=True)
-                summary = page.locator(".preparation-summary")
+                summary = page.get_by_role(
+                    "button", name=re.compile(r"^Preparing libraries\s*This run")
+                )
                 works.wait_for()
                 summary.wait_for()
                 assert summary.bounding_box()["y"] < works.bounding_box()["y"]
@@ -537,7 +539,9 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
                 assert "preparation=" not in page.url
 
                 page.get_by_role("button", name="Back to works").click()
-                page.locator(".preparation-summary").click()
+                page.get_by_role(
+                    "button", name=re.compile(r"^Preparing libraries\s*This run")
+                ).click()
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
