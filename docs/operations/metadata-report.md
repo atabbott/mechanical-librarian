@@ -171,18 +171,18 @@ a field or can become a proposal.
 | Observation | Expectation it checks |
 | --- | --- |
 | `runtime_short_of_provider` | a complete recording runs within 1 min 30 s of the edition's stated running time |
-| `chapter_structure_mismatch` | chapter durations align with the matched edition's, allowing one skipped chapter at each end |
-| `track_sequence_gap` | the declared track sequence has no hole |
-| `track_sequence_disorder` | the declared sequence rises with file order |
+| `chapter_structure_mismatch` | the embedded chapter lengths match the edition's, allowing one skipped chapter at each end |
+| `track_sequence_gap` | the track numbers run without a gap |
+| `track_sequence_disorder` | the track numbers rise in file order |
 | `track_duration_unavailable` | every track states a usable running time |
 | `chapter_atoms_partial` | every track carries embedded chapters, or none does |
-| `tag_disagrees_across_tracks` | one value per tagged field |
-| `asin_disagrees_across_tracks` | one ASIN across the files |
-| `container_unexpected` | each file holds the container its extension names |
+| `tag_disagrees_across_tracks` | all files of a book give the same value for each tag |
+| `asin_disagrees_across_tracks` | all files of a book give the same ASIN |
+| `container_unexpected` | each file's container matches its file extension |
 | `codec_unexpected` | each audio stream is aac or mp3 |
 | `duration_unstated` | each container states its running time |
-| `stream_encrypted` | no Apple-protected sample entries |
-| `media_unreadable` | every file opens and reads within bounds |
+| `stream_encrypted` | no file is protected by DRM (Apple-protected sample entries) |
+| `media_unreadable` | every file opens and reads within Mechanical Librarian's limits |
 
 The last four come from headers only; no sample is decoded
 ([ADR-0074](../architecture/decisions/0074-headers-only-media-health-facts.md)).
@@ -191,7 +191,8 @@ A chapter mismatch is stated only
 where identity was settled by chapters. A shortfall is stated once per
 edition, and not at all if another provider compared the same edition and
 found none. No observation refuses an item. Where the evidence needed is
-absent the section says nothing, so an empty section is not an all-clear.
+absent nothing is stated and Library shows no Media health section, which is
+not an all-clear.
 
 ## Provider discovery
 

@@ -110,7 +110,7 @@ describe('the admission sentence', () => {
       />,
     )
     const chapter = screen.getByRole('region', { name: 'How this recording was matched' })
-    expect(chapter).toHaveTextContent('Complete chapter timing and structure corroborate')
+    expect(chapter).toHaveTextContent('Its chapter timings and structure confirm this recording')
     expect(chapter).not.toHaveAttribute('aria-live')
     expect(chapter.querySelector('[role="status"]')).toBeNull()
     expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
@@ -118,7 +118,7 @@ describe('the admission sentence', () => {
 })
 
 describe('the Library decision surface', () => {
-  it('opens Whole-work context for an admission basis alone', async () => {
+  it('opens Recording match for an admission basis alone', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
@@ -129,8 +129,8 @@ describe('the Library decision surface', () => {
       })),
     }
     renderRoute('/library?lens=all&preview=case-1', http)
-    const context = await screen.findByRole('region', { name: 'Whole-work context' })
-    expect(within(context).getByRole('heading', { name: 'Whole-work context' })).toBeVisible()
+    const context = await screen.findByRole('region', { name: 'Recording match' })
+    expect(within(context).getByRole('heading', { name: 'Recording match' })).toBeVisible()
     expect(
       within(context).getByRole('region', { name: 'How this recording was matched' }),
     ).toHaveTextContent(
@@ -138,7 +138,7 @@ describe('the Library decision surface', () => {
     )
   })
 
-  it('keeps Whole-work context closed for a recording with neither note', async () => {
+  it('keeps Recording match closed for a recording with neither note', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
@@ -149,7 +149,7 @@ describe('the Library decision surface', () => {
     }
     renderRoute('/library?lens=all&preview=case-1', http)
     expect(await screen.findByRole('navigation', { name: 'Review fields' })).toBeVisible()
-    expect(screen.queryByRole('region', { name: 'Whole-work context' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Recording match' })).toBeNull()
   })
 })
 
@@ -168,7 +168,7 @@ const companionRow = (
 const companionRows = [
   companionRow('candidates', "Looked up the book and its audio editions by the EPUB's ISBN."),
   companionRow('no_match', "The EPUB's ISBN did not lead to this audiobook."),
-  companionRow('unavailable', 'Could not be reached.'),
+  companionRow('unavailable', 'Did not answer.'),
 ]
 
 const reportDetail = (overrides: Partial<ReportDetailView> = {}): ReportDetailView => ({
@@ -202,7 +202,7 @@ describe('the companion ISBN row in Sources', () => {
     )
     expect(rows[1]).toHaveTextContent("The EPUB's ISBN did not lead to this audiobook.")
     // Every other ending keeps its generic reason under the companion label.
-    expect(rows[2]).toHaveTextContent('Could not be reached.')
+    expect(rows[2]).toHaveTextContent('Did not answer.')
   }
 
   it('names the EPUB on case Evidence Sources', async () => {
@@ -239,7 +239,7 @@ describe('the companion ISBN row in Sources', () => {
       detailKind: 'report' as const,
       summary: {
         state: 'no_decision_recorded' as const,
-        reason: 'No review decision is recorded.',
+        reason: 'Nothing to decide for this work.',
         fields: [],
       },
       preparation: null,
@@ -275,7 +275,7 @@ describe('the companion ISBN row in Sources', () => {
         works: [{ ...first, preparationOutcomes: companionRows }],
       })),
     })
-    const footer = await screen.findByText('3 lookups recorded for this work')
+    const footer = await screen.findByText('3 source lookups')
     await user.click(footer)
     const sources = footer.closest('.work-sources')
     if (!(sources instanceof HTMLElement)) throw new Error('the comparison footer did not render')

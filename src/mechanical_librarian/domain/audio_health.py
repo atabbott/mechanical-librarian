@@ -126,12 +126,8 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
         "The embedded chapter lengths match the edition's, allowing one "
         "skipped chapter at each end."
     ),
-    AudioHealthKind.TRACK_SEQUENCE_GAP: (
-        "The track numbers run without a gap."
-    ),
-    AudioHealthKind.TRACK_SEQUENCE_DISORDER: (
-        "The track numbers rise in file order."
-    ),
+    AudioHealthKind.TRACK_SEQUENCE_GAP: ("The track numbers run without a gap."),
+    AudioHealthKind.TRACK_SEQUENCE_DISORDER: ("The track numbers rise in file order."),
     AudioHealthKind.TRACK_DURATION_UNAVAILABLE: (
         "Every track states its own running time."
     ),
@@ -155,9 +151,7 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
     AudioHealthKind.DURATION_UNSTATED: (
         "Each file's container states the running time of what it holds."
     ),
-    AudioHealthKind.STREAM_ENCRYPTED: (
-        "No file is protected by DRM."
-    ),
+    AudioHealthKind.STREAM_ENCRYPTED: ("No file is protected by DRM."),
     AudioHealthKind.MEDIA_UNREADABLE: (
         "Every file opens and reads within Mechanical Librarian’s limits."
     ),

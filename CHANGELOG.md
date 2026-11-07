@@ -100,6 +100,10 @@ brackets are GitHub issues.
   own sentence; source statuses, preview outcomes, evidence roles and reviewer
   errors drop internal words; and the policy preview gives each automatic
   refusal the same sentence the review case gives it (#1765).
+- Library's work list, work summary, preview and Attention queue read plainly.
+  A failed book says what to do next, source rows drop internal words, empty
+  sections no longer show, and a failed load says to try again or restart the
+  service. The Sources heading wraps on a phone with large text (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

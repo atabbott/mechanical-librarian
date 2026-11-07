@@ -68,11 +68,9 @@ describe('Library review ownership', () => {
       renderRoute(route, http)
       const section = await screen.findByRole('region', { name: 'How this recording was matched' })
       expect(
-        within(section).getByText(
-          /Complete chapter timing and structure corroborate this recording/u,
-        ),
+        within(section).getByText(/Its chapter timings and structure confirm this recording/u),
       ).toBeVisible()
-      expect(within(section).getByText(/where overall runtime is unavailable/u)).toBeVisible()
+      expect(within(section).getByText(/since no total running time is available/u)).toBeVisible()
       const source = within(section).getByText('Recording source')
       expect(within(section).getByText('Audnexus · recording-1')).not.toBeVisible()
       await userEvent.setup().click(source)
@@ -144,7 +142,7 @@ describe('Library review ownership', () => {
     // Only the fields this case offers are named (C1): this case offers Title.
     expect(
       within(section).getByText(
-        'Book-level evidence supports title choices. The exact recording remains unresolved.',
+        'Book-level evidence supports title choices. The exact recording is not known.',
       ),
     ).toBeVisible()
     // One offered field reads in the singular (#1642).
@@ -184,7 +182,7 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
     expect(
       within(section).getByText(
-        'Book-level evidence supports title, description, and genre choices. The exact recording remains unresolved.',
+        'Book-level evidence supports title, description, and genre choices. The exact recording is not known.',
       ),
     ).toBeVisible()
     expect(within(section).queryByText(/series|ASIN/u)).toBeNull()
@@ -211,13 +209,13 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
     expect(
       within(section).getByText(
-        'Book-level evidence supports title, publication date, and cover choices. A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
+        'Book-level evidence supports title, publication date, and cover choices. A Hardcover audio edition supports a narrator choice. The exact recording is not known.',
       ),
     ).toBeVisible()
     // Covers can now be chosen here, so the note no longer says they cannot.
     expect(
       within(section).getByText(
-        'Your choices apply only to these fields. Recording identifiers and automatic changes are unavailable from this evidence.',
+        'Your choices apply only to these fields. This evidence cannot set recording identifiers or make automatic changes.',
       ),
     ).toBeVisible()
     expect(within(section).queryByText(/covers/u)).toBeNull()
@@ -239,13 +237,13 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
     expect(
       within(section).getByText(
-        'A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
+        'A Hardcover audio edition supports a narrator choice. The exact recording is not known.',
       ),
     ).toBeVisible()
     // Narrators alone are one field, so the note reads in the singular.
     expect(
       within(section).getByText(
-        'Your choice applies only to this field. Recording identifiers and automatic changes are unavailable from this evidence.',
+        'Your choice applies only to this field. This evidence cannot set recording identifiers or make automatic changes.',
       ),
     ).toBeVisible()
     expect(within(section).queryByText(/these fields/u)).toBeNull()
@@ -365,7 +363,7 @@ describe('Library review ownership', () => {
                 provider: 'Open Library',
                 companionIsbn: false,
                 providerRequests: 2,
-                reason: 'Returned more than the accepted bound, so nothing was retained.',
+                reason: 'Returned more than Mechanical Librarian reads, so nothing was recorded.',
                 status: 'oversized',
               },
             ],
@@ -932,9 +930,7 @@ describe('Library review ownership', () => {
     expect(screen.getByText('<script>untrusted</script>')).toBeVisible()
     expect(document.querySelector('script')).toBeNull()
     expect(
-      screen.getByText(
-        'The recorded outcome is marked below. You can select another eligible value.',
-      ),
+      screen.getByText('The recorded outcome is marked below. You can choose another value.'),
     ).toBeVisible()
     expect(screen.getByRole('radio', { name: /Choose current value/u })).toBeVisible()
     expect(screen.queryByText('Current review case')).toBeNull()

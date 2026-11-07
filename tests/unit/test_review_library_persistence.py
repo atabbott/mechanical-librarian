@@ -273,7 +273,7 @@ def test_a_work_with_no_review_case_projects_its_current_values_and_reason() -> 
     summary = item["summary"]
     assert type(summary) is dict
     assert summary["state"] == "no_decision_recorded"
-    assert "No review decision is recorded" in str(summary["reason"])
+    assert "Nothing to decide for this work." in str(summary["reason"])
     # The review surface omits only the store's restore flag (#1424).
     assert summary["fields"] == [
         {key: value for key, value in field.items() if key != "restorable"}
@@ -473,8 +473,8 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
         # A provider-credential terminal says nothing about the media.
         "media_health": [],
         "provider": "hardcover-main",
-        "reason": "Provider credentials need owner attention.",
-        "recovery": "Update the configured provider credentials, then scan this library again.",
+        "reason": "A source refused its credentials.",
+        "recovery": "Replace them in Settings → Metadata sources, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -484,7 +484,7 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     # names the condition instead of presenting an empty record.
     assert item["summary"] == {
         "fields": [],
-        "reason": "Provider credentials need owner attention.",
+        "reason": "A source refused its credentials.",
         "state": "preparation_failed",
     }
     assert "credential unavailable" not in json.dumps(item)
@@ -618,88 +618,90 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
     assert stale == ("stale", 0)
 
 
+# The next step for every code a rescan re-prepares and Library has no
+# more specific remedy for (#1765; proved in test_review_pipeline.py).
+_SCAN_AGAIN = "Scan this library again to retry it."
+
+
 @pytest.mark.parametrize(
     ("status", "reason", "recovery"),
     (
-        (
-            "provider",
-            "A provider ended without a usable result.",
-            "No owner action is currently available.",
-        ),
+        ("provider", "A source stopped without a usable answer.", _SCAN_AGAIN),
         (
             "configuration",
-            "Provider configuration needs owner attention.",
-            "Update the configured provider, then scan this library again.",
+            "A source’s settings need changing.",
+            "Correct them in Settings → Metadata sources, then scan this library again.",
         ),
         (
             "authentication",
-            "Provider credentials need owner attention.",
-            "Update the configured provider credentials, then scan this library again.",
+            "A source refused its credentials.",
+            "Replace them in Settings → Metadata sources, then scan this library again.",
         ),
         (
             "stale",
-            "The item changed while preparation was in progress.",
-            "Automatic recovery is pending for the current item.",
+            "The book changed while it was being prepared.",
+            "Mechanical Librarian will prepare its current version automatically.",
         ),
         (
             "transient",
-            "Bounded automatic recovery attempts were exhausted.",
-            "When this library finishes with failures, open Background activity and choose Retry.",
+            "The automatic retries are used up.",
+            "When this library finishes, open Background activity and choose Retry.",
         ),
-        (
-            "projection",
-            "Review projection could not be completed.",
-            "No owner action is currently available.",
-        ),
+        ("projection", "The review could not be put together.", _SCAN_AGAIN),
         (
             "failed",
-            "Preparation failed; no safe detail is available.",
-            "No owner action is currently available.",
+            "Preparation stopped, and no more detail can be shown.",
+            _SCAN_AGAIN,
         ),
         (
             "currentness",
-            "The source changed before preparation could be completed.",
-            "Automatic recovery is pending for the current source.",
+            "The source changed before preparation finished.",
+            "Mechanical Librarian will prepare its current version automatically.",
         ),
         (
             "persistence",
-            "Preparation state could not be durably recorded.",
-            "No owner action is currently available.",
+            "Mechanical Librarian could not save its progress on this book.",
+            _SCAN_AGAIN,
         ),
         (
             "unsupported_media",
-            "This media type is not supported for review preparation.",
-            "Use a supported media file, then scan this library again.",
+            "Mechanical Librarian cannot read this type of file.",
+            "Replace it with a supported file, then scan this library again.",
         ),
         (
             "unreadable_media",
-            "The local media file could not be read.",
-            "Restore a readable media file in the library, then scan this library again.",
+            "A file of this book could not be read.",
+            "Replace it with a readable copy, then scan this library again.",
         ),
         (
             "parser_refused",
-            "The media file could not be safely read within supported parsing limits.",
-            "Use a media file that meets the supported parsing limits, then scan this library again.",
+            "The file is too complex for Mechanical Librarian to read.",
+            "Replace the file, then scan this library again.",
+        ),
+        (
+            "multi_file_budget_exceeded",
+            "This audiobook has more audio than Mechanical Librarian reads as one book.",
+            "Use fewer or smaller audio files, then scan this library again.",
         ),
         (
             "missing_required_input",
-            "Required preparation input is unavailable.",
-            "Provide the required supported item input, then scan this library again.",
+            "Something this book needs for preparation is missing.",
+            "Check the book’s files in Audiobookshelf, then scan this library again.",
         ),
         (
             "malformed_retained_data",
-            "Retained preparation data could not be safely reopened.",
-            "No owner action is currently available.",
+            "Saved preparation data for this book could not be read.",
+            _SCAN_AGAIN,
         ),
         (
             "internal_failure",
-            "Preparation stopped before a usable review package was produced.",
-            "No owner action is currently available.",
+            "Preparation stopped before the review was ready.",
+            _SCAN_AGAIN,
         ),
         (
             "unknown",
-            "Preparation failed; no safe detail is available.",
-            "No owner action is currently available.",
+            "Preparation stopped, and no more detail can be shown.",
+            _SCAN_AGAIN,
         ),
     ),
 )
@@ -763,8 +765,7 @@ def test_a_composed_item_names_the_track_that_refused_it() -> None:
     assert isinstance(preparation, dict)
     assert isinstance(summary, dict)
     assert preparation["reason"] == (
-        "The local media file could not be read. "
-        "The refusing file is track 3 of this item's audio files."
+        "A file of this book could not be read. It is track 3 of its audio files."
     )
     assert preparation["provider"] == "provider"
     assert summary["reason"] == preparation["reason"]
@@ -776,7 +777,7 @@ def test_a_terminal_without_a_recorded_track_reads_exactly_as_before() -> None:
 
     preparation = item["preparation"]
     assert isinstance(preparation, dict)
-    assert preparation["reason"] == "The local media file could not be read."
+    assert preparation["reason"] == "A file of this book could not be read."
     assert preparation["provider"] == "provider"
 
 
@@ -3248,13 +3249,13 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
 @pytest.mark.parametrize(
     "status,reason",
     (
-        (ProviderStatus.CANDIDATES, "Returned metadata candidates for comparison."),
-        (ProviderStatus.UNAVAILABLE, "Could not be reached."),
-        (ProviderStatus.RATE_LIMITED, "Limited the request rate."),
+        (ProviderStatus.CANDIDATES, "Returned possible matches to compare."),
+        (ProviderStatus.UNAVAILABLE, "Did not answer."),
+        (ProviderStatus.RATE_LIMITED, "Mechanical Librarian retries it automatically."),
         (
             ProviderStatus.NOT_NEEDED,
-            "Not needed, so this source was never asked: another source had "
-            "already matched this recording by its running time.",
+            "Never asked: another source had already matched this recording by "
+            "its running time.",
         ),
     ),
 )

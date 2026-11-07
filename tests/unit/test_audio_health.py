@@ -853,3 +853,40 @@ def test_runtime_reads_in_hours_and_minutes_and_states_the_difference() -> None:
     assert stated(_LOCAL_SECONDS + 90) == []
     for value in stated(_LOCAL_SECONDS + 834):
         assert value is not None and "seconds" not in value
+
+
+@pytest.mark.parametrize(
+    ("kind", "bound"),
+    (
+        (
+            AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH,
+            "The embedded chapter lengths match the edition's, allowing one "
+            "skipped chapter at each end.",
+        ),
+        (AudioHealthKind.TRACK_SEQUENCE_GAP, "The track numbers run without a gap."),
+        (
+            AudioHealthKind.TRACK_SEQUENCE_DISORDER,
+            "The track numbers rise in file order.",
+        ),
+        (
+            AudioHealthKind.TAG_DISAGREES_ACROSS_TRACKS,
+            "All files of a book give the same value for each tag.",
+        ),
+        (
+            AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS,
+            "All files of a book give the same ASIN.",
+        ),
+        (
+            AudioHealthKind.CONTAINER_UNEXPECTED,
+            "Each file’s container matches its file extension.",
+        ),
+        (AudioHealthKind.STREAM_ENCRYPTED, "No file is protected by DRM."),
+        (
+            AudioHealthKind.MEDIA_UNREADABLE,
+            "Every file opens and reads within Mechanical Librarian’s limits.",
+        ),
+    ),
+)
+def test_each_rule_reads_in_the_owners_words(kind: AudioHealthKind, bound: str) -> None:
+    """The rule line is what the owner reads under each observation (#1765)."""
+    assert AUDIO_HEALTH_BOUNDS[kind] == bound

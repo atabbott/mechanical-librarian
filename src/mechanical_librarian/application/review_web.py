@@ -3528,7 +3528,10 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
         "Saved preparation data for this book could not be read.",
         _SCAN_AGAIN,
     ),
-    "internal_failure": ("Preparation stopped before the review was ready.", _SCAN_AGAIN),
+    "internal_failure": (
+        "Preparation stopped before the review was ready.",
+        _SCAN_AGAIN,
+    ),
     "unknown": (
         "Preparation stopped, and no more detail can be shown.",
         _SCAN_AGAIN,

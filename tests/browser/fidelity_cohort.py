@@ -24,7 +24,7 @@ from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
 TERMINAL_FAILURE_COPY = (
-    "Provider credentials need owner attention. "
+    "A source refused its credentials. "
     "<img src=x onerror=window.__terminalFailureExecuted=true> "
     + "UnbrokenTerminalPreparationCondition"
     * 12
@@ -108,7 +108,7 @@ TERMINAL_LIBRARY_WORK = _work(
         "media_health": [],
         "provider": "hardcover-main",
         "reason": TERMINAL_FAILURE_COPY,
-        "recovery": "Update the configured provider credentials, then scan this library again.",
+        "recovery": "Replace them in Settings → Metadata sources, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -119,13 +119,13 @@ TERMINAL_LIBRARY_WORK = _work(
             "provider_requests": 1,
             "lane_kind": "work",
             "provider": "hardcover-main",
-            "reason": "Provider credentials need owner attention.",
+            "reason": "A source refused its credentials.",
             "status": "authentication",
         }
     ],
     summary={
         "fields": [],
-        "reason": "Provider credentials need owner attention.",
+        "reason": "A source refused its credentials.",
         "state": "preparation_failed",
     },
 )
@@ -258,8 +258,8 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
                 {"destination": "series", "state": "missing", "value": None},
             ],
             "reason": (
-                "No review decision is recorded for this work. Its current values "
-                "are shown exactly as Mechanical Librarian last read them."
+                "Nothing to decide for this work. These are its values as "
+                "Mechanical Librarian last read them."
             ),
             "state": "no_decision_recorded",
         },
@@ -1884,7 +1884,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                         "provider_requests": 2,
                         "lane_kind": "isbn",
                         "provider": "Hardcover",
-                        "reason": "Returned no matching metadata, so nothing was retained.",
+                        "reason": "Returned no matching metadata.",
                         "status": "no_match",
                     },
                 ],
