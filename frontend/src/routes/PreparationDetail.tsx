@@ -31,7 +31,14 @@ const preparationStateLine = (presentation: PreparationPresentation) => {
         'Finished'
       ) : (
         <>
-          Finished <RecordedTime seconds={presentation.completed_at} />
+          Finished{' '}
+          {/*
+           * The time re-reads itself each minute; inside the status line it
+           * would be announced each time, so it is its own quiet region.
+           */}
+          <span aria-live="off">
+            <RecordedTime seconds={presentation.completed_at} />
+          </span>
         </>
       )
     case 'dismissed':

@@ -45,6 +45,11 @@ import {
   renderRoute,
   wholeText,
 } from './fixtures'
+import { formatWhen } from '../src/dates'
+
+// A finished run's status line says when it finished, as Library reads a
+// recorded time (#1765).
+const finishedLine = (seconds: number) => `Finished ${formatWhen(seconds, new Date())}`
 import { view as settingsView } from './settingsFixtures'
 
 // jsdom has no native dialog methods; real focus trapping/Escape are browser proof.
@@ -554,7 +559,7 @@ describe('Library route', () => {
 
     await act(async () => release(confirmed))
     expect(
-      await screen.findByText(/^Finished \S/u, {
+      await screen.findByText(wholeText(finishedLine(101)), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -574,7 +579,9 @@ describe('Library route', () => {
       .fn<ReviewHttp['getPreparation']>()
       .mockResolvedValue(terminalPreparation(runId))
     renderRoute(`/library?lens=all&preparation=${runId}`, http)
-    const state = await screen.findByText(/^Finished \S/u, { selector: '.preparation-run-state' })
+    const state = await screen.findByText(wholeText(finishedLine(101)), {
+      selector: '.preparation-run-state',
+    })
     expect(state).toHaveAttribute('role', 'status')
     const detail = state.closest('.workspace-detail')
     expect(detail).not.toBeNull()
@@ -924,8 +931,8 @@ describe('Library route', () => {
     ],
     ['blocked', 'Preparation paused', 'Prepared works can still be reviewed.'],
     // A finished run's line says when it finished (#1765).
-    ['completed_clean', 'Preparation complete', /^Finished \S/u],
-    ['completed_with_failures', 'Preparation completed with failures', /^Finished \S/u],
+    ['completed_clean', 'Preparation complete', finishedLine(104)],
+    ['completed_with_failures', 'Preparation completed with failures', finishedLine(104)],
   ] as const)(
     'describes the %s preparation detail truthfully',
     async (state, heading, runState) => {
@@ -967,9 +974,7 @@ describe('Library route', () => {
       // introduction repeats either (#1765).
       expect(document.querySelector('.preparation-detail header p')).toBeNull()
       expect(
-        screen.getByText(typeof runState === 'string' ? wholeText(runState) : runState, {
-          selector: '.preparation-run-state',
-        }),
+        screen.getByText(wholeText(runState), { selector: '.preparation-run-state' }),
       ).toBeVisible()
       await waitFor(() => expect(detailHeading).toHaveFocus())
     },
@@ -1243,7 +1248,7 @@ describe('Library route', () => {
         },
       })
     })
-    await screen.findByText(/^Finished \S/u, {
+    await screen.findByText(wholeText(finishedLine(107)), {
       selector: '.preparation-run-state',
     })
     expect(screen.queryByText(/books\/min/u)).toBeNull()
@@ -1381,7 +1386,7 @@ describe('Library route', () => {
       })
       await user.click(screen.getByRole('button', { name: /Preparation completed with failures/u }))
       expect(
-        await screen.findByText(/^Finished \S/u, {
+        await screen.findByText(wholeText(finishedLine(101)), {
           selector: '.preparation-run-state',
         }),
       ).toBeVisible()
@@ -1457,7 +1462,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText(/^Finished \S/u, {
+      await screen.findByText(wholeText(finishedLine(101)), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1503,7 +1508,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText(/^Finished \S/u, {
+      await screen.findByText(wholeText(finishedLine(101)), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1615,7 +1620,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText(/^Finished \S/u, {
+      await screen.findByText(wholeText(finishedLine(101)), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1872,8 +1877,11 @@ describe('Library route', () => {
     expect(summary).toBeVisible()
     await userEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Preparation is starting' })).toBeVisible()
-    // A starting run has nothing in flight, so Now preparing is left out (#1765).
+    // A starting run has nothing in flight and nothing finished, so those
+    // sections are left out, and it has no rate yet (#1765).
     expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Recent completions' })).toBeNull()
+    expect(screen.queryByText(/books\/min|No book finished/u)).toBeNull()
     // Mount the actual panel before controlling the fallback sampling cadence.
     vi.useFakeTimers()
     onTestFinished(() => {
@@ -1979,7 +1987,7 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     fireEvent.click(summary)
     expect(
-      await screen.findByText(/^Finished \S/u, {
+      await screen.findByText(wholeText(finishedLine(101)), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()

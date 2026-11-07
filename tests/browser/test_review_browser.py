@@ -13244,8 +13244,9 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     ), count
-                for selector in (".preparation-run-state", ".preparation-outcomes"):
-                    assert page.locator(f"{selector} .count-pair").count(), selector
+                # A finished run's status line says when it finished; its
+                # counts are in the outcomes row (#1765).
+                assert page.locator(".preparation-outcomes .count-pair").count()
             finally:
                 browser.close()
 

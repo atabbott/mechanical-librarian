@@ -15,6 +15,7 @@ import {
 import type { LibraryView, PreparationView, ReviewHttp, ScanState } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { formatWhen } from '../src/dates'
 import { RoutePending, createApplicationRouter, preparationQuery } from '../src/router'
 import {
   createHttp,
@@ -448,7 +449,7 @@ describe('Application shell', () => {
     expect(summaryText.textContent).toBe(`This run: ${runLine}`)
     fireEvent.click(summary)
     expect(
-      await screen.findByText(/^Finished \S/u, {
+      await screen.findByText(wholeText(`Finished ${formatWhen(101, new Date())}`), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
