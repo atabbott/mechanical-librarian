@@ -920,7 +920,7 @@ def _a6_split_fixture(text: Sentinels) -> Fixture:
     # Scalar, the decision's own reason: A6a.
     fixture.result("title", "defer", ["insufficient_support"], [claim])
     fixture.abstain("title", "insufficient_support")
-    # Scalar, an echo of the proposal set's refusal: reported, not counted.
+    # Scalar, an echo of the proposal set's refusal: not A6a (#1745).
     fixture.result("publisher", "defer", ["no_positive_preservation_evidence"])
     fixture.abstain("publisher", "evidence_sufficiency_manual")
     # Not scalar for this source: the rich residual, A6b.
@@ -953,7 +953,7 @@ def test_a6_splits_scalar_abstention_from_the_rich_residual(
     scalar = _snapshot(rows["A6a"], "snap-a")
     # Only the source's scalar destinations, only the decision's own reasons.
     assert (scalar["fields"], scalar["by_destination"]) == (1, {"title": 1})
-    assert scalar["echo_fields"] == 1
+    assert "echo_fields" not in scalar
     assert scalar["true_positive"] == 1
     residual = _snapshot(rows["A6b"], "snap-a")
     assert residual["status"] == a6b_status
@@ -970,7 +970,7 @@ def test_a6_splits_scalar_abstention_from_the_rich_residual(
         )
         assert row["disposition"] == "kept (ADR-0092)"
     markdown = _run([*arguments, "--format", "markdown"], attention=probe)[1]
-    assert "1 / 1 (1 actionable; 1 upstream echo not counted)" in markdown
+    assert "upstream echo" not in markdown
     if not rich_split:
         assert "not separable on that snapshot: rich refusals collapsed" in markdown
 

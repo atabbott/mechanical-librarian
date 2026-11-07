@@ -29,6 +29,13 @@ file, or a member of the product's closed destination and reason vocabularies;
 anything else raises before a byte is written. No title, creator, identifier,
 path, configured connection, library or provider name is ever emitted.
 
+The ``--a6-abstention`` flag adds the automatic-decision abstention analysis
+of #1745 (``scripts/admission_rule_a6.py``) to the JSON document under
+``a6_abstention``: its two populations, the first failing eligibility check
+and the closed relaxations, replayed under each source. With ``--format
+markdown`` it prints that analysis's tables instead of the ledger's, so each
+page is one run's output.
+
 Usage:
     git archive --format=tar --prefix=src-REV/ REV src scripts | tar -x -C SCRATCH
     uv run python scripts/admission_rule_ledger.py \
@@ -36,13 +43,7 @@ Usage:
         --source-root LABEL SCRATCH/src-REV \
         [--source-report LABEL /copy/cold-start-report.json] \
         [--snapshot ...] [--repository CHECKOUT] [--format json|markdown] \
-        [--follow-on GATE=ISSUE ...] [--breakdown A6]
-
-``--breakdown A6`` adds the automatic-decision abstention breakdown of #1745
-(``scripts/admission_rule_a6.py``) to the JSON document: its two populations,
-the first failing eligibility check and the closed relaxations, replayed
-under each source. With ``--format markdown`` it prints the breakdown's tables
-instead of the ledger's, so each page is one run's output.
+        [--follow-on GATE=ISSUE ...]
 """
 
 from __future__ import annotations
@@ -491,7 +492,6 @@ def _never(_case: Case) -> frozenset[str]:
 # decides the source's _SUPPORTED_DESTINATIONS; every other destination's
 # no_eligible_action is the rich-preview path's residual.
 _A6_REASONS = frozenset({"insufficient_support", "no_eligible_action"})
-_A6_ECHO = frozenset({"evidence_sufficiency_manual"})
 
 
 def _abstaining(codes: frozenset[str], *, scalar: bool) -> Signal:
@@ -697,9 +697,6 @@ class Gate:
     ranked: bool = True
     # Why a row that would score is kept out of the ranking.
     unranked_note: str | None = None
-    # Blocked fields whose refusal only repeats an upstream gate's: reported
-    # beside the row, never counted or scored (#1745).
-    echo: Signal | None = None
     # Measurable only where the source keeps rich refusals' own reasons.
     needs_rich_split: bool = False
 
@@ -1226,16 +1223,15 @@ CATALOGUE: tuple[Gate, ...] = (
         "593e619821175655dd15c24e4717104eca0d722f",
         "the source's scalar decision destinations",
         "none: the lowest-identifier rule is rejected; closed relaxations in the "
-        "A6 breakdown",
+        "A6 analysis",
         "alternative",
+        # Only the decision's own reasons: evidence_sufficiency_manual repeats
+        # the proposal set's refusal and is reported in the A6 analysis.
         _abstaining(_A6_REASONS, scalar=True),
-        # Blocked fields count as A6a only where the decision abstained for its
-        # own reasons; evidence_sufficiency_manual repeats the proposal set's.
-        echo=_abstaining(_A6_ECHO, scalar=True),
         disposition="kept (ADR-0092)",
         ranked=False,
         unranked_note="kept by ADR-0092; its own cost is the proposable population "
-        "in the A6 breakdown",
+        "in the A6 analysis",
     ),
     Gate(
         "A6b",
@@ -1393,8 +1389,6 @@ class Tally:
     tied: int = 0
     # blocked fields competing on a destination a later election decides
     election_fields: int = 0
-    # blocked fields whose refusal repeats an upstream gate's (#1745)
-    echo_fields: int = 0
 
 
 # Elections that decide competing values on these destinations on main. A
@@ -1509,10 +1503,6 @@ def _tally_case(
 ) -> None:
     if gate.medium is not None and case.medium != gate.medium:
         return
-    if gate.echo is not None:
-        tally.echo_fields += sum(
-            1 for destination in gate.echo(case) if case.blocked(destination)
-        )
     blocked = sorted(
         destination for destination in gate.signal(case) if case.blocked(destination)
     )
@@ -1935,7 +1925,6 @@ def _row(
                     "pick_agrees": tally.pick_agrees if picks else None,
                     "tied_fields": tally.tied if picks else None,
                     "election_fields": tally.election_fields,
-                    "echo_fields": tally.echo_fields if gate.echo is not None else None,
                 }
             )
         per_snapshot.append(entry)
@@ -2082,7 +2071,6 @@ _STRUCTURAL_KEYS = frozenset(
         "pick",
         "rate",
         "note",
-        "echo_fields",
     }
 )
 
@@ -2147,8 +2135,8 @@ def _engine(probe: AttentionProbe) -> tuple[frozenset[str], bool]:
     return scalar, True if probe.rich_split is None else probe.rich_split
 
 
-def _breakdown_module() -> ModuleType:
-    """Import the A6 breakdown, which imports this module back (#1745)."""
+def _a6_module() -> ModuleType:
+    """Import the A6 analysis, which imports this module back (#1745)."""
     try:
         from scripts import admission_rule_a6 as module
     except ImportError:  # pragma: no cover - direct `python scripts/...` execution
@@ -2162,12 +2150,12 @@ def build_ledger(
     *,
     ancestry: Ancestry,
     attention: AttentionReader,
+    a6_replay: A6Reader | None = None,
     follow_ons: Mapping[str, int] | None = None,
-    breakdown: A6Reader | None = None,
 ) -> dict[str, object]:
     measured: list[tuple[str, Mapping[str, Status], Mapping[str, Tally]]] = []
     snapshot_entries: list[dict[str, object]] = []
-    a6 = None if breakdown is None else _breakdown_module()
+    a6 = None if a6_replay is None else _a6_module()
     a6_entries: list[dict[str, object]] = []
     a6_tallies: list[object] = []
     for item in inputs:
@@ -2181,8 +2169,8 @@ def build_ledger(
             tallies, media = measure_snapshot(connection, statuses, elections, scalar)
         finally:
             connection.close()
-        if a6 is not None and breakdown is not None:
-            replay = breakdown(item.source_root, item.database)
+        if a6 is not None and a6_replay is not None:
+            replay = a6_replay(item.source_root, item.database)
             if replay.scalar != scalar or replay.rich_split != rich_split:
                 raise Refusal("decision replay disagrees with the source probe")
             connection = _open_snapshot(item.database)
@@ -2235,7 +2223,7 @@ def build_ledger(
             "snapshots": a6_entries,
             "pooled_relaxations": a6.pooled_relaxations(a6_tallies),
         }
-        ledger["breakdowns"] = {a6.BREAKDOWN: section}
+        ledger[a6.KEY] = section
         vocabulary |= a6.vocabulary(section)
     _closed(ledger, vocabulary)
     return ledger
@@ -2259,8 +2247,6 @@ def _cell(entry: Mapping[str, object]) -> str:
         notes.append(f"{_number(entry['actionable_fields'])} actionable")
     if entry.get("election_fields"):
         notes.append(f"{_number(entry['election_fields'])} stale: later election")
-    if entry.get("echo_fields") is not None:
-        notes.append(f"{_number(entry['echo_fields'])} upstream echo not counted")
     return f"{cell} ({'; '.join(notes)})" if notes else cell
 
 
@@ -2302,11 +2288,10 @@ def _pick_cell(row: Mapping[str, object]) -> str:
 
 
 def render_markdown(ledger: Mapping[str, object]) -> str:
-    """The ledger's tables, or with a breakdown, that breakdown's tables only."""
-    breakdowns = _dict(ledger.get("breakdowns"))
-    if breakdowns:
-        a6 = _breakdown_module()
-        return "\n".join(a6.render(_dict(breakdowns[a6.BREAKDOWN]))) + "\n"
+    """The ledger's tables, or with --a6-abstention, that analysis's tables only."""
+    if "a6_abstention" in ledger:
+        a6 = _a6_module()
+        return "\n".join(a6.render(_dict(ledger[a6.KEY]))) + "\n"
     snapshots = cast("list[dict[str, object]]", ledger["snapshots"])
     labels = [cast("str", entry["label"]) for entry in snapshots]
     header = (
@@ -2429,11 +2414,11 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--repository", type=Path, default=Path(__file__).resolve().parents[1]
     )
+    parser.add_argument("--a6-abstention", action="store_true")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument(
         "--follow-on", action="append", default=[], metavar="GATE=ISSUE"
     )
-    parser.add_argument("--breakdown", choices=("A6",), default=None)
     return parser.parse_args(argv)
 
 
@@ -2500,10 +2485,10 @@ def main(
         for item in inputs:
             if not item.database.is_file():
                 raise Refusal("database unreadable")
-        breakdown: A6Reader | None = None
-        if arguments.breakdown is not None:
-            breakdown = (
-                cast("A6Reader", _breakdown_module().child_a6)
+        a6_replay: A6Reader | None = None
+        if arguments.a6_abstention:
+            a6_replay = (
+                cast("A6Reader", _a6_module().child_a6)
                 if decision_replay is None
                 else decision_replay
             )
@@ -2513,8 +2498,8 @@ def main(
             if ancestry is None
             else ancestry,
             attention=child_attention if attention is None else attention,
+            a6_replay=a6_replay,
             follow_ons=follow_ons,
-            breakdown=breakdown,
         )
         if arguments.format == "markdown":
             rendered = render_markdown(ledger)

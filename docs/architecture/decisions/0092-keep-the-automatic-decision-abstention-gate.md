@@ -42,7 +42,7 @@ Re-measured, A6 was not one gate:
   fields compete on title, which later elections (#974, #981, #1040) decide
   on main.
 
-`--breakdown A6` of `scripts/admission_rule_ledger.py` measures the scalar
+`--a6-abstention` of `scripts/admission_rule_ledger.py` measures the scalar
 engine (A6a) on both populations. For every abstained field it rebuilds the
 decision packet under the snapshot's own source, replays that source's
 decision, and attributes each candidate to the first failing named check of
@@ -92,8 +92,9 @@ and none exist yet.
    - **A6b** is the rich-preview `no_eligible_action` residual. It is
      refiled under its rich reason's own row wherever the source can
      separate it.
-   - `evidence_sufficiency_manual` is reported beside A6a as an upstream
-     echo. It is never counted or scored.
+   - `evidence_sufficiency_manual` is an upstream echo of the proposal
+     set's refusal. The A6 analysis reports it; the ledger never counts or
+     scores it.
    - Neither row is ranked.
 
    Any future loosening is a closed relaxation, one per destination. It
@@ -204,8 +205,8 @@ adopt.
   - a product-built case replayed through the real child with no mirror
     disagreement.
 - `tests/unit/test_admission_rule_ledger.py` covers the A6a/A6b split, the
-  echo column and the collapsed-source status.
+  echo's exclusion from A6a and the collapsed-source status.
 - Re-running the documented Reproduce commands on both retained snapshots
   regenerates the tables of [the ledger](../../product/admission-rule-ledger.md)
-  and of [the A6 breakdown](../../product/automatic-decision-abstention.md)
+  and of [the A6 analysis](../../product/automatic-decision-abstention.md)
   byte for byte.

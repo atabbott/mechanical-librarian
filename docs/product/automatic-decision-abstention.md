@@ -4,7 +4,7 @@ The [admission-rule ledger](admission-rule-ledger.md)'s A6 row,
 "automatic-decision abstention", measured on its own terms (#1745). The
 tables below are the Markdown output of
 [`scripts/admission_rule_ledger.py`](../../scripts/admission_rule_ledger.py)
-`--breakdown A6`, unedited, over the ledger's two retained snapshots.
+`--a6-abstention`, unedited, over the ledger's two retained snapshots.
 [ADR-0092](../architecture/decisions/0092-keep-the-automatic-decision-abstention-gate.md)
 records the decision they support: keep the gate.
 
@@ -25,8 +25,8 @@ records the decision they support: keep the gate.
   Both are counted by destination, reason, medium and the number of
   alternatives the field kept.
 - **Upstream echo and rich residual.** An `evidence_sufficiency_manual`
-  abstention repeats the proposal set's refusal; it is counted here and never
-  scored. The rich residual is `no_eligible_action` on a destination outside
+  abstention repeats the proposal set's refusal; it is counted only here,
+  never in the ledger, and never scored. The rich residual is `no_eligible_action` on a destination outside
   the scalar engine, over all fields. It is separable only where the source
   keeps rich refusals' own reasons.
 - **Replay.** For every current case a child process imports only the
@@ -123,7 +123,7 @@ records the decision they support: keep the gate.
 | language_two_correlations_without_local | pooled | both | 9 | 0 | 5 / 0 / 0 / 3 | 1 | 2/0/0 | 1.000 (0.342) | 0 / 1 (1 right) / 0 | 0 | not estimable (0 comparable) |
 | published_date_day_one_correlation | pooled | both | 0 | 0 | 0 / 0 / 0 / 0 | 0 | 0/0/0 | not estimable | 0 / 0 (0 right) / 0 | 0 | not estimable (0 comparable) |
 
-## Reading the breakdown
+## Reading the analysis
 
 - **The old row was three things.** A6's 5,481 blocked ebook-744 fields were
   80 scalar abstentions, 162 upstream echoes and 5,239 rich-preview refusals
@@ -146,7 +146,7 @@ records the decision they support: keep the gate.
 ## Reproduce
 
 Run the [ledger's Reproduce command](admission-rule-ledger.md#reproduce)
-with `--breakdown A6` added. It prints these tables instead of the
-ledger's, and the JSON document carries them under `breakdowns`. The
-breakdown rebuilds every current case's decision packet under its source,
+with `--a6-abstention` added. It prints these tables instead of the
+ledger's, and the JSON document carries them under `a6_abstention`. The
+analysis rebuilds every current case's decision packet under its source,
 which takes about forty seconds for both snapshots.

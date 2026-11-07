@@ -1,4 +1,4 @@
-"""The A6 breakdown of the admission-rule ledger (#1745).
+"""The A6 abstention analysis of the admission-rule ledger (#1745).
 
 Automatic-decision abstention is measured here on two populations, never on
 the ledger's blocked fields alone:
@@ -55,7 +55,7 @@ try:
 except ImportError:  # pragma: no cover - direct `python scripts/...` execution
     import admission_rule_ledger as ledger  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
 
-BREAKDOWN = "A6"
+KEY = "a6_abstention"
 A6_REASONS = ("insufficient_support", "no_eligible_action")
 ECHO_REASON = "evidence_sufficiency_manual"
 RICH_RESIDUAL_REASON = "no_eligible_action"
@@ -898,7 +898,7 @@ def _screen(
 def measure_a6(
     connection: sqlite3.Connection, probe: A6Probe
 ) -> tuple[A6Tally, Counter[str]]:
-    """Stream the current cases once and tally the A6 breakdown."""
+    """Stream the current cases once and tally the A6 analysis."""
     tally = A6Tally()
     media: Counter[str] = Counter()
     table = table_for(probe.version)
@@ -1130,8 +1130,7 @@ def human_decisions(connection: sqlite3.Connection) -> int:
 
 VOCABULARY = frozenset(
     {
-        BREAKDOWN,
-        "breakdowns",
+        KEY,
         "engine",
         "scalar_destinations",
         "rich_split",
@@ -1170,7 +1169,7 @@ VOCABULARY = frozenset(
 
 
 def vocabulary(section: Mapping[str, object]) -> frozenset[str]:
-    """The breakdown's closed strings, plus each validated engine version."""
+    """The analysis's closed strings, plus each validated engine version."""
     engines = {
         cast("str", entry["engine"])
         for entry in ledger._dicts(section.get("snapshots"))

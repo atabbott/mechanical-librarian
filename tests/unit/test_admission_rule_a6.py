@@ -1,4 +1,4 @@
-"""The A6 breakdown of the admission-rule ledger (#1745).
+"""The A6 abstention analysis of the admission-rule ledger (#1745).
 
 Synthetic only: packets are built here as the child would report them, and
 every free-text slot carries a sentinel, so a leaked value shows up in the
@@ -479,8 +479,7 @@ def _breakdown_run(tmp_path: Path, *extra: str) -> tuple[int, str, str]:
     code = ledger.main(
         [
             *_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path),
-            "--breakdown",
-            "A6",
+            "--a6-abstention",
             *extra,
         ],
         stdout=stdout,
@@ -495,7 +494,7 @@ def _breakdown_run(tmp_path: Path, *extra: str) -> tuple[int, str, str]:
 def test_the_breakdown_keeps_the_proposable_population_apart(tmp_path: Path) -> None:
     code, stdout, _ = _breakdown_run(tmp_path)
     assert code == 0
-    section = json.loads(stdout)["breakdowns"]["A6"]
+    section = json.loads(stdout)["a6_abstention"]
     entry = section["snapshots"][0]
     populations = {
         (row["population"], row["destination"], row["alternatives"]): row["fields"]
@@ -553,7 +552,7 @@ def test_the_breakdown_is_aggregate_only(tmp_path: Path) -> None:
     _strings(json.loads(stdout), keys, values)
     vocabulary = _test_vocabulary(["snap-a"]) | a6.VOCABULARY | {V22}
     vocabulary |= ledger._STRUCTURAL_KEYS
-    vocabulary |= {"rich_refusals_collapsed", "echo_fields"}
+    vocabulary |= {"rich_refusals_collapsed"}
     for value in [*keys, *values]:
         assert value in vocabulary or len(value) == 40, value
     (tmp_path / "m").mkdir()
@@ -568,8 +567,7 @@ def test_a_replay_that_disagrees_with_the_source_probe_refuses(tmp_path: Path) -
     code, stdout, stderr = _run(
         [
             *_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path),
-            "--breakdown",
-            "A6",
+            "--a6-abstention",
         ],
         attention=lambda _root, _db: ledger.AttentionProbe((), 0, 0, ("title",), True),
     )
