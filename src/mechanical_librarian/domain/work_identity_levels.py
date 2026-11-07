@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from mechanical_librarian.domain.metadata_report import creator_comparison_key
-from mechanical_librarian.domain.validation import boolean, exact_type
+from mechanical_librarian.domain.validation import boolean, exact_type, text
 from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
@@ -62,9 +62,9 @@ class IdentityReference:
     def __post_init__(self) -> None:
         if (
             self.title is not None
-            and type(self.title) is not str
-            or type(self.creators) is not tuple
-            or any(type(value) is not str for value in self.creators)
+            and not text(self.title)
+            or not exact_type(tuple)(self.creators)
+            or not all(text(value) for value in self.creators)
         ):
             raise ValueError("identity reference is invalid")
 
