@@ -52,8 +52,6 @@ import {
   uncertainWriteOutcome,
   ResponseDecodeError,
   UncertainMutationError,
-  mapCodexDevice,
-  mapReviewerAccess,
 } from '../src/api/http'
 import type { PolicyStateView, SettingsWrite } from '../src/api/http'
 import { classifyDecisionFailure } from '../src/reviewDecisionController'
@@ -103,6 +101,17 @@ const readSettings = (document: unknown) =>
     csrf,
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getSettings()
+// The reviewer-access family is decoded centrally too (#1690).
+const readReviewerAccess = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getReviewerAccess()
+const readCodexDevice = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getCodexDevice()
 const readEvidence = (document: unknown) =>
   new ReviewApiClient({
     csrf,
@@ -180,10 +189,14 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+// A reviewer-access read that fails one of the named checks the mapper keeps
+// (ADR-0091) is the mapper's own 502; a structural one is the decoder's.
+const unnamed = (code: string) => ({ status: 502, code })
+
 describe('reviewer access transport vocabulary', () => {
   it.each(['profile_not_provisioned', 'profile_unreadable', 'profile_contract_mismatch'])(
     'admits provisioning reason %s only in its exact state',
-    (reason) => {
+    async (reason) => {
       const codex = {
         ...reviewerAccessPayload().codex,
         state: 'not_provisioned',
@@ -191,32 +204,35 @@ describe('reviewer access transport vocabulary', () => {
         model: null,
         host_headroom_bytes: null,
       }
-      expect(mapReviewerAccess(reviewerAccessPayload({ codex })).codex.reason).toBe(reason)
+      expect((await readReviewerAccess(reviewerAccessPayload({ codex }))).codex.reason).toBe(reason)
       for (const invalid of [
         { ...codex, state: 'ready' },
         { ...codex, model: 'gpt-5.6-sol' },
         { ...codex, reason: 'host_evidence_unavailable' },
       ]) {
-        expect(() => mapReviewerAccess(reviewerAccessPayload({ codex: invalid }))).toThrow()
+        await expect(
+          readReviewerAccess(reviewerAccessPayload({ codex: invalid })),
+        ).rejects.toMatchObject(unnamed('invalid_reviewer_access_response'))
       }
     },
   )
-  it('rejects the prior view and malformed contained model grammar', () => {
-    expect(() =>
-      mapReviewerAccess(reviewerAccessPayload({ schema_version: 'reviewer-access-view-v1' })),
-    ).toThrow()
+  it('rejects the prior view and malformed contained model grammar', async () => {
+    await expect(
+      readReviewerAccess(reviewerAccessPayload({ schema_version: 'reviewer-access-view-v1' })),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
     for (const model of [null, '', 'model\nsecret', 'provider/model', 'x'.repeat(129)]) {
-      expect(() =>
-        mapReviewerAccess(
+      await expect(
+        readReviewerAccess(
           reviewerAccessPayload({ codex: { ...reviewerAccessPayload().codex, model } }),
         ),
-      ).toThrow()
+      ).rejects.toMatchObject(unnamed('invalid_reviewer_access_response'))
     }
   })
 
-  it.each(['openai/gpt-6-luna'])('preserves the exact cover recommendation %s', (model) => {
+  it.each(['openai/gpt-6-luna'])('preserves the exact cover recommendation %s', async (model) => {
     expect(
-      mapReviewerAccess(reviewerAccessPayload({ recommendations: [model] })).recommendations,
+      (await readReviewerAccess(reviewerAccessPayload({ recommendations: [model] })))
+        .recommendations,
     ).toEqual([model])
   })
 
@@ -232,8 +248,8 @@ describe('reviewer access transport vocabulary', () => {
     'timed_out',
     'data_policy_refused',
     'image_limit_exceeded',
-  ] as const)('preserves the closed %s refusal', (state) => {
-    const mapped = mapReviewerAccess(
+  ] as const)('preserves the closed %s refusal', async (state) => {
+    const mapped = await readReviewerAccess(
       reviewerAccessPayload({
         openrouter: {
           engine: 'openrouter',
@@ -248,88 +264,107 @@ describe('reviewer access transport vocabulary', () => {
     expect(mapped.openrouter).toMatchObject({ state, reason: state })
   })
 
+  it('rejects a cross-engine reason with the named slot check', async () => {
+    await expect(
+      readReviewerAccess(
+        reviewerAccessPayload({
+          codex: {
+            engine: 'codex',
+            state: 'failed',
+            reason: 'invalid_key',
+            model: 'gpt-5.6-sol',
+            tier: null,
+            host_headroom_bytes: 1,
+          },
+        }),
+      ),
+    ).rejects.toMatchObject(unnamed('invalid_reviewer_access_response'))
+  })
+
+  const candidate = {
+    model: 'provider/model',
+    tier: 'free',
+    qualified: false,
+    evidence: 'catalogue_capability_only',
+    requests_per_minute: null,
+    requests_per_day: null,
+  }
+  // The checks the reviewer-access mapper made by hand, each now the
+  // decoder's (S83-S87, the `mapReviewerAccess` E list and its presence sites
+  // at d53effa) (#1690).
   it.each([
-    [
-      'cross-engine reason',
-      {
-        codex: {
-          engine: 'codex',
-          state: 'failed',
-          reason: 'invalid_key',
-          model: 'gpt-5.6-sol',
-          tier: null,
-          host_headroom_bytes: 1,
-        },
-      },
-    ],
     [
       'hostile model',
       { mapping: { engine: 'openrouter', model: 'provider/model\nBearer secret' } },
+      'pattern@/mapping/model',
     ],
-    ['hostile recommendation', { recommendations: ['provider/model\nBearer secret'] }],
-    ['extra mapping field', { mapping: { engine: 'codex', model: 'invented' } }],
+    [
+      'hostile recommendation',
+      { recommendations: ['provider/model\nBearer secret'] },
+      'pattern@/recommendations/0',
+    ],
+    [
+      'extra mapping field',
+      { mapping: { engine: 'codex', model: 'invented' } },
+      'unknown_key@/mapping/model',
+    ],
     [
       'non-integer headroom',
       {
-        codex: {
-          engine: 'codex',
-          state: 'ready',
+        codex: { ...reviewerAccessPayload().codex, host_headroom_bytes: '1' },
+      },
+      'type@/codex/host_headroom_bytes',
+    ],
+    [
+      'negative headroom',
+      {
+        codex: { ...reviewerAccessPayload().codex, host_headroom_bytes: -1 },
+      },
+      'min@/codex/host_headroom_bytes',
+    ],
+    [
+      'unknown openrouter tier',
+      {
+        openrouter: {
+          engine: 'openrouter',
+          state: 'usable',
           reason: null,
-          model: 'gpt-5.6-sol',
-          tier: null,
-          host_headroom_bytes: '1',
+          model: 'provider/model',
+          tier: 'trial',
+          host_headroom_bytes: null,
         },
       },
+      'enum@/openrouter/tier',
     ],
     [
       'array candidate model',
-      {
-        candidates: [
-          {
-            model: ['provider/model'],
-            tier: 'free',
-            qualified: false,
-            evidence: 'catalogue_capability_only',
-            requests_per_minute: null,
-            requests_per_day: null,
-          },
-        ],
-      },
+      { candidates: [{ ...candidate, model: ['provider/model'] }] },
+      'type@/candidates/0/model',
+    ],
+    [
+      'hostile candidate model',
+      { candidates: [{ ...candidate, model: 'provider/model\nBearer secret' }] },
+      'pattern@/candidates/0/model',
     ],
     [
       'array candidate tier',
-      {
-        candidates: [
-          {
-            model: 'provider/model',
-            tier: ['free'],
-            qualified: false,
-            evidence: 'catalogue_capability_only',
-            requests_per_minute: null,
-            requests_per_day: null,
-          },
-        ],
-      },
+      { candidates: [{ ...candidate, tier: ['free'] }] },
+      'type@/candidates/0/tier',
+    ],
+    [
+      'zero candidate rate',
+      { candidates: [{ ...candidate, requests_per_minute: 0 }] },
+      'min@/candidates/0/requests_per_minute',
     ],
     [
       'qualified candidate',
-      {
-        candidates: [
-          {
-            model: 'provider/model',
-            tier: 'paid',
-            qualified: true,
-            evidence: 'catalogue_capability_only',
-            requests_per_minute: null,
-            requests_per_day: null,
-          },
-        ],
-      },
+      { candidates: [{ ...candidate, tier: 'paid', qualified: true }] },
+      'const@/candidates/0/qualified',
     ],
-    ['extra top-level field', { invented: true }],
-  ])('rejects %s', (_label, overrides) => {
-    expect(() => mapReviewerAccess(reviewerAccessPayload(overrides))).toThrow(
-      'invalid_reviewer_access_response',
+    ['extra top-level field', { invented: true }, 'unknown_key@/invented'],
+  ])('rejects %s at the decoder', async (_label, overrides, failure) => {
+    await expect(readReviewerAccess(reviewerAccessPayload(overrides))).rejects.toMatchObject(
+      refused(failure),
     )
   })
 
@@ -338,15 +373,17 @@ describe('reviewer access transport vocabulary', () => {
     'permission_or_process',
     'protocol_or_process',
     'restart_interrupted',
-  ] as const)('preserves the closed device failure %s', (failure) => {
+  ] as const)('preserves the closed device failure %s', async (failure) => {
     expect(
-      mapCodexDevice({
-        state: failure === 'restart_interrupted' ? 'interrupted' : 'failed',
-        verification_url: null,
-        user_code: null,
-        expires_in_seconds: null,
-        failure,
-      }).failure,
+      (
+        await readCodexDevice({
+          state: failure === 'restart_interrupted' ? 'interrupted' : 'failed',
+          verification_url: null,
+          user_code: null,
+          expires_in_seconds: null,
+          failure,
+        })
+      ).failure,
     ).toBe(failure)
   })
 
@@ -362,7 +399,7 @@ describe('reviewer access transport vocabulary', () => {
       structured_outputs: true,
     }
     expect(
-      mapReviewerAccess(reviewerAccessPayload({ description_metadata: metadata }))
+      (await readReviewerAccess(reviewerAccessPayload({ description_metadata: metadata })))
         .description_metadata?.request_price,
     ).toBeNull()
     const client = new ReviewApiClient({
@@ -379,18 +416,21 @@ describe('reviewer access transport vocabulary', () => {
         })
       ).request_price,
     ).toBeNull()
-    for (const invalid of [
-      { ...metadata, prompt_price: null },
-      { ...metadata, request_price: '-1' },
-      { ...metadata, request_price: '' },
-    ]) {
-      expect(() =>
-        mapReviewerAccess(reviewerAccessPayload({ description_metadata: invalid })),
-      ).toThrow('invalid_description_metadata')
+    for (const [invalid, failure] of [
+      [{ ...metadata, prompt_price: null }, refused('type@/description_metadata/prompt_price')],
+      [
+        { ...metadata, request_price: '' },
+        refused('min_length@/description_metadata/request_price'),
+      ],
+      [{ ...metadata, request_price: '-1' }, unnamed('invalid_description_metadata')],
+    ] as const) {
+      await expect(
+        readReviewerAccess(reviewerAccessPayload({ description_metadata: invalid })),
+      ).rejects.toMatchObject(failure)
     }
   })
 
-  it('accepts only the fixed issued prompt shape', () => {
+  it('accepts only the fixed issued prompt shape', async () => {
     const issued = {
       state: 'issued',
       verification_url: 'https://auth.openai.com/codex/device',
@@ -398,16 +438,26 @@ describe('reviewer access transport vocabulary', () => {
       expires_in_seconds: 900,
       failure: null,
     }
-    expect(mapCodexDevice(issued).state).toBe('issued')
-    expect(mapCodexDevice({ ...issued, user_code: 'ABCD-EFGHJ' }).user_code).toBe('ABCD-EFGHJ')
+    expect((await readCodexDevice(issued)).state).toBe('issued')
+    expect((await readCodexDevice({ ...issued, user_code: 'ABCD-EFGHJ' })).user_code).toBe(
+      'ABCD-EFGHJ',
+    )
     for (const user_code of ['Bearer secret', 'ABC-1234', 'ABCD-123456789']) {
-      expect(() => mapCodexDevice({ ...issued, user_code })).toThrow(
-        'invalid_codex_device_response',
+      await expect(readCodexDevice({ ...issued, user_code })).rejects.toMatchObject(
+        refused('pattern@/user_code'),
       )
     }
-    expect(() => mapCodexDevice({ ...issued, invented: true })).toThrow(
-      'invalid_codex_device_response',
+    await expect(readCodexDevice({ ...issued, invented: true })).rejects.toMatchObject(
+      refused('unknown_key@/invented'),
     )
+    // The prompt belongs to issued and waiting only (X47).
+    for (const invalid of [
+      { ...issued, user_code: null },
+      { ...issued, state: 'ready' },
+    ])
+      await expect(readCodexDevice(invalid)).rejects.toMatchObject(
+        unnamed('invalid_codex_device_response'),
+      )
   })
 })
 
@@ -3692,7 +3742,7 @@ it.each(['invalid JSON', 'interrupted body'])(
 
 it.each([null, '0', '0.000001'])(
   'admits independent cover price %s bound to the saved model',
-  (price) => {
+  async (price) => {
     const metadata = {
       model: 'example/model',
       observed_at: 1,
@@ -3705,15 +3755,16 @@ it.each([null, '0', '0.000001'])(
       mapping: { engine: 'openrouter', model: 'example/model' },
       cover_metadata: metadata,
     })
-    expect(mapReviewerAccess(value).cover_metadata).toEqual(metadata)
-    expect(() =>
-      mapReviewerAccess({ ...value, mapping: { engine: 'openrouter', model: 'example/other' } }),
-    ).toThrow()
-    expect(() =>
-      mapReviewerAccess({ ...value, cover_metadata: { ...metadata, image_price: 'NaN' } }),
-    ).toThrow()
-    expect(() =>
-      mapReviewerAccess({
+    expect((await readReviewerAccess(value)).cover_metadata).toEqual(metadata)
+    // The binding and the price grammar are named checks (ADR-0091).
+    await expect(
+      readReviewerAccess({ ...value, mapping: { engine: 'openrouter', model: 'example/other' } }),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_cover_metadata' })
+    await expect(
+      readReviewerAccess({ ...value, cover_metadata: { ...metadata, image_price: 'NaN' } }),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_cover_metadata' })
+    await expect(
+      readReviewerAccess({
         ...value,
         cost_evidence: {
           schema_version: 'reviewer-cost-evidence-v2',
@@ -3721,11 +3772,11 @@ it.each([null, '0', '0.000001'])(
           private: 'forbidden',
         },
       }),
-    ).toThrow()
+    ).rejects.toMatchObject(refused('unknown_key@/cost_evidence/private'))
   },
 )
 
-it('admits per-row cost runs and refuses a missing row run or a top-level run', () => {
+describe('reviewer cost evidence', () => {
   const run = { source_head: 'a'.repeat(40), cohort_sha256: 'b'.repeat(64), observed_at: 1 }
   const row = {
     model: 'openai/gpt-6-luna',
@@ -3741,18 +3792,44 @@ it('admits per-row cost runs and refuses a missing row run or a top-level run', 
     measured_run: run,
   }
   const evidence = (cost_evidence: unknown) =>
-    mapReviewerAccess(reviewerAccessPayload({ cost_evidence }))
+    readReviewerAccess(reviewerAccessPayload({ cost_evidence }))
   const valid = { schema_version: 'reviewer-cost-evidence-v2', models: [row] }
-  expect(evidence(valid).cost_evidence).toEqual(valid)
-  const missing = Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'measured_run'))
-  for (const invalid of [
-    { ...valid, models: [missing] },
-    { ...valid, models: [{ ...row, measured_run: null }] },
-    { ...valid, models: [{ ...row, measured_run: { ...run, source_head: 'A'.repeat(40) } }] },
-    { ...valid, measured_run: run },
-    { ...valid, schema_version: 'reviewer-cost-evidence-v1' },
-  ])
-    expect(() => evidence(invalid)).toThrow(new ApiError(502, 'invalid_cost_evidence'))
+
+  it('admits per-row cost runs and refuses a missing row run or a top-level run', async () => {
+    expect((await evidence(valid)).cost_evidence).toEqual(valid)
+    const missing = Object.fromEntries(
+      Object.entries(row).filter(([key]) => key !== 'measured_run'),
+    )
+    const at = '/cost_evidence'
+    for (const [invalid, failure] of [
+      [{ ...valid, models: [missing] }, `required@${at}/models/0/measured_run`],
+      [{ ...valid, models: [{ ...row, measured_run: null }] }, `type@${at}/models/0/measured_run`],
+      [
+        { ...valid, models: [{ ...row, measured_run: { ...run, source_head: 'A'.repeat(40) } }] },
+        `pattern@${at}/models/0/measured_run/source_head`,
+      ],
+      [{ ...valid, measured_run: run }, `unknown_key@${at}/measured_run`],
+      [{ ...valid, schema_version: 'reviewer-cost-evidence-v1' }, `const@${at}/schema_version`],
+    ] as const)
+      await expect(evidence(invalid)).rejects.toMatchObject(refused(failure))
+  })
+
+  // The accounting (X44), its prices (X45) and one row per model and task
+  // (X46) stay with the mapper (ADR-0091).
+  it.each([
+    ['attempted differs from selected', [{ ...row, requests_attempted: 99 }]],
+    ['completed and failed miss attempted', [{ ...row, requests_failed: 1 }]],
+    ['more works than requests', [{ ...row, requests_selected: 100, works: 101 }]],
+    ['description images', [{ ...row, task: 'description', distinct_images: 1 }]],
+    ['an unbounded price', [{ ...row, total_cost_usd: '1e9', per_1000_usd: '1e10' }]],
+    ['a per-1000 cost off its total', [{ ...row, per_1000_usd: '0.7' }]],
+    ['a repeated model and task', [row, row]],
+  ])('refuses %s with the named check', async (_label, models) => {
+    await expect(evidence({ ...valid, models })).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_cost_evidence',
+    })
+  })
 })
 
 describe('preparation scan identity', () => {
@@ -4079,8 +4156,20 @@ describe('central response decoding (#1685)', () => {
       {},
       '/reduced_motion',
     ],
+    [
+      'GET /api/v1/reviewer-access',
+      (client: ReviewApiClient) => client.getReviewerAccess(),
+      reviewerAccessPayload({ cost_evidence: undefined }),
+      '/cost_evidence',
+    ],
+    [
+      'GET /api/v1/reviewer-access/codex/device',
+      (client: ReviewApiClient) => client.getCodexDevice(),
+      { verification_url: null, user_code: null, expires_in_seconds: null, failure: null },
+      '/state',
+    ],
   ] as const)(
-    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1689)',
+    'reports an undecodable %s answer as a 502 with its reason and pointer (#1686-#1690)',
     async (operation, read, document, at) => {
       const failure = await read(answering(document)).catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(ResponseDecodeError)
@@ -4521,6 +4610,193 @@ describe('settings write decoding (#1689)', () => {
     )
     expect((await answering(saved).retryProviderRecovery(1)).authority).toBe('store')
   })
+})
+
+describe('reviewer-access write decoding (#1690)', () => {
+  const answering = (body: unknown) =>
+    new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () => Response.json(body)),
+    })
+  const access = reviewerAccessPayload()
+  const device = {
+    state: 'issued',
+    verification_url: 'https://auth.openai.com/codex/device',
+    user_code: 'ABCD-1234',
+    expires_in_seconds: 900,
+    failure: null,
+  }
+  const metadata = {
+    model: 'example/text',
+    observed_at: 1,
+    prompt_price: '0.000001',
+    completion_price: '0.000002',
+    request_price: null,
+    text_input: true,
+    text_output: true,
+    structured_outputs: true,
+  }
+  const openRouter = { expected_revision: 3, api_key: 'synthetic', model: 'example/vision' }
+  type Send = (client: ReviewApiClient) => Promise<unknown>
+  const sends: readonly (readonly [operation: string, send: Send, answer: unknown])[] = [
+    [
+      'PUT /api/v1/reviewer-access/openrouter',
+      (client) => client.configureOpenRouter(openRouter),
+      access,
+    ],
+    ['DELETE /api/v1/reviewer-access/openrouter', (client) => client.clearOpenRouter(3), access],
+    [
+      'POST /api/v1/reviewer-access/openrouter/refresh',
+      (client) => client.refreshOpenRouter(undefined, 'description_rewrite'),
+      access,
+    ],
+    ['PUT /api/v1/reviewer-access/selection', (client) => client.selectReviewer(null, 3), access],
+    ['DELETE /api/v1/reviewer-access/codex', (client) => client.clearCodex(3), access],
+    [
+      'POST /api/v1/reviewer-access/codex/device',
+      (client) => client.startCodexDevice(3),
+      { access, device },
+    ],
+    [
+      'POST /api/v1/reviewer-access/codex/device/cancel',
+      (client) => client.cancelCodexDevice(),
+      {
+        ...device,
+        state: 'cancelled',
+        verification_url: null,
+        user_code: null,
+        expires_in_seconds: null,
+      },
+    ],
+    [
+      'POST /api/v1/reviewer-access/codex/recheck',
+      (client) => client.recheckCodex(),
+      {
+        ...device,
+        state: 'usable',
+        verification_url: null,
+        user_code: null,
+        expires_in_seconds: null,
+      },
+    ],
+    // The test and the disclosure write nothing, but they are not marked as
+    // writing nothing, so they read as uncertain too (stage-3 Q4).
+    [
+      'POST /api/v1/reviewer-access/description-model/test',
+      (client) => client.testDescriptionModel(openRouter),
+      metadata,
+    ],
+    [
+      'POST /api/v1/reviewer-access/description-model/contained',
+      (client) => client.describeContainedDescription(),
+      { model: 'contained-model', profile_sha256: 'a'.repeat(64) },
+    ],
+  ]
+
+  it.each(sends)('accepts the documented %s answer', async (_operation, send, answer) => {
+    await expect(send(answering(answer))).resolves.toBeDefined()
+  })
+
+  it.each(sends)(
+    'reports an unreadable %s answer as uncertain',
+    async (operation, send, answer) => {
+      const body = { ...(answer as Record<string, unknown>), invented: true }
+      const refusal = await send(answering(body)).catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UncertainMutationError)
+      expect(refusal).toBeInstanceOf(AmbiguousMutationError)
+      expect(refusal).toMatchObject({
+        ...uncertain('unknown_key@/invented'),
+        operation,
+        responseStatus: 200,
+      })
+      expect((refusal as Error).message).not.toContain('/')
+      expect(uncertainWriteOutcome(refusal)).toBe(true)
+    },
+  )
+
+  // The contained disclosure's model and profile digest were a plain Error
+  // (S81, S82); they are the decoder's now.
+  it.each([
+    [{ model: '', profile_sha256: 'a'.repeat(64) }, 'min_length@/model'],
+    [{ model: 'contained-model', profile_sha256: 'A'.repeat(64) }, 'pattern@/profile_sha256'],
+    [{ model: 'contained-model' }, 'required@/profile_sha256'],
+  ])('reports a contained disclosure %o as uncertain', async (body, failure) => {
+    await expect(answering(body).describeContainedDescription()).rejects.toMatchObject({
+      ...uncertain(failure),
+      operation: 'POST /api/v1/reviewer-access/description-model/contained',
+    })
+  })
+
+  // A named check failed on a committing answer, or on the test, is uncertain
+  // with the check's code (stage-3 Q12).
+  it.each([
+    [
+      'DELETE /api/v1/reviewer-access/codex',
+      (client: ReviewApiClient) => client.clearCodex(3),
+      reviewerAccessPayload({ codex: { ...access.codex, model: null } }),
+      'invalid_reviewer_access_response',
+    ],
+    [
+      'PUT /api/v1/reviewer-access/selection',
+      (client: ReviewApiClient) => client.selectReviewer(null, 3),
+      reviewerAccessPayload({
+        cost_evidence: {
+          schema_version: 'reviewer-cost-evidence-v2',
+          models: [
+            {
+              model: 'openai/gpt-6-luna',
+              task: 'cover',
+              requests_selected: 100,
+              requests_attempted: 99,
+              requests_completed: 99,
+              requests_failed: 0,
+              works: 99,
+              distinct_images: 1,
+              total_cost_usd: '0.099',
+              per_1000_usd: '1',
+              measured_run: {
+                source_head: 'a'.repeat(40),
+                cohort_sha256: 'b'.repeat(64),
+                observed_at: 1,
+              },
+            },
+          ],
+        },
+      }),
+      'invalid_cost_evidence',
+    ],
+    [
+      'POST /api/v1/reviewer-access/codex/device',
+      (client: ReviewApiClient) => client.startCodexDevice(3),
+      { access, device: { ...device, user_code: null } },
+      'invalid_codex_device_response',
+    ],
+    [
+      'POST /api/v1/reviewer-access/codex/recheck',
+      (client: ReviewApiClient) => client.recheckCodex(),
+      { ...device, state: 'ready' },
+      'invalid_codex_device_response',
+    ],
+    [
+      'POST /api/v1/reviewer-access/description-model/test',
+      (client: ReviewApiClient) => client.testDescriptionModel(openRouter),
+      { ...metadata, request_price: '-1' },
+      'invalid_description_metadata',
+    ],
+  ] as const)(
+    'reports %s failing a named check as uncertain (%#)',
+    async (operation, send, body, code) => {
+      const refusal = await send(answering(body)).catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UncertainMutationError)
+      expect(refusal).toMatchObject({
+        ...uncertain(`invariant@${code}`),
+        operation,
+        responseStatus: 200,
+      })
+      expect(uncertainWriteOutcome(refusal)).toBe(true)
+    },
+  )
 })
 
 // The cover and choice-context checks named X55-X61 in ADR-0091, and the two
