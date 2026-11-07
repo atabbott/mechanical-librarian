@@ -149,7 +149,11 @@ export const policyImpactDisplay = (
     return {
       changed: false,
       title: 'No change',
-      detail: `remains ${current}. ${reasonSentence(field.reason ? humanReason(field.reason) : 'the exact current value is preserved')}`,
+      // With no specific reason, the line ends at the value (#1760).
+      detail:
+        !field.reason || field.reason === 'target_preserved' || field.reason === 'unchanged'
+          ? `remains ${current}.`
+          : `remains ${current}. ${reasonSentence(humanReason(field.reason))}`,
       technicalDetail,
     }
   if (!currentIsDisplayable && !desiredIsDisplayable)

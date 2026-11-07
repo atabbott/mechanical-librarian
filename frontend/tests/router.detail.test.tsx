@@ -1095,9 +1095,6 @@ describe('Library review ownership', () => {
     expect(run.returnToAutomatic).toHaveBeenCalledOnce()
   })
 
-  // A reread that fails replaces the work with its own failure and Try again
-  // (#1288), so the panel never claims a reload that did not happen; the
-  // next reread settles the uncertainty.
   // A background reread after the outcome resolved (window focus, a live
   // update) keeps the resolved message rather than reverting to reloading.
   it.each([
@@ -1128,6 +1125,9 @@ describe('Library review ownership', () => {
     },
   )
 
+  // A reread that fails replaces the work with its own failure and Try again
+  // (#1288), so the panel never claims a reload that did not happen; the
+  // next reread settles the uncertainty.
   it('settles an unknown outcome from the next reread when the first one fails', async () => {
     const user = userEvent.setup()
     let rereads = 0

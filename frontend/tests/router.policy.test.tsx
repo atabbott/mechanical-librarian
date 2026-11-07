@@ -333,9 +333,7 @@ describe('Policy route', () => {
       const { policyCommand } = await run('validate', new ApiError(503, 'persistence'))
 
       expect(
-        await screen.findByText(
-          'The complete draft could not be validated. Nothing was saved or activated; try again.',
-        ),
+        await screen.findByText("The draft couldn't be validated. Nothing was saved. Try again."),
       ).toBeVisible()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
     })
@@ -382,9 +380,7 @@ describe('Policy route', () => {
     it('to validation says nothing was saved', async () => {
       const { policyCommand } = await run('validate')
       expect(
-        await screen.findByText(
-          'The complete draft could not be validated. Nothing was saved or activated; try again.',
-        ),
+        await screen.findByText("The draft couldn't be validated. Nothing was saved. Try again."),
       ).toBeVisible()
       expect(screen.queryByText(/uncertain|could not be confirmed/u)).toBeNull()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate'])
@@ -418,10 +414,7 @@ describe('Policy route', () => {
     // An answer that is not JSON at all is that phase's failure too, not an
     // uncertain write (#1731).
     it.each([
-      [
-        'validate',
-        'The complete draft could not be validated. Nothing was saved or activated; try again.',
-      ],
+      ['validate', "The draft couldn't be validated. Nothing was saved. Try again."],
       [
         'preview',
         "The preview didn't load. Nothing changed. Choose Validate and preview to try again.",
@@ -437,7 +430,7 @@ describe('Policy route', () => {
     it.each([
       [
         'validate',
-        'The complete draft could not be validated. Nothing was saved or activated; try again.',
+        "The draft couldn't be validated. Nothing was saved. Try again.",
         ['validate'],
         0,
       ],
@@ -577,7 +570,7 @@ describe('Policy route', () => {
       'Ebooks: Ask me. You choose each value. If set to Automatic: No automatic effect. You review each change.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me. You choose each value. If set to Automatic: Fill empty ASIN.',
+      'Audiobooks: Ask me. You choose each value. If set to Automatic: Fill an empty ASIN.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field\. Automatic available\./u)).toBeVisible()
@@ -638,6 +631,45 @@ describe('Policy route', () => {
     expect(scope).toHaveTextContent('If set to Automatic: Fill empty or respell the same language.')
     expect(scope?.textContent.match(/Fill empty or respell the same language/gu)).toHaveLength(2)
     expect(scope).not.toHaveTextContent('Fill empty only')
+  })
+
+  // #1760: one sentence per set of operations, the fields as its object, one
+  // comma list, British spelling.
+  it('lists audiobook contributor operations as one plain sentence', async () => {
+    renderRoute('/policy?section=identity', {
+      ...createHttp(),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+        schema_version: 'metadata-policy-notebook-v1',
+        policy_id: 'policy-1',
+        profile: {
+          schema_version: 'metadata-policy-profile-v3',
+          name: 'Default',
+          options: { contributor_names: 'canonical' },
+          destinations: {},
+        },
+        rich_qualification: [],
+        audiobook_qualification: [
+          ...(['authors', 'narrators'] as const).flatMap((destination) =>
+            (['fill', 'preserve', 'normalize', 'add', 'replace'] as const).map((operation) => ({
+              automatic_available: true,
+              destination,
+              field: 'contributor_names' as const,
+              identity: `contributor_names:canonical:audiobook_${destination}_${operation}`,
+              operation,
+              option: 'canonical' as const,
+              record_sha256: 'c'.repeat(64),
+            })),
+          ),
+          ...inertAudiobookQualification.filter((entry) => entry.field !== 'contributor_names'),
+        ],
+      })),
+    })
+    const contributors = await screen.findByRole('region', { name: 'Authors and narrators' })
+    const scope = contributors.querySelector('.cm-policy-media-scope')
+    expect(scope).toHaveTextContent(
+      'Fill empty, keep current, normalise, add or replace authors and narrators.',
+    )
+    expect(scope?.textContent).not.toMatch(/;| or keep| or normali[sz]e or/u)
   })
 
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
@@ -1107,7 +1139,7 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText(
-        '· Ask me now: would propose filling the empty field with Proposed cast. Automatic in the draft: fills the empty field with Complete recording cast',
+        '· Ask me now: would propose filling the empty field with Proposed cast. Automatic in the draft: fills the empty field with Complete recording cast.',
         { selector: '.cm-policy-impact small' },
       ),
     ).toBeVisible()

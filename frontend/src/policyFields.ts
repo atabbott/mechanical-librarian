@@ -8,7 +8,7 @@ import { destinationLabel } from './labels'
 export const audiobookOperationLabels = {
   fill: 'Fill an empty field',
   preserve: 'Keep the current value',
-  normalize: 'Normalize the representation',
+  normalize: 'Normalise the representation',
   add: 'Add supported members',
   replace: 'Replace the current value',
   replace_invalid: 'Replace an invalid ASIN',
@@ -28,7 +28,7 @@ export const operationScopeLabels = {
 export const operationWords = {
   fill: 'fill empty',
   preserve: 'keep current',
-  normalize: 'normalize',
+  normalize: 'normalise',
   add: 'add',
   replace: 'replace',
   replace_invalid: 'replace invalid',

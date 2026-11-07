@@ -146,7 +146,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title. The exact current value is preserved.',
+      detail: 'remains Current title.',
     })
     expect(
       policyImpactDisplay({
@@ -217,7 +217,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title. The exact current value is preserved.',
+      detail: 'remains Current title.',
     })
     expect(
       policyImpactDisplay({

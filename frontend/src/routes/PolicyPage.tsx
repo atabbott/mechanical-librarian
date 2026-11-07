@@ -63,6 +63,12 @@ type PolicyMutation =
   | { action: 'activate'; body: PolicyActivationRequest }
   | { action: PolicyCommandPath; body?: PolicyCommandBody<PolicyCommandPath> }
 
+// "a, b or c": one comma list, never a chain of "or".
+const plainList = (items: readonly string[], last: 'or' | 'and') =>
+  items.length < 2
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} ${last} ${items.at(-1) ?? ''}`
+
 const Check = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24">
     <path d="m5 12 4 4L19 7" />
@@ -262,8 +268,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       else
         setStatus({
           tone: 'error',
-          message:
-            'The complete draft could not be validated. Nothing was saved or activated; try again.',
+          message: "The draft couldn't be validated. Nothing was saved. Try again.",
         })
     }
   }
@@ -406,7 +411,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       ? ('Policy change' as const)
                       : ('No policy change' as const),
                     detail: field.changed
-                      ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail}`
+                      ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail.replace(/[^.]$/u, '$&.')}`
                       : projected.detail,
                     technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
                   },
@@ -464,15 +469,27 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       operations.push(operationWords[entry.operation])
       grouped.set(entry.destination, operations)
     }
-    const operations = [...grouped]
-      .map(([destination, values]) => `${values.join(' or ')} ${destinationLabel(destination)}`)
-      .concat(
-        media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
-          ? ['no automatic effect on Narrators']
-          : [],
-      )
-      .join('; ')
-    return `${operations.charAt(0).toUpperCase()}${operations.slice(1)}.`
+    // One sentence per set of operations, with the fields as its object:
+    // "Fill empty, keep current or replace authors and narrators." (#1760).
+    const byOperations = new Map<string, { operations: string[]; fields: string[] }>()
+    for (const [destination, operations] of grouped) {
+      const key = operations.join('|')
+      const label = destinationLabel(destination)
+      const field = label === label.toUpperCase() ? label : label.toLowerCase()
+      const group = byOperations.get(key) ?? { operations, fields: [] }
+      group.fields.push(field)
+      byOperations.set(key, group)
+    }
+    const sentences = [...byOperations.values()].map(({ operations, fields }) => {
+      const text =
+        operations.length === 1 && operations[0] === 'fill empty'
+          ? `fill ${fields.length === 1 ? 'an empty' : 'empty'} ${plainList(fields, 'and')}`
+          : `${plainList(operations, 'or')} ${plainList(fields, 'and')}`
+      return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`
+    })
+    if (media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical')
+      sentences.push('No automatic effect on narrators.')
+    return sentences.join(' ')
   }
 
   const mediaBehavior = (field: FieldDefinition, option: string, media: 'ebook' | 'audiobook') => {
