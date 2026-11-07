@@ -81,6 +81,7 @@ from urllib.parse import quote
 from mechanical_librarian.domain import shadow_decision, shadow_outcome
 from mechanical_librarian.domain.metadata_report import TargetDestination, isbn_family
 from mechanical_librarian.domain.proposal_set import _OUTCOME_REASON_SETS
+from mechanical_librarian.domain.validation import exact_type
 
 if TYPE_CHECKING:
     from scripts.admission_rule_a3 import A3Reader
@@ -181,6 +182,13 @@ def _dicts(value: object) -> list[dict[str, object]]:
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _exact[T](kind: type[T], value: object) -> T:
+    """Return a decoded field of exactly `kind`; raise ValueError otherwise."""
+    if not exact_type(kind)(value):
+        raise ValueError
+    return cast("T", value)
 
 
 def _document(value: object) -> dict[str, object]:

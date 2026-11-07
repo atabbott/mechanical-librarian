@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import cast
 
 from mechanical_librarian.domain import shadow_decision
+from mechanical_librarian.domain.proposal_set import MAX_BIBLIOGRAPHIC_COMBINATIONS
 
 # Direct execution puts scripts/ on sys.path and the ledger aliases itself
 # there before importing this module; the test import resolves the scripts
@@ -314,30 +315,12 @@ sys.stdout.write(json.dumps({
 """
 
 
-def _bool(value: object) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError
-    return value
-
-
-def _int(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError
-    return value
-
-
-def _str(value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError
-    return value
-
-
 def _optional_str(value: object) -> str | None:
-    return None if value is None else _str(value)
+    return None if value is None else ledger._exact(str, value)
 
 
 def _tokens(value: object) -> tuple[str, ...]:
-    return tuple(_str(item) for item in cast("list[object]", value))
+    return tuple(ledger._exact(str, item) for item in cast("list[object]", value))
 
 
 def _optional_tokens(value: object) -> tuple[str, ...] | None:
@@ -346,9 +329,9 @@ def _optional_tokens(value: object) -> tuple[str, ...] | None:
 
 def _component(data: Mapping[str, object]) -> Component:
     return Component(
-        kind=_str(data["kind"]),
+        kind=ledger._exact(str, data["kind"]),
         alternative=_optional_str(data["alternative"]),
-        state=_str(data["state"]),
+        state=ledger._exact(str, data["state"]),
         texts=tuple(_tokens(item) for item in cast("list[object]", data["texts"])),
         items=tuple(
             SeriesItem(
@@ -363,30 +346,30 @@ def _component(data: Mapping[str, object]) -> Component:
 
 def _combination(data: Mapping[str, object]) -> Combination:
     return Combination(
-        title_kind=_str(data["title_kind"]),
+        title_kind=ledger._exact(str, data["title_kind"]),
         title_alternative=_optional_str(data["title_alternative"]),
         title_tokens=_optional_tokens(data["title_tokens"]),
         title_value=_optional_str(data["title_value"]),
-        title_kept=_bool(data["title_kept"]),
+        title_kept=ledger._exact(bool, data["title_kept"]),
         subtitle=_component(cast("dict[str, object]", data["subtitle"])),
         series=_component(cast("dict[str, object]", data["series"])),
-        verdict=_bool(data["verdict"]),
+        verdict=ledger._exact(bool, data["verdict"]),
     )
 
 
 def _prior(data: Mapping[str, object]) -> Prior:
     return Prior(
-        outcome=_str(data["outcome"]),
+        outcome=ledger._exact(str, data["outcome"]),
         reasons=_tokens(data["reasons"]),
         selected=_optional_str(data["selected"]),
         assessment=_optional_str(data["assessment"]),
-        alternatives=_int(data["alternatives"]),
-        all_preserve=_bool(data["all_preserve"]),
+        alternatives=ledger._exact(int, data["alternatives"]),
+        all_preserve=ledger._exact(bool, data["all_preserve"]),
     )
 
 
 def _case(data: Mapping[str, object]) -> CaseReplay:
-    replay = _str(data["replay"])
+    replay = ledger._exact(str, data["replay"])
     counterfactual = _optional_str(data["counterfactual"])
     a3 = _tokens(data["a3"])
     if (
@@ -404,7 +387,7 @@ def _case(data: Mapping[str, object]) -> CaseReplay:
         ),
         counterfactual=counterfactual,
         prior={
-            _str(destination): _prior(cast("dict[str, object]", item))
+            ledger._exact(str, destination): _prior(cast("dict[str, object]", item))
             for destination, item in cast("dict[object, object]", data["prior"]).items()
         },
     )
@@ -416,16 +399,16 @@ def parse_probe(text: str) -> A3Probe:
         loaded = cast("dict[str, object]", json.loads(text))
         engine = cast("dict[str, object]", loaded["engine"])
         probe = A3Probe(
-            policy=_str(engine["policy"]),
-            same_name_rule=_bool(engine["same_name_rule"]),
-            limit=_int(engine["limit"]),
+            policy=ledger._exact(str, engine["policy"]),
+            same_name_rule=ledger._exact(bool, engine["same_name_rule"]),
+            limit=ledger._exact(int, engine["limit"]),
             cases={
-                _str(case_id): _case(cast("dict[str, object]", item))
+                ledger._exact(str, case_id): _case(cast("dict[str, object]", item))
                 for case_id, item in cast(
                     "dict[object, object]", loaded["cases"]
                 ).items()
             },
-            failed=_int(loaded["failed"]),
+            failed=ledger._exact(int, loaded["failed"]),
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         raise ledger.Refusal("combination replay failed") from None
@@ -570,8 +553,17 @@ def work_causes(
 
 
 def stale_for_main(case: CaseReplay) -> bool:
-    """Whether a tried combination survives main's veto (#1099)."""
-    return any(not clauses(item, same_name_rule=True) for item in case.combinations)
+    """Whether main would form a combination under its veto (#1099).
+
+    Main rejects the whole set when more distinct combinations survive than
+    its limit allows, so a work is stale only within that limit.
+    """
+    survivors = {
+        item.key()
+        for item in case.combinations
+        if not clauses(item, same_name_rule=True)
+    }
+    return 0 < len(survivors) <= MAX_BIBLIOGRAPHIC_COMBINATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -735,20 +727,81 @@ def relax_r3(replay: CaseReplay, destination: str) -> Verdict:
 # Screens for an admitted field.
 
 
+Value = str | tuple[tuple[str | None, str | None], ...]
+"""A compared value: normalised text, or a series as (name, sequence) pairs."""
+
+
 def _normal(value: object) -> str | None:
     return " ".join(value.casefold().split()) if isinstance(value, str) else None
 
 
-def _admitted_values(alternative: Mapping[str, object], destination: str) -> set[str]:
+_SERIES_KINDS = frozenset({"series", "series_sequence"})
+
+
+def _admitted_values(alternative: Mapping[str, object], destination: str) -> set[Value]:
     value = ledger._dict(alternative.get("value")).get("value")
     if destination == "series":
-        return {
-            name
+        items = tuple(
+            (_normal(item.get("name")), _normal(item.get("sequence")))
             for item in ledger._dicts(value)
-            if (name := _normal(item.get("name"))) is not None
-        }
+        )
+        return {items} if items else set()
     normal = _normal(value)
     return set() if normal is None else {normal}
+
+
+def _stated_series(claims: Sequence[Mapping[str, object]]) -> Value | None:
+    """A record's complete series value, paired as main pairs it.
+
+    Mirrors `_series_from_claims`: each name takes the sequence claim beside
+    it, and None means the record states no usable series value.
+    """
+    items = [
+        claim
+        for claim in claims
+        if claim.get("scope") == "work" and claim.get("kind") in _SERIES_KINDS
+    ]
+    names = sum(claim.get("kind") == "series" for claim in items)
+    if not names:
+        return None
+    result: list[tuple[str, str | None]] = []
+    index = 0
+    while index < len(items):
+        sequence_claim: Mapping[str, object] | None = None
+        if items[index].get("kind") == "series_sequence":
+            sequence_claim = items[index]
+            index += 1
+            if index >= len(items):
+                return None
+        name_claim = items[index]
+        name = _normal(name_claim.get("value"))
+        if (
+            name_claim.get("kind") != "series"
+            or name_claim.get("state") != "valid"
+            or name is None
+        ):
+            return None
+        index += 1
+        if (
+            sequence_claim is None
+            and index < len(items)
+            and items[index].get("kind") == "series_sequence"
+        ):
+            sequence_claim = items[index]
+            index += 1
+        sequence: str | None = None
+        if sequence_claim is not None:
+            state, raw = sequence_claim.get("state"), sequence_claim.get("value")
+            if state == "valid":
+                sequence = _normal(raw)
+                if sequence is None:
+                    return None
+            elif not (state == "absent" and raw is None):
+                return None
+        elif names > 1:
+            return None
+        result.append((name, sequence))
+    return tuple(result)
 
 
 def value_agreement(
@@ -756,6 +809,7 @@ def value_agreement(
 ) -> bool | None:
     """Whether an identifier-accepted record the field does not cite agrees.
 
+    A series agrees only on its complete value, every name with its sequence.
     None when no such record states a value for the field.
     """
     cited = case.resolve(ledger._list(alternative.get("evidence_references")))
@@ -768,14 +822,19 @@ def value_agreement(
         and identity not in cited
     }
     admitted = _admitted_values(alternative, destination)
-    stated: list[str] = []
+    stated: list[Value] = []
     for provider in case.providers():
         for candidate in ledger._dicts(provider.get("candidates")):
             if candidate.get("identity") not in accepted:
                 continue
+            claims = ledger._dicts(candidate.get("claims"))
+            if destination == "series":
+                if (series := _stated_series(claims)) is not None:
+                    stated.append(series)
+                continue
             stated += [
                 normal
-                for claim in ledger._dicts(candidate.get("claims"))
+                for claim in claims
                 if claim.get("kind") == destination
                 and (normal := _normal(claim.get("value"))) is not None
             ]
