@@ -264,6 +264,12 @@ class CurrentReviewCaseSnapshot:
     # Destinations whose automatic handling an owner hold keeps off on this
     # case, including a hold carried forward from an earlier case (ADR-0085).
     held_destinations: tuple[str, ...] = ()
+    # Held destinations whose return to automatic handling the owner has
+    # requested; the hold stays until the requested checks finish (#1755).
+    return_requested_destinations: tuple[str, ...] = ()
+    # Held destinations whose requested checks finished with failures. The
+    # hold stays and nothing retries those checks, so the owner can ask again.
+    return_failed_destinations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1222,6 +1228,11 @@ class InspectCurrentReviewCase:
             return None
         if inventory_role == "contextual":
             owner_control = None
+        # Held only while the hold row is in force: Return to automatic
+        # releases it on the deciding case too (#1358).
+        manual_hold = destination in snapshot.held_destinations and (
+            carried_hold or (decision is not None and automatic_decision is not None)
+        )
         field = {
             "current": target_fields[destination],
             "deterministic_disposition": result["outcome"],
@@ -1243,13 +1254,13 @@ class InspectCurrentReviewCase:
                 else None
             ),
             "automatic_selection_sources": automatic_selection_sources,
-            # Held only while the hold row is in force: Return to
-            # automatic releases it on the deciding case too (#1358).
-            "manual_hold": destination in snapshot.held_destinations
-            and (
-                carried_hold
-                or (decision is not None and automatic_decision is not None)
-            ),
+            "manual_hold": manual_hold,
+            # A requested return keeps the hold until its checks finish, so
+            # the field says it was requested, also after a reload (#1755).
+            "manual_return_requested": manual_hold
+            and destination in snapshot.return_requested_destinations,
+            "manual_return_failed": manual_hold
+            and destination in snapshot.return_failed_destinations,
             "classification": classification.state,
             "classification_reason": classification.reason,
             "editable": classification.editable and has_owner_action,

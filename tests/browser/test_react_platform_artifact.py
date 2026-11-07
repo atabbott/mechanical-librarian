@@ -140,6 +140,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     ambiguous_decisions = 0
     fail_policy_persistently = False
     description_mode = False
+    return_failed_mode = False
     consent_payloads: list[object] = []
     return_automatic_requests = 0
     connection_state = "paused"
@@ -315,6 +316,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     else conditions[0]["affected"],
                     "updated_at": 2,
                 }
+            if return_failed_mode and path == "/api/v1/review-cases/case-4":
+                # The requested checks finished with failures: the hold stays
+                # and the case offers the request again (#1755).
+                held_case = cast("dict[str, object]", payload)
+                for held_field in cast("list[dict[str, object]]", held_case["fields"]):
+                    if held_field["manual_hold"]:
+                        held_field["manual_return_failed"] = True
             if description_mode and path == "/api/v1/review-cases/case-1":
                 detail = cast("dict[str, object]", payload)
                 fields = cast("list[dict[str, object]]", detail["fields"])
@@ -2324,6 +2332,26 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.get_by_role("button", name="Fresh checks requested")
         ).to_have_attribute("aria-disabled", "true")
         assert return_automatic_requests == 1
+
+        return_failed_mode = True
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-4&field=title"
+        )
+        # The held field's decision is from an earlier case, so its line
+        # already names the button and the failure line says the state once.
+        page.get_by_text("The fresh checks ended with failures.", exact=True).wait_for()
+        assert page.get_by_text("to request them again").count() == 0
+        expect(
+            page.get_by_role("button", name="Resume automatic handling")
+        ).not_to_have_attribute("aria-disabled", "true")
+        page.get_by_role("button", name="Resume automatic handling").click()
+        page.get_by_role("button", name="Resume after fresh checks").click()
+        page.get_by_text(
+            "Fresh checks requested. Manual handling remains until they complete.",
+            exact=True,
+        ).wait_for()
+        assert return_automatic_requests == 2
+        return_failed_mode = False
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.get_by_role("heading", name="Evidence").count() == 0
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
