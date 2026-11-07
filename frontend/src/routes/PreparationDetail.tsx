@@ -218,7 +218,7 @@ export const PreparationDetail = ({
   if (recoveryRequired) {
     heading = 'Preparation stopped'
     introduction =
-      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Prepared books remain available.'
+      'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
   }
   return (
     <div className="preparation-detail">

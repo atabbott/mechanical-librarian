@@ -22,6 +22,10 @@ translation, adaptation, abridgement and variant-marker vetoes, an audiobook
 recording variant conflict), and an inverted creator form only the query used
 (#1380). `level_admission` takes the first two as caller-decided flags; the
 creator form is the caller's to exclude before building the reference.
+
+Callers pass length-bounded text: the stored claim or association projections
+the product already bounds. The decoration grammar's patterns are proven only
+on such text, and nothing here bounds it again.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from mechanical_librarian.domain.metadata_report import creator_comparison_key
-from mechanical_librarian.domain.validation import boolean, exact_type
+from mechanical_librarian.domain.validation import boolean, exact_type, text
 from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
@@ -59,9 +63,9 @@ class IdentityReference:
     def __post_init__(self) -> None:
         if (
             self.title is not None
-            and type(self.title) is not str
-            or type(self.creators) is not tuple
-            or any(type(value) is not str for value in self.creators)
+            and not text(self.title)
+            or not exact_type(tuple)(self.creators)
+            or not all(text(value) for value in self.creators)
         ):
             raise ValueError("identity reference is invalid")
 
