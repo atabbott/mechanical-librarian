@@ -22,7 +22,20 @@ Every decision-level (alternative-control) row also splits its controls and
 its pick measure by destination and by medium (#1744), and classes its
 actionable fields: tied, decidable, contaminated, no right-work alternative or
 single alternative. ``--breakdown GATE`` renders one such row's split as an
-extra Markdown section.
+extra Markdown section, with one more ranking measured beside the pick: the
+corroborated pick, the one alternative more independent sources state than any
+other, and at least two.
+
+Where a snapshot stores owner decisions, the owner's latest decision on an
+item's field names the right alternative, on the decided case whether or not it
+is still current, and every decision-level row reports how often its pick is
+that alternative (#1748).
+
+W9 (the series identity match), A8 (series membership completeness) and A9
+(series provider evidence) refuse a value the proposal set already proposed, so
+the outcome rule cannot see them. Where the source has W9, a child process
+replays the product's own series path under that source
+(``scripts/admission_rule_series.py``) and its verdict names the row.
 
 Attention per case (#1310) is read under each snapshot's own source: a child
 ``python -I`` process imports only that revision's tree and composes the
@@ -75,6 +88,7 @@ from mechanical_librarian.domain.proposal_set import _OUTCOME_REASON_SETS
 
 if TYPE_CHECKING:
     from scripts.admission_rule_a6 import A6Reader
+    from scripts.admission_rule_series import SeriesProbe, SeriesReader
 
 LEDGER_SCHEMA = "admission-rule-ledger-v2"
 WILSON_Z = 1.959964
@@ -207,6 +221,12 @@ class Case:
     # The source revision's scalar decision destinations (#1745), as its own
     # shadow_decision._SUPPORTED_DESTINATIONS states them.
     scalar: frozenset[str] = frozenset()
+    # The series replay's verdict (#1748): replay row -> whether loosening it
+    # projects the value. None where no replay ran for the snapshot.
+    replay: dict[str, bool] | None = None
+    # destination -> (outcome, selected value) of the owner decision that
+    # labels the field (#1748); values stay in memory
+    owner: dict[str, tuple[str, object]] = field(default_factory=dict)
 
     def applicable(self, destinations: frozenset[str]) -> frozenset[str]:
         present = destinations & frozenset(self.results)
@@ -705,12 +725,60 @@ class Gate:
     unranked_note: str | None = None
     # Measurable only where the source keeps rich refusals' own reasons.
     needs_rich_split: bool = False
+    # Attributed by the series replay wherever the source has W9 (#1748);
+    # ``signal`` is then only the fallback for a source without it.
+    replayed: bool = False
 
 
 _NOT_RECORDED = "not recorded"
 _LANE = "every destination its provider lanes feed"
 _ISBN = frozenset({"isbn"})
 _COVER = frozenset({"cover"})
+_SERIES = frozenset({"series"})
+# W9's introducing commit (#998): the series replay runs where the snapshot's
+# source has it (#1748).
+_SERIES_REPLAY_COMMIT = "dc8de6f51417c209aa95941864273a9fe8ebbac9"
+
+
+def _completeness(reason: str) -> bool:
+    return reason == "series_membership_incomplete"
+
+
+def _provider_evidence(reason: str) -> bool:
+    return reason == "series_provider_evidence_required" or reason.startswith(
+        "series_provider_failure_"
+    )
+
+
+def _identity(reason: str) -> bool:
+    return reason == "target_work_applicability_unproved"
+
+
+# Each replay row's own reasons, for the stored outcome's agreement (#1748).
+_REPLAY_REASONS: dict[str, Callable[[str], bool]] = {
+    "W9": _identity,
+    "A8": _completeness,
+    "A9": _provider_evidence,
+}
+
+
+def _stored_series(reason: Callable[[str], bool]) -> Signal:
+    """A replay row's stored reason where the replay cannot run.
+
+    Only a field whose result kept an alternative: the no-candidate
+    ``series_membership_incomplete`` repeats the proposal set's refusal.
+    """
+
+    def signal(case: Case) -> frozenset[str]:
+        return frozenset(
+            destination
+            for destination in case.applicable(_SERIES)
+            if any(reason(code) for code in case.reasons(destination))
+            and _dicts(case.results.get(destination, {}).get("alternatives"))
+        )
+
+    return signal
+
 
 CATALOGUE: tuple[Gate, ...] = (
     Gate(
@@ -888,7 +956,11 @@ CATALOGUE: tuple[Gate, ...] = (
         "work-scope destinations",
         "admit the lowest-identifier alternative without target-work proof",
         "alternative",
-        _reason({"target_work_applicability_unproved", "target_work_contradicted"}),
+        # The series reason is W9's identity match (#998), not #972's (#1748).
+        _reason(
+            {"target_work_applicability_unproved", "target_work_contradicted"},
+            _ALL - _SERIES,
+        ),
         disposition="already filed as #1355",
     ),
     Gate(
@@ -939,18 +1011,21 @@ CATALOGUE: tuple[Gate, ...] = (
     Gate(
         "W9",
         "Work and edition binding",
-        "Series identity match for series fill",
-        "domain/metadata_report.py; domain/rich_metadata_preview.py",
+        "Series identity match for automatic series values (by work, or by ISBN "
+        "under ADR-0070)",
+        "domain/rich_metadata_preview.py _project; domain/proposal_set.py "
+        "provider_candidate_represents_target_series_work",
         "#998 (dc8de6f5); ADR-0070",
         _NOT_RECORDED,
-        "dc8de6f51417c209aa95941864273a9fe8ebbac9",
+        _SERIES_REPLAY_COMMIT,
         "series",
-        "admit the lowest-identifier series alternative",
+        "admit the series value whose sources are not shown to be this work",
         "alternative",
-        _reason(
-            {"series_conflicting_membership", "series_membership_incomplete"},
-            frozenset({"series"}),
-        ),
+        # Only the replay: series_conflicting_membership and the no-candidate
+        # series_membership_incomplete repeat the proposal set's refusal, which
+        # T1, A3 or A2 counts (#1748).
+        disposition="kept (#1748)",
+        replayed=True,
     ),
     Gate(
         "C1",
@@ -1273,6 +1348,39 @@ CATALOGUE: tuple[Gate, ...] = (
         ranked=False,
     ),
     Gate(
+        "A8",
+        "Applicability and abstention",
+        "Series membership completeness (malformed, oversized or unpaired series "
+        "claims)",
+        "domain/rich_metadata_preview.py _automatic_series_abstention",
+        "#817 (660fac2f)",
+        _NOT_RECORDED,
+        "660fac2f11f01028f3a9b8ca407efc799209951a",
+        "series",
+        "admit a series value with incomplete membership claims",
+        "not_identity",
+        _stored_series(_completeness),
+        needs_rich_split=True,
+        replayed=True,
+    ),
+    Gate(
+        "A9",
+        "Applicability and abstention",
+        "Series provider evidence (a provider states the value, and no lookup "
+        "behind it failed)",
+        "domain/rich_metadata_preview.py _automatic_series_abstention",
+        "#991 (f458a907), which replaced earlier refusals",
+        _NOT_RECORDED,
+        "f458a9075a7f07c6560c7c65d58b2a3f5983632b",
+        "series",
+        "admit a series value only the file states, or one backed by a lookup "
+        "that failed",
+        "not_identity",
+        _stored_series(_provider_evidence),
+        needs_rich_split=True,
+        replayed=True,
+    ),
+    Gate(
         "B1",
         "Evidence-dropping bounds",
         "Local text bounds and unsafe-text sentinels",
@@ -1404,6 +1512,24 @@ class Split:
     single_alternative: int = 0
     # actionable fields whose pick preserves the current value
     pick_preserves: int = 0
+    # The corroborated pick (#1748), measured beside the pick and never
+    # scored: actionable fields with two or more alternatives, those where it
+    # picks, and of those the decidable ones and the ones it gets right
+    corroborated_fields: int = 0
+    corroborated_picks: int = 0
+    corroborated_decidable: int = 0
+    corroborated_agrees: int = 0
+    # owner-labelled fields where it picks, and where it is the owner's
+    corroborated_owner_labelled: int = 0
+    corroborated_owner_agrees: int = 0
+    # Blocked fields an owner decision labels (#1748), by outcome, and those
+    # whose pick is the alternative the decision names
+    owner_labelled: int = 0
+    owner_accept: int = 0
+    owner_entered: int = 0
+    owner_keep_current: int = 0
+    owner_reject: int = 0
+    owner_agrees: int = 0
 
     def add(self, other: Split) -> None:
         for item in fields(Split):
@@ -1422,6 +1548,12 @@ class Tally(Split):
     # decision-level rows only: the same counts per destination and per medium
     destinations: dict[str, Split] = field(default_factory=dict)
     media: dict[str, Split] = field(default_factory=dict)
+    # whether the snapshot stores owner decisions at all (#1748)
+    owner_recorded: bool = False
+    # Replay rows (#1748): the series replay's counts of current cases, and
+    # the blocked fields the stored outcome refused with the row's own reason
+    replay: dict[str, int] | None = None
+    stored_refused: int = 0
 
 
 # Elections that decide competing values on these destinations on main. A
@@ -1468,6 +1600,10 @@ def _actionable(gate: Gate, case: Case, destination: str) -> bool:
     kept no alternative stays blocked however the rule is loosened. A
     cover field is blocked here only because a matching candidate exists.
     """
+    if gate.replayed and case.replay is not None:
+        # W9 can unblock only what the replay projects once the identity match
+        # accepts (#1748).
+        return gate.control == "alternative" and case.replay.get(gate.gate_id, False)
     if gate.control == "alternative":
         return bool(_dicts(case.results.get(destination, {}).get("alternatives")))
     return gate.control == "cover_candidates"
@@ -1529,6 +1665,108 @@ def _classify_pick(case: Case, result: Mapping[str, object], counts: Split) -> N
         counts.no_right_work += 1
 
 
+def _corroborated(result: Mapping[str, object]) -> dict[str, object] | None:
+    """The one alternative more independent sources state than any other, and
+    at least two; None otherwise.
+
+    Sources are the proposal set's own correlations: one per provider
+    authority or local file, so a value two records of one provider state
+    counts once.
+    """
+    alternatives = _dicts(result.get("alternatives"))
+    if len(alternatives) < 2:
+        return None
+    sources = [
+        len(
+            {
+                item
+                for item in _list(alternative.get("correlations"))
+                if isinstance(item, str)
+            }
+        )
+        for alternative in alternatives
+    ]
+    best = max(sources)
+    if best < 2 or sources.count(best) != 1:
+        return None
+    return alternatives[sources.index(best)]
+
+
+def _classify_corroborated(
+    case: Case, result: Mapping[str, object], counts: Split
+) -> dict[str, object] | None:
+    """Count one actionable field for the corroborated pick; return the pick."""
+    alternatives = _dicts(result.get("alternatives"))
+    if len(alternatives) < 2:
+        return None
+    counts.corroborated_fields += 1
+    chosen = _corroborated(result)
+    if chosen is None:
+        return None
+    counts.corroborated_picks += 1
+    right = [item for item in alternatives if _right_work(case, item)]
+    if len(right) == 1:
+        counts.corroborated_decidable += 1
+        if chosen is right[0]:
+            counts.corroborated_agrees += 1
+    return chosen
+
+
+_OWNER_OUTCOMES = ("accept", "owner_entered", "keep_current", "reject")
+
+
+def _named(case: Case, destination: str) -> dict[str, object] | None:
+    """The alternative the owner's decision on the field names, if any.
+
+    Accepting or entering a value names the alternative with that value;
+    keeping the current value names the one that keeps it; a rejection, or a
+    value no alternative carries, names none.
+    """
+    outcome, selected = case.owner[destination]
+    alternatives = _dicts(case.results.get(destination, {}).get("alternatives"))
+    for alternative in alternatives:
+        if (
+            outcome in {"accept", "owner_entered"}
+            and alternative.get("value") == selected
+        ):
+            return alternative
+        if (
+            outcome == "keep_current"
+            and alternative.get("assessment") == "preserves_target"
+        ):
+            return alternative
+    return None
+
+
+def _count_owner(
+    case: Case,
+    destination: str,
+    result: Mapping[str, object],
+    counts: Split,
+    corroborated: Mapping[str, object] | None,
+) -> None:
+    """Count a blocked field an owner decision labels (#1748)."""
+    if destination not in case.owner:
+        return
+    outcome = case.owner[destination][0]
+    counts.owner_labelled += 1
+    if outcome == "accept":
+        counts.owner_accept += 1
+    elif outcome == "owner_entered":
+        counts.owner_entered += 1
+    elif outcome == "keep_current":
+        counts.owner_keep_current += 1
+    else:
+        counts.owner_reject += 1
+    named = _named(case, destination)
+    if named is not None and _pick(result) is named:
+        counts.owner_agrees += 1
+    if corroborated is not None:
+        counts.corroborated_owner_labelled += 1
+        if corroborated is named:
+            counts.corroborated_owner_agrees += 1
+
+
 def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
     if gate.control == "alternative":
         pick = _pick(case.results.get(destination, {}))
@@ -1545,19 +1783,60 @@ def _reached(gate: Gate, case: Case, destination: str) -> frozenset[str]:
     return frozenset()
 
 
-def _tally_case(
-    gate: Gate, case: Case, tally: Tally, elections: frozenset[str] = frozenset()
-) -> None:
-    if gate.medium is not None and case.medium != gate.medium:
-        return
-    blocked = sorted(
+def _replay_signal(gate: Gate, case: Case) -> frozenset[str]:
+    """The series field when the replay names this row for it (#1748)."""
+    if case.replay is not None and gate.gate_id in case.replay:
+        return case.applicable(_SERIES)
+    return frozenset()
+
+
+def _blocked_fields(gate: Gate, case: Case) -> list[str]:
+    if gate.replayed and case.replay is not None:
+        # The replayed rows refuse a value the proposal set already proposed:
+        # blocked whatever the outcome, unless it keeps the current value.
+        return sorted(
+            destination
+            for destination in _replay_signal(gate, case)
+            if _text(case.results.get(destination, {}).get("outcome"))
+            not in {None, "keep"}
+        )
+    return sorted(
         destination for destination in gate.signal(case) if case.blocked(destination)
     )
+
+
+def _tally_case(
+    gate: Gate,
+    case: Case,
+    tally: Tally,
+    elections: frozenset[str] = frozenset(),
+    *,
+    current: bool = True,
+) -> None:
+    """Tally one case for one gate.
+
+    A decided case that is no longer current (#1748) adds only its owner
+    labels: the row's counts are current cases'.
+    """
+    if gate.medium is not None and case.medium != gate.medium:
+        return
+    blocked = _blocked_fields(gate, case)
+    if not current:
+        if gate.control == "alternative":
+            for destination in blocked:
+                if destination in case.owner:
+                    _tally_label(gate, case, destination, tally)
+        return
     if not blocked:
         return
     tally.works += 1
     for destination in blocked:
         one = Split(fields=1, actionable=int(_actionable(gate, case, destination)))
+        if gate.replayed and case.replay is not None:
+            reason = _REPLAY_REASONS[gate.gate_id]
+            tally.stored_refused += any(
+                reason(code) for code in case.reasons(destination)
+            )
         tally.by_destination[destination] += 1
         tally.by_medium[case.medium] += 1
         result = case.results.get(destination, {})
@@ -1575,10 +1854,29 @@ def _tally_case(
             else:
                 one.unlabelled += 1
         if gate.control == "alternative":
-            _classify_pick(case, result, one)
+            corroborated = None
+            # Only an actionable field is classed: for W9 the replay decides
+            # that, not whether the result kept an alternative (#1748).
+            if one.actionable:
+                _classify_pick(case, result, one)
+                corroborated = _classify_corroborated(case, result, one)
+            _count_owner(case, destination, result, one, corroborated)
             tally.destinations.setdefault(destination, Split()).add(one)
             tally.media.setdefault(case.medium, Split()).add(one)
         tally.add(one)
+
+
+def _tally_label(gate: Gate, case: Case, destination: str, tally: Tally) -> None:
+    """Add only the owner label of a decided case that is no longer current."""
+    result = case.results.get(destination, {})
+    one = Split()
+    corroborated = (
+        _corroborated(result) if _actionable(gate, case, destination) else None
+    )
+    _count_owner(case, destination, result, one, corroborated)
+    tally.destinations.setdefault(destination, Split()).add(one)
+    tally.media.setdefault(case.medium, Split()).add(one)
+    tally.add(one)
 
 
 def wilson_lower_bound(successes: int, total: int, z: float = WILSON_Z) -> float | None:
@@ -1592,8 +1890,13 @@ def wilson_lower_bound(successes: int, total: int, z: float = WILSON_Z) -> float
     return max(0.0, (centre - margin) / denominator)
 
 
-_CASES_SQL = (
-    "SELECT rc.document,mr.document,"
+_CURRENT_SQL = (
+    "rc.review_case_id IN (SELECT review_case_id FROM current_review_packages "
+    "WHERE review_case_id IS NOT NULL)"
+)
+_DECIDED_SQL = "rc.review_case_id IN (SELECT review_case_id FROM human_decisions)"
+_CASE_COLUMNS_SQL = (
+    "SELECT rc.review_case_id,rc.document,mr.document,"
     "(SELECT shadow.document FROM shadow_decision_outcomes shadow "
     "WHERE shadow.review_case_id=rc.review_case_id "
     "ORDER BY shadow.evaluated_at DESC LIMIT 1),"
@@ -1602,9 +1905,106 @@ _CASES_SQL = (
     "ON consideration.consideration_id=current_cover.consideration_id "
     "WHERE current_cover.review_case_id=rc.review_case_id LIMIT 1) "
     "FROM review_cases rc JOIN metadata_reports mr ON mr.report_id=rc.report_id "
-    "WHERE rc.review_case_id IN (SELECT review_case_id FROM current_review_packages "
-    "WHERE review_case_id IS NOT NULL) ORDER BY rc.review_case_id"
 )
+_CASES_SQL = _CASE_COLUMNS_SQL + f"WHERE {_CURRENT_SQL} ORDER BY rc.review_case_id"
+# Decided cases that are no longer current still carry owner labels (#1748).
+_DECIDED_CASES_SQL = (
+    _CASE_COLUMNS_SQL
+    + f"WHERE {_DECIDED_SQL} AND NOT {_CURRENT_SQL} ORDER BY rc.review_case_id"
+)
+
+
+def _tables(connection: sqlite3.Connection) -> frozenset[str]:
+    return frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    )
+
+
+def series_cases_sql(connection: sqlite3.Connection) -> str:
+    """The case query the series replay and the ledger share (#1748).
+
+    A case's ordinal is its position here, in both processes: every current
+    case, and every decided case where owner decisions are stored, with a flag
+    saying which are current.
+    """
+    scope = _CURRENT_SQL
+    if "human_decisions" in _tables(connection):
+        scope += f" OR {_DECIDED_SQL}"
+    return (
+        f"SELECT rc.review_case_id,{_CURRENT_SQL} FROM review_cases rc "
+        f"WHERE {scope} ORDER BY rc.review_case_id"
+    )
+
+
+OwnerDecisions = dict[str, dict[str, tuple[str, object]]]
+
+
+def _owner_decisions(connection: sqlite3.Connection) -> OwnerDecisions | None:
+    """The owner decision that labels each case's field, or None where none
+    are stored (#1748).
+
+    The table is optional, as ``automatic_decisions`` is (#1747): a source
+    that predates it, or a copy without it, reports "not stored" rather than
+    refusing. A field's latest decision by ordinal counts unless it is at or
+    below the case's episode floor (history, #1358) or withdrawn. One item
+    gets one label per field: across a superseded case and its successor
+    only the latest decision counts. The item is the library item the case
+    is for, the case document's ``target.connection``, ``target.library``
+    and ``target.item``, which a write and rescan do not change.
+    """
+    tables = _tables(connection)
+    if "human_decisions" not in tables:
+        return None
+    floors: dict[str, int] = {}
+    if "review_case_episodes" in tables:
+        floors = dict(
+            connection.execute(
+                "SELECT review_case_id,decision_floor FROM review_case_episodes"
+            ).fetchall()
+        )
+    latest: dict[tuple[str, str], tuple[int, str, str]] = {}
+    for ordinal, case_id, destination, outcome, selected in connection.execute(
+        "SELECT ordinal,review_case_id,destination,outcome,selected_value_document "
+        "FROM human_decisions ORDER BY ordinal"
+    ):
+        latest[(case_id, destination)] = (ordinal, outcome, selected)
+    items: dict[str, tuple[object, ...]] = {
+        case_id: (connection_name, library, item)
+        if None not in (connection_name, library, item)
+        else (case_id,)
+        for case_id, connection_name, library, item in connection.execute(
+            "SELECT rc.review_case_id,json_extract(rc.document,'$.target.connection'),"
+            "json_extract(rc.document,'$.target.library'),"
+            "json_extract(rc.document,'$.target.item') "
+            f"FROM review_cases rc WHERE {_DECIDED_SQL}"
+        )
+    }
+    winners: dict[tuple[object, ...], tuple[int, str, str, str]] = {}
+    for (case_id, destination), (ordinal, outcome, selected) in latest.items():
+        floor = floors.get(case_id)
+        if floor is not None and ordinal <= floor:
+            continue
+        key = (*items.get(case_id, (case_id,)), destination)
+        if key not in winners or winners[key][0] < ordinal:
+            winners[key] = (ordinal, case_id, outcome, selected)
+    decisions: OwnerDecisions = {}
+    for (*_item, destination), (
+        _ordinal,
+        case_id,
+        outcome,
+        selected,
+    ) in winners.items():
+        if outcome == "withdraw":
+            continue
+        try:
+            value: object = json.loads(selected) if isinstance(selected, str) else None
+        except ValueError:
+            value = None
+        decisions.setdefault(case_id, {})[cast("str", destination)] = (outcome, value)
+    return decisions
 
 
 def _open_snapshot(path: Path) -> sqlite3.Connection:
@@ -1638,25 +2038,58 @@ def measure_snapshot(
     statuses: Mapping[str, Status],
     elections: Iterable[str] = (),
     scalar: frozenset[str] = frozenset(shadow_decision._SUPPORTED_DESTINATIONS),
+    series: SeriesProbe | None = None,
 ) -> tuple[dict[str, Tally], Counter[str]]:
-    """Stream current cases once, tallying every measurable gate."""
+    """Stream current cases once, tallying every measurable gate.
+
+    Decided cases that are no longer current follow, for their owner labels
+    only. ``series`` is the series replay's verdict, by the ordinals of
+    ``series_cases_sql``; None where the replay did not run.
+    """
     later = _election_destinations(elections)
     measurable = [gate for gate in CATALOGUE if statuses[gate.gate_id] == "measurable"]
-    tallies = {gate.gate_id: Tally() for gate in measurable}
     media: Counter[str] = Counter()
     try:
-        rows = connection.execute(_CASES_SQL)
-        for case_text, report_text, shadow_text, consideration_text in rows:
-            case = _build_case(
-                _document(case_text),
-                _document(report_text),
-                _document(shadow_text),
-                _document(consideration_text),
-            )
-            case.scalar = scalar
-            media[case.medium] += 1
+        owner = _owner_decisions(connection)
+        tallies = {
+            gate.gate_id: Tally(owner_recorded=owner is not None) for gate in measurable
+        }
+        ordinals: dict[str, int] = {}
+        if series is not None:
+            ordinals = {
+                row[0]: ordinal
+                for ordinal, row in enumerate(
+                    connection.execute(series_cases_sql(connection))
+                )
+            }
             for gate in measurable:
-                _tally_case(gate, case, tallies[gate.gate_id], later)
+                if gate.replayed:
+                    tallies[gate.gate_id].replay = dict(series.counts)
+        queries = [(_CASES_SQL, True)]
+        if owner:
+            queries.append((_DECIDED_CASES_SQL, False))
+        for query, current in queries:
+            for case_id, *documents in connection.execute(query):
+                if not current and case_id not in (owner or {}):
+                    continue
+                case_text, report_text, shadow_text, consideration_text = documents
+                case = _build_case(
+                    _document(case_text),
+                    _document(report_text),
+                    _document(shadow_text),
+                    _document(consideration_text),
+                )
+                case.scalar = scalar
+                case.owner = (owner or {}).get(case_id, {})
+                if series is not None:
+                    ordinal = ordinals.get(case_id)
+                    case.replay = {} if ordinal is None else series.flags(ordinal)
+                if current:
+                    media[case.medium] += 1
+                for gate in measurable:
+                    _tally_case(
+                        gate, case, tallies[gate.gate_id], later, current=current
+                    )
     except sqlite3.Error:
         raise Refusal("snapshot schema unrecognised") from None
     return tallies, media
@@ -1696,14 +2129,22 @@ def git_ancestry(repository: Path) -> Ancestry:
     return ancestry
 
 
+def series_replay_runs(revision: str, ancestry: Ancestry) -> bool:
+    """Whether the snapshot's source has W9, so its series path is replayed."""
+    return ancestry(_SERIES_REPLAY_COMMIT, revision)
+
+
 def gate_statuses(
     revision: str, ancestry: Ancestry, rich_split: bool = True
 ) -> dict[str, Status]:
     statuses: dict[str, Status] = {}
+    replay = series_replay_runs(revision, ancestry)
     for gate in CATALOGUE:
         if not ancestry(gate.introduced_in, revision):
             statuses[gate.gate_id] = "gate_postdates_source"
-        elif gate.needs_rich_split and not rich_split:
+        elif (
+            gate.needs_rich_split and not rich_split and not (gate.replayed and replay)
+        ):
             statuses[gate.gate_id] = "rich_refusals_collapsed"
         elif not gate.retained:
             statuses[gate.gate_id] = "block_not_retained"
@@ -1939,6 +2380,7 @@ def _row(
     destinations: dict[str, Split] = {}
     media: dict[str, Split] = {}
     measurable_anywhere = False
+    owner_recorded = True
     estimable_control = gate.control in ("alternative", "cover_candidates")
     picks = gate.control == "alternative"
     for label, statuses, tallies in snapshots:
@@ -1948,6 +2390,7 @@ def _row(
             measurable_anywhere = True
             tally = tallies[gate.gate_id]
             pooled.add(tally)
+            owner_recorded &= tally.owner_recorded
             for pool, split in (
                 (destinations, tally.destinations),
                 (media, tally.media),
@@ -1973,6 +2416,13 @@ def _row(
                     "election_fields": tally.election_fields,
                 }
             )
+            if picks:
+                entry["owner"] = _owner_entry(tally, tally.owner_recorded)
+            if gate.replayed:
+                entry["replay"] = tally.replay
+                entry["stored_refused"] = (
+                    tally.stored_refused if tally.replay is not None else None
+                )
         per_snapshot.append(entry)
     total = pooled.true_positive + pooled.false_positive
     precision = pooled.true_positive / total if estimable_control and total else None
@@ -2011,13 +2461,14 @@ def _row(
         "pick": _pick_entry(pooled) if picks and measurable_anywhere else None,
         "split": {
             "by_destination": {
-                key: _split_entry(counts)
+                key: _split_entry(counts, owner_recorded)
                 for key, counts in sorted(destinations.items())
             },
             "by_medium": {
-                key: _split_entry(counts) for key, counts in sorted(media.items())
+                key: _split_entry(counts, owner_recorded)
+                for key, counts in sorted(media.items())
             },
-            "total": _split_entry(pooled),
+            "total": _split_entry(pooled, owner_recorded),
         }
         if picks and measurable_anywhere
         else None,
@@ -2049,8 +2500,59 @@ def _pick_entry(counts: Split) -> dict[str, object]:
     }
 
 
-def _split_entry(counts: Split) -> dict[str, object]:
-    """One destination's or medium's controls and pick measure (#1744)."""
+def _rate(successes: int, total: int) -> tuple[float | None, float | None]:
+    bound = wilson_lower_bound(successes, total)
+    return (
+        round(successes / total, 4) if total else None,
+        None if bound is None else round(bound, 4),
+    )
+
+
+def _owner_entry(counts: Split, recorded: bool) -> dict[str, object] | None:
+    """How often the pick is the owner's alternative (#1748); None if not stored."""
+    if not recorded:
+        return None
+    rate, bound = _rate(counts.owner_agrees, counts.owner_labelled)
+    return {
+        "labelled": counts.owner_labelled,
+        "by_outcome": {
+            "accept": counts.owner_accept,
+            "owner_entered": counts.owner_entered,
+            "keep_current": counts.owner_keep_current,
+            "reject": counts.owner_reject,
+        },
+        "pick_agrees": counts.owner_agrees,
+        "rate": rate,
+        "wilson_lower_bound": bound,
+    }
+
+
+def _corroborated_entry(counts: Split, recorded: bool) -> dict[str, object]:
+    """The corroborated pick's reach and agreement (#1748); measured, not scored."""
+    rate, bound = _rate(counts.corroborated_agrees, counts.corroborated_decidable)
+    owner_rate, owner_bound = _rate(
+        counts.corroborated_owner_agrees, counts.corroborated_owner_labelled
+    )
+    return {
+        "fields": counts.corroborated_fields,
+        "picks": counts.corroborated_picks,
+        "decidable": counts.corroborated_decidable,
+        "agrees": counts.corroborated_agrees,
+        "rate": rate,
+        "wilson_lower_bound": bound,
+        "owner_labelled": counts.corroborated_owner_labelled if recorded else None,
+        "owner_agrees": counts.corroborated_owner_agrees if recorded else None,
+        "owner_rate": owner_rate if recorded else None,
+        "owner_wilson_lower_bound": owner_bound if recorded else None,
+    }
+
+
+def _split_entry(counts: Split, owner_recorded: bool) -> dict[str, object]:
+    """One destination's or medium's controls and pick measure (#1744).
+
+    Its owner labels are pooled only when every snapshot behind it stores
+    owner decisions; otherwise they are null (#1748).
+    """
     total = counts.true_positive + counts.false_positive
     lower = wilson_lower_bound(counts.true_positive, total)
     return {
@@ -2064,6 +2566,8 @@ def _split_entry(counts: Split) -> dict[str, object]:
         "precision": round(counts.true_positive / total, 4) if total else None,
         "wilson_lower_bound": None if lower is None else round(lower, 4),
         "pick": _pick_entry(counts),
+        "owner": _owner_entry(counts, owner_recorded),
+        "corroborated": _corroborated_entry(counts, owner_recorded),
     }
 
 
@@ -2162,6 +2666,29 @@ _STRUCTURAL_KEYS = frozenset(
         "single_alternative_fields",
         "pick_preserves",
         "breakdown",
+        "owner",
+        "labelled",
+        "by_outcome",
+        "accept",
+        "owner_entered",
+        "keep_current",
+        "reject",
+        "corroborated",
+        "picks",
+        "decidable",
+        "agrees",
+        "owner_labelled",
+        "owner_agrees",
+        "owner_rate",
+        "owner_wilson_lower_bound",
+        "replay",
+        "stored_refused",
+        "replayed",
+        "unreplayed",
+        "reached",
+        "unreached_ask",
+        "unreached_earlier",
+        "unreached_no_candidate",
     }
 )
 
@@ -2236,11 +2763,22 @@ def _a6_module() -> ModuleType:
     return module
 
 
+def _series_module() -> ModuleType:
+    """Import the series replay, which imports this module back (#1748)."""
+    try:
+        from scripts import admission_rule_series as module
+    except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+        sys.modules.setdefault("admission_rule_ledger", sys.modules[__name__])
+        import admission_rule_series as module  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+    return module
+
+
 def build_ledger(
     inputs: Sequence[SnapshotInput],
     *,
     ancestry: Ancestry,
     attention: AttentionReader,
+    series_replay: SeriesReader | None = None,
     a6_replay: A6Reader | None = None,
     follow_ons: Mapping[str, int] | None = None,
     breakdown: str | None = None,
@@ -2258,7 +2796,19 @@ def build_ledger(
             scalar, rich_split = _engine(probe)
             statuses = gate_statuses(item.revision, ancestry, rich_split)
             elections = later_elections(item.revision, ancestry)
-            tallies, media = measure_snapshot(connection, statuses, elections, scalar)
+            series = None
+            if series_replay_runs(item.revision, ancestry):
+                reader = (
+                    cast("SeriesReader", _series_module().child_series)
+                    if series_replay is None
+                    else series_replay
+                )
+                series = reader(
+                    item.source_root, item.database, series_cases_sql(connection)
+                )
+            tallies, media = measure_snapshot(
+                connection, statuses, elections, scalar, series
+            )
         finally:
             connection.close()
         if a6 is not None and a6_replay is not None:
@@ -2383,15 +2933,108 @@ def _agreement(pick: Mapping[str, object]) -> str | None:
     )
 
 
+def _ratio(successes: object, total: object, rate: object, bound: object) -> str | None:
+    """ "k/n rate (lower)", or None where nothing was decided."""
+    if rate is None or bound is None:
+        return None
+    return (
+        f"{_number(successes)}/{_number(total)} {cast('float', rate):.3f} "
+        f"({cast('float', bound):.3f})"
+    )
+
+
+def _owner_suffix(owner: object) -> str:
+    """The pick cell's owner-label suffix (#1748)."""
+    if not isinstance(owner, dict):
+        return "; owner decisions not stored in every snapshot"
+    entry = cast("dict[str, object]", owner)
+    agreement = _ratio(
+        entry["pick_agrees"],
+        entry["labelled"],
+        entry["rate"],
+        entry["wilson_lower_bound"],
+    )
+    return "; no owner decisions" if agreement is None else f"; owner {agreement}"
+
+
 def _pick_cell(row: Mapping[str, object]) -> str:
     pick = row.get("pick")
     if not isinstance(pick, dict):
         return "not applicable"
     agreement = _agreement(cast("dict[str, object]", pick))
     tied = f"{_number(pick['tied_fields'])} tied"
+    owner = _owner_suffix(_dict(_dict(row["split"])["total"]).get("owner"))
     if agreement is None:
-        return f"not estimable (0 decidable; {tied})"
-    return f"{agreement}; {tied}"
+        return f"not estimable (0 decidable; {tied}){owner}"
+    return f"{agreement}; {tied}{owner}"
+
+
+def _owner_cell(owner: object) -> str:
+    if not isinstance(owner, dict):
+        return _NOT_RECORDED
+    entry = cast("dict[str, object]", owner)
+    return (
+        _ratio(
+            entry["pick_agrees"],
+            entry["labelled"],
+            entry["rate"],
+            entry["wilson_lower_bound"],
+        )
+        or "not estimable"
+    )
+
+
+def _corroborated_cells(entry: Mapping[str, object]) -> list[str]:
+    """The corroborated pick's breakdown cells (#1748)."""
+    corroborated = _dict(entry["corroborated"])
+    controls = _ratio(
+        corroborated["agrees"],
+        corroborated["decidable"],
+        corroborated["rate"],
+        corroborated["wilson_lower_bound"],
+    )
+    if corroborated["owner_labelled"] is None:
+        owner = _NOT_RECORDED
+    else:
+        owner = (
+            _ratio(
+                corroborated["owner_agrees"],
+                corroborated["owner_labelled"],
+                corroborated["owner_rate"],
+                corroborated["owner_wilson_lower_bound"],
+            )
+            or "not estimable"
+        )
+    return [
+        f"{_number(corroborated['picks'])}/{_number(corroborated['fields'])}",
+        controls or "not estimable",
+        _owner_cell(entry["owner"]),
+        owner,
+    ]
+
+
+def _replay_lines(row: Mapping[str, object]) -> list[str]:
+    """The series replay's reach per snapshot, for a replayed row (#1748)."""
+    entries = [
+        entry
+        for entry in cast("list[dict[str, object]]", row["snapshots"])
+        if isinstance(entry.get("replay"), dict)
+    ]
+    if not entries:
+        return []
+    lines = [
+        "",
+        "| Snapshot | Replayed | Reach the identity match | "
+        "Also refused in the stored outcome |",
+        "|---|---|---|---|",
+    ]
+    for entry in entries:
+        replay = _dict(entry["replay"])
+        lines.append(
+            f"| {entry['label']} | {_number(replay['replayed'])} | "
+            f"{_number(replay['reached'])} | {_number(entry['stored_refused'])} |"
+        )
+    return lines
 
 
 def _breakdown_section(row: Mapping[str, object]) -> list[str]:
@@ -2403,8 +3046,11 @@ def _breakdown_section(row: Mapping[str, object]) -> list[str]:
     lines += [
         "| Split | Fields | Actionable | TP/FP/unlabelled | Reach no record | "
         "Identity precision (lower) | Pick agrees (lower) | Tied | Contaminated | "
-        "No right-work | Single | Pick preserves |",
-        "|" + "---|" * 12,
+        "No right-work | Single | Pick preserves | Corroborated picks | "
+        "Corroborated pick agrees where controls decide (lower) | "
+        "Pick agrees with the owner (lower) | "
+        "Corroborated pick agrees with the owner (lower) |",
+        "|" + "---|" * 16,
     ]
     groups = [
         (key if basis == "destination" else f"medium: {key}", _dict(entry))
@@ -2423,9 +3069,11 @@ def _breakdown_section(row: Mapping[str, object]) -> list[str]:
             f"{_number(pick['contaminated_fields'])} | "
             f"{_number(pick['no_right_work_fields'])} | "
             f"{_number(pick['single_alternative_fields'])} | "
-            f"{_number(pick['pick_preserves'])} |"
+            f"{_number(pick['pick_preserves'])} | "
+            + " | ".join(_corroborated_cells(entry))
+            + " |"
         )
-    return lines
+    return [*lines, *_replay_lines(row)]
 
 
 def render_markdown(ledger: Mapping[str, object]) -> str:
@@ -2632,6 +3280,7 @@ def main(
     stderr: TextIO | None = None,
     ancestry: Ancestry | None = None,
     attention: AttentionReader | None = None,
+    series_replay: SeriesReader | None = None,
     decision_replay: A6Reader | None = None,
 ) -> int:
     output = sys.stdout if stdout is None else stdout
@@ -2659,6 +3308,7 @@ def main(
             if ancestry is None
             else ancestry,
             attention=child_attention if attention is None else attention,
+            series_replay=series_replay,
             a6_replay=a6_replay,
             follow_ons=follow_ons,
             breakdown=breakdown,
