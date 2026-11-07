@@ -397,7 +397,7 @@ _COVER_EVIDENCE_STATEMENTS: Final[Mapping[CoverSourceKind, tuple[str, str, str]]
             CoverSourceKind.ABS: (
                 "Local library record",
                 "local_presence",
-                "Audiobookshelf\u2019s current cover.",
+                "Your current cover.",
             ),
             CoverSourceKind.EPUB: (
                 "EPUB file",
@@ -1834,7 +1834,7 @@ def _cover_choice_contexts(
                 {
                     "source": "Local library record",
                     "role": "local_presence",
-                    "observation": "Audiobookshelf\u2019s current cover.",
+                    "observation": "Your current cover.",
                 }
             ]
             if incumbent

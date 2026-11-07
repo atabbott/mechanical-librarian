@@ -500,7 +500,7 @@ def _field(
                 "alternative_id": None,
                 "evidence": [
                     {
-                        "observation": "Audiobookshelf’s current value.",
+                        "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -962,7 +962,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Local library record",
                                     "role": "local_presence",
-                                    "observation": "Audiobookshelf’s current cover.",
+                                    "observation": "Your current cover.",
                                 }
                             ],
                             # The producer's own sentence for an unavailable

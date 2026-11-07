@@ -2643,7 +2643,7 @@ def _choice_contexts(
             "evidence": (
                 [
                     {
-                        "observation": "Audiobookshelf\u2019s current value.",
+                        "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }

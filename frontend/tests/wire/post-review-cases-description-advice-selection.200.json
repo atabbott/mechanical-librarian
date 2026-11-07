@@ -270,7 +270,7 @@
                 "alternative_id": null,
                 "evidence": [
                   {
-                    "observation": "Audiobookshelf’s current value.",
+                    "observation": "Your current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
@@ -405,7 +405,7 @@
                 "alternative_id": null,
                 "evidence": [
                   {
-                    "observation": "Audiobookshelf’s current value.",
+                    "observation": "Your current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
@@ -583,7 +583,7 @@
                 "alternative_id": null,
                 "evidence": [
                   {
-                    "observation": "Audiobookshelf’s current value.",
+                    "observation": "Your current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   }

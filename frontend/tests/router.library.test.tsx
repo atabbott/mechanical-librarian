@@ -5266,7 +5266,7 @@ describe('Library route', () => {
               {
                 source: 'Local library record',
                 role: 'local_presence',
-                observation: 'Audiobookshelf’s current cover.',
+                observation: 'Your current cover.',
               },
             ],
             limitations: ['Its image could not be previewed.'],

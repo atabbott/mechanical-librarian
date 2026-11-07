@@ -284,7 +284,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "alternative_id": None,
                 "evidence": [
                     {
-                        "observation": "Audiobookshelf’s current cover.",
+                        "observation": "Your current cover.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
