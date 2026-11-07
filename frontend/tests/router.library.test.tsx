@@ -326,6 +326,9 @@ it('moves focus to Reload when both selected-work reads meet a newer build, the 
   await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(http.getAttention).toHaveBeenCalledTimes(2))
   await screen.findByText('Loading selected work…')
+  // The workspace holds focus while the reads are pending (#1742).
+  expect(document.body).not.toHaveFocus()
+  expect(document.querySelector('#main-content .workspace-detail')).toHaveFocus()
   releaseWorks()
   await screen.findByText('Selected work was not loaded.', {
     exact: false,
@@ -361,6 +364,35 @@ it('moves focus to Reload when a selected detail retry meets a newer build (#128
     expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
   )
   expect(document.body).not.toHaveFocus()
+})
+
+it('holds focus in the workspace while a selected detail retry reads (#1742)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  let release: () => void = () => undefined
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      if (!retried) throw new ApiError(503, 'unavailable')
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      throw new BuildMismatchError()
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  await screen.findByText('Loading selected work…')
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  expect(document.body).not.toHaveFocus()
+  expect(workspace).toHaveFocus()
+  release()
+  await waitFor(() =>
+    expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
+  )
 })
 
 it('moves focus to Reload when a lineage check outlasts a selected-work retry (#1742)', async () => {
@@ -8506,7 +8538,8 @@ describe('Library route', () => {
     expect(retry).toHaveFocus()
     await user.click(retry)
     expect(await screen.findByText('Loading selected work…')).toBeVisible()
-    expect(document.body).toHaveFocus()
+    // The workspace holds focus while the retry reads, not the page (#1742).
+    expect(document.querySelector('#main-content .workspace-detail')).toHaveFocus()
     await act(async () => {
       release?.(detail)
     })
@@ -8537,7 +8570,8 @@ describe('Library route', () => {
     retry.focus()
     await user.click(retry)
     expect(await screen.findByText('Loading selected work…')).toBeVisible()
-    expect(document.body).toHaveFocus()
+    // The workspace holds focus while the retry reads, not the page (#1742).
+    expect(document.querySelector('#main-content .workspace-detail')).toHaveFocus()
     await act(async () => {
       rejectRetry?.(new Error('retry selected detail failure'))
     })
@@ -15223,7 +15257,7 @@ describe('a focused field decision (#1519)', () => {
     },
   )
 
-  it('moves focus to the workspace when a successful Retry observations leaves none to show (#1742)', async () => {
+  it('moves focus to the field question when a successful Retry observations leaves none to show (#1742)', async () => {
     const user = userEvent.setup()
     let reads = 0
     open(focused(), {
@@ -15250,7 +15284,9 @@ describe('a focused field decision (#1519)', () => {
     await waitFor(() =>
       expect(screen.queryByRole('region', { name: 'Recorded observations' })).toBeNull(),
     )
-    await waitFor(() => expect(document.querySelector('.workspace-detail')).toHaveFocus())
+    await waitFor(() =>
+      expect(document.querySelector('.decision-canvas .decision-question')).toHaveFocus(),
+    )
     expect(document.body).not.toHaveFocus()
   })
 

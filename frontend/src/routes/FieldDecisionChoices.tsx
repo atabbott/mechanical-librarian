@@ -163,8 +163,9 @@ export function RecordedFieldObservations({
                 (result) =>
                   result.isSuccess
                     ? // A read that leaves this field nothing to show removes the
-                      // section (#1519): the workspace holds focus instead.
-                      (heading.current ?? document.querySelector<HTMLElement>('.workspace-detail'))
+                      // section (#1519): the field's question takes focus instead.
+                      (heading.current ??
+                      document.querySelector<HTMLElement>('.decision-canvas .decision-question'))
                     : observationsRetry.current,
               )
             }}

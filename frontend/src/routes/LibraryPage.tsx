@@ -1133,6 +1133,14 @@ export default function LibraryPage({
     selectedDetailRetry.current = null
     selectedDetailShown.current = null
   }, [search.preview])
+  // The loading line replaces a selected-work Try again while its reads run:
+  // the workspace, which stays, holds focus until the settled read takes it.
+  const holdSelectedRetry = () => {
+    selectedDetailRetry.current = search.preview ?? null
+    document
+      .querySelector<HTMLElement>('#main-content .workspace-detail')
+      ?.focus({ preventScroll: true })
+  }
   useEffect(() => {
     // An error is settled only once it renders: while another read is still
     // in flight the work shows as loading, and its Try again or Reload does
@@ -1141,8 +1149,10 @@ export default function LibraryPage({
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
+    // A selected-work retry holds focus on the workspace while it reads.
     const restoreAfterRetry =
-      selectedDetailRetry.current === search.preview && active === document.body
+      selectedDetailRetry.current === search.preview &&
+      (active === document.body || active === workspace)
     if (workspace && active === workspace && selectedDetailReady)
       workspace.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     else if (restoreAfterRetry) {
@@ -2209,7 +2219,7 @@ export default function LibraryPage({
                 <button
                   ref={selectedDetailRetryButton}
                   onClick={() => {
-                    selectedDetailRetry.current = search.preview ?? null
+                    holdSelectedRetry()
                     void retry()
                     void attention.refetch()
                     // The case read names the work too, so it is read again (#1365).
@@ -2251,7 +2261,7 @@ export default function LibraryPage({
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
-                  selectedDetailRetry.current = search.preview ?? null
+                  holdSelectedRetry()
                   void detail.refetch()
                 }}
               >
@@ -2439,7 +2449,8 @@ export default function LibraryPage({
                   ) : null}
                   <header>
                     <div>
-                      <h3>
+                      {/* Takes focus when a retry below it leaves nothing in its place. */}
+                      <h3 className="decision-question" tabIndex={-1}>
                         {selectedActionable
                           ? decisionQuestion(selected.destination)
                           : destinationLabel(selected.destination)}
