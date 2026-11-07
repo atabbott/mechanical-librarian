@@ -67,6 +67,13 @@ _BOOK = "hardcover-work-0000000010"
 _ASIN = "B0LINKED01"
 
 
+def _dispatch(lane: ProviderLaneObservation) -> dom.ProviderLaneDispatch:
+    """How a lane's dispatch ended, as the generator records it."""
+    outcome = dom.lane_dispatch_outcome(lane, starved=False)
+    assert outcome is not None
+    return dom.ProviderLaneDispatch(outcome)
+
+
 def _companion_claim(kind: ClaimKind, value: str, **fields: object) -> LocalClaim:
     return LocalClaim.create(
         kind=kind,
@@ -245,9 +252,7 @@ def _hardcover(
     )
     record = replace(
         record,
-        dispatch=dom.ProviderLaneDispatch(
-            dom.lane_dispatch_outcome(record, starved=False)
-        ),
+        dispatch=_dispatch(record),
     )
     return ProviderObservation(
         "catalogue",
@@ -725,9 +730,7 @@ def test_a_report_refuses_a_companion_search_it_did_not_plan(
     )
     record = replace(
         record,
-        dispatch=dom.ProviderLaneDispatch(
-            dom.lane_dispatch_outcome(record, starved=False)
-        ),
+        dispatch=_dispatch(record),
     )
     with pytest.raises(ReportValueError, match="work lane"):
         MetadataReport.create(

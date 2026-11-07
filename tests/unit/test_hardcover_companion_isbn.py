@@ -30,6 +30,7 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -50,6 +51,13 @@ _ISBN = "9780306406157"
 _OTHER_ISBN = "9780140328721"
 _COMPANION_BOOK = 20
 _SEARCH_BOOK = 10
+
+
+def _dispatch(lane: ProviderLaneObservation) -> dom.ProviderLaneDispatch:
+    """How a lane's dispatch ended, as the generator records it."""
+    outcome = dom.lane_dispatch_outcome(lane, starved=False)
+    assert outcome is not None
+    return dom.ProviderLaneDispatch(outcome)
 
 
 def _companion_claim(kind: ClaimKind, value: str, **fields: object) -> LocalClaim:
@@ -208,9 +216,7 @@ def _report(observation: ProviderObservation) -> MetadataReport:
                 lanes=tuple(
                     replace(
                         lane,
-                        dispatch=dom.ProviderLaneDispatch(
-                            dom.lane_dispatch_outcome(lane, starved=False)
-                        ),
+                        dispatch=_dispatch(lane),
                     )
                     for lane in observation.lanes
                 ),
