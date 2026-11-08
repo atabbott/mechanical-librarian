@@ -1,112 +1,128 @@
-# Future Reviewer Backends
+# Future reviewer backends
 
-This is a deferred direction, not a current capability. Nothing here is
-scheduled or authorised for implementation.
+Nothing on this page exists yet. It is a direction for later, and none of it
+is scheduled or approved for work.
 
 ## What exists today
 
-Reviewer access is closed and task-scoped. An owner may select Codex or one
-OpenRouter model for the advisory `cover_observation` and `description_rewrite`
-tasks only
+A reviewer does two jobs today, `cover_observation` and `description_rewrite`,
+and both only give advice. For each, you can choose Codex or one OpenRouter
+model, and no other job uses a reviewer
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
-The installed Codex reviewer runs inside the contained-reviewer kernel, and
-the kernel's generic qualification workflow stays source-only
+The installed Codex reviewer runs inside the contained-reviewer kernel, an
+isolated sandbox. The kernel's general-purpose use stays in the source code
+and is not installed
 ([ADR-0041](../architecture/decisions/0041-contract-contained-reviewer-kernel.md),
 [ADR-0050](../architecture/decisions/0050-bound-installed-owner-assistance.md)).
-None of this is a generic reviewer backend or pre-decides the port a future
+None of this is a general reviewer backend or settles the interface a future
 backend would use.
 
 ## Direction
 
-Two independent optional backends may be considered after 1.0:
+After 1.0, two optional backends are possible. Neither depends on the other.
 
-1. **Hosted OpenRouter reviewer.** An owner-controlled OpenRouter account and
-   one exact, qualified free or paid model configuration, beyond the closed
-   tasks.
-2. **Externally operated model server.** A compatible model server that the
-   owner installs and runs separately.
+1. An OpenRouter reviewer for more jobs than today's two. It uses your own
+   OpenRouter account and one exact, qualified model configuration, free or
+   paid.
+2. A compatible model server that you install and run yourself, outside
+   Mechanical Librarian.
 
-Either needs a newly promoted GitHub issue, a product reviewer contract, a
-trust-boundary decision, and a configuration, privacy and secret-reference
-design before work starts, with external-service behaviour reverified then.
+Before work starts on either, it needs a new GitHub issue that schedules it, a
+product reviewer contract and a trust-boundary decision. It also needs a
+design for its configuration, privacy and secret references. How the outside
+service behaves is checked again at that point.
 
-## Constraints any backend must keep
+## Rules for every backend
 
-Every backend sits behind a new application-owned port and keeps the
-[AI trust boundary](../architecture/ai-boundary.md). A backend:
+Every backend connects through a new interface that Mechanical Librarian
+defines, and stays inside the
+[AI trust boundary](../architecture/ai-boundary.md). For each backend:
 
-- receives only the versioned bounded reviewer packet and selected staged
-  attachments;
-- returns one direct closed-schema object covering every proposal and no
-  others;
-- receives no target-service or provider credential, main database, backup,
-  production media, mutation port, shell, tool or apply authority;
-- cannot choose candidates, evidence, policy, prompts, destinations or writes;
-- declares its text, image, context, schema, authentication and model-identity
-  capabilities before any work is eligible;
-- reports actual model, endpoint and provider identity, which the application
-  persists as immutable provenance with the prompt, evidence, schema, policy
-  and configuration versions;
-- applies hard bounds on input, output, response size, time, concurrency,
-  retries and circuit breaking; and
-- turns authentication, quota, availability, capability, identity, transport,
-  timeout, malformed-output and citation failures into typed safe states,
-  never an inferred or repaired decision. A failure suspends only the affected
-  configuration under bounded retry and is never evidence about a field.
+- It receives only a size-limited review request in a versioned format, and
+  the attachments Mechanical Librarian picked and prepared for it.
+- It replies with one object in a fixed schema, and nothing else. The object
+  covers every proposal it was given, and no other.
+- It gets no credential for your library service or a source. It cannot reach
+  the main database, backups or your media files. It has no shell, no tools
+  and no way to write or apply a change.
+- It cannot choose the values it judges, the evidence, the policy, its
+  prompts, the fields to change or what is written.
+- Before it is given any work, it declares what it supports: text, images,
+  context length, schema, authentication and model identity.
+- It reports the model, endpoint and model provider that answered. Mechanical
+  Librarian keeps them in a record that never changes, with the versions of
+  the prompt, evidence, schema, policy and configuration.
+- It has hard limits on input, output, response size, time, parallel requests
+  and retries, and a cut-off that stops requests after repeated failures.
+- Each failure becomes a named state: authentication, quota, availability,
+  capability, identity, transport, timeout, malformed output or citation. It
+  never becomes a guessed or repaired decision. A failure pauses only the
+  configuration it affects, with limited retries, and is never evidence about
+  a field.
 
-Further rules:
+A change of endpoint, provider, model, free or paid status, or privacy policy
+is a configuration change you make, and the audit record shows it. A backend
+never falls back from one of these to another by itself.
 
-- **No silent switching.** Changing endpoint, provider, model, free or paid
-  status, or privacy policy is an explicit audited configuration change. No
-  backend falls back across those boundaries.
-- **Qualification does not transfer.** A changed identity or material
-  configuration is a new evaluation cohort. Eligibility beyond shadow or
-  manual review belongs to the exact backend, model, provider, route, prompt,
-  schema and policy tuple, never to a vendor or to free models generally.
-- **Validate independently.** The application rejects unknown fields,
-  trailing content, partial or duplicate decisions, invented values, unknown
-  citations and identity mismatches, whatever the provider claims. Tools,
-  plugins, web search and response repair stay disabled.
-- **Disclose before any request.** No connection test, preflight or packet is
-  sent, and no credential leaves the container, until the owner enables the
-  backend and accepts a disclosure matching its current configuration. The
-  disclosure names every field, excerpt and attachment category sent, the
-  processing parties, and the retention, training, region and cost posture.
-  It excludes raw media, whole works, production paths and unrelated
-  evidence. A material change invalidates acceptance.
-- **Owner-controlled secrets.** Credentials are write-only, reviewer-scoped
-  secret references. They never appear in exports, browser readback, logs,
-  audit content or support bundles. The image ships no shared credential.
-- **Narrow transport.** A dedicated client per backend, restricted to its
-  configured origin, with normal TLS validation, no redirects that carry
-  credentials, and no state shared with target or provider clients.
-- **Core work continues.** Inventory, local evidence, deterministic proposals
-  and policy, and human review keep working when every reviewer is absent or
-  unhealthy. Reviewer failure never affects container liveness.
+Qualification never carries over. A change to the model's identity, or to
+anything material in its configuration, starts a new evaluation. Shadow review
+records a backend's answers without using them. In manual review, you decide.
+Only one exact combination of backend, model, provider, route, prompt, schema
+and policy can qualify for more than that. A vendor, or free models in
+general, never qualify.
 
-The [data-privacy contract](../architecture/data-privacy.md) governs any
-external processing.
+Mechanical Librarian checks every answer itself, whatever the provider claims.
+It rejects unknown fields, trailing content, partial or duplicate decisions,
+invented values, unknown citations and a mismatched identity. Tools, plugins,
+web search and response repair stay off.
 
-## Backend-specific constraints
+Nothing goes out until you turn the backend on and accept a disclosure that
+matches its current configuration: no connection test, preflight check,
+review request or credential. The disclosure names every field, excerpt and
+kind of attachment sent, who processes them, and the retention, training,
+region and cost terms. It says that raw media, whole works, file paths in
+your library and unrelated evidence are never sent. After a material change,
+you accept again.
 
-**OpenRouter.** Account-default models and the random `openrouter/free` router
-are refused for decision-bearing review. A route that cannot meet its
-configured provider, retention, training and region constraints makes the
-reviewer unavailable rather than less private. Free-tier exhaustion, price
-change or model retirement never selects another model, provider or paid
-route.
+You control the credentials. Each is a write-only reference to a secret that
+only the reviewer can use. Credentials never appear in exports, the browser,
+logs, the audit record or support bundles. The image ships with no shared
+credential.
 
-**External model server.** The image carries no inference runtime, model
-weights, downloader, GPU dependency or server lifecycle manager, and the
-product never discovers, starts or upgrades the server. Configuration names
-one exact `http` or `https` origin, compatibility profile, model ID, privacy
-mode and optional reviewer-scoped secret. URLs with credentials, fragments,
-ambiguous hosts, other schemes or open paths are refused. Authentication is a
-reviewer-scoped bearer or file secret only, never arbitrary headers or
-cookies. Compatibility is proven by a bounded
-handshake, not inferred from an "OpenAI-compatible" label. Plain HTTP,
-loopback or private-network access needs an explicit, visible local-endpoint
-mode limited to that origin. DNS rebinding, redirects and file, socket,
-link-local, metadata-service or undeclared destinations fail closed. There is
-no global TLS-disable option. A custom model starts shadow or manual-only, and
-a text-only configuration leaves image-dependent work manual.
+Each backend has its own network client, limited to its configured origin. It
+checks TLS certificates as normal and never follows a redirect that would
+carry a credential. It shares no state with the clients for your library
+service or sources.
+
+Inventory, local evidence, rule-based proposals and policy, and your own
+review keep working when no reviewer is set up or working. A reviewer failure
+never makes the container unhealthy.
+
+The [data-privacy contract](../architecture/data-privacy.md) applies to any
+processing outside Mechanical Librarian.
+
+## Rules by backend
+
+An OpenRouter reviewer never uses your account's default model or the random
+`openrouter/free` router for a review that informs a decision. If no route
+meets the configured provider, retention, training and region limits, the
+reviewer is unavailable. It never falls back to a less private route. Running
+out of free use, a price change or a retired model never selects another
+model, provider or paid route.
+
+A model server is yours to run. The image carries no inference runtime, model
+weights, downloader, GPU dependency or server lifecycle manager. Mechanical
+Librarian never discovers, starts or upgrades the server. Its configuration
+names one exact `http` or `https` origin, compatibility profile, model ID and
+privacy setting, and an optional secret for the reviewer. Mechanical Librarian
+refuses a URL with a credential, a fragment, an ambiguous host, another scheme
+or an open path. The reviewer signs in only with a bearer token or a secret
+file, never with custom headers or cookies.
+
+A handshake with fixed limits proves the server is compatible. An
+"OpenAI-compatible" label is not taken as proof. Plain HTTP, loopback or a
+private network needs a visible local-endpoint setting that you turn on, limited
+to that origin. DNS rebinding, redirects, and file, socket, link-local,
+metadata-service or undeclared destinations are blocked. No setting turns TLS
+checking off globally. A custom model starts in shadow or manual review only. A
+text-only configuration leaves any work that needs images to manual review.
