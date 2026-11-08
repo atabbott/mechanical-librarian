@@ -47,12 +47,20 @@ _SWITCH_SQL = (
     "FROM retained_cover_removals removal WHERE removal.plan_id=effect.plan_id)) "
     "OR (binding.plan_id IS NULL "
     "AND json_extract(effect.document,'$.plan.pre_value') IS NULL)) "
+    # Two listed switches of one work are ordered by listing sequence, as the
+    # release rule and the newest retained original are; any other later
+    # write by when it was verified.
     "AND NOT EXISTS (SELECT 1 FROM field_effects later "
+    "LEFT JOIN retained_cover_listings later_listing "
+    "ON later_listing.plan_id=later.plan_id "
     "WHERE later.connection_name=effect.connection_name "
     "AND later.library_name=effect.library_name AND later.work_id=effect.work_id "
     "AND later.destination='cover' AND later.state='verified' "
-    "AND (later.updated_at>effect.updated_at OR (later.updated_at=effect.updated_at "
-    "AND later.plan_id>effect.plan_id))) "
+    "AND later.plan_id<>effect.plan_id AND CASE "
+    "WHEN listing.sequence IS NOT NULL AND later_listing.sequence IS NOT NULL "
+    "THEN later_listing.sequence>listing.sequence "
+    "ELSE later.updated_at>effect.updated_at OR (later.updated_at=effect.updated_at "
+    "AND later.plan_id>effect.plan_id) END) "
     # The owner's answer is read through the work's current selection, a
     # primary-key search: automation never supersedes an owner selection, so
     # an owner answer after the write is always the current one.

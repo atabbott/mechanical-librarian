@@ -272,6 +272,25 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
         assert missing.value.code == "missing"
 
 
+def test_a_works_newest_listed_switch_is_its_highest_listing_sequence(
+    tmp_path: Path,
+) -> None:
+    with _library(tmp_path) as library:
+        original = _abs_digest(library.report)
+        # After a clock step the newer switch carries the earlier time.
+        _switch(library, "item-1", plan="1", at=200, original=original, sequence=1)
+        newer = _switch(
+            library, "item-1", plan="2", at=100, original=original, sequence=2
+        )
+        page = cover_page(library.repository, "switched", None)
+
+    (item,) = page["items"]
+    assert item["switched"]["at"] == 100
+    assert str(item["switched"]["before"]["url"]).startswith(
+        f"/api/v1/covers/replaced?plan={newer}"
+    )
+
+
 def test_only_the_newest_cover_write_of_a_work_is_listed(tmp_path: Path) -> None:
     with _library(tmp_path) as library:
         original = _abs_digest(library.report)
