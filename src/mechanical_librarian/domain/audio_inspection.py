@@ -7,6 +7,7 @@ media-evidence protocol and not a future format extension point.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import unicodedata
@@ -39,7 +40,9 @@ from mechanical_librarian.domain.validation import text as exact_text
 # a claim (#1481).  The child still reads one file and names no ordinal: which
 # track a fact came from, and whether a sidecar belongs, is the parent's
 # knowledge.
-AUDIO_INSPECTION_SCHEMA = "audio-inspection-v5"
+# `v6` adds, per sidecar, whether it started with a byte-order mark and its
+# reading without that mark when the two differ (#1796).
+AUDIO_INSPECTION_SCHEMA = "audio-inspection-v6"
 AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
 # The retained report's own ceiling, and deliberately not a smaller one.  A
 # legal inspection of a file with 1,024 chapters titled to the full 280
@@ -73,6 +76,10 @@ MAX_ASSOCIATION_CHARACTERS = 255
 MAX_ASSOCIATION_CREATORS = 16
 # The newly read Libation keys a manifest entry records as shadow evidence.
 MAX_SIDECAR_SHADOW = 16
+# What one item's manifest may record from readings without a byte-order mark
+# (#1796): at most this many serialized bytes across every entry, beside the
+# item-wide `MAX_FACTS`.
+MAX_BYTE_ORDER_MARK_BYTES = 65_536
 # The largest track set one item may be composed from.  The reference library's
 # widest audiobook is 352 files, and every count, byte, and second below is
 # bounded against this number rather than against whatever a target answers.
@@ -351,6 +358,18 @@ class AudioSidecarShadowField(StrEnum):
 
     SERIES_TITLE = "series_title"
     FORMAT_TYPE = "format_type"
+
+
+class AudioSidecarStrippedLimit(StrEnum):
+    """Which bound cut a sidecar's reading without its byte-order mark (#1796).
+
+    ``fact_budget``: the child's one fact budget ran out before that reading
+    kept all it found.  ``child_output``: the reading was removed so the
+    child's answer fits its byte bound.
+    """
+
+    FACT_BUDGET = "fact_budget"
+    CHILD_OUTPUT = "child_output"
 
 
 def association_text(value: object) -> str | None:
@@ -868,6 +887,110 @@ def _ordered_members(value: object, vocabulary: type[StrEnum]) -> bool:
     return positions == sorted(set(positions))
 
 
+def _observed_bound(field: AudioInspectionField) -> int:
+    return (
+        MAX_DESCRIPTION_CHARACTERS
+        if field is AudioInspectionField.DESCRIPTION
+        else MAX_OBSERVED_CHARACTERS
+    )
+
+
+@dataclass(frozen=True, repr=False)
+class AudioSidecarByteOrderMarkFact:
+    """One value only a reading without a byte-order mark kept (#1796).
+
+    Recorded, never a claim.  Each text takes `AudioInspectionFact`'s own
+    bound for its field, and no support excerpt is kept.
+    """
+
+    field: AudioInspectionField
+    observed: str
+    canonical: str | None = None
+    role: str | None = None
+
+    def __post_init__(self) -> None:
+        if not exact_type(AudioInspectionField)(self.field) or (
+            self.field not in SIDECAR_FIELDS
+        ):
+            raise ValueError("audio sidecar byte-order-mark fact is malformed")
+        try:
+            validate_projection_text(
+                self.observed, "audio observed value", _observed_bound(self.field)
+            )
+            if self.canonical is not None:
+                validate_projection_text(
+                    self.canonical, "audio canonical value", MAX_CANONICAL_CHARACTERS
+                )
+        except EvidenceValueError as error:
+            raise ValueError(
+                "audio sidecar byte-order-mark fact is malformed"
+            ) from error
+        if (self.field is AudioInspectionField.CONTRIBUTOR) != (
+            self.role is not None
+        ) or (self.role is not None and not _valid_role(self.role)):
+            raise ValueError("audio sidecar byte-order-mark fact is malformed")
+
+    @classmethod
+    def of(cls, fact: AudioInspectionFact) -> AudioSidecarByteOrderMarkFact:
+        return cls(fact.field, fact.observed_value, fact.canonical_value, fact.role)
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "canonical": self.canonical,
+            "field": self.field.value,
+            "observed": self.observed,
+            "role": self.role,
+        }
+
+    def __repr__(self) -> str:
+        return "AudioSidecarByteOrderMarkFact(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
+class AudioSidecarByteOrderMark:
+    """What reading a sidecar without its leading byte-order mark adds (#1796).
+
+    ``refusals`` are the ones that reading would have had, and ``facts`` the
+    values it kept that the reading with the mark did not.  Neither is ever
+    believed.  ``facts_omitted`` says the parent dropped facts for a bound,
+    and ``omitted`` names the child's bound that cut the reading itself.
+    """
+
+    refusals: tuple[AudioSidecarRefusal, ...] = ()
+    facts: tuple[AudioSidecarByteOrderMarkFact, ...] = ()
+    facts_omitted: bool = False
+    omitted: AudioSidecarStrippedLimit | None = None
+
+    def __post_init__(self) -> None:
+        terminal = set(self.refusals) & TERMINAL_SIDECAR_REFUSALS
+        if (
+            not _ordered_members(self.refusals, AudioSidecarRefusal)
+            or set(self.refusals) & PARENT_SIDECAR_REFUSALS
+            or (terminal and (len(self.refusals) != 1 or self.facts))
+            or not tuple_of(exact_type(AudioSidecarByteOrderMarkFact), MAX_FACTS)(
+                self.facts
+            )
+            or not boolean(self.facts_omitted)
+            or not optional(exact_type(AudioSidecarStrippedLimit))(self.omitted)
+            or (
+                self.omitted is AudioSidecarStrippedLimit.CHILD_OUTPUT
+                and (self.refusals or self.facts)
+            )
+        ):
+            raise ValueError("audio sidecar byte-order-mark record is malformed")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "facts": [value.to_data() for value in self.facts],
+            "facts_omitted": self.facts_omitted,
+            "omitted": None if self.omitted is None else self.omitted.value,
+            "refusals": [value.value for value in self.refusals],
+        }
+
+    def __repr__(self) -> str:
+        return "AudioSidecarByteOrderMark(<redacted>)"
+
+
 @dataclass(frozen=True, repr=False)
 class AudioSidecarDigest:
     """One recognized document present beside the audio file when it was read.
@@ -881,7 +1004,9 @@ class AudioSidecarDigest:
     which kind it is and what it is bound to, the refusals that withheld it or
     part of it, the claims it contributed, the fields withheld because
     sidecars disagreed on them or because they repeat the target's own record,
-    and the Libation keys read as shadow evidence only.
+    and the Libation keys read as shadow evidence only.  ``byte_order_mark``
+    records, for a document that started with one, what a reading without it
+    would add (#1796); it is never believed.
     """
 
     name: str
@@ -896,6 +1021,7 @@ class AudioSidecarDigest:
     # Positions in the target's narrator list of the narrators echoed, value
     # free like the rest; present exactly when a narrator was echoed.
     echoed_narrators: tuple[int, ...] = ()
+    byte_order_mark: AudioSidecarByteOrderMark | None = None
 
     def __post_init__(self) -> None:
         if not matching(_SHA256)(self.digest):
@@ -952,6 +1078,18 @@ class AudioSidecarDigest:
             or (self.shadow and self.kind is not AudioSidecarKind.LIBATION)
         ):
             raise ValueError("audio sidecar classification is inconsistent")
+        mark = self.byte_order_mark
+        if mark is not None and (
+            type(mark) is not AudioSidecarByteOrderMark
+            # Only a document a child read can have started with a mark.
+            or refusals & PARENT_SIDECAR_REFUSALS
+            or (
+                AudioSidecarRefusal.OTHER_FILE in mark.refusals
+                and self.kind is not AudioSidecarKind.CUE
+            )
+            or (mark.omitted is not None and self.kind is AudioSidecarKind.OPF)
+        ):
+            raise ValueError("audio sidecar byte-order-mark record is inconsistent")
 
     @property
     def refused(self) -> bool:
@@ -970,6 +1108,9 @@ class AudioSidecarDigest:
             "name": self.name,
             "refusals": [value.value for value in self.refusals],
             "shadow": [value.to_data() for value in self.shadow],
+            "byte_order_mark": None
+            if self.byte_order_mark is None
+            else self.byte_order_mark.to_data(),
         }
 
     def __repr__(self) -> str:
@@ -1093,6 +1234,11 @@ class AudioSidecarReading:
     ``file_reference`` (a CUE sheet's first ``FILE`` value, compared as a bare
     string and never opened) are association text: they serve the parent's
     belonging rules and never leave the inspector (#1481).
+
+    ``byte_order_mark`` says the document started with U+FEFF.  ``stripped`` is
+    then its reading without that one mark, present only when it differs, and
+    ``stripped_limit`` names a bound that cut it (#1796).  The parent never
+    lets ``stripped`` become a claim.
     """
 
     name: str
@@ -1106,6 +1252,9 @@ class AudioSidecarReading:
     # a path, a control character, an over-long name -- names no track of the
     # item, so it is recorded as naming another file rather than none.
     file_refused: bool = False
+    byte_order_mark: bool = False
+    stripped: AudioSidecarReading | None = None
+    stripped_limit: AudioSidecarStrippedLimit | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -1114,6 +1263,44 @@ class AudioSidecarReading:
             )
         except EvidenceValueError as error:
             raise ValueError("audio sidecar reading is malformed") from error
+        stripped = self.stripped
+        if (
+            not boolean(self.byte_order_mark)
+            or not optional(exact_type(AudioSidecarStrippedLimit))(self.stripped_limit)
+            or (
+                (stripped is not None or self.stripped_limit)
+                and not self.byte_order_mark
+            )
+            or (
+                # Both OPF scanners start at a `<`, so a leading mark is never
+                # read and the reading without it is this one (#1796).
+                self.surface is AudioEvidenceSurface.SIDECAR_OPF
+                and (stripped is not None or self.stripped_limit is not None)
+            )
+            or (
+                self.stripped_limit is AudioSidecarStrippedLimit.CHILD_OUTPUT
+                and stripped is not None
+            )
+            or (
+                stripped is not None
+                and (
+                    type(stripped) is not AudioSidecarReading
+                    or stripped.name != self.name
+                    or stripped.surface is not self.surface
+                    or stripped.byte_order_mark
+                    or stripped.stripped is not None
+                    or stripped.stripped_limit is not None
+                    or stripped.to_data()
+                    == dataclasses.replace(
+                        self,
+                        byte_order_mark=False,
+                        stripped=None,
+                        stripped_limit=None,
+                    ).to_data()
+                )
+            )
+        ):
+            raise ValueError("audio sidecar reading is malformed")
         if (
             self.surface not in SIDECAR_KIND_SURFACES.values()
             or not exact_type(AudioEvidenceSurface)(self.surface)
@@ -1165,6 +1352,11 @@ class AudioSidecarReading:
             "shadow": [value.to_data() for value in self.shadow],
             "surface": self.surface.value,
             "title": self.title,
+            "byte_order_mark": self.byte_order_mark,
+            "stripped": None if self.stripped is None else self.stripped.to_data(),
+            "stripped_limit": None
+            if self.stripped_limit is None
+            else self.stripped_limit.value,
         }
 
     def __repr__(self) -> str:
@@ -1204,11 +1396,16 @@ def _shadow_from_data(item: object) -> AudioSidecarShadow:
     )
 
 
-def _reading_from_data(item: object, source: Fingerprint | None) -> AudioSidecarReading:
+def _reading_from_data(
+    item: object, source: Fingerprint | None, *, nested: bool = False
+) -> AudioSidecarReading:
     if not closed_document(
+        "byte_order_mark",
         "file",
         "file_refused",
         "name",
+        "stripped",
+        "stripped_limit",
         "surface",
         "title",
         facts=_list,
@@ -1217,6 +1414,10 @@ def _reading_from_data(item: object, source: Fingerprint | None) -> AudioSidecar
     )(item):
         raise ValueError("audio inspection protocol is invalid")
     item = cast("dict[str, Any]", item)
+    # One level only: a reading without its mark carries no reading of its own,
+    # refused before it is ever parsed.
+    if nested and item["stripped"] is not None:
+        raise ValueError("audio inspection protocol is invalid")
     return AudioSidecarReading(
         item["name"],
         AudioEvidenceSurface(item["surface"]),
@@ -1226,6 +1427,25 @@ def _reading_from_data(item: object, source: Fingerprint | None) -> AudioSidecar
         item["file"],
         tuple(_shadow_from_data(value) for value in item["shadow"]),
         item["file_refused"],
+        item["byte_order_mark"],
+        None
+        if item["stripped"] is None
+        else _reading_from_data(item["stripped"], source, nested=True),
+        None
+        if item["stripped_limit"] is None
+        else AudioSidecarStrippedLimit(item["stripped_limit"]),
+    )
+
+
+def _all_readings(
+    sidecars: tuple[AudioSidecarReading, ...],
+) -> tuple[AudioSidecarReading, ...]:
+    """Every reading, each followed by its reading without a mark (#1796)."""
+    return tuple(
+        reading
+        for value in sidecars
+        for reading in (value, value.stripped)
+        if reading is not None
     )
 
 
@@ -1262,13 +1482,14 @@ class AudioInspection:
                 AudioInspectionLimits.HARD_CAPS["sidecar_documents"],
             )(self.sidecars)
             or len({value.name for value in self.sidecars}) != len(self.sidecars)
-            or len(self.facts) + sum(len(value.facts) for value in self.sidecars)
+            or len(self.facts)
+            + sum(len(value.facts) for value in _all_readings(self.sidecars))
             > MAX_FACTS
         ):
             raise ValueError("audio inspection is malformed")
         if self.source is not None and any(
             fact.source != self.source
-            for value in self.sidecars
+            for value in _all_readings(self.sidecars)
             for fact in value.facts
         ):
             raise ValueError("audio inspection fact source is inconsistent")
@@ -1355,6 +1576,33 @@ class AudioInspection:
             separators=(",", ":"),
             sort_keys=True,
         )
+
+    def to_json_within(self, maximum: int) -> str:
+        """The child's answer, within ``maximum`` bytes when its plain part fits.
+
+        Readings without a byte-order mark are shadow evidence (#1796), so they
+        are the first thing an answer gives up: one too large with them is
+        written again with every one removed and marked ``child_output``.  Only
+        an answer too large without them fails, as it did before they existed.
+        """
+        serialized = self.to_json()
+        if len(serialized.encode("utf-8")) <= maximum or all(
+            value.stripped is None for value in self.sidecars
+        ):
+            return serialized
+        return dataclasses.replace(
+            self,
+            sidecars=tuple(
+                value
+                if value.stripped is None
+                else dataclasses.replace(
+                    value,
+                    stripped=None,
+                    stripped_limit=AudioSidecarStrippedLimit.CHILD_OUTPUT,
+                )
+                for value in self.sidecars
+            ),
+        ).to_json()
 
     @classmethod
     def from_json(cls, serialized: str) -> "AudioInspection":
@@ -1493,12 +1741,15 @@ __all__ = [
     "AudioObservationKind",
     "AudioPerformanceType",
     "AudioSidecarBinding",
+    "AudioSidecarByteOrderMark",
+    "AudioSidecarByteOrderMarkFact",
     "AudioSidecarDigest",
     "AudioSidecarKind",
     "AudioSidecarReading",
     "AudioSidecarRefusal",
     "AudioSidecarShadow",
     "AudioSidecarShadowField",
+    "AudioSidecarStrippedLimit",
     "AudioTrackDigest",
     "ECHO_FIELDS",
     "MAX_ASSOCIATION_CHARACTERS",
@@ -1511,6 +1762,7 @@ __all__ = [
     "association_text",
     "MAX_AUDIO_FILE_RECORDS",
     "MAX_AUDIO_TRACKS",
+    "MAX_BYTE_ORDER_MARK_BYTES",
     "MAX_CHAPTERS",
     "MAX_PUBLIC_REPORT_BYTES",
     "MAX_SIDECAR_NAME_CHARACTERS",

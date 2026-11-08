@@ -138,6 +138,7 @@ export const detail: CaseDetailView = {
       humanDecision: null,
       automaticDecision: null,
       automaticWithheldReason: null,
+      automaticWithheldCondition: null,
       notices: [],
       provenance: [],
       preservationOnly: false,
@@ -522,5 +523,5 @@ export const renderRoute = (entry: string, http = createHttp(), updates?: LiveUp
 }
 
 export const openActivityAuthority = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(await screen.findByText('Authority and recovery'))
+  await user.click(await screen.findByText('Writes and recovery'))
 }

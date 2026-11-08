@@ -492,7 +492,7 @@ codes appear only under "Technical detail".
 
 Activity is always in the masthead and has no badge. While a change waits for
 you, such as a description to restore in Audiobookshelf, the page never says
-no action is needed. Pausing new work and removing a library's write
+no action is needed. Pausing writes and removing a library's write
 permission are in a section you open.
 
 ### Write permission

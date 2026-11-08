@@ -92,24 +92,28 @@ describe('Library review ownership', () => {
         items: [
           {
             destinations: ['language' as const],
+            language: 'en',
             observation: 'Language: en',
             role: 'local_presence' as const,
             source: 'Local library record',
           },
           {
             destinations: ['language' as const],
+            language: 'pt-BR',
             observation: 'Language: pt-BR',
             role: 'external_observation' as const,
             source: 'Open Library',
           },
           {
             destinations: ['language' as const],
+            language: 'French (fr)',
             observation: 'Language: French (fr). Not offered as a choice.',
             role: 'local_presence' as const,
             source: 'Local metadata',
           },
           {
             destinations: ['language' as const],
+            language: 'UND',
             observation: 'Language: UND. Not offered as a choice. The language is not known.',
             role: 'local_presence' as const,
             source: 'Local metadata',
@@ -328,6 +332,7 @@ describe('Library review ownership', () => {
             items: [
               {
                 destinations: ['title' as const],
+                language: null,
                 observation: 'Title: <script>Second observation</script>',
                 role: 'external_corroboration',
                 source: 'Open Library',
@@ -340,6 +345,7 @@ describe('Library review ownership', () => {
             items: [
               {
                 destinations: ['title' as const],
+                language: null,
                 observation: 'Title: A Book',
                 role: 'local_presence',
                 source: 'This library',
@@ -789,6 +795,7 @@ describe('Library review ownership', () => {
         items: [
           {
             destinations: ['title' as const],
+            language: null,
             observation: `${id} observation`,
             role: 'external_observation' as const,
             source: 'Synthetic source',
@@ -925,6 +932,7 @@ describe('Library review ownership', () => {
         {
           source: 'Hardcover',
           role: 'external_corroboration' as const,
+          language: null,
           observation: 'Title: Old title',
         },
       ],

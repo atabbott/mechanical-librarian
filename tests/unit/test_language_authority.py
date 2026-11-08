@@ -252,6 +252,7 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                     ("language",),
                     f"Language: {claim.observed}. Not offered as a choice. "
                     "The language is not known.",
+                    claim.observed,
                 )
                 for claim in report.local_claims
                 if claim.kind.value == "language"
@@ -270,6 +271,7 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                             if claim.scope is ClaimScope.EDITION
                             else ""
                         ),
+                        claim.value,
                     )
                 ] += 1
                 assert all(
@@ -282,6 +284,7 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                         item["role"],
                         tuple(item["destinations"]),
                         item["observation"],
+                        item["language"],
                     )
                     for item in language
                 )
@@ -992,7 +995,8 @@ def test_language_display_name_label_in_persisted_automatic_activity(tmp_path, a
             if i["event_id"] == decision["decision_id"]
         )
         facts = {i["label"]: i["value"] for i in event["evidence"]}
-        assert facts["Policy setting"] == "Language rendering: Display name"
+        assert facts["Policy option"] == "Language: Use language display name"
+        assert "Policy setting" not in facts
         assert facts["New value"] == "English"
 
 

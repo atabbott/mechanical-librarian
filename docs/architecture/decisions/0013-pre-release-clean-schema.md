@@ -441,3 +441,12 @@ sidecars, and a report carries forward while its file and configuration
 fingerprints are unchanged, so a stored report would keep them. The proposal
 policy is unchanged. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1796 also takes the clean-rebuild branch. `metadata-report-v76` records,
+for each audiobook sidecar that starts with a byte-order mark, what a reading
+without the mark would add and the refusals it would have had. A v75 report
+states none of this, and a report carries forward while its file and
+configuration fingerprints are unchanged, so a stored report would never
+record it. The proposal policy is unchanged. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.

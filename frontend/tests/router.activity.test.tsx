@@ -65,7 +65,7 @@ it('keeps navigation available during initial Activity failure and retries the r
     expect(screen.getByRole('heading', { name: "Activity couldn't be loaded" })).toBeVisible()
   })
   await user.click(screen.getByRole('button', { name: 'Try again' }))
-  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Activity' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(3)
 })
 
@@ -86,7 +86,7 @@ it('explains a lost Activity read in plain words and retries it', async () => {
   expect(screen.queryByText(/Failed to fetch|Review API request failed/u)).toBeNull()
   expect(screen.getByText('network_unavailable').closest('details')).not.toHaveAttribute('open')
   await user.click(screen.getByRole('button', { name: 'Try again' }))
-  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Activity' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(2)
 })
 
@@ -183,13 +183,13 @@ describe('Activity route', () => {
     await user.click(within(held).getByRole('button', { name: /held back/u }))
     expect(
       within(held).getByText(
-        "Held back: Automatic is off, so this won't be written unless you turn it back on.",
+        'Automatic is off, so this is not written until you turn it on again.',
       ),
     ).toBeVisible()
     await user.click(within(asked).getByRole('button', { name: /asked again/u }))
     expect(
       within(asked).getByText(
-        'Asked again: this choice was made before the book last came back for review, so it no longer counts and the field is asking you again.',
+        'This choice was made before the book came back for review, so the field asks you again.',
       ),
     ).toBeVisible()
     expect(
@@ -330,14 +330,12 @@ describe('Activity route', () => {
     expect(consentTrigger).toHaveAttribute('aria-expanded', 'false')
     expect(consentTrigger).toHaveAttribute('aria-controls', 'activity-consent')
     await user.click(consentTrigger)
-    expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Write permissions' })).toBeVisible()
     // Confirm is the filled primary beside a plain Cancel (#1289).
     const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
     expect(confirm).toBeDisabled()
     expect(confirm).toHaveClass('button-primary')
-    expect(screen.getByRole('button', { name: 'Cancel permission review' })).not.toHaveClass(
-      'button-primary',
-    )
+    expect(screen.getByRole('button', { name: 'Cancel' })).not.toHaveClass('button-primary')
   })
 
   it.each([
@@ -362,12 +360,10 @@ describe('Activity route', () => {
       renderRoute('/activity', http)
       await openActivityAuthority(user)
       current = { ...initial, paused: true }
-      await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+      await user.click(screen.getByRole('button', { name: 'Pause writes' }))
 
       await waitFor(() =>
-        expect(screen.getByRole('alert')).toHaveTextContent(
-          'The requested activity change was applied, confirmed by the authoritative server.',
-        ),
+        expect(screen.getByRole('alert')).toHaveTextContent('The change was made.'),
       )
       expect(screen.getByRole('alert')).not.toHaveTextContent('failed safely')
       expect(http.activityCommand).toHaveBeenCalledOnce()
@@ -376,12 +372,12 @@ describe('Activity route', () => {
   )
 
   it.each([
+    ['applied', true, 'The change was made.'],
     [
-      'applied',
-      true,
-      'The requested activity change was applied, confirmed by the authoritative server.',
+      'unconfirmed',
+      false,
+      'No answer came back. Check whether the change was made before trying again.',
     ],
-    ['unconfirmed', false, 'The activity outcome could not be confirmed. No command was resent.'],
   ])('reconciles an ambiguous pause as %s without resending it', async (_name, paused, message) => {
     const user = userEvent.setup()
     const initial: ActivityView = activity({
@@ -399,7 +395,7 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
     await openActivityAuthority(user)
     current = { ...initial, paused }
-    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+    await user.click(screen.getByRole('button', { name: 'Pause writes' }))
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(message))
     expect(http.activityCommand).toHaveBeenCalledOnce()
@@ -407,15 +403,11 @@ describe('Activity route', () => {
   })
 
   it.each([
-    [
-      'applied',
-      [],
-      'The requested activity change was applied, confirmed by the authoritative server.',
-    ],
+    ['applied', [], 'The change was made.'],
     [
       'unconfirmed',
       [{ connection: 'primary', library: 'fiction', prepared: null }],
-      'The activity outcome could not be confirmed. No command was resent.',
+      'No answer came back. Check whether the change was made before trying again.',
     ],
   ])(
     'reconciles an undecodable revoke answer as %s without resending it (#1691)',
@@ -472,11 +464,11 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
     await openActivityAuthority(user)
     available = false
-    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+    await user.click(screen.getByRole('button', { name: 'Pause writes' }))
 
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'The activity outcome could not be confirmed. No command was resent.',
+        'No answer came back. Check whether the change was made before trying again.',
       ),
     )
     expect(http.activityCommand).toHaveBeenCalledOnce()
@@ -497,9 +489,9 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
     await openActivityAuthority(user)
-    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+    await user.click(screen.getByRole('button', { name: 'Pause writes' }))
 
-    const authority = screen.getByLabelText('Activity authority and recovery')
+    const authority = screen.getByLabelText('Writes and recovery')
     await waitFor(() =>
       expect(within(authority).getByRole('alert')).toHaveTextContent(
         /^Your session was refreshed\. Press again\.$/,
@@ -530,19 +522,17 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
     await openActivityAuthority(user)
     // Mounted from the first render, not created by the press it reports.
-    const authority = screen.getByLabelText('Activity authority and recovery')
+    const authority = screen.getByLabelText('Writes and recovery')
     const line = within(authority).getByRole('status')
     expect(line).toHaveClass('activity-command-status')
     expect(line).toBeEmptyDOMElement()
-    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+    await user.click(screen.getByRole('button', { name: 'Pause writes' }))
 
     expect(within(authority).getByRole('status')).toBe(line)
     expect(line).toBeEmptyDOMElement()
     if (!release) throw new Error('pause must be pending')
     release()
-    await waitFor(() =>
-      expect(line).toHaveTextContent('Activity state refreshed from the authoritative server.'),
-    )
+    await waitFor(() => expect(line).toHaveTextContent('The change was made.'))
     expect(within(authority).getByRole('status')).toBe(line)
   })
 
@@ -597,9 +587,7 @@ describe('Activity route', () => {
     expect(http.activityCommand).toHaveBeenLastCalledWith('activity/consent', {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })
-    expect(
-      await screen.findByText('Activity state refreshed from the authoritative server.'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('The change was made.')).toBeInTheDocument()
   })
 
   // A lost answer, and a committed answer the browser cannot read (#1691).
@@ -651,12 +639,12 @@ describe('Activity route', () => {
 
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'The activity outcome could not be confirmed. No command was resent.',
+        'No answer came back. Check whether the change was made before trying again.',
       ),
     )
     expect(http.activityCommand).toHaveBeenCalledOnce()
     expect(router.state.location.hash).toBe('activity-consent')
-    expect(screen.getByRole('button', { name: 'Cancel permission review' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeVisible()
   })
 
   it('clears protected consent selection when current eligibility changes', async () => {
@@ -708,9 +696,9 @@ describe('Activity route', () => {
     expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
     // The discard says why, in the panel's own status line, and focus that
     // fell with the checkbox lands on the control that starts the next check.
-    const review = screen.getByRole('region', { name: 'Enable guarded writes' })
+    const review = screen.getByRole('region', { name: 'Write permissions' })
     expect(within(review).getByRole('status')).toHaveTextContent(
-      /^Your library settings changed\. Review the permissions again\.$/,
+      /^Your library settings changed\. Check write permissions again\.$/,
     )
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Check write permissions' })).toHaveFocus(),
@@ -921,7 +909,7 @@ describe('Activity route', () => {
     [
       'owner-entered',
       { events: [{ work_label: 'Entered work', state: 'owner_entered', origin: 'human' }] },
-      'Owner-entered',
+      'Entered by you',
     ],
     [
       'withdrawn',
@@ -988,7 +976,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No action needed' })).toBeVisible()
     expect(screen.getAllByText(rowStatus).at(-1)).toBeVisible()
   })
 
@@ -996,12 +984,12 @@ describe('Activity route', () => {
     [
       1,
       'A stopped change needs you',
-      'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.',
+      'Its ledger entry, marked Closed, says why. Nothing retries it on its own: follow its advice, or choose the field again. If it isn’t listed, widen the range.',
     ],
     [
       2,
       '2 stopped changes need you',
-      'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.',
+      'Each one’s ledger entry, marked Closed, says why. Nothing retries them on their own: follow its advice, or choose the field again. If one isn’t listed, widen the range.',
     ],
   ])(
     'never reads calm while %i changes wait on the owner',
@@ -1015,8 +1003,8 @@ describe('Activity route', () => {
       expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
       expect(screen.getByText(detail)).toBeVisible()
       expect(screen.getByText('Action needed')).toBeVisible()
-      expect(screen.queryByText('No action required')).toBeNull()
-      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
+      expect(screen.queryByText('No action needed')).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'No action needed' })).toBeNull()
     },
   )
 
@@ -1031,7 +1019,7 @@ describe('Activity route', () => {
     }
     renderRoute(path, http)
 
-    const detail = await screen.findByText(/^Its “Prepared change closed” entry/u)
+    const detail = await screen.findByText(/^Its ledger entry, marked Closed/u)
     expect(detail.textContent.endsWith(`If it isn’t listed, ${ending}`)).toBe(true)
   })
 
@@ -1042,8 +1030,14 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
-    expect(screen.getByText('No action required')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No action needed' })).toBeVisible()
+    expect(document.querySelector('.cm-activity-calm')).toHaveTextContent(/^No action needed$/u)
+    expect(screen.getAllByText('No action needed')).toHaveLength(2)
+    expect(
+      screen.queryByText(
+        'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
+      ),
+    ).toBeNull()
   })
 
   it('keeps failed outcomes bounded in ledger rows', async () => {
@@ -1143,7 +1137,7 @@ describe('Activity route', () => {
       screen.getAllByText(/Writes are held because an earlier write behaved unexpectedly\./u),
     ).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Pause writes' })).toBeVisible()
   })
 
   it('projects all durable provider-recovery phases with safe scope and work units', async () => {
@@ -1200,32 +1194,24 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Provider recovery' })).toBeVisible()
-    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
-      '2 affected scopes',
+    expect(await screen.findByRole('heading', { name: 'Source recovery' })).toBeVisible()
+    expect(screen.getByText('Waiting to retry').parentElement).toHaveTextContent('2 sources')
+    expect(screen.getByText('Waiting to retry').parentElement).toHaveTextContent(
+      'Too many requests at once; Request quota used up; Did not answer',
     )
-    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
-      'Provider burst limit; Provider quota exhausted; Provider temporarily unavailable',
+    expect(screen.getByText('Waiting to retry').parentElement).toHaveTextContent('next retry')
+    expect(screen.getByText('Waiting to retry').parentElement).toHaveTextContent(
+      'Priority: needs a second source, general retry',
     )
-    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
-      'next eligible',
+    expect(screen.getByText('Checking the source').parentElement).toHaveTextContent('1 source')
+    expect(screen.getByText('Retrying', { selector: 'strong' }).parentElement).toHaveTextContent(
+      '3 works',
     )
-    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
-      'Priority: needs independent evidence, general recovery scan',
-    )
-    expect(screen.getByText('Checking provider health').parentElement).toHaveTextContent(
-      '1 affected scope',
-    )
-    expect(screen.getByText('Retrying affected work').parentElement).toHaveTextContent(
-      '3 affected works',
-    )
-    expect(screen.getByText('Recovered').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Recovered').parentElement).toHaveTextContent('1 source')
     expect(screen.getByText('Recovered').parentElement).not.toHaveTextContent('Priority:')
-    expect(screen.getByText('Needs a configuration change').parentElement).toHaveTextContent(
-      '2 affected scopes',
-    )
-    expect(screen.getByText('No further retry scheduled').parentElement).toHaveTextContent(
-      '1 affected scope',
+    expect(screen.getByText('Needs a settings change').parentElement).toHaveTextContent('2 sources')
+    expect(screen.getByText('No automatic retry remains').parentElement).toHaveTextContent(
+      '1 source',
     )
     expect(screen.queryByRole('button', { name: /provider.*retry/i })).toBeNull()
   })
@@ -1266,7 +1252,8 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
 
     await openActivityAuthority(user)
-    expect(await screen.findAllByText(/^Recovery:/)).toHaveLength(3)
+    expect(await screen.findAllByText(/^Writes are held because /u)).toHaveLength(3)
+    expect(screen.queryByText(/Recovery:/u)).toBeNull()
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
@@ -1355,9 +1342,9 @@ describe('Activity route', () => {
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
-    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Write permissions' })).toBeVisible()
     expect(await screen.findByRole('checkbox')).toBeDisabled()
-    expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /pause writes|resume writes/i })).toBeNull()
   })
 
   it('requires an explicit resume for current waiting work while paused', async () => {
@@ -1380,17 +1367,13 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByText('New work paused')).toBeVisible()
+    expect(await screen.findByText('Writes paused')).toBeVisible()
+    expect(screen.getByText('Nothing is checked or written until you resume writes.')).toBeVisible()
     expect(
-      screen.getByText(
-        'Resume new work when you are ready. No automatic check will start while new work is paused.',
-      ),
-    ).toBeVisible()
-    expect(
-      screen.queryByText('Next exact-current check runs automatically. No action is required.'),
+      screen.queryByText('The current value is checked again before anything is written.'),
     ).toBeNull()
     await openActivityAuthority(user)
-    expect(screen.getByRole('button', { name: 'Resume new work' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Resume writes' })).toBeVisible()
   })
 
   it('reads work, exact change, and result in order, and announces the change as a sentence', async () => {
@@ -1462,7 +1445,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     // The row is read in the order the ticket names: work, field, exact
     // change, result. The arrow the column shows is hidden from the
     // announcement, which carries the same change as a whole sentence.
@@ -1478,12 +1461,12 @@ describe('Activity route', () => {
     )
     expect(screen.getByText('Verified')).toBeVisible()
 
-    // A verified write whose authority was human is an Owner choice, not a
+    // A verified write whose authority was human is Your choice, not a
     // Review, and no row repeats its own lifecycle back at it.
     const categories = screen
-      .getAllByText(/^(Owner choice|Policy change)$/)
+      .getAllByText(/^(Your choice|Policy change)$/)
       .filter((node) => node.className.includes('cm-activity-category'))
-    expect(categories.map((node) => node.textContent)).toEqual(['Owner choice', 'Policy change'])
+    expect(categories.map((node) => node.textContent)).toEqual(['Your choice', 'Policy change'])
 
     // Only the Policy record carries the exact From/To; the owner change keeps
     // the compact detail density beside it.
@@ -1493,10 +1476,10 @@ describe('Activity route', () => {
       ).getByRole('button', { name: /^Details for /u })
     await user.click(disclosureFor('Paper Moons over Larkspur Station'))
     expect(screen.getByText('Confirmed in Audiobookshelf')).toBeVisible()
-    expect(screen.queryByRole('region', { name: /exact policy changes/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: /policy changes/ })).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Hide details for /u }))
     await user.click(disclosureFor('Library policy'))
-    const table = screen.getByLabelText('2 exact policy changes')
+    const table = screen.getByLabelText('2 policy changes')
     expect(table).toHaveTextContent('Title layout')
     expect(table).toHaveTextContent('Setting')
     expect(table).toHaveTextContent('Ask me')
@@ -1529,7 +1512,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     const [english, british] = [languageName('en'), languageName('en-GB')]
     expect(english).toBe('English (en)')
     expect(screen.getByText(`${english} → ${british}`)).toBeInTheDocument()
@@ -1557,7 +1540,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     // The route moves focus to its own heading on arrival. Wait for that to
     // settle before taking the keyboard, or the press lands on the heading.
     await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
@@ -1692,7 +1675,7 @@ describe('Activity route', () => {
         const target =
           outcome === 'mismatch'
             ? await screen.findByRole('button', { name: 'Reload' })
-            : await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+            : await screen.findByRole('list', { name: 'Recorded transitions' })
         await waitFor(() => expect(target).toHaveFocus())
         expect(document.body).not.toHaveFocus()
       },
@@ -1742,7 +1725,7 @@ describe('Activity route', () => {
           })
           await waitFor(() => expect(reload).toHaveFocus())
         } else {
-          const list = screen.getByRole('list', { name: 'Recorded lifecycle transitions' })
+          const list = screen.getByRole('list', { name: 'Recorded transitions' })
           await waitFor(() => expect(list.querySelectorAll('li')).toHaveLength(25))
           await waitFor(() => expect(list.querySelectorAll('li')[20]).toHaveFocus())
         }
@@ -1785,7 +1768,7 @@ describe('Activity route', () => {
       'Recorded transitions could not be loaded.',
     )
     await user.click(screen.getByRole('button', { name: 'Try again' }))
-    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded transitions' })
     expect(lifecycle.querySelectorAll('li')).toHaveLength(21)
     expect(lifecycle.querySelector('li')?.textContent).toMatch(/\u00a0· Planned$/u)
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
@@ -1827,7 +1810,7 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
-    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded transitions' })
     const lines = [...lifecycle.querySelectorAll('li')].map((item) => item.textContent)
     expect(lines).toHaveLength(2)
     // One recorded time, in the one format (#1286), then the state.
@@ -1875,7 +1858,7 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
-    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded transitions' })
     const lines = [...lifecycle.querySelectorAll('li')].map((item) =>
       item.textContent.split('\u00a0· ').at(-1),
     )
@@ -1913,7 +1896,7 @@ describe('Activity route', () => {
     const { queryClient } = renderRoute('/activity', http)
 
     await user.click(await screen.findByRole('button', { name: /^Details for /u }))
-    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded transitions' })
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
     await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(23))
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
@@ -2008,17 +1991,21 @@ describe('Activity route', () => {
 
     // The offer and the status panel read the same consent state, so the page
     // cannot claim calm directly above the count that refutes it (#639).
+    expect(await screen.findByText('Writes are off.')).toBeVisible()
+    // No library writes yet, so nothing at all is written (#1765).
     expect(
-      await screen.findByText('Writes are off. Review permissions when you are ready.'),
+      within(screen.getByRole('region', { name: 'Writes are off.' })).getByText(
+        'Nothing is written until you give permission.',
+      ),
     ).toBeVisible()
+    expect(screen.queryByText('Nothing else is written until you give permission.')).toBeNull()
     expect(
       screen.queryByRole('heading', { name: 'Prepared work needs your permission' }),
     ).toBeNull()
     expect(screen.getAllByText('Awaiting permission')).toHaveLength(1)
     for (const calm of [
-      'No intervention needed',
-      'No action required',
-      'No action is required.',
+      'No action needed',
+      'The current value is checked again before anything is written.',
       'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
     ])
       expect(screen.queryByText(calm)).toBeNull()
@@ -2026,22 +2013,22 @@ describe('Activity route', () => {
     await user.click(
       within(
         screen.getByRole('region', {
-          name: 'Writes are off. Review permissions when you are ready.',
+          name: 'Writes are off.',
         }),
       ).getByRole('button', { name: 'Review write permissions' }),
     )
-    expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Write permissions' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(screen.getByRole('checkbox', { name: /fiction/ }))
-    await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
-    expect(screen.queryByRole('heading', { name: 'Enable guarded writes' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('heading', { name: 'Write permissions' })).toBeNull()
     expect(screen.getAllByText('Awaiting permission')).toHaveLength(1)
     expect(screen.queryByText('Prepared work needs your permission')).toBeNull()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(
       within(
         screen.getByRole('region', {
-          name: 'Writes are off. Review permissions when you are ready.',
+          name: 'Writes are off.',
         }),
       ).getByRole('button', { name: 'Review write permissions' }),
     )
@@ -2050,7 +2037,7 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
     expect(
       await screen.findByText(
-        'The destinations changed since you reviewed them. No permission was granted. Check write permissions again, then confirm.',
+        'The fields that can be written changed after your check, so no permission was granted. Check write permissions again.',
       ),
     ).toBeVisible()
     expect(http.activityCommand).toHaveBeenCalledTimes(1)
@@ -2058,6 +2045,11 @@ describe('Activity route', () => {
     expect(failure).toHaveFocus()
     expect(failure.closest('#activity-consent')).not.toBeNull()
     expect(screen.getAllByRole('alert')).toHaveLength(1)
+    // The readiness live region stays mounted while it has nothing to say, so
+    // its next line is announced; it is hidden from view while empty (#1765).
+    const readiness = document.querySelector('#activity-consent > p[role="status"]')
+    expect(readiness).not.toBeNull()
+    expect(readiness).toBeEmptyDOMElement()
     await user.click(screen.getByRole('button', { name: 'Check write permissions' }))
     await user.click(await screen.findByRole('checkbox', { name: /fiction/ }))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -2102,7 +2094,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No action needed' })).toBeVisible()
     expect(
       screen.queryByRole('heading', { name: 'Prepared work needs your permission' }),
     ).toBeNull()
@@ -2112,12 +2104,12 @@ describe('Activity route', () => {
     [
       'a lapse',
       [{ connection: 'primary', library: 'fiction', reason: 'destinations_changed' as const }],
-      'Nothing is written to your libraries until you give permission again.',
+      'Nothing is written until you give permission again.',
     ],
     [
       'no permission at all',
       [],
-      'No library has write permission, so nothing is written to your libraries until you give it.',
+      'No library has write permission. Nothing is written until you give it.',
     ],
   ])('never reports calm while no library holds permission: %s (#1370)', async (_, lapsed, why) => {
     const view = activity({
@@ -2145,26 +2137,31 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Writes are off' })).toBeVisible()
-    expect(await screen.findByText(why)).toBeVisible()
-    for (const calm of [
-      'No intervention needed',
-      'No action required',
-      'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
-    ])
-      expect(screen.queryByText(calm)).toBeNull()
     // A lapse opens the consent card, in its existing slot, with the reason;
-    // the status below says something else rather than repeating it (#1370).
+    // with nothing waiting, the status copy is hidden rather than restating
+    // it (#1370, #1765).
     const reason =
       'Write permission for fiction lapsed because this version of Mechanical Librarian can write a different set of fields.'
     if (lapsed.length) {
+      const card = await screen.findByRole('region', { name: 'Writes are off.' })
+      expect(card).toHaveTextContent(reason)
       expect(
-        await screen.findByRole('region', {
-          name: 'Writes are off. Review permissions when you are ready.',
-        }),
-      ).toHaveTextContent(reason)
+        within(card).getByText(`${reason} Nothing is written until you give permission.`),
+      ).toBeVisible()
       expect(screen.getAllByText(reason, { exact: false })).toHaveLength(1)
+      expect(screen.queryByRole('heading', { name: 'Writes are off' })).toBeNull()
+      expect(screen.queryByText(why)).toBeNull()
+      expect(document.querySelector('.cm-activity-status h2')).toBeNull()
+      expect(document.querySelector('.cm-activity-status p')).toBeNull()
+    } else {
+      expect(await screen.findByRole('heading', { name: 'Writes are off' })).toBeVisible()
+      expect(await screen.findByText(why)).toBeVisible()
     }
+    for (const calm of [
+      'No action needed',
+      'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
+    ])
+      expect(screen.queryByText(calm)).toBeNull()
   })
 
   it('states a lapse beside a library that kept its permission (#1370)', async () => {
@@ -2201,8 +2198,7 @@ describe('Activity route', () => {
     ).toBeVisible()
     expect(screen.getByText('Action needed')).toBeVisible()
     for (const calm of [
-      'No intervention needed',
-      'No action required',
+      'No action needed',
       'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
     ])
       expect(screen.queryByText(calm)).toBeNull()
@@ -2245,7 +2241,7 @@ describe('Activity route', () => {
       ),
     ).toBeVisible()
     for (const calm of [
-      'No intervention needed',
+      'No action needed',
       'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
     ])
       expect(screen.queryByText(calm)).toBeNull()
@@ -2304,14 +2300,14 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Activity' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'No action needed' })).toBeVisible()
     await openActivityAuthority(user)
-    expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Pause writes' })).toBeVisible()
     // The single ambiguous number is gone: waiting is now stated as the four
     // different next steps an owner has (#639).
     expect(screen.queryByText('Waiting to retry')).toBeNull()
-    for (const reason of ['Awaiting permission', 'Scheduled', 'Retrying', 'Held for recovery'])
+    for (const reason of ['Awaiting permission', 'Ready to apply', 'Retrying', 'Held for recovery'])
       expect(screen.getByText(reason)).toBeVisible()
     // The row reads work, field, exact change, result -- and the disclosure
     // says which of its two states it is in (#636).
@@ -2388,9 +2384,9 @@ describe('Activity route', () => {
       }
       try {
         const { router } = renderRoute('/activity', http)
-        await screen.findByRole('heading', { name: 'Activity and recovery' })
+        await screen.findByRole('heading', { name: 'Activity' })
         frames.length = 0
-        await user.click(screen.getByRole('button', { name: 'Owner choices' }))
+        await user.click(screen.getByRole('button', { name: 'Your choices' }))
         await waitFor(() =>
           expect(http.getActivity).toHaveBeenLastCalledWith(
             expect.objectContaining({ eventType: 'review' }),
@@ -2464,7 +2460,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await waitFor(() =>
       expect(document.getElementById('main-content')).toHaveAttribute('data-route-focus-identity'),
     )
@@ -2615,7 +2611,7 @@ describe('Activity route', () => {
     }
     const { router } = renderRoute('/activity?rangeDays=90', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     const navigate = vi.spyOn(router, 'navigate')
     const requests = vi.mocked(http.getActivity).mock.calls.length
     const dateRange = screen.getByRole('combobox', { name: 'Activity date range' })
@@ -2654,7 +2650,7 @@ describe('Activity route', () => {
     }
     const { router } = renderRoute('/activity?page=2', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
     await waitFor(() => expect(page).toHaveValue(2))
     await waitFor(() =>
@@ -2728,7 +2724,7 @@ describe('Activity route', () => {
         }),
       )
       const { router } = renderRoute('/activity', { ...createHttp(), getActivity })
-      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      await screen.findByRole('heading', { name: 'Activity' })
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       await waitFor(() =>
@@ -2752,7 +2748,7 @@ describe('Activity route', () => {
           search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
         })
       })
-      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      await screen.findByRole('heading', { name: 'Activity' })
       const freshSearch = screen.getByRole('searchbox', { name: 'Search activity' })
       freshSearch.focus()
 
@@ -2783,7 +2779,7 @@ describe('Activity route', () => {
     )
     renderRoute('/activity', { ...createHttp(), getActivity })
 
-    const heading = await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const heading = await screen.findByRole('heading', { name: 'Activity' })
     const focusTarget = heading.closest<HTMLElement>('[data-route-focus]')
     expect(focusTarget).not.toBeNull()
     await waitFor(() => expect(focusTarget).toHaveFocus())
@@ -2838,7 +2834,7 @@ describe('Activity route', () => {
         }),
       }
       renderRoute('/activity', http)
-      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      await screen.findByRole('heading', { name: 'Activity' })
       vi.useFakeTimers()
       try {
         const query = screen.getByRole('searchbox', { name: 'Search activity' })
@@ -2916,7 +2912,7 @@ describe('Activity route', () => {
         : Promise.resolve(view(search)),
     )
     renderRoute('/activity', { ...createHttp(), getActivity })
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     const query = screen.getByRole('searchbox', { name: 'Search activity' })
     query.focus()
     vi.useFakeTimers()
@@ -2978,7 +2974,7 @@ describe('Activity route', () => {
     const user = userEvent.setup({ delay: 175 })
     renderRoute('/activity', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     const rows = screen.getByRole('combobox', { name: 'Events per activity page' })
     await user.click(rows)
     await user.click(screen.getByRole('option', { name: '50 per page' }))
@@ -3125,7 +3121,7 @@ describe('Activity route', () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/activity?q=first&page=1', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await router.navigate({
       to: '/activity',
       search: { eventType: 'all', q: 'second', rangeDays: 30, page: 2, pageSize: 25 },
@@ -3204,7 +3200,7 @@ describe('Activity route', () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/activity?q=canonical&page=1', http)
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await user.click(screen.getByRole('button', { name: 'Next' }))
     await waitFor(() => expect(deferred.has(2)).toBe(true))
     await user.click(screen.getByRole('button', { name: 'Next' }))
@@ -3342,7 +3338,7 @@ it('skips speculative Activity data work and starts its required navigation read
     reads[0]?.resolve(activity())
     await navigation
   })
-  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Activity' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(1)
 })
 
@@ -3384,7 +3380,7 @@ it.each([
   if (hash !== 'activity-consent') {
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
   }
-  await screen.findByRole('button', { name: 'Cancel permission review' })
+  await screen.findByRole('button', { name: 'Cancel' })
   if (close === 'success') {
     await user.click(await screen.findByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -3395,7 +3391,7 @@ it.each([
     )
   } else if (close === 'toggle') {
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
-  } else await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+  } else await user.click(screen.getByRole('button', { name: 'Cancel' }))
   const closedHash = hash === 'activity-consent' ? '' : hash
   await waitFor(() => expect(router.state.location.hash).toBe(closedHash))
   expect(router.state.location.search).toEqual({
@@ -3404,7 +3400,7 @@ it.each([
     page: 1,
     pageSize: 50,
   })
-  expect(screen.queryByRole('button', { name: 'Cancel permission review' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
   const search = { eventType: 'policy', rangeDays: 7, page: 1, pageSize: 50 } as const
   await act(async () => {
     await router.navigate({ to: '/library', search: { lens: 'all' } })
@@ -3413,8 +3409,8 @@ it.each([
   await act(async () => {
     await router.navigate({ to: '/activity', search, hash: closedHash })
   })
-  await screen.findByRole('heading', { name: 'Activity and recovery' })
-  expect(screen.queryByRole('button', { name: 'Cancel permission review' })).toBeNull()
+  await screen.findByRole('heading', { name: 'Activity' })
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
   if (close !== 'success') expect(http.activityCommand).not.toHaveBeenCalled()
 })
 
@@ -3457,18 +3453,14 @@ it.each([false, null, 'error'] as const)(
         outcome === false
           ? 'The backup check did not pass. Check again before enabling writes.'
           : outcome === null
-            ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
-            : 'Permission readiness is unavailable. No permission was granted. Try again.',
+            ? 'The backup check did not finish. Check again before enabling writes.'
+            : 'Permission readiness was not checked, so no permission was granted. Try again.',
       ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
-    // A check that answered reads Check again; one that failed or could not
-    // confirm the current state reads Retry (#1286).
-    await user.click(
-      screen.getByRole('button', {
-        name: outcome === false ? 'Check again' : 'Retry permission check',
-      }),
-    )
+    // Every check that has run reads Check again, whatever it found (#1765).
+    expect(screen.queryByRole('button', { name: 'Retry permission check' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Check again' }))
     await waitFor(() => expect(screen.getByRole('checkbox')).toBeEnabled())
     expect(screen.getByRole('checkbox')).not.toBeChecked()
     expect(http.activityCommand).not.toHaveBeenCalled()
@@ -3493,11 +3485,15 @@ describe('write-permission readiness on an earlier build (#1742)', () => {
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
     await screen.findByRole('button', { name: reloadName })
     expect(staleLead('Permission readiness was not loaded.')).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Retry permission check' })).toBeNull()
-    expect(screen.queryByText(/Permission readiness is unavailable\./u)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
+    expect(
+      screen.queryByText(
+        /^Permission readiness was not checked, so no permission was granted\. Try again\.$/u,
+      ),
+    ).toBeNull()
   })
 
-  it('moves focus to the reload when Retry permission check meets a newer build', async () => {
+  it('moves focus to the reload when Check again meets a newer build', async () => {
     const user = userEvent.setup()
     const http = createHttp()
     vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
@@ -3506,7 +3502,7 @@ describe('write-permission readiness on an earlier build (#1742)', () => {
       .mockRejectedValue(new BuildMismatchError())
     renderRoute('/activity', http)
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
-    await user.click(await screen.findByRole('button', { name: 'Retry permission check' }))
+    await user.click(await screen.findByRole('button', { name: 'Check again' }))
     const reload = await screen.findByRole('button', { name: reloadName })
     await waitFor(() => expect(reload).toHaveFocus())
     expect(document.body).not.toHaveFocus()
@@ -3533,10 +3529,12 @@ describe('write-permission readiness on an earlier build (#1742)', () => {
     await user.click(confirm)
     expect(http.getActivityConsent).toHaveBeenCalledOnce()
     expect(http.activityCommand).not.toHaveBeenCalled()
+    expect(screen.queryByText('No answer came back.', { exact: false })).toBeNull()
     expect(
-      screen.queryByText('The activity outcome could not be confirmed.', { exact: false }),
+      screen.queryByText(
+        /^Permission readiness was not checked, so no permission was granted\. Try again\.$/u,
+      ),
     ).toBeNull()
-    expect(screen.queryByText(/Permission readiness is unavailable\./u)).toBeNull()
   })
 })
 
@@ -3559,18 +3557,18 @@ it('keeps history usable during checking and discards a late result after close 
     .mockResolvedValue(permissionReadiness(permissionHistory, false))
   renderRoute('/activity', http)
   const summary = await screen.findByRole('region', {
-    name: 'Writes are off. Review permissions when you are ready.',
+    name: 'Writes are off.',
   })
   const trigger = within(summary).getByRole('button', { name: 'Review write permissions' })
   await user.click(trigger)
-  expect(await screen.findByText('Checking backup readiness and write permissions…')).toBeVisible()
+  expect(await screen.findByText('Checking the backup and write permissions…')).toBeVisible()
   expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBeEnabled()
   expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toHaveAttribute(
     'aria-disabled',
     'true',
   )
   expect(http.getActivity).toHaveBeenCalledOnce()
-  await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(trigger).toHaveFocus())
   expect(signal?.aborted).toBe(true)
   await user.click(trigger)
@@ -3647,7 +3645,7 @@ it.each([
       stream.announce({ sequence: 1, subject: null, topic: cause })
   })
   if (cause === 'filter-change') {
-    await user.click(screen.getByRole('button', { name: 'Owner choices' }))
+    await user.click(screen.getByRole('button', { name: 'Your choices' }))
     await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(reads + 1))
   }
   if (cause === 'same-basis retry') {
@@ -3679,7 +3677,7 @@ it('keeps keyboard focus on Check again while its check runs, and ignores a seco
   const retry = screen.getByRole('button', { name: 'Check again' })
   retry.focus()
   await user.keyboard('{Enter}')
-  await screen.findByText('Checking backup readiness and write permissions…')
+  await screen.findByText('Checking the backup and write permissions…')
   expect(retry).toHaveFocus()
   expect(retry).toHaveAttribute('aria-disabled', 'true')
   await user.keyboard('{Enter}')
@@ -3708,7 +3706,7 @@ it('holds the ticks behind a connection condition and frees them on recovery', a
   expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeEnabled()
 })
 
-const basisChanged = 'Your library settings changed. Review the permissions again.'
+const basisChanged = 'Your library settings changed. Check write permissions again.'
 const grantedHistory: ActivityView = {
   ...permissionHistory,
   capabilities: permissionHistory.capabilities.map((item) => ({
@@ -3730,7 +3728,7 @@ it.each(['consent', 'policy'] as const)(
       })
     const consentReads = vi.mocked(http.getActivityConsent).mock.calls.length
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
-    const review = screen.getByRole('region', { name: 'Enable guarded writes' })
+    const review = screen.getByRole('region', { name: 'Write permissions' })
     await waitFor(() => expect(within(review).getByRole('status')).toHaveTextContent(basisChanged))
     expect(http.getActivityConsent).toHaveBeenCalledTimes(consentReads + 1)
     expect(http.activityCommand).not.toHaveBeenCalled()
@@ -3750,10 +3748,10 @@ it('keeps the draft when the verification read fails, so Confirm can be pressed 
   vi.mocked(http.getActivityConsent).mockRejectedValueOnce(new ApiError(503, 'unavailable'))
   const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
   await user.click(confirm)
-  const review = screen.getByRole('region', { name: 'Enable guarded writes' })
+  const review = screen.getByRole('region', { name: 'Write permissions' })
   await waitFor(() =>
     expect(within(review).getByRole('alert')).toHaveTextContent(
-      /^Permission readiness is unavailable\. No permission was granted\. Try again\.$/,
+      /^Permission readiness was not checked, so no permission was granted\. Try again\.$/,
     ),
   )
   expect(http.activityCommand).not.toHaveBeenCalled()
@@ -3794,30 +3792,26 @@ it('states the requirement beside Confirm and the scope only over included desti
     .mockResolvedValueOnce(permissionReadiness(excludedOnly))
     .mockResolvedValue(permissionReadiness(permissionHistory))
   renderRoute('/activity', http)
-  const scope = /^Only the included destinations shown above are enabled\./
+  const scope = /^Only included fields are written\./
   await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
   const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
-  expect(confirm).toHaveAccessibleDescription(
-    'Select each library you want to include, then confirm.',
-  )
+  expect(confirm).toHaveAccessibleDescription('Choose the libraries to include, then confirm.')
   expect(confirm.previousElementSibling).toHaveTextContent(
-    'Select each library you want to include, then confirm.',
+    'Choose the libraries to include, then confirm.',
   )
-  expect(screen.getByText('Checking backup readiness and write permissions…')).toBeVisible()
+  expect(screen.getByText('Checking the backup and write permissions…')).toBeVisible()
   expect(screen.queryByText(scope)).toBeNull()
   await act(async () => finish(permissionReadiness(permissionHistory)))
   expect(await screen.findByText(scope)).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Check again' }))
   await screen.findByText(
-    'Permission readiness is unavailable. No permission was granted. Try again.',
+    'Permission readiness was not checked, so no permission was granted. Try again.',
   )
   expect(screen.queryByText(scope)).toBeNull()
-  await user.click(screen.getByRole('button', { name: 'Retry permission check' }))
-  await screen.findByText('Excluded — the connection lacks permission for it')
+  await user.click(screen.getByRole('button', { name: 'Check again' }))
+  await screen.findByText('Excluded: the connection lacks permission for it')
   expect(screen.queryByText(scope)).toBeNull()
-  expect(confirm).toHaveAccessibleDescription(
-    'Select each library you want to include, then confirm.',
-  )
+  expect(confirm).toHaveAccessibleDescription('Choose the libraries to include, then confirm.')
 })
 
 it('announces success through a page status already mounted and moves focus to it', async () => {
@@ -3835,12 +3829,10 @@ it('announces success through a page status already mounted and moves focus to i
     waiting: { ...permissionHistory.waiting, scheduled: 1 },
   })
   await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
-  await waitFor(() =>
-    expect(page).toHaveTextContent('Activity state refreshed from the authoritative server.'),
-  )
+  await waitFor(() => expect(page).toHaveTextContent('The change was made.'))
   expect(document.querySelector('.cm-activity-route > .activity-command-status')).toBe(page)
   await waitFor(() => expect(page).toHaveFocus())
-  expect(screen.queryByRole('region', { name: 'Enable guarded writes' })).toBeNull()
+  expect(screen.queryByRole('region', { name: 'Write permissions' })).toBeNull()
   // It reads directly under the card, and the next Tab continues from there.
   expect(page?.previousElementSibling).toHaveClass('cm-write-consent')
   await user.tab()
@@ -3882,7 +3874,7 @@ it('says so when a retry finds another basis and clears the ticks', async () => 
   vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(permissionReadiness(changed))
   const retry = screen.getByRole('button', { name: 'Check again' })
   await user.click(retry)
-  const review = screen.getByRole('region', { name: 'Enable guarded writes' })
+  const review = screen.getByRole('region', { name: 'Write permissions' })
   await waitFor(() =>
     expect(within(review).getAllByRole('status')[0]).toHaveTextContent(basisChanged),
   )
@@ -3939,8 +3931,14 @@ it.each([
     if (name === 'connection condition')
       vi.mocked(http.getPreparation).mockResolvedValue(pausedConnection('paused'))
     renderRoute('/activity', http)
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
-    if (name === 'connection condition') await screen.findByText('Library connection is paused')
+    await screen.findByRole('heading', { name: 'Activity' })
+    // The shell's connection notice says it; the status panel keeps its review
+    // entry but adds no heading of its own (#1765).
+    if (name === 'connection condition') {
+      const notice = await screen.findByRole('region', { name: 'Library connection' })
+      expect(await within(notice).findByText('Library connection failed')).toBeVisible()
+      expect(document.querySelector('.cm-activity-status h2')).toBeNull()
+    }
     // The card waits for the one Settings read that names its libraries (#1286).
     const entries =
       owner === 'none'
@@ -3986,7 +3984,7 @@ it('moves focus to the new entry when the focused one leaves', async () => {
   expect(status.closest('.cm-activity-status')).not.toBeNull()
   expect(status).not.toHaveClass('button-primary')
   await user.click(status)
-  await user.click(await screen.findByRole('button', { name: 'Cancel permission review' }))
+  await user.click(await screen.findByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(status).toHaveFocus())
   vi.mocked(http.getActivity).mockResolvedValue(waitingFor({ awaiting_permission: 1 }))
   await act(async () => {
@@ -4033,9 +4031,9 @@ it.each([false, true])(
     await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(1))
     expect(http.getActivityPermissionReadiness).not.toHaveBeenCalled()
     await act(async () => finishHistory(history))
-    const review = await screen.findByRole('region', { name: 'Enable guarded writes' })
+    const review = await screen.findByRole('region', { name: 'Write permissions' })
     await waitFor(() => expect(review).toHaveFocus())
-    await screen.findByText('Checking backup readiness and write permissions…')
+    await screen.findByText('Checking the backup and write permissions…')
     expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
     expect(signal?.aborted).toBe(false)
     // The busy check stays in the tab order, announced as unavailable, so a
@@ -4047,7 +4045,7 @@ it.each([false, true])(
     )
     expect(within(review).getByRole('button', { name: 'Check again' })).toHaveFocus()
     await user.tab()
-    expect(within(review).getByRole('button', { name: 'Cancel permission review' })).toHaveFocus()
+    expect(within(review).getByRole('button', { name: 'Cancel' })).toHaveFocus()
     await act(async () => finishPermissions(permissionReadiness(history)))
     expect(await screen.findByRole('checkbox')).toBeEnabled()
     expect(screen.getByRole('checkbox')).not.toBeChecked()
@@ -4277,7 +4275,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(within(evidence).getByText('Automatic decision')).toBeVisible()
     expect(
       within(evidence).getByText(
-        'This check confirmed the automatic decision below; nothing was written.',
+        'This check confirmed the automatic decision below. Nothing was written.',
       ),
     ).toBeVisible()
     expect(paired).toHaveAccessibleName(/^Details for Title, .*, automatic decision, [^,]+$/u)
@@ -4575,7 +4573,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
 
   it.each(['policy', 'all', 'review'])('shows no notice for the known filter %s', async (value) => {
     renderRoute(`/activity?eventType=${value}`, paged())
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await new Promise((resolve) => requestAnimationFrame(resolve))
     expect(noticeRegion()).toHaveTextContent('')
   })
@@ -4589,7 +4587,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     [
       'a chip',
       async (user: ReturnType<typeof userEvent.setup>) => {
-        await user.click(screen.getByRole('button', { name: 'Owner choices' }))
+        await user.click(screen.getByRole('button', { name: 'Your choices' }))
       },
     ],
     [
@@ -4663,7 +4661,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     renderRoute('/activity', http)
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
     const destinations = await screen.findByRole('list', {
-      name: 'fiction included and excluded destinations',
+      name: 'fiction fields',
     })
     expect(
       within(destinations)
@@ -4739,18 +4737,14 @@ describe('owner language in Activity (#1286)', () => {
     // Partial consent says which library holds permission and which waits.
     expect(
       await screen.findByText(
-        'Writes are on for Fiction Shelf. History Room needs permission. Review permissions when you are ready.',
+        'Writes are enabled for Fiction Shelf. History Room needs permission.',
         { exact: false },
       ),
     ).toBeVisible()
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
-    expect(
-      await screen.findByRole('list', { name: 'History Room included and excluded destinations' }),
-    ).toBeVisible()
-    expect(
-      screen.getByRole('list', { name: 'Fiction Shelf included and excluded destinations' }),
-    ).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+    expect(await screen.findByRole('list', { name: 'History Room fields' })).toBeVisible()
+    expect(screen.getByRole('list', { name: 'Fiction Shelf fields' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
     await openActivityAuthority(user)
     const remove = screen.getByRole('button', { name: 'Remove write permission for Fiction Shelf' })
     expect(remove).toBeVisible()
@@ -4807,20 +4801,26 @@ describe('owner language in Activity (#1286)', () => {
     }
     renderRoute('/activity', http)
     const heading = await screen.findByText(
-      'Writes are on for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
+      'Writes are enabled for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
       { exact: false },
     )
     expect(heading).not.toHaveTextContent(/Research Shelf needs/u)
     const card = heading.closest('section')
     if (!card) throw new Error('the consent card is a section')
-    expect(within(card).getAllByText(/readiness/iu)).toHaveLength(1)
+    expect(within(card).queryByText(/readiness/iu)).toBeNull()
+    expect(within(card).getAllByText(/until you give permission/u)).toHaveLength(1)
+    // Fiction Shelf already writes, so the card says nothing else is (#1765).
+    expect(
+      within(card).getByText('Nothing else is written until you give permission.'),
+    ).toBeVisible()
+    expect(within(card).queryByText('Nothing is written until you give permission.')).toBeNull()
     // The review says the same: the held library is held, not waiting.
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
-    await screen.findByRole('list', { name: 'Research Shelf included and excluded destinations' })
+    await screen.findByRole('list', { name: 'Research Shelf fields' })
     const label = (name: string) => screen.getByText(name, { selector: 'strong' }).closest('label')
     expect(label('Research Shelf')).toHaveTextContent('1 prepared · Writes held')
     expect(label('Research Shelf')).not.toHaveTextContent('Not ready yet')
-    expect(label('History Room')).toHaveTextContent('Ready for consent')
+    expect(label('History Room')).toHaveTextContent(/· Ready$/u)
   })
 
   it('shows an already-consented library as writes enabled', async () => {
@@ -4834,11 +4834,11 @@ describe('owner language in Activity (#1286)', () => {
     }
     renderRoute('/activity', http)
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
-    await screen.findByRole('list', { name: 'Fiction Shelf included and excluded destinations' })
+    await screen.findByRole('list', { name: 'Fiction Shelf fields' })
     const label = (name: string) => screen.getByText(name, { selector: 'strong' }).closest('label')
     expect(label('Fiction Shelf')).toHaveTextContent('Writes enabled')
-    expect(label('Fiction Shelf')).not.toHaveTextContent('Ready for consent')
-    expect(label('History Room')).toHaveTextContent('Ready for consent')
+    expect(label('Fiction Shelf')).not.toHaveTextContent(/· Ready$/u)
+    expect(label('History Room')).toHaveTextContent(/· Ready$/u)
   })
 
   it('reads a library as writes enabled once every destination that can be is consented (#1286 X8)', async () => {
@@ -4884,14 +4884,14 @@ describe('owner language in Activity (#1286)', () => {
     renderRoute('/activity', http)
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
     const list = await screen.findByRole('list', {
-      name: 'Fiction Shelf included and excluded destinations',
+      name: 'Fiction Shelf fields',
     })
     const label = screen.getByText('Fiction Shelf', { selector: 'strong' }).closest('label')
     expect(label).toHaveTextContent('Writes enabled')
-    expect(label).not.toHaveTextContent('Some destinations are ready')
+    expect(label).not.toHaveTextContent('Some fields are ready')
     expect(within(list).getAllByText(/^Writes enabled · \d+ prepared$/u)).toHaveLength(2)
     expect(within(list).queryByText(/^Included/u)).toBeNull()
-    expect(within(list).getByText(/^Excluded — /u)).toBeVisible()
+    expect(within(list).getByText(/^Excluded: /u)).toBeVisible()
   })
 
   it('never reads a consented but suspended destination as writes enabled (#1286 B1)', async () => {
@@ -4945,18 +4945,18 @@ describe('owner language in Activity (#1286)', () => {
     renderRoute('/activity', http)
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
     const fiction = await screen.findByRole('list', {
-      name: 'Fiction Shelf included and excluded destinations',
+      name: 'Fiction Shelf fields',
     })
     const history = screen.getByRole('list', {
-      name: 'History Room included and excluded destinations',
+      name: 'History Room fields',
     })
     expect(within(fiction).getAllByText(/^Writes enabled · \d+ prepared$/u)).toHaveLength(1)
     expect(
-      within(fiction).getByText('Writes held — an earlier write behaved unexpectedly'),
+      within(fiction).getByText('Writes held: an earlier write behaved unexpectedly'),
     ).toBeVisible()
     expect(within(history).queryByText(/Writes enabled/u)).toBeNull()
     expect(
-      within(history).getByText('Writes held — an earlier write behaved unexpectedly'),
+      within(history).getByText('Writes held: an earlier write behaved unexpectedly'),
     ).toBeVisible()
     const label = (name: string) => screen.getByText(name, { selector: 'strong' }).closest('label')
     expect(label('Fiction Shelf')).toHaveTextContent('Writes enabled')
@@ -5008,10 +5008,10 @@ describe('owner language in Activity (#1286)', () => {
     renderRoute('/activity', http)
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
     const destinations = await screen.findByRole('list', {
-      name: 'history included and excluded destinations',
+      name: 'history fields',
     })
     expect(destinations).toHaveTextContent(
-      'Excluded — nothing is prepared for it yet, and you can give permission again once a change is prepared',
+      'Excluded: nothing is prepared for it yet, and you can give permission again once a change is prepared',
     )
     expect(destinations).not.toHaveTextContent('it is not ready yet')
   })
@@ -5021,13 +5021,13 @@ describe('owner language in Activity (#1286)', () => {
       'waiting without a remedy',
       { state: 'waiting' as const, remedy: null },
       'A source is limited',
-      'A metadata source is limiting lookups',
+      'A source is limiting lookups',
     ],
     [
       'needing an API key',
       { state: 'waiting' as const, remedy: 'add_api_key' as const },
       'Action needed',
-      'A metadata source needs attention',
+      'A source needs attention',
     ],
   ])('a first provider throttle is never calm: %s', async (_name, overrides, header, heading) => {
     const throttle: ProviderThrottleEntry = {
@@ -5055,12 +5055,12 @@ describe('owner language in Activity (#1286)', () => {
     renderRoute('/activity', http)
     expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
     expect(document.querySelector('.cm-activity-calm')).toHaveTextContent(header)
-    expect(
-      screen.getByRole('link', { name: 'Review metadata sources in Settings' }),
-    ).toHaveAttribute('href', '/settings?group=providers')
+    expect(screen.getByRole('link', { name: 'Check sources in Settings' })).toHaveAttribute(
+      'href',
+      '/settings?group=providers',
+    )
     // The calm sentinels stay exactly as they are elsewhere.
-    for (const calm of ['No intervention needed', 'No action required'])
-      expect(screen.queryByText(calm)).toBeNull()
+    for (const calm of ['No action needed']) expect(screen.queryByText(calm)).toBeNull()
   })
 
   it('gives every disclosure in a page a distinct accessible name', async () => {
@@ -5136,8 +5136,8 @@ describe('owner language in Activity (#1286)', () => {
   })
 
   it.each([
-    [1, '1 recovery item needs review'],
-    [2, '2 recovery items need review'],
+    [1, '1 item needs recovery'],
+    [2, '2 items need recovery'],
   ])('agrees the recovery verb with %i held item', async (count, summary) => {
     const http: ReviewHttp = {
       ...createHttp(),
@@ -5157,4 +5157,81 @@ describe('owner language in Activity (#1286)', () => {
     renderRoute('/activity', http)
     expect(await screen.findByText(summary)).toBeVisible()
   })
+
+  it.each([
+    [1, '1 source needs a settings change before lookups retry.', '1 item needs recovery'],
+    [2, '2 sources need a settings change before lookups retry.', '2 items need recovery'],
+  ])(
+    'sends %i dormant source to Settings from the status (#1765)',
+    async (count, paragraph, summary) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () =>
+          activity({
+            enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+            provider_recovery: [
+              {
+                state: 'dormant',
+                affected_count: count,
+                next_eligible_at: null,
+                dispatch_reasons: [],
+                failure_reasons: [],
+              },
+            ],
+          }),
+        ),
+      }
+      renderRoute('/activity', http)
+      expect(await screen.findByRole('heading', { name: 'Recovery needs attention' })).toBeVisible()
+      const status = document.querySelector('.cm-activity-status')
+      if (!(status instanceof HTMLElement)) throw new Error('the status panel renders')
+      expect(within(status).getByText(paragraph)).toBeVisible()
+      expect(
+        within(status).getByRole('link', { name: 'Check sources in Settings' }),
+      ).toHaveAttribute('href', '/settings?group=providers')
+      expect(screen.getAllByRole('link', { name: 'Check sources in Settings' })).toHaveLength(1)
+      expect(screen.queryByText(/a fix in Settings/u)).toBeNull()
+      expect(screen.getByText(summary)).toBeVisible()
+    },
+  )
+
+  it.each([
+    ['nothing to recover', 0, null],
+    ['one item to recover', 1, '1 item needs recovery'],
+  ])(
+    'while paused, the controls line counts recovery only: %s (#1765)',
+    async (_name, count, summary) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () =>
+          activity({
+            paused: true,
+            enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+            suspensions: (['title'] as const).slice(0, count).map((destination) => ({
+              connection: 'primary',
+              destination,
+              reason: 'unexpected_effect_behavior' as const,
+              scope: 'destination' as const,
+              updated_at: 1,
+            })),
+          }),
+        ),
+      }
+      renderRoute('/activity', http)
+      await screen.findByRole('heading', { name: 'Activity' })
+      const disclosure = await screen.findByText('Writes and recovery', { selector: 'strong' })
+      const line = disclosure.parentElement?.querySelector('small') ?? null
+      if (summary === null) {
+        // Paused is said by the status heading; the line adds nothing.
+        expect(await screen.findByRole('heading', { name: 'Writes are paused' })).toBeVisible()
+        expect(line).toBeNull()
+        expect(screen.getAllByText('Writes are paused')).toHaveLength(1)
+        expect(screen.queryByText(/needs? recovery$/u)).toBeNull()
+      } else {
+        expect(line).toHaveTextContent(new RegExp(`^${summary}$`, 'u'))
+        expect(screen.getByText(summary)).toBeVisible()
+        expect(screen.queryByText('Writes are paused')).toBeNull()
+      }
+    },
+  )
 })

@@ -428,11 +428,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         page.set_viewport_size({"width": width, "height": height})
                         if name == "activity-labels":
                             expect(
-                                page.get_by_role("region", name="Provider recovery")
-                                .get_by_text("Waiting for a safe retry", exact=True)
+                                page.get_by_role("region", name="Source recovery")
+                                .get_by_text("Waiting to retry", exact=True)
                                 .locator("..")
                             ).to_contain_text(
-                                "Priority: needs independent evidence, general recovery scan"
+                                "Priority: needs a second source, general retry"
                             )
                             assert page.evaluate(
                                 "() => document.documentElement.scrollWidth <= window.innerWidth"
@@ -641,7 +641,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ("/policy?section=publication", "Library policy"),
             ("/policy?section=curation", "Library policy"),
             ("/policy?section=unsupported", "Library policy"),
-            ("/activity", "Activity and recovery"),
+            ("/activity", re.compile(r"^Activity$")),
         )
         for path, heading in routes:
             stage[0] = f"direct-route:{path}"
@@ -662,6 +662,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 notice = page.get_by_label("Library connection", exact=True)
                 check = notice.get_by_role("button", name="Check connection again")
                 expect(check).to_be_visible()
+                expect(notice).to_contain_text("Library connection failed")
+                if path == "/activity":
+                    # The notice says it; the status panel adds no heading or
+                    # paragraph of its own (#1765).
+                    # The source recovery list below keeps its own lines.
+                    expect(page.locator(".cm-activity-status h2")).to_have_count(0)
+                    expect(page.locator(".cm-activity-status-copy > p")).to_have_count(
+                        0
+                    )
                 assert "primary" not in notice.inner_text()
                 assert "http" not in notice.inner_text()
                 for width, expected_columns in (
@@ -792,25 +801,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             if path == "/activity":
                 stage[0] = "activity:compact-initial-geometry"
                 expect(page.locator(".cm-page-heading")).to_be_focused()
-                recovery = page.get_by_role("region", name="Provider recovery")
+                recovery = page.get_by_role("region", name="Source recovery")
                 expected_recovery = {
-                    "Waiting for a safe retry": "2 affected scopes",
-                    "Checking provider health": "1 affected scope",
-                    "Retrying affected work": "3 affected works",
-                    "Recovered": "1 affected scope",
-                    "Needs a configuration change": "2 affected scopes",
-                    "No further retry scheduled": "1 affected scope",
+                    "Waiting to retry": "2 sources",
+                    "Checking the source": "1 source",
+                    "Retrying": "3 works",
+                    "Recovered": "1 source",
+                    "Needs a settings change": "2 sources",
+                    "No automatic retry remains": "1 source",
                 }
                 for label, units in expected_recovery.items():
                     row = recovery.get_by_text(label, exact=True).locator("..")
                     expect(row).to_contain_text(units)
                 expect(
-                    recovery.get_by_text(
-                        "Waiting for a safe retry", exact=True
-                    ).locator("..")
-                ).to_contain_text(
-                    "Priority: needs independent evidence, general recovery scan"
-                )
+                    recovery.get_by_text("Waiting to retry", exact=True).locator("..")
+                ).to_contain_text("Priority: needs a second source, general retry")
                 recovery_text = recovery.inner_text().lower()
                 for forbidden in (
                     "provider_",
@@ -961,12 +966,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             parseFloat(style.outlineOffset) <= 0;
                         }"""
                     ), state
+                    # The ledger heading stands alone, without a caption (#1765).
                     expect(
                         ledger.get_by_text(
                             "One record for review decisions, policy changes, safeguards, writes, and verification.",
                             exact=True,
                         )
-                    ).to_be_visible()
+                    ).to_have_count(0)
                     expect(ledger.get_by_text("Date range", exact=True)).to_be_visible()
                     expect(
                         controls.get_by_role("searchbox", name="Search activity")
@@ -979,11 +985,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     assert_compact_activity_priority("paused")
                     for connection_state in ("checking",):
                         page.reload()
-                        page.get_by_role("heading", name="Activity ledger").wait_for()
+                        page.get_by_role(
+                            "heading", name="Ledger", exact=True
+                        ).wait_for()
                         assert_compact_activity_priority(connection_state)
                     connection_state = "paused"
                     page.reload()
-                    page.get_by_role("heading", name="Activity ledger").wait_for()
+                    page.get_by_role("heading", name="Ledger", exact=True).wait_for()
                     page.get_by_label("Library connection", exact=True).get_by_role(
                         "button", name="Check connection again"
                     ).click()
@@ -1269,7 +1277,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(entry).to_have_count(1)
                 assert entry.evaluate("node => node.closest('details') === null")
                 entry.click()
-                page.get_by_role("heading", name="Enable guarded writes").wait_for()
+                page.get_by_role(
+                    "heading", name="Write permissions", exact=True
+                ).wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Household ebooks"
                 ).get_by_text("5 prepared · Writes enabled").wait_for()
@@ -1279,7 +1289,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     .get_by_role("checkbox")
                 )
                 spoken.check()
-                page.get_by_role("heading", name="Activity ledger").wait_for()
+                page.get_by_role("heading", name="Ledger", exact=True).wait_for()
                 page.get_by_label("Search activity").wait_for()
                 for width, height in ((1440, 900), (390, 844)):
                     stage[0] = f"activity:escape-dropdown-focus:{width}"
@@ -1310,7 +1320,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page_size.click()
                     page.get_by_role("option", name="50 per page").click()
                     expect(page_size).to_be_focused()
-                page.get_by_role("button", name="Owner choices").click()
+                page.get_by_role("button", name="Your choices").click()
                 # Exact: a row's Details name carries its work title (#1286).
                 page.get_by_role("button", name="All", exact=True).click()
                 inspect_control = page.get_by_role(
@@ -1344,9 +1354,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert consent_payloads == []
                 stage[0] = "activity:consent-refresh"
                 page.get_by_role("button", name="Confirm write permissions").click()
-                page.get_by_text(
-                    "Activity state refreshed from the authoritative server."
-                ).wait_for()
+                page.get_by_text("The change was made.").wait_for()
                 connection_state = "paused"
             stage[0] = f"direct-route:{path}:document-count"
             assert documents == (before_entry + (4 if path == "/activity" else 1))
@@ -2645,9 +2653,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(
             projected_context.get_by_text("Safe visible description <3", exact=False)
         ).to_have_count(0)
-        projected_context.get_by_text(
-            "No policy change · Tag handling is off.", exact=False
-        ).wait_for()
+        projected_context.get_by_text("Tag handling is off.", exact=False).wait_for()
+        # A row no longer repeats the summary's "No policy change" (#1765).
+        expect(
+            projected_context.get_by_text("No policy change", exact=False)
+        ).to_have_count(0)
         projected_context.get_by_text("Unchanged outcomes (2)", exact=True).click()
         assert projected_context.evaluate("node => node.open") is False
         page.get_by_role("button", name="Sign out").click()
@@ -2814,7 +2824,7 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.route("**/*", fulfill)
         page.goto("https://react-platform.invalid/activity")
-        page.get_by_role("heading", name="Activity and recovery").wait_for()
+        page.get_by_role("heading", name="Activity", exact=True).wait_for()
         checks = page.locator("article.is-checks")
         toggle = checks.get_by_role("button")
         expect(checks).to_have_count(1)
@@ -5297,7 +5307,9 @@ def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
             if surface == "#activity-consent":
                 page.set_viewport_size({"width": 390, "height": 844})
                 entry.click()
-                page.get_by_role("heading", name="Enable guarded writes").wait_for()
+                page.get_by_role(
+                    "heading", name="Write permissions", exact=True
+                ).wait_for()
             else:
                 entry.wait_for()
             for width in (390, 375, 320):

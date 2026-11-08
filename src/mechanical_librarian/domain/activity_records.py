@@ -64,13 +64,13 @@ class ActivityResult(StrEnum):
     ACCEPTED = "Accepted"
     KEPT_CURRENT = "Kept current"
     REJECTED = "Rejected"
-    OWNER_ENTERED = "Owner-entered"
+    OWNER_ENTERED = "Entered by you"
     WITHDRAWN = "Withdrawn"
     COVER_ADVICE_COMPLETED = "Cover advice completed"
     COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
     COVER_ADVICE_FAILED = "Cover advice failed"
-    OWNER_COVER_CHOICE_RECORDED = "Owner cover choice recorded"
-    MANUAL_COVER_RETRY = "Manual cover retry"
+    OWNER_COVER_CHOICE_RECORDED = "Your cover choice recorded"
+    MANUAL_COVER_RETRY = "Cover retried by you"
     NO_CHANGE_NEEDED = "No change needed"
     APPLYING = "Applying"
     PREPARING = "Preparing"
@@ -88,6 +88,14 @@ class ActivityResult(StrEnum):
 # The write lifecycle states that are still moving or already closed without
 # an applied value. Neither is a completed change, so neither claims one.
 _UNSETTLED = frozenset({"planned", "claimed", "applying", "reconciling"})
+
+# A prepared change that ended says so in its result column's own word.
+_CLOSED_VERBS = {
+    "stale": "closed",
+    "abandoned": "stopped",
+    "failed": "failed",
+    "superseded": "replaced",
+}
 
 # The owner's four categories are the durable event type said in the owner's
 # words, not a second classification that could come to disagree with the one
@@ -250,13 +258,13 @@ def _write_facts(
         summary = (
             "Split title and subtitle"
             if confirmed
-            else "Paired title and subtitle change unconfirmed"
+            else "Title and subtitle change not confirmed yet"
             if state == "reconciling"
-            else "Paired title and subtitle change pending"
+            else "Title and subtitle change pending"
             if not failure
-            else "Paired title and subtitle change waiting"
-            if failure == "connection"
-            else "Paired title and subtitle change stopped"
+            else "Title and subtitle change waiting"
+            if failure == "connection" or state == "retryable"
+            else f"Title and subtitle change {_CLOSED_VERBS.get(state, 'closed')}"
         )
         return ReadableChange(summary, summary), [
             {"label": "Previous title", "value": value_text("title", previous)},
@@ -274,7 +282,7 @@ def _write_facts(
                 "label": "Confirmed in Audiobookshelf",
                 "value": "Both title and subtitle confirmed"
                 if confirmed
-                else "Both fields have not been confirmed",
+                else "Title and subtitle not confirmed",
             },
         ]
     change = set_change(destination, previous, desired)
@@ -294,11 +302,9 @@ def _write_facts(
         facts = [
             {"label": "Prepared value", "value": value_text(destination, desired)},
             {
-                # A lost connection or a paused retry has not stopped the
-                # change (#1402).
-                "label": "What happened"
-                if failure == "connection" or state == "retryable"
-                else "Why it stopped",
+                # A waiting change and an ended one both say what happened;
+                # the summary carries the result word (#1402, #1765).
+                "label": "What happened",
                 "value": failure_reason(failure),
             },
             {"label": "Chosen by", "value": chosen},
@@ -311,7 +317,7 @@ def _write_facts(
                 }
             )
             return ReadableChange(
-                "Prepared change paused", "Prepared change paused"
+                "Prepared change waiting", "Prepared change waiting"
             ), facts
         if failure == "connection":
             # A lost connection closes this attempt, not the decision: say what
@@ -325,8 +331,8 @@ def _write_facts(
                     + (
                         f"Prepared again {prepared} of {CONNECTION_REPLAN_LIMIT} times."
                         if prepared
-                        else "Not prepared again yet; up to "
-                        f"{CONNECTION_REPLAN_LIMIT} times."
+                        else "Not prepared again yet (up to "
+                        f"{CONNECTION_REPLAN_LIMIT} times)."
                     ),
                 }
             )
@@ -343,7 +349,8 @@ def _write_facts(
                 else "The selected change was not confirmed",
             }
         )
-        return ReadableChange("Prepared change closed", "Prepared change closed"), facts
+        closed = f"Prepared change {_CLOSED_VERBS.get(state, 'closed')}"
+        return ReadableChange(closed, closed), facts
     facts = [
         {"label": "Previous value", "value": value_text(destination, previous)},
         {"label": "New value", "value": value_text(destination, desired)},
@@ -376,7 +383,7 @@ def _decision_facts(
         else _reported_value(_pinned_report(record, report), destination)
     )
     selected = record.get("selected_value")
-    chosen = {"label": "Chosen by", "value": "Library owner"}
+    chosen = {"label": "Chosen by", "value": "You"}
     if state == "keep_current":
         return keep_change(destination, current), [
             {"label": "Current value", "value": value_text(destination, current)},
@@ -401,7 +408,6 @@ def _decision_facts(
             [
                 {"label": "Current value", "value": value_text(destination, current)},
                 chosen,
-                {"label": "Outcome", "value": "No change was prepared"},
             ],
         )
     chosen_value = cast("dict[str, object]", selected).get("value")
@@ -440,7 +446,7 @@ def _automatic_facts(
         {"label": "New value", "value": value_text(destination, selected)},
         {"label": "Chosen by", "value": "Automatic policy"},
         {
-            "label": "Policy setting",
+            "label": "Policy option",
             "value": f"{policy_setting_label(category)}: {policy_option_label(option, category)}"
             if category and option
             else "Not recorded",
@@ -481,9 +487,9 @@ def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
             "Mechanical Librarian",
             "No cover was changed",
         ),
-        "selected": ("Chose a different cover", "Library owner", "Recorded"),
-        "kept_incumbent": ("Kept the current cover", "Library owner", "Recorded"),
-        "no_action": ("Left the cover unchanged", "Library owner", "Recorded"),
+        "selected": ("Chose a different cover", "You", "Recorded"),
+        "kept_incumbent": ("Kept the current cover", "You", "Recorded"),
+        "no_action": ("Left the cover unchanged", "You", "Recorded"),
         "stale": (
             "Prepared cover closed",
             "Not recorded",
@@ -499,7 +505,6 @@ def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
     return ReadableChange(summary, summary), [
         {"label": "Chosen by", "value": chosen},
         {"label": "What happened", "value": outcome},
-        {"label": "Your action", "value": "None"},
     ]
 
 
@@ -537,21 +542,21 @@ def readable_activity_event(
         change = ReadableChange(description, description)
         facts = [
             {
-                "label": "Application",
-                "value": "Preparation grants no write authority. Review current Description choices in Library.",
+                "label": "What happens next",
+                "value": "Nothing is written until you choose a description in Library.",
             }
         ]
         if state in {"failed", "interrupted"}:
             facts.append(
                 {
                     "label": "Retry",
-                    "value": "Request another attempt from Description in Library; no automatic retry.",
+                    "value": "Request it again from Description in Library. It is not retried on its own.",
                 }
             )
     elif source_kind == "description_decision":
         change = ReadableChange(
             "Advised description selected",
-            "Advised description queued under existing write requirements",
+            "Selected the advised description",
         )
         selected = record.get("selected_value")
         facts = [
@@ -564,8 +569,8 @@ def readable_activity_event(
             },
             {"label": "Chosen by", "value": chooser_label(origin)},
             {
-                "label": "Application",
-                "value": "Queued under existing write requirements; no write is implied by this selection",
+                "label": "What happens next",
+                "value": "It is written only with your write permission",
             },
         ]
     elif source_kind == "automatic_decision":
@@ -576,10 +581,6 @@ def readable_activity_event(
             {
                 "label": "Why it stayed unchanged",
                 "value": ISBN_REFUSAL_REASONS[cast(str, record["reason_code"])],
-            },
-            {
-                "label": "Outcome",
-                "value": "No ISBN change was prepared at this evaluation",
             },
         ]
     elif source_kind == "field_effect_no_change":
@@ -602,33 +603,23 @@ def readable_activity_event(
         summary = f"{counted} {'activated' if activated else 'being applied'}"
         change = ReadableChange(summary, summary)
         facts = [
-            {"label": "Changed by", "value": "Library owner"},
+            {"label": "Changed by", "value": "You"},
             {
                 "label": "Policy generation",
                 "value": str(record.get("generation", ABSENT)),
-            },
-            {
-                "label": "Active policy",
-                "value": f"Updated with all {counted}"
-                if activated
-                else "Being updated",
             },
         ]
         event["policy_changes"] = changes
     elif source_kind == "degraded":
         degraded_reason = cast(str, record.get("degraded_reason", ""))
         unavailable = {
-            AUTOMATIC_AUTHORITY_UNAVAILABLE: "The automatic authority is no longer available",
+            AUTOMATIC_AUTHORITY_UNAVAILABLE: "The automatic decision it records can no longer be read",
         }.get(degraded_reason, "Details cannot be read")
         change = ReadableChange(
             "Details unavailable", "Recorded details are unavailable"
         )
         facts = [
-            {
-                "label": "Record status",
-                "value": "This retained event cannot be fully projected",
-            },
-            {"label": "Disclosure", "value": unavailable},
+            {"label": "Reason", "value": unavailable},
         ]
         event["diagnostic"] = {
             "event_class": "automatic_decision",
@@ -640,7 +631,7 @@ def readable_activity_event(
     if record.get("advised") is True:
         facts.extend(
             [
-                {"label": "Provenance", "value": "Advised · Authored content"},
+                {"label": "Written by", "value": "Description adviser"},
                 {
                     "label": "Adviser",
                     "value": f"{record.get('engine')} · {record.get('model')}",

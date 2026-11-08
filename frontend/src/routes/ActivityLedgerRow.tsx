@@ -182,7 +182,7 @@ function ActivityTransitions({
   return (
     <ol
       className="cm-activity-transitions"
-      aria-label="Recorded lifecycle transitions"
+      aria-label="Recorded transitions"
       tabIndex={-1}
       ref={list}
     >
@@ -343,14 +343,14 @@ export function ActivityEventRow({
           {event.policy_changes.length ? (
             <section
               className="cm-activity-policy-changes"
-              aria-label={`${String(event.policy_changes.length)} exact policy changes`}
+              aria-label={`${String(event.policy_changes.length)} policy changes`}
             >
               <header>
                 <strong>
-                  {event.policy_changes.length} exact{' '}
+                  {event.policy_changes.length}{' '}
                   {event.policy_changes.length === 1 ? 'change' : 'changes'}
                 </strong>
-                <span>Field and setting</span>
+                <span>Field</span>
                 <span>From</span>
                 <span>To</span>
               </header>

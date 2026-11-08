@@ -373,7 +373,8 @@ def test_a_switch_stopped_by_retention_says_why_in_activity(
         if event["destination"] == "cover" and event["state"] == "stale"
     ]
     facts = {str(item["label"]): str(item["value"]) for item in event["evidence"]}
-    assert facts["Why it stopped"] == (
+    assert "Why it stopped" not in facts
+    assert facts["What happened"] == (
         "Mechanical Librarian could not save a copy of the current cover, "
         "so it left the cover unchanged"
     )

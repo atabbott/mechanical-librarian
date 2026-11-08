@@ -1303,14 +1303,14 @@ class _InstalledPreparationRun:
             assert set(settings_statuses) == {200}, settings_statuses
             assert "synthetic-token" not in page.content()
             page.get_by_role("link", name="Activity", exact=True).click()
-            page.get_by_role(
-                "heading", name="Activity and recovery", exact=True
-            ).wait_for(timeout=_FOREGROUND_RESPONSE_BUDGET_MS)
-            page.get_by_role("button", name="Owner choices", exact=True).click()
+            page.get_by_role("heading", name="Activity", exact=True).wait_for(
+                timeout=_FOREGROUND_RESPONSE_BUDGET_MS
+            )
+            page.get_by_role("button", name="Your choices", exact=True).click()
             expect(
-                page.get_by_role("button", name="Owner choices", exact=True)
+                page.get_by_role("button", name="Your choices", exact=True)
             ).to_have_attribute("aria-pressed", "true")
-            page.get_by_text("Owner choice", exact=True).wait_for(
+            page.get_by_text("Your choice", exact=True).wait_for(
                 timeout=_FOREGROUND_RESPONSE_BUDGET_MS
             )
             page.get_by_text("Accepted", exact=True).wait_for(

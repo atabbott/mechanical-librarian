@@ -17,9 +17,9 @@ export interface PermissionCheck extends ActivityPermissionReadinessView {
   readonly policyId: string
   readonly basis: string
 }
-export const basisChangedCopy = 'Your library settings changed. Review the permissions again.'
+export const basisChangedCopy = 'Your library settings changed. Check write permissions again.'
 export const readinessUnavailableCopy =
-  'Permission readiness is unavailable. No permission was granted. Try again.'
+  'Permission readiness was not checked, so no permission was granted. Try again.'
 
 export const ActivityPermissionCheck = ({
   discarded,
@@ -61,16 +61,16 @@ export const ActivityPermissionCheck = ({
           : discarded
             ? basisChangedCopy
             : !requested
-              ? 'Permission readiness has not been checked, or the library changed. Check again before selecting destinations.'
+              ? ''
               : permissions.isFetching
-                ? 'Checking backup readiness and write permissions…'
+                ? 'Checking the backup and write permissions…'
                 : permissions.isError
                   ? readinessUnavailableCopy
                   : permission?.backup_ready === null
-                    ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
+                    ? 'The backup check did not finish. Check again before enabling writes.'
                     : permission?.backup_ready === false
                       ? 'The backup check did not pass. Check again before enabling writes.'
-                      : 'Backup readiness checked. Review the included and excluded destinations.'}
+                      : 'Backup checked.'}
       </p>
       {staleLead !== null ? (
         <StaleBuildRead lead={staleLead} ref={checkButton} />
@@ -82,18 +82,14 @@ export const ActivityPermissionCheck = ({
           onClick={checking ? undefined : check}
           aria-disabled={checking || undefined}
         >
-          {!requested
-            ? 'Check write permissions'
-            : permissions.isError || permission?.backup_ready === null
-              ? 'Retry permission check'
-              : 'Check again'}
+          {!requested ? 'Check write permissions' : 'Check again'}
         </button>
       )}
       {permission?.example ? (
         <p>
-          Example: {destinationLabel(permission.example.destination)} for{' '}
-          {libraryName(permission.example.library)} — {displayValue(permission.example.before)} →{' '}
-          {displayValue(permission.example.after)}
+          For example, {destinationLabel(permission.example.destination)} in{' '}
+          {libraryName(permission.example.library)} changes from{' '}
+          {displayValue(permission.example.before)} to {displayValue(permission.example.after)}.
         </p>
       ) : null}
     </>
