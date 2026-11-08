@@ -275,6 +275,8 @@ def retained_report_as_current(document: str) -> MetadataReport:
     closed `final_host`: an earlier producer followed no Open Library redirect,
     so a retrieved Open Library cover there was served by
     `covers.openlibrary.org` itself, and every other source states none. v72
+    made a Hardcover WORK lane's candidates books and planned an ebook lane
+    over its EPUB creators, neither of which a v49 report holds. v73
     added each cover artifact's same-art `measures`: null here, since an
     earlier producer measured no preview.
     """
@@ -282,7 +284,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v72"
+    data["schema_version"] = "metadata-report-v73"
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -506,7 +508,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v72'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v73'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -525,10 +527,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v72'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v73'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v72'", f"= '{version}'"
+            "= 'metadata-report-v73'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

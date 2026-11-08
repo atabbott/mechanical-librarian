@@ -30,7 +30,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from tests.support.evidence_led_titles import isbn_title_report
-from tests.support.hardcover_evidence import hardcover_envelope
+from tests.support.hardcover_evidence import books_envelope
 from tests.support.proposal_evidence import _fields, _report
 
 _TITLE = "Synthetic Voyage"
@@ -74,8 +74,7 @@ def _observe(
     plan = metadata_discovery_plan(
         TargetSnapshot("ebook", _TITLE, (), fields=fields), claims
     )
-    payload = hardcover_envelope(
-        [{"id": 1, "book_id": 10}],
+    payload = books_envelope(
         [
             {
                 "id": 10,

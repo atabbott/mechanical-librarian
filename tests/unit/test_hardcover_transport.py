@@ -39,6 +39,7 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.hardcover_evidence import (
     HostileEncodedProviderStream,
     InterruptedProviderStream,
+    hardcover_answer,
     hardcover_envelope,
     isbn_claim,
     isbn_lookup,
@@ -183,7 +184,7 @@ def test_hardcover_operations_keep_relationship_selections_within_depth_three(
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope([], []),
+            json=hardcover_answer(request, [], []),
         )
 
     captured.clear()
@@ -210,7 +211,7 @@ def test_hardcover_operations_keep_relationship_selections_within_depth_three(
     else:
         assert {
             "authors": ["Ada Example"],
-            "title": "Current title",
+            "titles": ["Current title", "Current Title", "current title"],
         } == operation["variables"]
 
 
