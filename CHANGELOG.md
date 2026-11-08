@@ -63,10 +63,11 @@ brackets are GitHub issues.
 
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'
   covers in review. Only editions in the library's languages, with at least
-  300 px on the short side, are fetched. Audiobooks get the square covers of
-  Hardcover's audio editions. An item shows up to twelve provider covers, eight
-  from Hardcover. None is chosen automatically, and a library with no
-  languages gets none (#1778, #1380).
+  300 px on the short side, are fetched, so a library with no languages gets
+  none. Audiobooks get the square covers of Hardcover's audio editions.
+  Edition covers are never chosen automatically. An item fetches up to twelve
+  provider covers, eight from Hardcover (#1778, #1380). A Hardcover connection
+  whose covers are off fetches none.
 - **Clean rebuild required.** Hardcover now finds a widely published ebook by
   its title and author instead of refusing it for having many editions. It
   matches the title whatever its capitals, searches with the EPUB's own authors
