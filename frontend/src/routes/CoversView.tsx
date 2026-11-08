@@ -590,10 +590,6 @@ function CoverWall({
   )
 }
 
-// Count reads in the order they were sent.
-let countReads = 0
-const pillCounts = (page: CoversPage | undefined) => page?.counts
-
 export default function CoversView() {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
@@ -614,19 +610,20 @@ export default function CoversView() {
   })
   const [notice, setNotice] = useState<string | null>(null)
   const [done, setDone] = useState<Readonly<Record<string, Outcome>>>({})
-  // Counts read again after each decision; the rows on screen stay as they
-  // were, with the decided ones marked, and the next page resumes after them.
+  // Counts are read again after each decision, else the newest page's
+  // count. The rows on screen stay as they were, with the decided ones
+  // marked, and the next page resumes after them.
+  const [countRead, setCountRead] = useState<{ tab: CoverTab; seq: number; pageAt: number }>()
   const [liveCounts, setLiveCounts] = useState<{
     tab: CoverTab
     counts: CoversPage['counts']
-    requested: number
     pageAt: number
   }>()
   const works = pages.data?.pages.flatMap((page) => page.items) ?? []
   const counts =
     (liveCounts?.tab === tab && liveCounts.pageAt === pages.dataUpdatedAt
       ? liveCounts.counts
-      : undefined) ?? pillCounts(pages.data?.pages[0])
+      : undefined) ?? pages.data?.pages.at(-1)?.counts
   const selectedId = search.cover
   const listed = works.find((work) => work.review_case_id === selectedId)
   // A linked book past the loaded pages is read on its own.
@@ -666,21 +663,29 @@ export default function CoversView() {
     if (!selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
       select(firstOpen.review_case_id, true)
   })
-  // Only the newest count read is shown: an older answer arriving late is
-  // dropped, and a later read of the first page replaces it.
-  const recordCounts = () => {
-    const requested = ++countReads
-    const pageAt = pages.dataUpdatedAt
-    void http.getCovers(tab).then(
-      (page) =>
-        setLiveCounts((current) =>
-          current?.tab === tab && current.requested > requested
-            ? current
-            : { tab, counts: page.counts, requested, pageAt },
-        ),
+  // Each decision asks for the counts again. Only the newest read is shown:
+  // a newer request cancels the answer of an older one, and a later read of
+  // the first page replaces it.
+  const recordCounts = () =>
+    setCountRead((current) => ({
+      tab,
+      seq: (current?.seq ?? 0) + 1,
+      pageAt: pages.dataUpdatedAt,
+    }))
+  useEffect(() => {
+    if (!countRead) return
+    let current = true
+    void http.getCovers(countRead.tab).then(
+      (page) => {
+        if (current)
+          setLiveCounts({ tab: countRead.tab, counts: page.counts, pageAt: countRead.pageAt })
+      },
       () => undefined,
     )
-  }
+    return () => {
+      current = false
+    }
+  }, [countRead, http])
   // After a choice or a skip the next book opens, so one tap moves on.
   const advance = (work: CoverWorkView, outcome: Outcome) => {
     setNotice(outcomeCopy(outcome, work.title))

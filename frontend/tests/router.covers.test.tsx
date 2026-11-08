@@ -418,6 +418,22 @@ describe('Covers view (#1633)', () => {
     expect(screen.queryByRole('button', { name: 'Show more covers' })).toBeNull()
   })
 
+  it('counts from the newest page after Show more covers', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({})
+    const first = page('all', [work('case-1', 'kept')], 'cursor-2')
+    const second = page('all', [work('case-2', 'kept')], null, { ...counts, kept: 3, all: 7 })
+    http.getCovers.mockImplementation(async (view, at) =>
+      at?.cursor === 'cursor-2' ? second : view === 'all' ? first : page(view, []),
+    )
+    renderRoute('/library?lens=all&view=covers&tab=all', http)
+    const tabs = await screen.findByRole('navigation', { name: 'Cover views' })
+    expect(await within(tabs).findByRole('button', { name: 'All 5' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Show more covers' }))
+    expect(await within(tabs).findByRole('button', { name: 'All 7' })).toBeVisible()
+    expect(within(tabs).getByRole('button', { name: 'Kept 3' })).toBeVisible()
+  })
+
   it('shows the wall with titles and opens a book after its row, with Close', async () => {
     const user = userEvent.setup()
     const http = coversHttp({
