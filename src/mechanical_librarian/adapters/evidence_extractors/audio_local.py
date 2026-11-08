@@ -37,6 +37,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarReading,
     AudioSidecarShadow,
     AudioSidecarShadowField,
+    association_file_reference,
     association_text,
     normalize_duration_seconds,
 )
@@ -1287,7 +1288,7 @@ def _line_sidecar_facts(
                     # a path, a control, an over-long name -- names none of
                     # them, so it is recorded as another file, not as none.
                     file_seen = True
-                    text.file_reference = association_text(value)
+                    text.file_reference = association_file_reference(value)
                     text.file_refused = text.file_reference is None
         matched = grammar.match(line)
         if matched is None:

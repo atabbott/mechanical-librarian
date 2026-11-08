@@ -1039,3 +1039,19 @@ def test_a_case_only_language_echo_needs_equal_recognition(
     match counts only where both spellings refuse alike."""
     context = _context(language=target)
     assert target_echo(context, _F.LANGUAGE, stated, ()) is echo
+
+
+def test_a_cue_file_value_keeps_the_whitespace_its_track_name_keeps() -> None:
+    """Codex R1: `Book  One.m4b` names the track `Book  One.m4b`, not another."""
+    track = "Synthetic  Track One.m4b"
+    sidecar = AudioSidecar(
+        _CUE,
+        "book.cue",
+        f'TITLE "{_TITLE}"\nPERFORMER "{_AUTHOR}"\nFILE "{track}" MP4\n',
+    )
+    [reading] = _interpret(sidecar).sidecars
+    assert (reading.file_reference, reading.file_refused) == (track, False)
+    evidence = FileAssociationEvidence((), (), frozenset(), (track,))
+    assert _one(reading, evidence=evidence).refusals == ()
+    collapsed = FileAssociationEvidence((), (), frozenset(), (" ".join(track.split()),))
+    assert _one(reading, evidence=collapsed).refusals == (_R.OTHER_FILE,)

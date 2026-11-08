@@ -372,8 +372,33 @@ def association_text(value: object) -> str | None:
         return None
 
 
+def association_file_reference(value: object) -> str | None:
+    """Return a CUE `FILE` value as association text, its whitespace kept.
+
+    It is compared exactly against the item's track names, which keep their
+    inner whitespace, so only the ends are trimmed, as a track name's are;
+    collapsing would make `Book  One.m4b` name another file.  The bound and
+    the projection grammar are association text's own.
+    """
+    if type(value) is not str:
+        return None
+    text = value.strip()
+    if not text or len(text) > MAX_ASSOCIATION_CHARACTERS:
+        return None
+    try:
+        return validate_projection_text(
+            text, "audio association text", MAX_ASSOCIATION_CHARACTERS
+        )
+    except EvidenceValueError:
+        return None
+
+
 def _valid_association(value: object) -> bool:
     return exact_text(value) and association_text(value) == value
+
+
+def _valid_file_reference(value: object) -> bool:
+    return exact_text(value) and association_file_reference(value) == value
 
 
 _valid_creators = tuple_of(_valid_association, MAX_ASSOCIATION_CREATORS)
@@ -1101,7 +1126,7 @@ class AudioSidecarReading:
             )(self.facts)
             or not optional(_valid_association)(self.title)
             or not _valid_creators(self.creators)
-            or not optional(_valid_association)(self.file_reference)
+            or not optional(_valid_file_reference)(self.file_reference)
             or (
                 self.file_reference is not None
                 and self.surface is not AudioEvidenceSurface.SIDECAR_CUE
@@ -1482,6 +1507,7 @@ __all__ = [
     "SIDECAR_FIELDS",
     "SIDECAR_KIND_SURFACES",
     "TERMINAL_SIDECAR_REFUSALS",
+    "association_file_reference",
     "association_text",
     "MAX_AUDIO_FILE_RECORDS",
     "MAX_AUDIO_TRACKS",
