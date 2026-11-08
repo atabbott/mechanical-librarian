@@ -1465,8 +1465,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
    book, the Switched list and the All wall. On a phone the list comes first
    and an open book replaces it, with Back to books. */
 .library-view-switch { margin:0 0 .75rem; }
-.library-view-switch .cm-segmented { display:inline-flex; border-radius:999px; }
-.library-view-switch .cm-segmented button { padding:.4rem 1rem; border-radius:999px; font-size:.85rem; }
+.library-view-switch .cm-segmented { display:inline-flex; flex-wrap:wrap; max-width:100%; border-radius:999px; }
+/* The side padding gives way on a narrow screen with enlarged text, so the switch never widens the page. */
+.library-view-switch .cm-segmented button { flex:1 1 auto; padding:.4rem min(1rem, 3vw); border-radius:999px; font-size:.85rem; }
 .covers-header h1 { margin:0; font-size:1.6rem; }
 .covers-tabs { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:.75rem; }
 .covers-tabs button { min-height:44px; padding:.45rem .8rem; border:1px solid var(--line); border-radius:.65rem; color:var(--soft); background:var(--surface); }
