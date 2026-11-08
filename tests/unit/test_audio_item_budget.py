@@ -36,11 +36,17 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionField,
     AudioInspectionOutcome,
 )
+from mechanical_librarian.domain.audio_sidecar_association import (
+    AudioAssociationContext,
+)
 from mechanical_librarian.domain.audiobook_corroboration import (
     local_claim_runtime_seconds,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint
 from mechanical_librarian.domain.metadata_report import canonical_json
+
+# No target record and no own-file list: association fails closed.
+_NO_TARGET = AudioAssociationContext(None, (), None)
 
 _MAXIMUM = 1_048_576
 # What a UTF-8 en dash becomes when it is decoded as Latin-1 and written back,
@@ -146,7 +152,9 @@ def test_a_set_past_the_track_bound_is_refused_before_any_file_is_opened(
     )
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector().inspect(mount, absent, _MAXIMUM)
+        IsolatedAudioInspector().inspect(
+            mount, absent, _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
     assert child.calls == []
@@ -167,7 +175,7 @@ def test_a_track_past_the_item_byte_ceiling_is_a_budget_terminal(
     )
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector().inspect(mount, tracks, 32)
+        IsolatedAudioInspector().inspect(mount, tracks, 32, association=_NO_TARGET)
 
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
 
@@ -180,7 +188,9 @@ def test_the_item_wall_stops_a_wide_set_and_names_the_budget(
     tracks = _tracks(mount, 3)
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector(lambda: next(readings)).inspect(mount, tracks, _MAXIMUM)
+        IsolatedAudioInspector(lambda: next(readings)).inspect(
+            mount, tracks, _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
 
@@ -241,7 +251,9 @@ def test_a_wall_that_fires_inside_a_child_is_the_budget_not_the_parser(
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", child)
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector(clock).inspect(mount, _tracks(mount, 3), _MAXIMUM)
+        IsolatedAudioInspector(clock).inspect(
+            mount, _tracks(mount, 3), _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
     assert raised.value.track == 2
@@ -257,7 +269,7 @@ def test_a_single_track_item_never_arms_the_item_clock(
     readings = iter((0.0, 10_000.0, 10_000.0, 10_000.0))
 
     result = IsolatedAudioInspector(lambda: next(readings)).inspect(
-        mount, _tracks(mount, 1), _MAXIMUM
+        mount, _tracks(mount, 1), _MAXIMUM, association=_NO_TARGET
     )
 
     assert result.audio.composition is AudioChapterComposition.SINGLE_FILE
@@ -275,7 +287,9 @@ def test_one_unreadable_track_ends_the_item_under_that_track_s_own_outcome(
     )
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector().inspect(mount, _tracks(mount, 3), _MAXIMUM)
+        IsolatedAudioInspector().inspect(
+            mount, _tracks(mount, 3), _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.MALFORMED
     assert raised.value.track == 2
@@ -298,7 +312,9 @@ def test_an_empty_track_is_unreadable_media_before_any_child_runs(
     (Path(mount.container_path) / "02.mp3").write_bytes(b"")
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+        IsolatedAudioInspector().inspect(
+            mount, tracks, _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
     assert raised.value.track == 2
@@ -318,9 +334,15 @@ def test_folder_evidence_reaches_only_the_first_track_s_child(
     """
     child = _RecordedChild()
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", child)
-    (Path(mount.container_path) / "metadata.json").write_text("{}", encoding="utf-8")
+    (Path(mount.container_path) / "folder.opf").write_text(
+        "<package/>", encoding="utf-8"
+    )
+    tracks = _tracks(mount, 3)
+    own = (*(value.relative_path for value in tracks), "folder.opf")
 
-    IsolatedAudioInspector().inspect(mount, _tracks(mount, 3), _MAXIMUM)
+    IsolatedAudioInspector().inspect(
+        mount, tracks, _MAXIMUM, association=AudioAssociationContext(None, (), own)
+    )
 
     assert [bool(call["sidecars"]) for call in child.calls] == [True, False, False]
     assert [call["path_file"] for call in child.calls] == [
@@ -335,7 +357,9 @@ def test_the_item_digest_composes_every_track_digest_in_manifest_order(
 ) -> None:
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _RecordedChild())
 
-    result = IsolatedAudioInspector().inspect(mount, _tracks(mount, 3), _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, _tracks(mount, 3), _MAXIMUM, association=_NO_TARGET
+    )
 
     digests = [value.digest for value in result.audio.tracks]
     assert digests == [
@@ -369,7 +393,9 @@ def test_every_composed_claim_resolves_under_the_tracks_that_carried_it(
         isolated_audio, "run_audio_inspector_child", _RecordedChild(facts=facts)
     )
 
-    result = IsolatedAudioInspector().inspect(mount, _tracks(mount, 3), _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, _tracks(mount, 3), _MAXIMUM, association=_NO_TARGET
+    )
 
     references = {claim.reference for claim in result.claims}
     assert all(
@@ -404,7 +430,9 @@ def test_a_composed_claim_set_past_its_ceiling_is_a_budget_terminal(
     )
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector().inspect(mount, _tracks(mount, 3), _MAXIMUM)
+        IsolatedAudioInspector().inspect(
+            mount, _tracks(mount, 3), _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
 
@@ -435,7 +463,9 @@ def test_the_composed_item_gives_the_runtime_gate_one_value_to_elect(
         isolated_audio, "run_audio_inspector_child", _RecordedChild(facts=facts)
     )
 
-    result = IsolatedAudioInspector().inspect(mount, _tracks(mount, 3), _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, _tracks(mount, 3), _MAXIMUM, association=_NO_TARGET
+    )
 
     assert local_claim_runtime_seconds(result.claims) == 360
 
@@ -446,7 +476,7 @@ def test_currentness_re_digests_every_track_and_notices_one_edit(
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _RecordedChild())
     tracks = _tracks(mount, 3)
     inspector = IsolatedAudioInspector()
-    result = inspector.inspect(mount, tracks, _MAXIMUM)
+    result = inspector.inspect(mount, tracks, _MAXIMUM, association=_NO_TARGET)
     paths = tuple(value.relative_path for value in tracks)
 
     assert inspector.unchanged(
@@ -465,7 +495,7 @@ def test_currentness_refuses_a_set_that_lost_a_track(
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _RecordedChild())
     tracks = _tracks(mount, 3)
     inspector = IsolatedAudioInspector()
-    result = inspector.inspect(mount, tracks, _MAXIMUM)
+    result = inspector.inspect(mount, tracks, _MAXIMUM, association=_NO_TARGET)
 
     assert not inspector.unchanged(
         mount,
@@ -500,7 +530,7 @@ def test_an_item_split_across_directories_is_handed_no_folder_evidence(
     )
     inspector = IsolatedAudioInspector()
 
-    result = inspector.inspect(mount, tracks, _MAXIMUM)
+    result = inspector.inspect(mount, tracks, _MAXIMUM, association=_NO_TARGET)
 
     assert [call["sidecars"] for call in child.calls] == [(), (), ()]
     assert [call["path_folder"] for call in child.calls] == [None, None, None]
@@ -525,16 +555,19 @@ def test_one_shared_directory_is_still_the_item_s_own_folder(
         _write(mount, f"Recording/{ordinal:02d}.mp3", f"track-{ordinal}".encode())
         for ordinal in (1, 2, 3)
     )
-    (Path(mount.container_path) / "Recording" / "metadata.json").write_text(
-        "{}", encoding="utf-8"
+    (Path(mount.container_path) / "Recording" / "folder.opf").write_text(
+        "<package/>", encoding="utf-8"
     )
+    own = (*(value.relative_path.split("/")[-1] for value in tracks), "folder.opf")
     inspector = IsolatedAudioInspector()
 
-    result = inspector.inspect(mount, tracks, _MAXIMUM)
+    result = inspector.inspect(
+        mount, tracks, _MAXIMUM, association=AudioAssociationContext(None, (), own)
+    )
 
     assert [bool(call["sidecars"]) for call in child.calls] == [True, False, False]
     assert [call["path_folder"] for call in child.calls] == ["Recording", None, None]
-    assert [value.name for value in result.audio.sidecars] == ["metadata.json"]
+    assert [value.name for value in result.audio.sidecars] == ["folder.opf"]
     assert inspector.unchanged(
         mount,
         tuple(value.relative_path for value in tracks),
@@ -542,6 +575,7 @@ def test_one_shared_directory_is_still_the_item_s_own_folder(
         _MAXIMUM,
         result.audio.sidecars,
         result.audio.tracks,
+        own_file_names=own,
     )
 
 
@@ -557,7 +591,9 @@ def test_the_item_wall_bounds_revalidation_as_well_as_inspection(
     """
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _RecordedChild())
     tracks = _tracks(mount, 3)
-    result = IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, tracks, _MAXIMUM, association=_NO_TARGET
+    )
     readings = iter((0.0, 0.0, MULTI_FILE_WALL_SECONDS + 1.0))
 
     with pytest.raises(AudioItemInspectionError) as raised:
@@ -580,7 +616,9 @@ def test_revalidating_a_single_track_item_never_arms_the_item_clock(
     """One file was already bounded by the per-file wall F43 installed."""
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _RecordedChild())
     tracks = _tracks(mount, 1)
-    result = IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, tracks, _MAXIMUM, association=_NO_TARGET
+    )
     readings = iter((0.0, 10_000.0, 10_000.0))
 
     assert IsolatedAudioInspector(lambda: next(readings)).unchanged(
@@ -616,7 +654,9 @@ def test_a_track_that_cannot_be_opened_names_the_ordinal_that_refused(
     (Path(mount.container_path) / removed).unlink()
 
     with pytest.raises(AudioItemInspectionError) as raised:
-        IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+        IsolatedAudioInspector().inspect(
+            mount, tracks, _MAXIMUM, association=_NO_TARGET
+        )
 
     assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
     assert raised.value.track == ordinal
@@ -645,7 +685,9 @@ def test_names_the_filesystem_states_reach_the_manifest_as_a_projection(
         for ordinal, name in enumerate(names, 1)
     )
 
-    result = IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, tracks, _MAXIMUM, association=_NO_TARGET
+    )
 
     assert [value.name for value in result.audio.tracks] == [
         f"01 {_PROJECTED_EN_DASH} Part.mp3",
@@ -668,7 +710,9 @@ def test_a_single_file_item_publishes_its_projected_name_too(
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _RecordedChild())
     track = _write(mount, f"Only {_MOJIBAKE_EN_DASH} Recording.mp3", b"one")
 
-    result = IsolatedAudioInspector().inspect(mount, (track,), _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, (track,), _MAXIMUM, association=_NO_TARGET
+    )
 
     assert result.audio.composition is AudioChapterComposition.SINGLE_FILE
     assert [value.name for value in result.audio.tracks] == [
@@ -687,8 +731,8 @@ def test_two_inspections_of_one_projected_set_compose_the_same_manifest(
     )
     inspector = IsolatedAudioInspector()
 
-    first = inspector.inspect(mount, tracks, _MAXIMUM)
-    second = inspector.inspect(mount, tracks, _MAXIMUM)
+    first = inspector.inspect(mount, tracks, _MAXIMUM, association=_NO_TARGET)
+    second = inspector.inspect(mount, tracks, _MAXIMUM, association=_NO_TARGET)
 
     assert canonical_json(
         [value.to_data() for value in first.audio.tracks]
@@ -740,7 +784,9 @@ def test_the_parent_records_discovery_titles_from_the_leaf_and_a_lone_tag(
     monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", child)
     tracks = tuple(_write(mount, path, path.encode()) for path in paths)
 
-    result = IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+    result = IsolatedAudioInspector().inspect(
+        mount, tracks, _MAXIMUM, association=_NO_TARGET
+    )
 
     assert expected == tuple(
         (value.basis, value.title) for value in result.audio.discovery_titles

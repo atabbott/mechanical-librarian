@@ -446,6 +446,8 @@ def _lane_lookup(
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
+        echoed_languages=plan.echoed_languages,
+        echoed_narrators=plan.echoed_narrators,
         requested_asin=lane.canonical_asin,
     )
 

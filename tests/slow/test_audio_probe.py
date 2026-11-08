@@ -42,7 +42,16 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionOutcome,
     AudioObservationKind,
 )
-from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState
+from mechanical_librarian.domain.audio_sidecar_association import (
+    AudioAssociationContext,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    FieldState,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+)
 from tests.support.audio_containers import (
     AC3_OBJECT_TYPE,
     Mp4Fixture,
@@ -79,9 +88,20 @@ def _track(relative_path: str, ordinal: int = 1) -> TargetFile:
     )
 
 
-def _inspect(root: Path, relative_path: str) -> AudioInspectionResult:
+# No target record and no own-file list: association fails closed.
+_NO_TARGET = AudioAssociationContext(None, (), None)
+
+
+def _inspect(
+    root: Path,
+    relative_path: str,
+    association: AudioAssociationContext = _NO_TARGET,
+) -> AudioInspectionResult:
     return IsolatedAudioInspector().inspect(
-        _mount(root), (_track(relative_path),), _MAXIMUM_BYTES
+        _mount(root),
+        (_track(relative_path),),
+        _MAXIMUM_BYTES,
+        association=association,
     )
 
 
@@ -90,6 +110,7 @@ def _inspect_set(root: Path, names: tuple[str, ...]) -> AudioInspectionResult:
         _mount(root),
         tuple(_track(name, ordinal) for ordinal, name in enumerate(names, 1)),
         _MAXIMUM_BYTES,
+        association=_NO_TARGET,
     )
 
 
@@ -129,19 +150,34 @@ def test_a_generated_audiobook_yields_one_closed_local_evidence_set(
             )
         )
     )
-    (folder / "metadata.json").write_text(
+    (folder / "book.metadata.json").write_text(
         json.dumps(
             {
                 "asin": "B0CW1KL2QD",
-                "narrators": ["Sidecar Narrator"],
-                "seriesName": "Discworld",
-                "description": "A sidecar summary.",
+                "title": "Recorded Title",
+                "authors": [{"name": "Example Author"}],
+                "narrators": [{"name": "Sidecar Narrator"}],
+                "publisher_summary": "A sidecar summary.",
             }
         ),
         encoding="utf-8",
     )
 
-    result = _inspect(media_root, f"{folder.name}/book.m4b")
+    result = _inspect(
+        media_root,
+        f"{folder.name}/book.m4b",
+        AudioAssociationContext(
+            "Recorded Title",
+            (
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Example Author",),
+                ),
+            ),
+            ("book.m4b", "book.metadata.json"),
+        ),
+    )
 
     observed = _claims(result)
     assert ("asin", "B0CW1KL2QD", "embedded_tag") in observed

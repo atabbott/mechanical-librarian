@@ -44,6 +44,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_FILE_RECORDS,
     MAX_AUDIO_TRACKS,
     AudioInspectionOutcome,
 )
@@ -343,7 +344,63 @@ def _snapshot(
         and type(title_field.value) is str
         else None
     )
-    return TargetSnapshot(media_kind, title, files, cover, fields, companion)
+    return TargetSnapshot(
+        media_kind,
+        title,
+        files,
+        cover,
+        fields,
+        companion,
+        _own_file_names(root, media, files_value, single)
+        if media_kind == "audiobook"
+        else None,
+    )
+
+
+# The widest item file list read: every audio record the payload may state,
+# and room for the ebooks, images and documents beside them.
+_MAX_OWN_FILE_RECORDS = MAX_AUDIO_FILE_RECORDS + 128
+
+
+def _own_file_names(
+    root: dict[str, Any],
+    media: dict[str, Any],
+    ebook_files: object,
+    ebook_file: object,
+) -> tuple[str, ...] | None:
+    """Name every file of the item, as bare names, or none at all (#1481).
+
+    The item's full list, `libraryFiles`, is read where the payload has it;
+    otherwise every ebook record and every audio record, included or excluded.
+    A list past the bound, or a record without a usable bare name, makes the
+    whole list unknown, so a folder-level sidecar fails closed.
+    """
+    if "libraryFiles" in root:
+        records = root["libraryFiles"]
+    else:
+        ebooks = (
+            ebook_files
+            if type(ebook_files) is list
+            else ([] if ebook_file is None else [ebook_file])
+        )
+        audio = media.get("audioFiles")
+        records = [*ebooks, *(audio if type(audio) is list else [])]
+    if type(records) is not list or len(records) > _MAX_OWN_FILE_RECORDS:
+        return None
+    names: list[str] = []
+    for record in records:
+        metadata = record.get("metadata") if type(record) is dict else None
+        name = metadata.get("filename") if type(metadata) is dict else None
+        if (
+            type(name) is not str
+            or not name
+            or len(name) > 255
+            or name.strip() != name
+            or any(character in name for character in "/\x00")
+        ):
+            return None
+        names.append(name)
+    return tuple(names)
 
 
 def _target_fields(
