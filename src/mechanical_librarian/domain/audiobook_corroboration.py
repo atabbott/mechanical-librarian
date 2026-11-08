@@ -24,6 +24,7 @@ from typing import Final, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
+    AudioInspectionField,
     AudioObservation,
     AudioObservationKind,
 )
@@ -67,6 +68,7 @@ from mechanical_librarian.domain.metadata_report import (
     companion_work_payload,
     discovery_lane_identity,
     duration_milliseconds,
+    echoed_target_values,
     local_identifier_asins,
     plan_alternative_discovery_title,
     provider_candidate_exact_work_identity_admission,
@@ -1119,6 +1121,7 @@ def _chapter_candidate_support(
     authors: tuple[str, ...],
     requested_asin: str | None,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> bool:
     """Qualify raw recording evidence before shaping can discard its vetoes."""
     # The chapter route needs exact work admission, which a target with no
@@ -1127,7 +1130,7 @@ def _chapter_candidate_support(
         return False
     if (
         recording_variant_conflict(
-            candidate, local_claims, title or "", library_languages
+            candidate, local_claims, title or "", library_languages, echoed_languages
         )
         is not None
     ):
@@ -1178,6 +1181,13 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
         report.local_claims,
         report.target.current_title or "",
         report.library_languages,
+        _echoed_languages(report),
+    )
+
+
+def _echoed_languages(report: MetadataReport) -> tuple[str, ...]:
+    return echoed_target_values(
+        report.audio, report.target.fields, AudioInspectionField.LANGUAGE
     )
 
 
@@ -1186,6 +1196,7 @@ def stated_runtime_admission(
     local_claims: tuple[LocalClaim, ...],
     title: str,
     library_languages: tuple[str, ...],
+    echoed_languages: tuple[str, ...] = (),
 ) -> bool:
     """Whether any of these observations admitted a recording by stated runtime.
 
@@ -1200,7 +1211,7 @@ def stated_runtime_admission(
                 candidate
                 for candidate in observation.candidates
                 if recording_variant_conflict(
-                    candidate, local_claims, title, library_languages
+                    candidate, local_claims, title, library_languages, echoed_languages
                 )
                 is None
             ),
@@ -1276,6 +1287,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                     authors,
                     asin,
                     report.library_languages,
+                    _echoed_languages(report),
                 )
             ):
                 vetoed.add(asin)
@@ -1332,6 +1344,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 authors,
                 asin,
                 report.library_languages,
+                _echoed_languages(report),
             ):
                 support.append((observation.provider, candidate.identity, asin))
     eligible = tuple(
@@ -1526,6 +1539,7 @@ def _corroborated_distance(
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     library_languages: tuple[str, ...],
+    echoed_languages: tuple[str, ...] = (),
 ) -> int | None:
     """The tight-band distance of one product the rule admits, or ``None``."""
     local = local_claim_runtime_seconds(local_claims)
@@ -1537,7 +1551,9 @@ def _corroborated_distance(
         or claims is None
         or stated_runtime_agreement(local, candidate).outcome
         is not CorroborationOutcome.CORROBORATED
-        or recording_variant_conflict(candidate, local_claims, title, library_languages)
+        or recording_variant_conflict(
+            candidate, local_claims, title, library_languages, echoed_languages
+        )
         is not None
     ):
         return None
@@ -1592,6 +1608,7 @@ def corroborated_recording_candidate(
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderCandidate | None:
     """Choose the one product the corroborated admission rule admits (#1307).
 
@@ -1622,6 +1639,7 @@ def corroborated_recording_candidate(
                 local_claims,
                 corroboration,
                 library_languages,
+                echoed_languages,
             )
         )
         is not None
@@ -1652,6 +1670,7 @@ def band_first_candidate(
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderCandidate | None:
     """Admit the one tight product of a set of title-admitted ones (#1260, #1307).
 
@@ -1682,7 +1701,9 @@ def band_first_candidate(
         len(tight) != 1
         or sum(outcome is CorroborationOutcome.CONTRADICTED for outcome, _ in outcomes)
         != len(admitted) - 1
-        or recording_variant_conflict(tight[0], local_claims, title, library_languages)
+        or recording_variant_conflict(
+            tight[0], local_claims, title, library_languages, echoed_languages
+        )
         is not None
         or _narrator_signal(
             (*corroboration.narrators, *_recording_narrators(local_claims)), tight[0]
@@ -2366,6 +2387,9 @@ def asin_lane_admission_basis_replays(
             candidate, work[0], work[1], audiobook=True
         ).admitted
     )
+    echoed_languages = echoed_target_values(
+        audio, target.fields, AudioInspectionField.LANGUAGE
+    )
     if value == TARGET_ADMISSION_BASIS:
         corroboration = recording_corroboration(target.fields)
         return (
@@ -2379,6 +2403,7 @@ def asin_lane_admission_basis_replays(
                 () if work is None else work[1],
                 queried,
                 library_languages,
+                echoed_languages,
             )
             or (
                 carried_lane
@@ -2391,6 +2416,7 @@ def asin_lane_admission_basis_replays(
                     local_claims,
                     corroboration,
                     library_languages,
+                    echoed_languages,
                 )
                 is not None
             )

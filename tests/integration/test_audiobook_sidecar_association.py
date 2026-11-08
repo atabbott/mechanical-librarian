@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,7 +33,12 @@ from mechanical_librarian.domain.audio_sidecar_association import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
+    FieldState,
+    LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
@@ -55,24 +61,39 @@ def _mount(root: Path) -> MediaMountConfiguration:
     return MediaMountConfiguration("audiobooks", str(root / "media"), "/service", True)
 
 
-def _fields(asin: str | None) -> tuple[TargetField, ...]:
-    fields = activation._target_fields()
-    if asin is None:
-        return fields
+def _fields(
+    asin: str | None,
+    language: str | None = None,
+    narrators: tuple[str, ...] = (),
+) -> tuple[TargetField, ...]:
+    values: dict[TargetDestination, str | tuple[str, ...]] = {}
+    if asin is not None:
+        values[TargetDestination.ASIN] = asin
+    if language is not None:
+        values[TargetDestination.LANGUAGE] = language
+    if narrators:
+        values[TargetDestination.NARRATORS] = narrators
     return tuple(
-        TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, asin)
-        if field.destination is TargetDestination.ASIN
+        TargetField(
+            field.destination, TargetFieldState.VALUE, values[field.destination]
+        )
+        if field.destination in values
         else field
-        for field in fields
+        for field in activation._target_fields()
     )
 
 
-def _snapshot(own: tuple[str, ...], asin: str | None) -> TargetSnapshot:
+def _snapshot(
+    own: tuple[str, ...],
+    asin: str | None,
+    language: str | None = None,
+    narrators: tuple[str, ...] = (),
+) -> TargetSnapshot:
     return TargetSnapshot(
         "audiobook",
         _TITLE,
         (TargetFile(activation._FILE_IDENTITY, _TRACK, "m4b"),),
-        fields=_fields(asin),
+        fields=_fields(asin, language, narrators),
         own_file_names=own,
     )
 
@@ -94,10 +115,16 @@ def child(monkeypatch: pytest.MonkeyPatch) -> Iterator[GrammarChild]:
 
 
 def _publish(
-    root: Path, own: tuple[str, ...], *, asin: str | None = None
+    root: Path,
+    own: tuple[str, ...],
+    *,
+    asin: str | None = None,
+    language: str | None = None,
+    narrators: tuple[str, ...] = (),
+    enrichment: ProviderStatus = ProviderStatus.NO_MATCH,
 ) -> tuple[MetadataReport, list[tuple[str, ProviderQueryKind]], AudioInspectionResult]:
     """Inspect the real folder and publish the report through `_run`."""
-    snapshot = _snapshot(own, asin)
+    snapshot = _snapshot(own, asin, language, narrators)
     inspected = IsolatedAudioInspector().inspect(
         _mount(root),
         snapshot.files,
@@ -113,7 +140,7 @@ def _publish(
             "store", "itunes_search", calls, status=ProviderStatus.NO_MATCH
         ),
         "audnexus": activation._FakeAudiobookProvider(
-            "enrichment", "audnexus", calls, status=ProviderStatus.NO_MATCH
+            "enrichment", "audnexus", calls, status=enrichment
         ),
         "audiosilo": activation._FakeAudiobookProvider(
             "silo", "audiosilo", calls, status=ProviderStatus.NO_MATCH
@@ -299,3 +326,355 @@ def test_a_foreign_file_added_to_the_folder_makes_the_report_stale(
     assert current()
     (tmp_path / "media" / _FOLDER / "other.flac").write_bytes(b"another item")
     assert not current()
+
+
+# Counting with the target (S13, T16a to T16c and T16g, and the refusal
+# readers of review B1).  The target here is the activation suite's fake
+# reader; an `.opf` that repeats its record is the echo.
+
+_NARRATOR = "Ilsa Brandt"
+_OTHER_NARRATOR = "Tamsin Vale"
+
+
+def _opf(*elements: str) -> str:
+    return (
+        "<package><metadata>"
+        f"<dc:title>{_TITLE}</dc:title><dc:creator>{_AUTHOR}</dc:creator>"
+        + "".join(elements)
+        + "</metadata></package>"
+    )
+
+
+def _asin_meta(asin: str) -> str:
+    return f'<meta name="calibre:asin" content="{asin}"/>'
+
+
+def _narrator_element(name: str) -> str:
+    return f'<dc:contributor opf:role="nrt">{name}</dc:contributor>'
+
+
+def _echoed(report: MetadataReport) -> list[list[str]]:
+    assert report.audio is not None
+    return [[field.value for field in entry.echoed] for entry in report.audio.sidecars]
+
+
+def _in(root: Path, name: str) -> Path:
+    folder = root / name
+    folder.mkdir(mode=0o700)
+    return folder
+
+
+def test_an_echoed_opf_asin_opens_no_lane_and_the_asserted_one_still_feeds(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """T16a: lanes and calls are the item's without the sidecar."""
+    echo_root = _in(tmp_path, "echo")
+    own = _library(echo_root, {"book.opf": _opf(_asin_meta(_SIDECAR_ASIN))})
+    echo, echo_calls, _ = _publish(echo_root, own, asin=_SIDECAR_ASIN)
+    bare_root = _in(tmp_path, "bare")
+    bare, bare_calls, _ = _publish(
+        bare_root, _library(bare_root, {}), asin=_SIDECAR_ASIN
+    )
+
+    assert _echoed(echo) == [["asin"]]
+    assert _claims(echo, "sidecar") == []
+    asserted = {
+        claim.reference
+        for claim in echo.local_claims
+        if claim.kind is ClaimKind.ASIN and claim.basis == "target_metadata"
+    }
+    assert asserted
+    # No phase-one lane: the plan the providers were first handed is the
+    # bare item's, and the only ASIN any lane asks is the asserted one.
+    assert echo_calls == bare_calls
+    assert _asin_lane_references(echo) == _asin_lane_references(bare)
+    assert _asin_lane_references(echo) <= asserted
+    assert ("audible_catalog", ProviderQueryKind.ASIN) in echo_calls
+
+
+def _restated_candidate(
+    *, title: str | None = None, language: str | None = None
+) -> Callable[..., ProviderCandidate]:
+    """The activation product, under another title or stating a language."""
+
+    def build(
+        provider: str, local_claims: tuple[LocalClaim, ...], *rest: str
+    ) -> ProviderCandidate:
+        original = _ACTIVATION_CANDIDATE(provider, local_claims, *rest)
+        stated = [
+            (
+                claim.kind,
+                title
+                if title is not None and claim.kind is ClaimKind.TITLE
+                else claim.value,
+                claim.scope,
+                claim.role,
+            )
+            for claim in original.claims
+        ]
+        if language is not None:
+            stated.append((ClaimKind.LANGUAGE, language, ClaimScope.EDITION, None))
+        claims = tuple(
+            ProviderClaim.create(
+                provider=provider,
+                candidate=original.identity,
+                kind=kind,
+                value=value,
+                state=FieldState.VALID,
+                scope=scope,
+                applicability="not_applicable",
+                role=role,
+                raw_order=order,
+            )
+            for order, (kind, value, scope, role) in enumerate(stated)
+        )
+        return replace(original, claims=claims)
+
+    return build
+
+
+_ACTIVATION_CANDIDATE = activation._enrichment_candidate
+
+
+def test_an_echoed_opf_asin_makes_no_candidate_represent_the_work(
+    tmp_path: Path, child: GrammarChild, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T16b: through the echo, the product does not represent the work."""
+    from mechanical_librarian.domain.proposal_set import (
+        provider_candidate_represents_target_work,
+    )
+
+    # Its title admits no work, so only an independent local ASIN can make
+    # the product represent the target.
+    monkeypatch.setattr(
+        activation,
+        "_enrichment_candidate",
+        _restated_candidate(title="An Unrelated Synthetic Work"),
+    )
+
+    def represented(report: MetadataReport) -> list[bool]:
+        return [
+            provider_candidate_represents_target_work(report, provider, candidate)
+            for provider in report.providers
+            for candidate in provider.candidates
+        ]
+
+    echo_root = _in(tmp_path, "echo")
+    own = _library(echo_root, {"book.opf": _opf(_asin_meta(_SIDECAR_ASIN))})
+    echo, _, _ = _publish(
+        echo_root, own, asin=_SIDECAR_ASIN, enrichment=ProviderStatus.CANDIDATES
+    )
+    read_root = _in(tmp_path, "read")
+    own = _library(read_root, {"book.opf": _opf(_asin_meta(_SIDECAR_ASIN))})
+    read, _, _ = _publish(read_root, own, enrichment=ProviderStatus.CANDIDATES)
+
+    assert _echoed(echo) == [["asin"]]
+    assert represented(echo) == [False]
+    # The control: the same document, with no record for it to repeat, is
+    # the file's own ASIN, and that alone makes the product represent it.
+    assert ("asin", _SIDECAR_ASIN) in _claims(read, "sidecar")
+    assert represented(read) == [True]
+
+
+def test_an_echoed_opf_asin_establishes_no_manifestation_binding(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """T16c: `_manifestation_binding` is not "established" through the echo."""
+    from mechanical_librarian.domain.reviewer_decision_summary import (
+        _known_correlations,
+        _manifestation_binding,
+    )
+
+    def binding(report: MetadataReport) -> str:
+        local, _ = _known_correlations(report)
+        references = [
+            claim.reference
+            for claim in report.local_claims
+            if claim.kind is ClaimKind.ASIN
+        ]
+        assert references
+        return _manifestation_binding(
+            report,
+            {
+                "scope": "edition",
+                "evidence_references": references,
+                "correlations": [local],
+            },
+        )
+
+    echo_root = _in(tmp_path, "echo")
+    own = _library(echo_root, {"book.opf": _opf(_asin_meta(_SIDECAR_ASIN))})
+    echo, _, _ = _publish(echo_root, own, asin=_SIDECAR_ASIN)
+    read_root = _in(tmp_path, "read")
+    own = _library(read_root, {"book.opf": _opf(_asin_meta(_SIDECAR_ASIN))})
+    read, _, _ = _publish(read_root, own, asin=_RECORD_ASIN)
+
+    assert _echoed(echo) == [["asin"]]
+    assert binding(echo) == "unresolved"
+    assert _echoed(read) == [[]]
+    assert binding(read) == "established"
+
+
+@pytest.mark.parametrize(
+    ("stated", "conflict"),
+    [("English", None), ("French", "recording_language_conflict")],
+)
+def test_an_echoed_opf_language_still_refuses_a_product_in_another_language(
+    tmp_path: Path,
+    child: GrammarChild,
+    monkeypatch: pytest.MonkeyPatch,
+    stated: str,
+    conflict: str | None,
+) -> None:
+    """Review B1: an echo withholds belief, never the language refusal.
+
+    The report's readers and the discovery plan's lookups both hand the
+    recording-conflict check the target's language for the echoed field.
+    """
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_discovery_plan,
+    )
+    from mechanical_librarian.domain import proposal_set
+    from mechanical_librarian.domain.metadata_report import recording_variant_conflict
+
+    monkeypatch.setattr(
+        activation, "_enrichment_candidate", _restated_candidate(language=stated)
+    )
+    own = _library(tmp_path, {"book.opf": _opf("<dc:language>English</dc:language>")})
+    report, _, _ = _publish(
+        tmp_path,
+        own,
+        asin=_SIDECAR_ASIN,
+        language="English",
+        enrichment=ProviderStatus.CANDIDATES,
+    )
+
+    assert _echoed(report) == [["language"]]
+    assert not any(claim.kind is ClaimKind.LANGUAGE for claim in report.local_claims)
+    [candidate] = [
+        candidate for provider in report.providers for candidate in provider.candidates
+    ]
+    # Without the target's value the withheld claim leaves nothing to compare,
+    # and a product in another language would pass.
+    assert (
+        recording_variant_conflict(
+            candidate, report.local_claims, _TITLE, report.library_languages
+        )
+        is None
+    )
+    echoed = proposal_set._echoed_languages(report)
+    assert echoed == ("English",)
+    plan = audiobook_discovery_plan(
+        _snapshot(own, _SIDECAR_ASIN, "English"),
+        report.local_claims,
+        audio=report.audio,
+    )
+    assert plan.echoed_languages == echoed
+    assert (
+        recording_variant_conflict(
+            candidate, report.local_claims, _TITLE, report.library_languages, echoed
+        )
+        == conflict
+    )
+
+
+def _narrated(root: Path, name: str, narrator: str | None) -> MetadataReport:
+    """Publish the item, its target crediting `_NARRATOR`, with one `.opf`."""
+    folder = _in(root, name)
+    documents = (
+        {} if narrator is None else {"book.opf": _opf(_narrator_element(narrator))}
+    )
+    report, _, _ = _publish(folder, _library(folder, documents), narrators=(_NARRATOR,))
+    return report
+
+
+def test_an_echoed_opf_narrator_still_guards_a_disjoint_replacement(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """T16g, as amended by review B1: the `shadow_outcome` guard only refuses.
+
+    With only an echoing `.opf` narrator, a replacement that shares no one
+    with the target's narrators still goes to the owner, as it did while the
+    echo was a claim. With no sidecar it does not; with an `.opf` narrator
+    that differs from the target's, the guard reads that narrator.
+    """
+    from mechanical_librarian.domain.shadow_outcome import (
+        _NARRATORS_REPLACE_IDENTITY,
+        _withdrawn_audiobook_identity,
+    )
+
+    def withdrawn(report: MetadataReport, desired: list[str]) -> bool:
+        return _withdrawn_audiobook_identity(
+            _NARRATORS_REPLACE_IDENTITY,
+            None,
+            [_NARRATOR],
+            desired,
+            report,
+            None,  # type: ignore[arg-type]  # read only by the title guard
+            series_preserved=False,
+        )
+
+    echo = _narrated(tmp_path, "echo", _NARRATOR)
+    bare = _narrated(tmp_path, "bare", None)
+    other = _narrated(tmp_path, "other", "Rowan Pell")
+
+    assert _echoed(echo) == [["contributor"]]
+    assert _claims(echo, "sidecar") == []
+    assert withdrawn(echo, [_OTHER_NARRATOR])
+    assert not withdrawn(echo, [_NARRATOR])
+    assert not withdrawn(bare, [_OTHER_NARRATOR])
+    assert _echoed(other) == [[]]
+    assert withdrawn(other, [_OTHER_NARRATOR])
+    assert not withdrawn(other, ["Rowan Pell"])
+
+
+def test_an_echoed_opf_narrator_no_longer_settles_a_single_source_cast(
+    tmp_path: Path, child: GrammarChild, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review B1: `_narrator_corroboration_guard` tightens, and says so.
+
+    The guard's other routes are held shut, so only the file's own narrator
+    mention can settle a cast one source stated. An echo is not that mention:
+    the cast is held for the owner, as for an item with no sidecar, while an
+    `.opf` narrator that is not the target's still settles it.
+    """
+    from mechanical_librarian.domain import proposal_set
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalAlternative,
+        ProposalAssessment,
+        ProposalOutcome,
+        ProposalResult,
+        ProposalScope,
+        ProposalValue,
+        ProposalValueKind,
+    )
+
+    monkeypatch.setattr(proposal_set, "admitted_audiobook_identity", lambda _r: True)
+    monkeypatch.setattr(
+        proposal_set, "narrator_candidate_set_agrees", lambda *_a, **_k: False
+    )
+    shape = (
+        ProposalValue(ProposalValueKind.LIST, (_OTHER_NARRATOR,)),
+        ProposalAssessment.REPLACES_TARGET,
+        ("provider_" + "b" * 64,),
+        ("correlation_" + "c" * 64,),
+        ProposalScope.EDITION,
+    )
+    alternative = ProposalAlternative(
+        proposal_set._alternative_id(*shape, None, None), *shape
+    )
+    single = ProposalResult(
+        TargetDestination.NARRATORS,
+        ProposalOutcome.PROPOSE_CHANGE,
+        (alternative,),
+        alternative.alternative_id,
+        ("unique_typed_candidate",),
+    )
+
+    def held(report: MetadataReport) -> bool:
+        guarded = proposal_set._narrator_corroboration_guard(report, single)
+        return guarded.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+
+    assert held(_narrated(tmp_path, "echo", _NARRATOR))
+    assert held(_narrated(tmp_path, "bare", None))
+    assert not held(_narrated(tmp_path, "other", "Rowan Pell"))

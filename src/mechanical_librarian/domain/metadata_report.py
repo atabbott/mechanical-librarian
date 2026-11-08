@@ -3422,11 +3422,47 @@ class ProviderObservation:
         }
 
 
+def echoed_target_values(
+    audio: AudioFacts | None,
+    fields: tuple[TargetField, ...],
+    field: AudioInspectionField,
+) -> tuple[str, ...]:
+    """The target's values for a field an `.opf` or `.nfo` echoed (#1481).
+
+    Echo withholding withholds belief, never a refusal. A reader that can
+    only refuse -- the recording-conflict language check, the narrator guard
+    on a qualified replacement -- reads these beside the local claims, so an
+    echoed value refuses exactly as the sidecar's own claim did before it
+    was withheld. An echo equals the target's value by definition, and these
+    are never belief: no reader that counts support reads them.
+    """
+    if audio is None or not any(field in entry.echoed for entry in audio.sidecars):
+        return ()
+    destination = {
+        AudioInspectionField.LANGUAGE: TargetDestination.LANGUAGE,
+        AudioInspectionField.CONTRIBUTOR: TargetDestination.NARRATORS,
+    }.get(field)
+    value = next(
+        (
+            item.value
+            for item in fields
+            if item.destination is destination and item.state is TargetFieldState.VALUE
+        ),
+        None,
+    )
+    if type(value) is str:
+        return (value,) if value else ()
+    if type(value) is tuple:
+        return tuple(item for item in value if type(item) is str and item)
+    return ()
+
+
 def recording_variant_conflict(
     candidate: ProviderCandidate,
     local_claims: tuple[LocalClaim, ...],
     local_title: str,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> str | None:
     """Compare explicit recording facts without filling unknown variant facts.
 
@@ -3435,6 +3471,10 @@ def recording_variant_conflict(
     one of them is refused, with its own reason so a reader can tell it from
     a claim conflict. One declared language is therefore exactly a language
     claim, and several accept any of them without choosing one.
+
+    `echoed_languages` is the target's language when an `.opf` or `.nfo`
+    stated it and the claim was withheld as an echo (#1481). It refuses as
+    the withheld claim did; see `echoed_target_values`.
     """
     from mechanical_librarian.domain.field_outcomes import (
         language_identity,
@@ -3461,7 +3501,7 @@ def recording_variant_conflict(
         if claim.kind is ClaimKind.LANGUAGE
         and claim.state is FieldState.VALID
         and known(claim.canonical)
-    ]
+    ] + [value for value in echoed_languages if known(value)]
     if any(
         not language_outcomes_compatible(left, right)
         for left in local_languages
@@ -4513,6 +4553,7 @@ def provider_candidate_set_work_identity_admission(
     corroboration: RecordingCorroboration | None = None,
     leading_number: bool = False,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set.
 
@@ -4540,7 +4581,8 @@ def provider_candidate_set_work_identity_admission(
     dispatches the `leading_number_stripped` rung (#1307).
 
     `library_languages` reach only the band's recording-conflict check, so they
-    never change a set admitted without the band (#1315).
+    never change a set admitted without the band (#1315). `echoed_languages`
+    reach the same check alone (#1481).
     """
 
     def admit(
@@ -4588,7 +4630,11 @@ def provider_candidate_set_work_identity_admission(
                 ).outcome
                 is CorroborationOutcome.CORROBORATED
                 and recording_variant_conflict(
-                    candidate, band_claims, local_title, library_languages
+                    candidate,
+                    band_claims,
+                    local_title,
+                    library_languages,
+                    echoed_languages,
                 )
                 is None
             )
@@ -4611,6 +4657,7 @@ def provider_candidate_set_work_identity_admission(
         corroboration,
         tight,
         library_languages,
+        echoed_languages,
     )
 
 
@@ -4623,6 +4670,7 @@ def _corroborated_set_admission(
     corroboration: RecordingCorroboration,
     tight: Callable[[ProviderCandidate], bool],
     library_languages: tuple[str, ...],
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderWorkIdentitySetAdmission:
     """Try the band-first set rule, then the corroborated rule (#1307)."""
     from mechanical_librarian.domain.audiobook_corroboration import (
@@ -4655,7 +4703,12 @@ def _corroborated_set_admission(
     )
     if admitted:
         chosen = band_first_candidate(
-            admitted, local_title, band_claims, corroboration, library_languages
+            admitted,
+            local_title,
+            band_claims,
+            corroboration,
+            library_languages,
+            echoed_languages,
         )
         if chosen is None:
             return refused
@@ -4670,6 +4723,7 @@ def _corroborated_set_admission(
             band_claims=band_claims,
             leading_number=True,
             library_languages=library_languages,
+            echoed_languages=echoed_languages,
         )
     chosen = corroborated_recording_candidate(
         eligible,
@@ -4678,6 +4732,7 @@ def _corroborated_set_admission(
         band_claims,
         corroboration,
         library_languages,
+        echoed_languages,
     )
     if chosen is None:
         return refused
@@ -5338,6 +5393,9 @@ class MetadataReport:
                     corroboration=corroboration,
                     leading_number=corroboration is not None,
                     library_languages=self.library_languages,
+                    echoed_languages=echoed_target_values(
+                        self.audio, self.target.fields, AudioInspectionField.LANGUAGE
+                    ),
                 )
                 if (
                     not set_admission.admitted
@@ -5384,6 +5442,9 @@ class MetadataReport:
                     and payload is not None
                     and payload.title_basis is None,
                     library_languages=self.library_languages,
+                    echoed_languages=echoed_target_values(
+                        self.audio, self.target.fields, AudioInspectionField.LANGUAGE
+                    ),
                 )
                 if (
                     not set_admission.admitted

@@ -35,8 +35,11 @@ _SIDECAR_KINDS = frozenset(
 # and an echoed or refused one no longer exists.  `beside_target`: local values
 # compared with the target's, which counts once through its own claims.
 # `recording_signal`: corroboration whose input already carries the target's
-# values, so the union is unchanged.  `narrator_guard`: the one behaviour
-# change, T16g.  `per_source`: per-source states, where a withheld field reads
+# values, so the union is unchanged.  `refusal`: a reader that can only refuse,
+# which reads the target's value for any field a manifest entry echoed, so an
+# echo withholds belief and never a refusal (review B1, T16g).  `tightens`:
+# the narrator corroboration guard, which an echo no longer satisfies, so a
+# single-source cast is held for the owner.  `per_source`: per-source states, where a withheld field reads
 # absent.  `embedded_only`: binds from `embedded_tag` alone (S15).
 # `invariant`: the S13 check itself.  `display`: shows evidence, decides
 # nothing.
@@ -45,7 +48,7 @@ _READERS: dict[str, str] = {
     "domain/audiobook_corroboration.py::_recording_narrators": "recording_signal",
     "domain/audiobook_corroboration.py::_local_series": "recording_signal",
     "domain/audiobook_corroboration.py::carried_asin_claim": "asin_by_basis",
-    "domain/metadata_report.py::recording_variant_conflict": "beside_target",
+    "domain/metadata_report.py::recording_variant_conflict": "refusal",
     "domain/metadata_report.py::local_identifier_asins": "asin_by_basis",
     "domain/metadata_report.py::_validate_sidecar_claims": "invariant",
     "domain/metadata_report.py::derive_field_results": "per_source",
@@ -53,7 +56,7 @@ _READERS: dict[str, str] = {
     "domain/metadata_report.py::source_state": "per_source",
     "domain/proposal_set.py::_unoffered_references": "beside_target",
     "domain/proposal_set.py::_observations": "beside_target",
-    "domain/proposal_set.py::_narrator_corroboration_guard": "narrator_guard",
+    "domain/proposal_set.py::_narrator_corroboration_guard": "tightens",
     "domain/proposal_set.py::_list_observations": "beside_target",
     "domain/proposal_set.py::provider_candidate_represents_target_work": (
         "asin_by_basis"
@@ -62,7 +65,7 @@ _READERS: dict[str, str] = {
     "domain/provider_value_language.py::established_work_languages": ("beside_target"),
     "domain/reviewer_decision_summary.py::creator_role_evidence": "display",
     "domain/rich_metadata_preview.py::_item_languages": "display",
-    "domain/shadow_outcome.py::_withdrawn_audiobook_identity": "narrator_guard",
+    "domain/shadow_outcome.py::_withdrawn_audiobook_identity": "refusal",
     "application/metadata_report.py::audiobook_discovery_plan": "asin_by_basis",
     "application/metadata_report.py::_asserted_asin_references": "asin_by_basis",
     "application/metadata_report.py::audiobook_asin_feed_plan": "asin_by_basis",
@@ -73,7 +76,8 @@ _CLASSES = frozenset(
         "asin_by_basis",
         "beside_target",
         "recording_signal",
-        "narrator_guard",
+        "refusal",
+        "tightens",
         "per_source",
         "embedded_only",
         "invariant",
@@ -125,6 +129,26 @@ def test_every_reader_of_a_sidecar_carried_kind_is_classified() -> None:
     assert not unlisted, (
         f"classify each new reader against the S13 table (#1481): {unlisted}"
     )
+
+
+def _function(reader: str) -> ast.FunctionDef:
+    relative, name = reader.split("::")
+    path = PACKAGE_ROOT / relative
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+
+
+def test_every_refusal_reader_reads_the_targets_value_for_an_echo() -> None:
+    """Review B1: a refuse-only reader is handed what an echo withheld."""
+    refusals = sorted(key for key, value in _READERS.items() if value == "refusal")
+    assert refusals
+    for reader in refusals:
+        names = _names(_function(reader))
+        assert names & {"echoed_languages", "echoed_target_values"}, reader
 
 
 def test_the_inventory_names_no_reader_that_is_gone() -> None:

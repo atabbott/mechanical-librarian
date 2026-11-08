@@ -38,7 +38,10 @@ from mechanical_librarian.domain.audio_health import (
     hours_minutes,
     media_unreadable_observation,
 )
-from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
+    AudioInspectionField,
+)
 from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
 )
@@ -79,6 +82,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
     TargetField,
+    echoed_target_values,
     recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -2967,6 +2971,11 @@ def _review_unselectable_evidence(
                             report.local_claims,
                             report.target.current_title or "",
                             report.library_languages,
+                            echoed_target_values(
+                                report.audio,
+                                report.target.fields,
+                                AudioInspectionField.LANGUAGE,
+                            ),
                         )
                         is not None
                         or candidate_recording_runtime_veto(
@@ -2995,6 +3004,11 @@ def _review_unselectable_evidence(
                         report.local_claims,
                         report.target.current_title or "",
                         report.library_languages,
+                        echoed_target_values(
+                            report.audio,
+                            report.target.fields,
+                            AudioInspectionField.LANGUAGE,
+                        ),
                     )
                     if narrator
                     else None

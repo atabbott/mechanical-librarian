@@ -36,6 +36,7 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    AudioInspectionField,
     AudioObservation,
     AudioObservationKind,
     AudioSidecarDigest,
@@ -148,6 +149,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     derive_field_results,
     discovery_lane_identity,
+    echoed_target_values,
     edition_marketplace_evidence,
     identifier_only_candidate,
     isbn_family,
@@ -350,6 +352,9 @@ class MetadataLookup:
     # The library's declared languages, which an audiobook's recording-conflict
     # check holds a product to when the item states no language (#1315).
     library_languages: tuple[str, ...] = ()
+    # The target's language where an `.opf` or `.nfo` echoed it: withheld as
+    # belief, it still refuses a product in another language (#1481).
+    echoed_languages: tuple[str, ...] = ()
     # An audiobook's companion EPUB (#1468): its ISBN may be asked and its
     # title may be an alternative, but its claims are never compared with a
     # provider's, so they are never `local_claims`.
@@ -394,6 +399,10 @@ class MetadataLookup:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
+            or type(self.echoed_languages) is not tuple
+            or any(
+                type(value) is not str or not value for value in self.echoed_languages
+            )
             or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -538,6 +547,7 @@ class MetadataDiscoveryPlan:
     recording_corroboration: RecordingCorroboration | None = None
     corroborated_rule: bool = True
     library_languages: tuple[str, ...] = ()
+    echoed_languages: tuple[str, ...] = ()
     # See `MetadataLookup`: the companion EPUB and the ASINs its book links.
     companion: CompanionEbook | None = None
     companion_linked_asins: tuple[str, ...] = ()
@@ -564,6 +574,10 @@ class MetadataDiscoveryPlan:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
+            or type(self.echoed_languages) is not tuple
+            or any(
+                type(value) is not str or not value for value in self.echoed_languages
+            )
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
@@ -1171,6 +1185,11 @@ def audiobook_discovery_plan(
             None if audio is None else recording_corroboration(target.fields)
         ),
         library_languages=library_languages,
+        # The target's language where a sidecar echoed it, for the
+        # recording-conflict refusal alone (#1481).
+        echoed_languages=echoed_target_values(
+            audio, target.fields, AudioInspectionField.LANGUAGE
+        ),
         companion=None if audio is None else companion,
     )
 
@@ -1474,6 +1493,7 @@ def audiobook_asin_feed_plan(
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
+        echoed_languages=plan.echoed_languages,
         companion=plan.companion,
         companion_linked_asins=companion_linked_asins(
             plan.local_claims, plan.audio, observations, plan.companion
@@ -2306,6 +2326,7 @@ def _audiosilo_not_needed(
             plan.local_claims,
             title,
             plan.library_languages,
+            plan.echoed_languages,
         )
     )
 
@@ -2551,6 +2572,7 @@ def _identifier_lane_candidates(
                     lookup.local_claims,
                     lookup.work_title or "",
                     lookup.library_languages,
+                    lookup.echoed_languages,
                 )
                 is None,
                 lookup.local_claims,
@@ -2643,6 +2665,7 @@ def _identifier_lane_candidates(
                 lookup.local_claims,
                 lookup.recording_corroboration,
                 lookup.library_languages,
+                lookup.echoed_languages,
             )
             is not None
         }
@@ -2670,7 +2693,11 @@ def _identifier_lane_candidates(
         c
         for c in observation.candidates
         if recording_variant_conflict(
-            c, lookup.local_claims, lookup.work_title or "", lookup.library_languages
+            c,
+            lookup.local_claims,
+            lookup.work_title or "",
+            lookup.library_languages,
+            lookup.echoed_languages,
         )
         is None
         and (c.identity in work_admitted or c.identity in alternative_admitted)
@@ -2700,6 +2727,7 @@ def _identifier_lane_candidates(
                 lookup.work_authors,
                 lookup.requested_asin,
                 lookup.library_languages,
+                lookup.echoed_languages,
             )
         )
         if chapter:
@@ -2945,6 +2973,7 @@ def qualify_provider_observation(
         leading_number=asserted_band
         and observation.authority == CORROBORATED_RULE_AUTHORITY,
         library_languages=lookup.library_languages,
+        echoed_languages=lookup.echoed_languages,
     )
     if not set_admission.admitted:
         return ProviderObservation(
@@ -2993,6 +3022,7 @@ def qualify_provider_observation(
                     lookup.local_claims,
                     lookup.work_title or "",
                     lookup.library_languages,
+                    lookup.echoed_languages,
                 )
                 is None
             ),

@@ -12,6 +12,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Self, cast
 
+from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
     candidate_edition_asin,
@@ -89,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     creator_comparison_key,
     creator_sequence_methods,
     discovery_lane_identity,
+    echoed_target_values,
     isbn_family,
     manifestation_publication_compatible,
     normalize_date_value,
@@ -3172,6 +3174,7 @@ def _plausible_narrator_candidates(
             report.local_claims,
             report.target.current_title or "",
             report.library_languages,
+            _echoed_languages(report),
         )
         is None
         and not candidate_recording_runtime_veto(
@@ -3222,6 +3225,13 @@ def narrator_candidate_set_agrees(
     )
 
 
+def _echoed_languages(report: MetadataReport) -> tuple[str, ...]:
+    """The target's language where a sidecar echoed it, for refusals (#1481)."""
+    return echoed_target_values(
+        report.audio, report.target.fields, AudioInspectionField.LANGUAGE
+    )
+
+
 def _narrator_corroboration_guard(
     report: MetadataReport, result: ProposalResult
 ) -> ProposalResult:
@@ -3233,6 +3243,11 @@ def _narrator_corroboration_guard(
     and can accept it; the proposal only stops calling it settled (#966).
     A cast from an audio edition, all a recording with no admitted identity
     is offered, is always one catalogue's word, so it is never settled (#1642).
+
+    An `.opf` or `.nfo` narrator that repeats Audiobookshelf's record is
+    withheld as an echo and is not the file's mention, so it no longer
+    settles such a cast: this guard tightens, holding it for the owner as for
+    an item with no sidecar (#1481).
     """
     if report.audio is not None and not admitted_audiobook_identity(report):
         return ProposalResult(
@@ -3611,6 +3626,7 @@ def _list_observations(
                         report.local_claims,
                         report.target.current_title or "",
                         report.library_languages,
+                        _echoed_languages(report),
                     )
                     is not None
                     or candidate_recording_runtime_veto(
@@ -3981,6 +3997,7 @@ def _target_backed_lookup_contains(
                     band_claims=_asserted_lane_band_claims(report, provider, lane),
                     corroboration=_asserted_lane_corroboration(report, provider, lane),
                     library_languages=report.library_languages,
+                    echoed_languages=_echoed_languages(report),
                 )
                 and lane.identity
                 == discovery_lane_identity(
@@ -4022,6 +4039,7 @@ def _candidate_set_replays_work_qualification(
     band_claims: tuple[LocalClaim, ...] | None = None,
     corroboration: RecordingCorroboration | None = None,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> bool:
     """Replay one unambiguous WORK candidate set before granting authority."""
     candidates_by_identity = {value.identity: value for value in provider.candidates}
@@ -4043,6 +4061,7 @@ def _candidate_set_replays_work_qualification(
         corroboration=corroboration,
         leading_number=corroboration is not None,
         library_languages=library_languages,
+        echoed_languages=echoed_languages,
     )
     return (
         admission.admitted
@@ -4229,6 +4248,7 @@ def provider_candidate_represents_target_work(
                 ),
                 leading_number=corroboration is not None,
                 library_languages=report.library_languages,
+                echoed_languages=_echoed_languages(report),
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:
@@ -4261,6 +4281,7 @@ def provider_candidate_represents_target_recording(
             report.local_claims,
             report.target.current_title or "",
             report.library_languages,
+            _echoed_languages(report),
         )
         is None
         and not candidate_recording_runtime_veto(
