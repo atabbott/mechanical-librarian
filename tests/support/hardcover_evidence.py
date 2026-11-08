@@ -8,6 +8,7 @@ module's tests.
 
 from __future__ import annotations
 
+import json
 from typing import cast
 
 import httpx
@@ -122,6 +123,41 @@ def hardcover_envelope(
     }
 
 
+def books_envelope(books: list[dict[str, object]]) -> dict[str, object]:
+    """The answer to the books-first WORK search: books and tags, no editions."""
+    data = cast(dict[str, object], hardcover_envelope([], books)["data"])
+    return {
+        "data": {
+            "books": [
+                {
+                    **work,
+                    "canonical_id": book.get("canonical_id"),
+                    "compilation": book.get("compilation", False),
+                }
+                for work, book in zip(
+                    cast(list[dict[str, object]], data["books"]), books, strict=True
+                )
+            ],
+            "tags": data["tags"],
+        }
+    }
+
+
+def hardcover_answer(
+    request: httpx.Request,
+    rows: list[dict[str, object]],
+    books: list[dict[str, object]],
+) -> dict[str, object]:
+    """The envelope a request's own document returns.
+
+    The books-first WORK search returns books alone; every other document
+    returns the edition rows beside them.
+    """
+    if json.loads(request.content)["operationName"] == "BooksByTitleAuthor":
+        return books_envelope(books)
+    return hardcover_envelope(rows, books)
+
+
 def isbn_claim() -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.ISBN,
@@ -153,25 +189,23 @@ def observe_contributions(
     contributions: list[dict[str, object]],
     lookup: MetadataLookup | None = None,
 ) -> ProviderObservation:
-    payload = hardcover_envelope(
-        [
-            {
-                "id": 1,
-                "book_id": 1,
-                "isbn_10": None,
-                "isbn_13": "9780306406157",
-                "contributions": contributions,
-            }
-        ],
-        [
-            {
-                "id": 1,
-                "title": "Synthetic title",
-                "release_date": "2001-02-03",
-                "contributions": contributions,
-            }
-        ],
-    )
+    rows: list[dict[str, object]] = [
+        {
+            "id": 1,
+            "book_id": 1,
+            "isbn_10": None,
+            "isbn_13": "9780306406157",
+            "contributions": contributions,
+        }
+    ]
+    books: list[dict[str, object]] = [
+        {
+            "id": 1,
+            "title": "Synthetic title",
+            "release_date": "2001-02-03",
+            "contributions": contributions,
+        }
+    ]
     return (
         HardcoverMetadataProvider(
             "catalogue",
@@ -180,7 +214,7 @@ def observe_contributions(
                     lambda request: httpx.Response(
                         200,
                         headers={"content-type": "application/json"},
-                        json=payload,
+                        json=hardcover_answer(request, rows, books),
                     )
                 )
             ),
