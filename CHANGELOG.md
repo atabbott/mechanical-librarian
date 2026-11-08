@@ -158,7 +158,8 @@ brackets are GitHub issues.
   (#1765).
 - Description work saved while preparation is paused now starts as soon as
   preparation resumes. Before, it waited for the next library poll, and a
-  library whose last scan had failures was not polled at all (#1785).
+  library whose last scan had failures was not polled at all. Resuming also
+  retries that library's failed items (#1785).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
