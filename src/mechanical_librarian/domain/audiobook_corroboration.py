@@ -37,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_ISBN_WORK_BASIS,
     COMPANION_WORK_BASIS,
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     TARGET_ADMISSION_BASIS,
     AudioFacts,
     ClaimKind,
@@ -1969,11 +1970,16 @@ def _counted_editions(
 def _accepted_recordings(
     observations: tuple[ProviderObservation, ...],
 ) -> tuple[ProviderCandidate, ...]:
-    """Every product an audiobook authority put forward for this item."""
+    """Every product an audiobook authority put forward for this item.
+
+    A cover-only authority's listing is no recording (#1779): its missing
+    runtime would otherwise agree with any edition.
+    """
     return tuple(
         candidate
         for observation in observations
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and observation.authority not in COVER_ONLY_AUDIOBOOK_AUTHORITIES
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
         if candidate.identity != candidate.work_identity
