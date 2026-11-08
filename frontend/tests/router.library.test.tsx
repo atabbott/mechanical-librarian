@@ -8205,7 +8205,9 @@ describe('Library route', () => {
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
     expect(
-      await screen.findByText('The current comparison could not be loaded. Try again.'),
+      await screen.findByText(
+        'The current comparison could not be loaded. Choose Review current comparison to try again.',
+      ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
 

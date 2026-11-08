@@ -1016,7 +1016,10 @@ export default function LibraryPage({
         {!displayedIdentity || detail.isError ? <h2>{staleCoverReview.title}</h2> : null}
         <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
         {staleCoverReview.failed ? (
-          <p>The current comparison could not be loaded. Try again.</p>
+          <p>
+            The current comparison could not be loaded. Choose Review current comparison to try
+            again.
+          </p>
         ) : null}
         <button
           type="button"
