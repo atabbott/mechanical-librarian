@@ -8,29 +8,33 @@ import {
 } from '../queryWork'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
-import { MediaHealth } from '../components/MediaHealth'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ComponentPropsWithRef, SyntheticEvent } from 'react'
+import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import type { SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import { ApiError, BuildMismatchError, displayValue } from '../api/http'
 import type {
   DecisionCommand,
-  LibraryLens,
   LibrarySearch,
   MediaKind,
   LibraryView,
   LibraryWorkView,
-  ProviderOutcomeView,
-  WorkSummaryState,
 } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useAttentionRail } from '../attentionRail'
 import { focusFieldHeading, useRouteReadyFocus } from '../focus'
-import { destinationLabel, mediaKindLabels, sourceStatusLabels } from '../labels'
+import { destinationLabel, mediaKindLabels } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
@@ -82,7 +86,7 @@ import {
   VerifiedManifestationIsbnAutomaticStatement,
 } from './FieldDecisionOutcome'
 import { OwnerControls } from './FieldDecisionOwner'
-import { PreparationDetail, PreparationSummary } from './PreparationDetail'
+import { PreparationDetail } from './PreparationDetail'
 import {
   librarySearchIdentity,
   usePreparationChange,
@@ -90,10 +94,11 @@ import {
 } from '../libraryPreparation'
 import { WorkSources, WorkSummary } from './WorkSummary'
 import { AttentionRail } from './AttentionRail'
+import { LibraryWorks } from './LibraryWorks'
 import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { useAutomaticHandling } from '../automaticHandling'
 import { BookMark } from '../components/BookMark'
-import { authorLine, reportEvidenceUrl } from '../libraryWork'
+import { RESTART_SENTENCE, workCount } from '../libraryWork'
 import {
   choiceContext,
   combinedAutomaticTags,
@@ -112,33 +117,28 @@ const prefetchIntentDelay = 50
 // with the next bounded page read, but never treat a frame as selection
 // authority.
 const maxCoalescedSuccessorCandidates = 50
-const lensLabels = {
-  all: 'All',
-  needs_attention: 'Needs attention',
-  no_attention_needed: 'No attention needed',
-  not_matched: 'Not matched',
-  preparation_failed: 'Could not finish',
-} satisfies Record<LibraryLens, string>
-// The masthead's Library link is the current page; the active lens is the
-// current item within it, so it says `true` rather than a second `page` (#1530).
-const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
-  <a {...props} aria-current={props['aria-current'] ? 'true' : undefined} />
-))
 // The compact layout, where the selected work replaces the list.
+const compactQuery = '(max-width: 1024px)'
 const compactWidth = () =>
-  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
+  typeof window.matchMedia === 'function' && window.matchMedia(compactQuery).matches
+// Below this the open Attention rail is a drawer over the workspace or the
+// whole screen, never a column beside the works.
+const railCoversQuery = '(max-width: 1199px)'
+// Whether `query` matches now, following the viewport as it changes.
+const useMediaMatch = (query: string) =>
+  useSyncExternalStore(
+    (change) => {
+      if (typeof window.matchMedia !== 'function') return () => undefined
+      const media = window.matchMedia(query)
+      media.addEventListener('change', change)
+      return () => {
+        media.removeEventListener('change', change)
+      }
+    },
+    () => typeof window.matchMedia === 'function' && window.matchMedia(query).matches,
+  )
 const narrowWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
-const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
-// A search under a lens counts that lens against its whole-library total; the
-// lens link names it visually and the status names it to screen readers (#1425).
-const lensMatching = {
-  all: ['all', undefined],
-  needs_attention: ['attention', 'needing attention'],
-  no_attention_needed: ['clear', 'needing no attention'],
-  not_matched: ['notMatched', 'not matched'],
-  preparation_failed: ['failed', 'that could not finish'],
-} as const
 
 // A recording's settled fill stays choosable without asking for review (#1249).
 const optionalChoice = (field: ReviewField) =>
@@ -171,51 +171,9 @@ const contextKind = (field: ReviewField) =>
       : ('unavailable' as const)
     : ('unchanged' as const)
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
-  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting for a recovery' : 'unavailable'}`
+  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
   outcome === 'owner_entered' || outcome === 'withdraw'
-// Match the persisted Library ordering; recovery eligibility is a separate contract.
-const limitingProviderStatuses = new Set([
-  'authentication',
-  'authorization',
-  'rate_limited',
-  'unavailable',
-  'incomplete',
-  'malformed',
-  'oversized',
-  'candidate_limit_exceeded',
-  'query_limit_exceeded',
-])
-// Why no provider matched a work, in the row's status slot (#1407).
-const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
-  not_matched_refused: 'Found, but not this work',
-  not_matched_unavailable_scheduled: 'Providers unavailable; will be checked again',
-  not_matched_unavailable: 'Providers unavailable',
-  not_matched_adapter_fault: 'Failed in Mechanical Librarian',
-  not_matched_no_match: 'No provider matched',
-}
-// A failed preparation's group shares its lens's name, so a "needs attention"
-// heading never sits outside the Needs attention lens (#1413).
-const providerGroup = (work: LibraryWorkView) =>
-  work.preparation
-    ? 'Could not finish'
-    : work.attention === 'not_matched'
-      ? 'Not matched'
-      : work.attentionCount === 0
-        ? 'No attention needed'
-        : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
-          ? 'Provider evidence limited'
-          : 'Provider evidence complete'
-const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
-  const counts = new Map<string, number>()
-  for (const outcome of outcomes) {
-    const label = sourceStatusLabels[outcome.status]
-    counts.set(label, (counts.get(label) ?? 0) + 1)
-  }
-  return [...counts]
-    .map(([label, count]) => (count > 1 ? `${String(count)} sources: ${label}` : label))
-    .join(' · ')
-}
 
 export default function LibraryPage({
   data,
@@ -238,6 +196,15 @@ export default function LibraryPage({
   onRailRetaining?: (retaining: boolean) => void
 }) {
   const works = useMemo(() => data?.works ?? [], [data?.works])
+  // The restart sentence is said once a screen: on the Works failure when that
+  // shows, otherwise on whichever other read failed (#1765). The compact layout
+  // hides the list behind a selected work, and below 1200px the Attention rail
+  // covers the workspace, so each says it there.
+  const worksSaysRestart = !data && failed && !(error instanceof BuildMismatchError)
+  const compactLayout = useMediaMatch(compactQuery)
+  const railCoversWorks = useMediaMatch(railCoversQuery)
+  const restartSentence = worksSaysRestart && !compactLayout ? '' : ` ${RESTART_SENTENCE}`
+  const railRestartSentence = worksSaysRestart && !railCoversWorks ? '' : ` ${RESTART_SENTENCE}`
   // Retained rows stay visible, but selection resolves only against the URL's own result.
   const currentWorks = retained ? noWorks : works
   const reading = pending || retained
@@ -254,12 +221,9 @@ export default function LibraryPage({
   const { http, updates, queryClient } = useReviewContext()
   // Global figures read the library summary, which carries no q (#1284).
   const summary = useQuery(librarySummaryQuery(http))
-  const [lensCount, lensWords] = lensMatching[search.lens]
-  const lensTotal = summary.data?.counts[lensCount]
   const summaryAttention = summary.data?.counts.attention
-  const summaryNotMatched = summary.data?.counts.notMatched
-  const summaryFailed = summary.data?.counts.failed
   const preparationState = usePreparation()
+  const noLibraryConnected = preparationState.data?.libraries.length === 0
   const presentation =
     preparationState.data?.presentation?.state === 'dismissed'
       ? null
@@ -273,61 +237,6 @@ export default function LibraryPage({
   const searchGeneration = useRef(0)
   const observedSearchIdentity = useRef(librarySearchIdentity(search))
   const expectedSearchIdentity = useRef<string | null>(null)
-  const searchInput = useRef<HTMLInputElement>(null)
-  const lensRow = useRef<HTMLElement>(null)
-  // The lenses scroll sideways in one row. An edge with more lenses beyond it
-  // fades, so a row that happens to end between two lenses still shows it
-  // continues. The current lens is brought into the row's view, clear of the
-  // fade, without moving the page: on load, on a lens change, and when the row
-  // or its lenses change size, as with enlarged text.
-  useLayoutEffect(() => {
-    const row = lensRow.current
-    if (!row) return
-    const mark = () => {
-      const start = row.scrollLeft > 1
-      const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1
-      if (start || end) row.dataset.more = start && end ? 'both' : start ? 'start' : 'end'
-      else delete row.dataset.more
-    }
-    // The first and last lenses scroll the row to its end, so no fade covers
-    // them; any other lens is brought clear of both fades.
-    const reveal = (lens: Element | null) => {
-      if (lens instanceof HTMLElement) {
-        let left = row.scrollLeft
-        if (lens === row.firstElementChild) left = 0
-        else if (lens === row.lastElementChild) left = row.scrollWidth - row.clientWidth
-        else {
-          const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
-          const rowBox = row.getBoundingClientRect()
-          const box = lens.getBoundingClientRect()
-          // A lens too wide to clear both fades is centred, or starts at the
-          // row's edge when even the row is narrower, so its label's start shows.
-          if (box.width > rowBox.width - 2 * fade)
-            left +=
-              box.width > rowBox.width
-                ? box.left - rowBox.left
-                : box.left - rowBox.left - (rowBox.width - box.width) / 2
-          else if (box.left < rowBox.left + fade) left -= rowBox.left + fade - box.left
-          else if (box.right > rowBox.right - fade) left += box.right - (rowBox.right - fade)
-        }
-        if (Math.abs(left - row.scrollLeft) > 0.5) row.scrollLeft = left
-      }
-      mark()
-    }
-    const revealCurrent = () => reveal(row.querySelector('[aria-current]'))
-    // Focus leaves a partly shown lens where it is, so Tab reveals it too.
-    const revealFocused = (event: FocusEvent) => reveal(event.target as Element | null)
-    revealCurrent()
-    row.addEventListener('scroll', mark, { passive: true })
-    row.addEventListener('focusin', revealFocused)
-    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(revealCurrent) : null
-    for (const node of [row, ...row.children]) resized?.observe(node)
-    return () => {
-      row.removeEventListener('scroll', mark)
-      row.removeEventListener('focusin', revealFocused)
-      resized?.disconnect()
-    }
-  }, [search.lens])
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -1120,7 +1029,7 @@ export default function LibraryPage({
         {!displayedIdentity || detail.isError ? <h2>{staleCoverReview.title}</h2> : null}
         <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
         {staleCoverReview.failed ? (
-          <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>
+          <p>The current comparison could not be loaded. Try again.</p>
         ) : null}
         <button
           type="button"
@@ -1766,7 +1675,7 @@ export default function LibraryPage({
             current: false,
             disabled: true,
             expanded: false,
-            label: 'Advised · Authored content · Recorded choice',
+            label: 'Description adviser · Earlier choice',
             longDescription: isLongDescription(
               'description',
               selectedAdvice.selected_advice.candidate.output.description,
@@ -1798,7 +1707,7 @@ export default function LibraryPage({
               selectedAdvice.state === 'requested' ||
               selectedAdvice.state === 'running',
             expanded: false,
-            label: 'Advised · Authored content',
+            label: 'Description adviser',
             longDescription: isLongDescription('description', adviceCandidate.output.description),
             onChoose: () => {
               if (!selectedAdvice.current || !selected.editable) return
@@ -1869,328 +1778,40 @@ export default function LibraryPage({
             Back to works
           </button>
         ) : null}
-        <section className="library-works" aria-labelledby="library-works-title">
-          {presentation ? (
-            <PreparationSummary
-              presentation={presentation}
-              reconnecting={preparationState.reconnecting}
-              recoveryRequired={preparationState.data?.recovery_required ?? false}
-              selected={preparationSelected}
-              onSelect={() =>
-                void navigate({
-                  search: (current) => {
-                    const next = { ...current, preparation: presentation.run_id }
-                    delete next.attention
-                    return next
-                  },
-                })
-              }
-            />
-          ) : null}
-          <div className="library-works-heading">
-            <h2 id="library-works-title">Works</h2>
-            <span role="status" aria-live="polite" aria-busy={retained || undefined}>
-              {data ? (
-                search.q ? (
-                  <>
-                    {lensTotal === undefined
-                      ? `Found ${workCount(data.counts[lensCount])}`
-                      : `Found ${String(data.counts[lensCount])} of ${workCount(lensTotal)}`}
-                    {lensWords === undefined ? null : (
-                      <span className="sr-only">{` ${lensWords}`}</span>
-                    )}
-                  </>
-                ) : (
-                  workCount(data.counts.all) +
-                  // The works outside both decision lenses, named beside the
-                  // total in the masthead's words (#1407, #1413).
-                  // One placeholder while the summary loads, so the line
-                  // does not wrap and then jump when it arrives.
-                  (summaryNotMatched === undefined || summaryFailed === undefined
-                    ? summary.isError
-                      ? ''
-                      : ' · …'
-                    : (
-                        [
-                          [summaryNotMatched, 'not matched'],
-                          [summaryFailed, 'could not finish'],
-                        ] as const
-                      )
-                        .map(([count, words]) =>
-                          count === 0 ? '' : ` · ${String(count)} ${words}`,
-                        )
-                        .join(''))
-                )
-              ) : failed ? (
-                'Count unavailable'
-              ) : (
-                'Loading count…'
-              )}
-            </span>
-          </div>
-          <nav className="lenses" aria-label="Library lenses" ref={lensRow}>
-            {(
-              [
-                'all',
-                'needs_attention',
-                'no_attention_needed',
-                'not_matched',
-                'preparation_failed',
-              ] as const
-            ).map((lens) => (
-              <LensLink
-                key={lens}
-                to="/library"
-                search={{
-                  lens,
-                  ...(search.q ? { q: search.q } : {}),
-                  ...(search.preview ? { preview: search.preview } : {}),
-                  ...(search.work ? { work: search.work } : {}),
-                  ...(search.field ? { field: search.field } : {}),
-                  ...(search.preparation ? { preparation: search.preparation } : {}),
-                }}
-                preload="intent"
-                onPointerEnter={() => lensIntent(lens)}
-                onFocus={() => lensIntent(lens)}
-                activeProps={{ 'aria-current': 'page' }}
-              >
-                {lensLabels[lens]}
-              </LensLink>
-            ))}
-          </nav>
-          <form className="search library-search" role="search" onSubmit={submitSearch}>
-            <label className="sr-only" htmlFor="library-query">
-              Search title, author, identifier, library, or format
-            </label>
-            <div>
-              <input
-                ref={searchInput}
-                id="library-query"
-                name="q"
-                type="search"
-                maxLength={128}
-                value={queryText}
-                placeholder="Search works…"
-                onChange={(event) => runSearch(event.target.value)}
-              />
-              {queryText ? (
-                <button
-                  type="button"
-                  aria-label="Clear search text"
-                  onClick={() => {
-                    runSearch('')
-                    searchInput.current?.focus()
-                  }}
-                >
-                  <span aria-hidden="true">×</span>
-                </button>
-              ) : null}
-            </div>
-          </form>
-          <div className="library-work-list" aria-busy={retained || undefined}>
-            {!data ? (
-              <div className="empty-copy" aria-busy={!failed}>
-                {failed && error instanceof BuildMismatchError ? (
-                  <StaleBuildRead lead="Works were not loaded." />
-                ) : failed ? (
-                  <>
-                    <p role="alert">Works are unavailable.</p>
-                    <button type="button" onClick={retry}>
-                      Try again
-                    </button>
-                  </>
-                ) : (
-                  <p role="status">Loading works…</p>
-                )}
-              </div>
-            ) : works.length === 0 ? (
-              <div className="empty-copy">
-                <p>No exact-current works match this search and lens.</p>
-                {search.q ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      runSearch('')
-                      searchInput.current?.focus()
-                    }}
-                  >
-                    Clear search
-                  </button>
-                ) : null}
-              </div>
-            ) : (
-              works.map((work, index) => {
-                const selectedWorkRow =
-                  !preparationSelected &&
-                  (selectedWork
-                    ? selectedWork.workId === work.workId
-                    : work.reviewCaseId !== undefined && search.preview === work.reviewCaseId)
-                const needsAttention = work.attentionCount > 0
-                // A published report is not a failure. The row for a work
-                // that stopped before producing one has nothing to open and
-                // stays an article; a work whose evidence is addressable is a
-                // successful entry the owner can read.
-                const evidence = reportEvidenceUrl(work) !== null
-                // Retained evidence is not by itself a clean outcome. A
-                // completed preparation reports no terminal failure at all, so
-                // its absence is what makes the recorded report the outcome; a
-                // later real failure over the same retained report is still a
-                // failure the owner has to see.
-                const recorded = evidence && work.preparation === null
-                // A terminal preparation failure outranks a retained report's
-                // not-matched reason: it is the failure the owner must see (#1407).
-                const status =
-                  (work.summary && !work.preparation
-                    ? notMatchedReasons[work.summary.state]
-                    : undefined) ??
-                  (recorded
-                    ? 'Recorded evidence available'
-                    : work.preparation
-                      ? 'Preparation failed safely'
-                      : needsAttention
-                        ? work.attentionCount === 1
-                          ? '1 field needs attention'
-                          : `${String(work.attentionCount)} fields need attention`
-                        : 'No attention needed')
-                const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
-                const group = providerGroup(work)
-                const previousWork = works[index - 1]
-                // Grouping follows the lens these rows were read for, not a retained URL's.
-                const showGroup =
-                  data.lens !== 'no_attention_needed' &&
-                  data.lens !== 'not_matched' &&
-                  data.lens !== 'preparation_failed' &&
-                  (!previousWork || providerGroup(previousWork) !== group)
-                const summary = providerSummary(work.preparationOutcomes)
-                const summaryId = summary ? `provider-summary-${work.id}` : undefined
-                const preparation = work.preparation
-                const preparationId = preparation ? `preparation-${work.id}` : undefined
-                const row = (
-                  <>
-                    <BookMark title={work.title} cover={work.cover} />
-                    <span className="library-work-copy">
-                      <strong className="library-work-title">{work.title}</strong>
-                      <span className="library-work-author">{authorLine(work)}</span>
-                      <span className="library-work-origin">
-                        {work.libraryDisplayName ?? work.library} ·{' '}
-                        {mediaKindLabels[work.mediaKind]}
-                      </span>
-                      {summary ? (
-                        <span id={summaryId} className="library-provider-summary">
-                          {summary}
-                        </span>
-                      ) : null}
-                      <span className="library-work-status">
-                        <StatusPill
-                          tone={
-                            !recorded && (needsAttention || work.preparation) ? 'notice' : 'accent'
-                          }
-                        >
-                          {status}
-                        </StatusPill>
-                        {preparation ? (
-                          <span id={preparationId} className="terminal-preparation-copy">
-                            {preparation.stage}: {preparation.reason} {preparation.recovery}{' '}
-                            Reference: <code>{preparation.diagnosticReference}</code>
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                  </>
-                )
-                return (
-                  <Fragment key={work.id}>
-                    {showGroup ? (
-                      <div className="library-provider-group">
-                        <h3>{group}</h3>
-                        {group === 'Provider evidence complete' ||
-                        group === 'Provider evidence limited' ? (
-                          <p>
-                            {group === 'Provider evidence complete'
-                              ? 'Lookups completed or did not apply; a match is not guaranteed.'
-                              : 'Some lookups did not supply usable evidence. Recoverable lookups can change this group when new evidence arrives.'}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {terminalFailure ? (
-                      <article
-                        key={work.id}
-                        className="library-work-row is-terminal"
-                        aria-label="Terminal preparation failure"
-                      >
-                        {row}
-                        {preparation?.mediaHealth.length ? (
-                          <MediaHealth observations={preparation.mediaHealth} />
-                        ) : null}
-                      </article>
-                    ) : (
-                      <>
-                        <button
-                          key={work.id}
-                          type="button"
-                          className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
-                          aria-current={selectedWorkRow ? 'true' : undefined}
-                          aria-disabled={retained || undefined}
-                          aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-                          aria-describedby={
-                            [preparationId, summaryId].filter(Boolean).join(' ') || undefined
-                          }
-                          onClick={() => void select(work)}
-                          onPointerEnter={() => workIntent(work)}
-                          onFocus={() => workIntent(work)}
-                        >
-                          {row}
-                        </button>
-                        {/* A work whose latest preparation could not read a file
-                            still opens what it retained, so the row is a control
-                            and the section has to sit beside it rather than
-                            inside it: a section nested in a button is not an
-                            openable row, and the observation is the one thing
-                            the failed attempt proved. */}
-                        {preparation?.mediaHealth.length ? (
-                          <div className="library-work-row-aside">
-                            <MediaHealth observations={preparation.mediaHealth} />
-                          </div>
-                        ) : null}
-                      </>
-                    )}
-                  </Fragment>
-                )
-              })
-            )}
-          </div>
-          {data && (data.previousCursor || data.nextCursor) ? (
-            // Only the moves that exist are offered; with one page there is no pager.
-            <div className="library-pager" aria-busy={retained || undefined}>
-              {data.previousCursor ? (
-                <button
-                  type="button"
-                  className="library-pager-previous"
-                  aria-disabled={retained || undefined}
-                  onClick={() => movePage(data.previousCursor)}
-                  onPointerEnter={() => pageIntent(data.previousCursor)}
-                  onFocus={() => pageIntent(data.previousCursor)}
-                >
-                  ← <span className="library-pager-word">Previous</span>
-                </button>
-              ) : null}
-              <span>Page {String(data.page)}</span>
-              {data.nextCursor ? (
-                <button
-                  type="button"
-                  className="library-pager-next"
-                  aria-disabled={retained || undefined}
-                  onClick={() => movePage(data.nextCursor)}
-                  onPointerEnter={() => pageIntent(data.nextCursor)}
-                  onFocus={() => pageIntent(data.nextCursor)}
-                >
-                  <span className="library-pager-word">Next</span> →
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
+        <LibraryWorks
+          search={search}
+          data={data}
+          works={works}
+          retained={retained}
+          failed={failed}
+          error={error}
+          retry={retry}
+          summaryCounts={summary.data?.counts}
+          summaryUnavailable={summary.isError}
+          presentation={presentation}
+          reconnecting={preparationState.reconnecting}
+          recoveryRequired={preparationState.data?.recovery_required ?? false}
+          preparationSelected={preparationSelected}
+          onSelectPreparation={(runId) =>
+            void navigate({
+              search: (current) => {
+                const next = { ...current, preparation: runId }
+                delete next.attention
+                return next
+              },
+            })
+          }
+          noLibraryConnected={noLibraryConnected}
+          selectedWork={selectedWork}
+          queryText={queryText}
+          runSearch={runSearch}
+          submitSearch={submitSearch}
+          select={select}
+          movePage={movePage}
+          lensIntent={lensIntent}
+          workIntent={workIntent}
+          pageIntent={pageIntent}
+        />
         <section
           className="workspace-detail"
           // Preparation states its own progress in one status line; the whole
@@ -2219,9 +1840,6 @@ export default function LibraryPage({
           ) : !search.preview ? (
             <div className="library-selection">
               <h2>Choose a work</h2>
-              <p>
-                Its current values and field position stay here while you move through attention.
-              </p>
             </div>
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
@@ -2235,7 +1853,7 @@ export default function LibraryPage({
               />
             ) : identityError ? (
               <p role="alert">
-                Selected work could not be loaded.{' '}
+                {`Selected work could not be loaded.${restartSentence}`}{' '}
                 <button
                   ref={selectedDetailRetryButton}
                   onClick={() => {
@@ -2262,8 +1880,7 @@ export default function LibraryPage({
                 >
                   Selected work
                 </h2>
-                <p>Readable work identity is not available on this Library page.</p>
-                <p role="status">This work is not available in the current Library result.</p>
+                <p role="status">This work is not in the current list of works.</p>
               </div>
             )
           ) : detail.isPending || (detail.isError && leaving) ? (
@@ -2275,7 +1892,7 @@ export default function LibraryPage({
           ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
-                'Selected work could not be loaded.'}{' '}
+                `Selected work could not be loaded.${restartSentence}`}{' '}
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
@@ -2288,12 +1905,11 @@ export default function LibraryPage({
             </p>
           ) : !detail.data.current ? (
             <div className="library-selection">
-              <p>Case superseded</p>
               <h2>{displayedIdentity.title}</h2>
               {staleCoverNotice ?? (
                 <p role="alert">
-                  This review case is no longer current. Reopen its current replacement from
-                  Library.
+                  This review case is out of date. Choose the work again in Works to open the
+                  current one.
                 </p>
               )}
             </div>
@@ -2324,11 +1940,11 @@ export default function LibraryPage({
                 </div>
                 <dl className="selected-work-status">
                   <div>
-                    <dt>Needs review</dt>
+                    <dt>Needs you</dt>
                     <dd>{String(attentionFields.length)}</dd>
                   </div>
                   <div>
-                    <dt>Resolved automatically</dt>
+                    <dt>Automatic</dt>
                     <dd>
                       {String(
                         detail.data.fields.filter(
@@ -2341,7 +1957,7 @@ export default function LibraryPage({
                     </dd>
                   </div>
                 </dl>
-                <nav className="selected-work-diagnostics" aria-label="Read-only work diagnostics">
+                <nav className="selected-work-diagnostics" aria-label="Evidence and history">
                   <Link
                     params={{ reviewCaseId: detail.data.id }}
                     search={normalizeDetailSearch({
@@ -2438,9 +2054,7 @@ export default function LibraryPage({
                   <div>
                     <h3>Review complete</h3>
                     <span>
-                      {String(complete.fields.length)} recorded field outcome
-                      {complete.fields.length === 1 ? '' : 's'}
-                      {writesActive ? ' — each began applying the moment you decided it.' : '.'}
+                      {`${String(complete.fields.length)} ${complete.fields.length === 1 ? 'field' : 'fields'} recorded.${writesActive ? ' Each started applying when you chose it.' : ''}`}
                     </span>
                   </div>
                   <ol>
@@ -2485,26 +2099,26 @@ export default function LibraryPage({
                     ) : attention.isPending ||
                       attention.isPlaceholderData ||
                       attention.isFetchingNextPage ? (
-                      <span>Looking for the next visible work…</span>
+                      <span>Finding the next work…</span>
                     ) : nextWorkError && attention.error instanceof BuildMismatchError ? (
-                      <StaleBuildRead lead="The next attention work was not loaded." />
+                      <StaleBuildRead lead="The next work was not loaded." />
                     ) : nextWorkError ? (
                       <>
-                        <span>The next attention work could not be loaded.</span>
+                        <span>{`The next work could not be loaded.${restartSentence}`}</span>
                         <Button variant="primary" type="button" onClick={retryNextWork}>
-                          Try finding next work again
+                          Try again
                         </Button>
                       </>
                     ) : !search.q ? (
-                      <span>All visible review work is complete.</span>
+                      <span>No other work needs a decision.</span>
                     ) : (
                       <span>
-                        All review work matching this search is complete.
-                        {summaryAttention === undefined || !data
+                        {summaryAttention !== undefined && data && outsideSearch === 0
+                          ? 'No other work needs a decision.'
+                          : 'No other work matching this search needs a decision.'}
+                        {summaryAttention === undefined || !data || outsideSearch === 0
                           ? null
-                          : outsideSearch > 0
-                            ? ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} a decision outside this search.`
-                            : ' No other work needs a decision.'}
+                          : ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} one outside this search.`}
                       </span>
                     )}
                   </footer>
@@ -2546,7 +2160,7 @@ export default function LibraryPage({
                           {selected.humanDecision === null && selected.manualHold
                             ? 'Your earlier decision still holds this field.'
                             : 'The recorded outcome is marked below.'}{' '}
-                          You can select another eligible value.
+                          You can choose another value.
                         </p>
                       ) : selectedOptional ? (
                         <p>{fieldReason(selected)}</p>
@@ -2770,8 +2384,8 @@ export default function LibraryPage({
               {detail.data.recordingIdentityBasis ||
               detail.data.recordingAdmissionBasis ||
               detail.data.audiobookReviewScope === 'work' ? (
-                <section aria-label="Whole-work context">
-                  <h3>Whole-work context</h3>
+                <section aria-label="Recording match">
+                  <h3>Recording match</h3>
                   <RecordingIdentityBasis
                     value={detail.data.recordingIdentityBasis}
                     admission={detail.data.recordingAdmissionBasis}
@@ -2863,6 +2477,7 @@ export default function LibraryPage({
           selected={selected}
           closeAttention={closeAttention}
           selectFromQueue={selectFromQueue}
+          restartSentence={railRestartSentence}
         />
       </div>
     </div>

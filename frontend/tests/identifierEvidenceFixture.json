@@ -1049,7 +1049,7 @@
         "provider_requests": 1,
         "lane_kind": "work",
         "provider": "Audible",
-        "reason": "Found candidates, but none was this work.",
+        "reason": "Found possible matches, but none was this work.",
         "status": "no_match"
       },
       {
@@ -1057,7 +1057,7 @@
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",
-        "reason": "Returned metadata candidates for comparison.",
+        "reason": "Returned possible matches to compare.",
         "status": "candidates"
       },
       {
@@ -1065,7 +1065,7 @@
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",
-        "reason": "Returned metadata candidates for comparison.",
+        "reason": "Returned possible matches to compare.",
         "status": "candidates"
       }
     ]
