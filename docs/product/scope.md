@@ -101,4 +101,4 @@ rules that skip a value needing no change or reject a value.
 The planned Calibre-Web/Calibre-compatible adapter must use a supported service
 API and declare each capability. No Calibre adapter exists today. Mechanical
 Librarian does not open a Calibre database, drive Calibre's screens or write to
-Calibre.
+Calibre today.
