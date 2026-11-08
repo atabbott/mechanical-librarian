@@ -4,8 +4,9 @@ iTunes Search is ADR-0061's corroboration-only surface.  It answers one
 free-text query against the audiobook media type and states a collection, an
 artist and a description -- and nothing about who read the recording or how
 long it runs.  That blindness is the point: an identity iTunes discovered can
-never satisfy the runtime band, so this adapter can corroborate a title and an
-author but can never carry an admission on its own.
+never satisfy the runtime band, so this adapter can corroborate an ebook's title
+and author but can never carry an admission on its own. An audiobook asks it
+one search for its cover and reads nothing else it says (ADR-0061 clause 9).
 
 The store answers `text/javascript` rather than `application/json`, which is
 the one media type this adapter admits beyond the default.  Everything else
@@ -55,6 +56,7 @@ from mechanical_librarian.application.metadata_report import (
     merge_provider_cover_descriptors,
     observe_work_ladder,
     provider_observation,
+    qualify_provider_observation,
 )
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
@@ -300,8 +302,8 @@ class ITunesSearchMetadataProvider:
                 authority="itunes_search",
             )
         # Only the asserted work lane: an audiobook's alternative title is
-        # never sent to the store, whose twelve-attempt budget it would share
-        # (#1255; #1254 removed iTunes from audiobook dispatch).
+        # never sent to the store, which is asked for a cover alone (#1255,
+        # #1779).
         lanes = tuple(
             lane
             for lane in plan.lanes
@@ -414,15 +416,26 @@ class ITunesSearchMetadataProvider:
         *,
         deadline: float | None,
     ) -> QualifiedLaneObservation:
-        if (
-            lookup.title is None
-            or not lookup.authors
-            or not work_query_ladder(
+        ladder = (
+            ()
+            if lookup.title is None or not lookup.authors
+            else work_query_ladder(
                 lookup.title, lookup.authors, audiobook=lookup.audio is not None
             )
-        ):
+        )
+        if not ladder:
             return QualifiedLaneObservation(
                 self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
+            )
+        if lookup.audio is not None:
+            # An audiobook asks the store for its cover alone: the first rung
+            # once, with no later rung or narrowing retry, as Open Library's
+            # audiobook lane does (#1309, #1779).
+            return QualifiedLaneObservation(
+                qualify_provider_observation(
+                    self._observe_work_query(lookup, ladder[0], deadline=deadline),
+                    lookup,
+                )
             )
         return observe_work_ladder(
             lookup,
