@@ -448,7 +448,7 @@ def test_every_surface_states_one_canonical_provider_label() -> None:
         "Local library record"
     )
     assert _choice_source_label({"provider": None, "source": "provider"}) == (
-        "Retained observation (provider name unavailable)"
+        "Unnamed source"
     )
     cover_sources = {label for label, _, _ in _COVER_EVIDENCE_STATEMENTS.values()}
     assert {
@@ -458,7 +458,7 @@ def test_every_surface_states_one_canonical_provider_label() -> None:
         PROVIDER_LABELS["itunes_search"],
         PROVIDER_LABELS["open_library"],
     } < cover_sources
-    assert "Provider evidence" == _UNNAMED_COVER_EVIDENCE_STATEMENT[0]
+    assert "Unnamed source" == _UNNAMED_COVER_EVIDENCE_STATEMENT[0]
 
 
 def test_store_authority_carries_the_order_only_while_audible_is_enabled() -> None:
