@@ -39,7 +39,13 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+)
 from mechanical_librarian.domain.reviewer_access import ReviewerEngine
 from tests.support.audiobook_reports import asserted_asin_report
 from tests.support.metadata_report_schemas import retained_report_as_current
@@ -2032,11 +2038,55 @@ def _retaining_service(
     return service, asked, live
 
 
+def _with_cover(
+    report: MetadataReport,
+    state: TargetFieldState,
+    sources: tuple[CoverSource, ...],
+) -> MetadataReport:
+    """``report`` with its cover target in ``state`` over ``sources``."""
+    held = next(
+        (
+            source.artifact.artifact_id
+            for source in sources
+            if source.kind is CoverSourceKind.ABS and source.artifact is not None
+        ),
+        None,
+    )
+    target = report.target
+    return MetadataReport.create(
+        target=TargetFacts(
+            target.connection,
+            target.library,
+            target.item,
+            tuple(
+                TargetField(
+                    field.destination,
+                    state,
+                    held if state is TargetFieldState.VALUE else None,
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
+    )
+
+
+def _over_a_cover(sources: tuple[CoverSource, ...]) -> MetadataReport:
+    """A report whose current cover is populated, as a switch leaves it."""
+    return _with_cover(_report(sources), TargetFieldState.VALUE, sources)
+
+
 def _retained_report(case: _Case) -> tuple[MetadataReport, tuple[str, str, str]]:
     source = _retained_source()
     assert source.artifact is not None
     return (
-        _report((*case.sources, source)),
+        _over_a_cover((*case.sources, source)),
         (source.artifact.original_digest, _PLAN, _DECISION),
     )
 
@@ -2130,12 +2180,13 @@ def test_a_retained_original_that_is_the_current_cover_is_not_offered(
     case: _Case,
 ) -> None:
     case_id = "review_case_" + "s" * 64
-    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    report = _over_a_cover(case.sources)
+    first = case.service.ensure(case_id, report.to_json(), case.proposal)
     incumbent = json.loads(case.store.current[case_id])["incumbent_digest"]
     assert incumbent is not None
     service, _, _ = _retaining_service(case, (incumbent, _PLAN, _DECISION))
 
-    replay = service.ensure(case_id, case.report.to_json(), case.proposal)
+    replay = service.ensure(case_id, report.to_json(), case.proposal)
 
     assert replay["consideration_id"] == first["consideration_id"]
     assert all(
@@ -2161,7 +2212,7 @@ def test_a_retained_original_that_a_provider_also_offers_is_one_card(
         CoverSourceState.RETRIEVED,
         reviewed.artifact,
     )
-    report = _report((*case.sources, same))
+    report = _over_a_cover((*case.sources, same))
     binding = (reviewed.artifact.original_digest, _PLAN, _DECISION)
     service, _, _ = _retaining_service(case, binding, lambda _digest: None)
     case_id = "review_case_" + "y" * 64
@@ -2170,6 +2221,37 @@ def test_a_retained_original_that_a_provider_also_offers_is_one_card(
 
     offered = [candidate["artifact_id"] for candidate in projected["candidates"]]
     assert offered.count(reviewed.artifact.artifact_id) == 1
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in json.loads(case.store.current[case_id])["candidates"]
+    )
+
+
+def test_a_retained_original_never_fills_an_empty_cover(case: _Case) -> None:
+    """Over an empty cover the proposal withholds the original, so the
+    comparison never offers a card its decision would refuse (#1363, D2)."""
+    source = _retained_source()
+    assert source.artifact is not None
+    sources = (
+        *(
+            candidate
+            for candidate in case.sources
+            if candidate.kind is not CoverSourceKind.ABS
+        ),
+        source,
+    )
+    report = _with_cover(_report(sources), TargetFieldState.MISSING, sources)
+    binding = (source.artifact.original_digest, _PLAN, _DECISION)
+    service, _, _ = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "e" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    assert projected["candidates"]
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in projected["candidates"]
+    )
     assert all(
         candidate["candidate_kind"] == "candidate"
         for candidate in json.loads(case.store.current[case_id])["candidates"]

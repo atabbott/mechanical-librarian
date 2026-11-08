@@ -896,6 +896,40 @@ describe('Put back (#1363)', () => {
     expect(within(row).getByRole('button', { name: 'Keep' })).toBeVisible()
   })
 
+  it('drops its own Put back mark when a live update reports the write refused', async () => {
+    const user = userEvent.setup()
+    const updates = createLiveStream()
+    const http = coversHttp({ switched: switchedRow() })
+    http.getCaseDetail.mockImplementation(async (id) =>
+      withRetained(coverDetail(id, titles[id] ?? id)),
+    )
+    renderRoute('/library?lens=all&view=covers&tab=switched', http, updates)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Put back' }))
+    expect(await screen.findByText('Put back First Book.')).toBeVisible()
+    expect(within(row).getByRole('button', { name: 'Change' })).toBeVisible()
+    // The write then finds the cover changed in Audiobookshelf first.
+    http.getCovers.mockResolvedValue(switchedRow({ state: 'stale', failure: 'target_changed' }))
+    await act(async () => {
+      updates.announce({ sequence: 5, subject: 'case-1', topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    const [refusedRow] = await screen.findAllByRole('listitem')
+    if (!refusedRow) throw new Error('a switched row is required')
+    expect(
+      await within(refusedRow).findByText(
+        'The cover was changed in Audiobookshelf, so it was not put back.',
+      ),
+    ).toHaveAttribute('role', 'status')
+    // Neither the Put back mark nor its button remains.
+    expect(within(refusedRow).queryByText('Put back')).toBeNull()
+    expect(within(refusedRow).queryByRole('button', { name: 'Change' })).toBeNull()
+    expect(within(refusedRow).queryByRole('button', { name: 'Put back' })).toBeNull()
+    expect(within(refusedRow).getByRole('button', { name: 'Keep' })).toBeVisible()
+    expect(within(refusedRow).getByRole('button', { name: 'Others' })).toBeVisible()
+  })
+
   it('labels the original Replaced cover in the comparison, with no match claim', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ switched: switchedRow() })

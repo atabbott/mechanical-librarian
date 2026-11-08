@@ -105,6 +105,9 @@ const donePills = {
 const putBackRefusedCopy = 'The cover was changed in Audiobookshelf, so it was not put back.'
 // A Put back's write still running: the row already reads as put back.
 const putBackPending = new Set(['planned', 'claimed', 'applying', 'reconciling', 'retryable'])
+/** A Put back whose write found the cover changed in Audiobookshelf first. */
+const putBackRefused = (work: CoverWorkView) =>
+  work.switched?.put_back?.state === 'stale' && work.switched.put_back.failure === 'target_changed'
 /** The original an automatic switch replaced, while it can still be put back (#1363). */
 const retainedCandidate = (field: ReviewField | undefined) =>
   field?.coverConsideration?.candidates.find(
@@ -397,8 +400,10 @@ function SwitchedRow({
   // The server's own record of a Put back: still writing reads as put back,
   // and a target that changed first says why nothing was put back.
   const putBack = switched.put_back
+  // A refusal outranks this view's own Put back mark, which the list drops,
+  // so the row offers Keep and Others again and says why.
+  const refused = putBackRefused(work)
   const shown = done ?? (putBack && putBackPending.has(putBack.state) ? 'put_back' : undefined)
-  const refused = putBack?.state === 'stale' && putBack.failure === 'target_changed'
   // Keep is the book's keep-current command; its case is read first so the
   // command carries the exact proposal and selection it answers. The command
   // admits keep-current only beside another cover, so a switch with no other
@@ -798,7 +803,16 @@ export default function CoversView() {
     tab === 'decide' || tab === 'kept'
       ? groupOrder.flatMap((group) => works.filter((work) => work.group === group))
       : works
-  const firstOpen = ordered.find((work) => done[work.review_case_id] === undefined)
+  // A Put back recorded here whose write the server then reports refused is
+  // no longer marked: the book is undecided again (#1363).
+  const marked: Readonly<Record<string, Outcome>> = Object.fromEntries(
+    Object.entries(done).filter(
+      ([id, outcome]) =>
+        outcome !== 'put_back' ||
+        !works.some((work) => work.review_case_id === id && putBackRefused(work)),
+    ),
+  )
+  const firstOpen = ordered.find((work) => marked[work.review_case_id] === undefined)
   // A selection the tab no longer holds is dropped, so a phone never shows
   // neither the list nor a book.
   useEffect(() => {
@@ -863,7 +877,7 @@ export default function CoversView() {
       return
     }
     const index = ordered.indexOf(work)
-    const next = ordered.slice(index + 1).find((item) => done[item.review_case_id] === undefined)
+    const next = ordered.slice(index + 1).find((item) => marked[item.review_case_id] === undefined)
     select(next?.review_case_id)
   }
   const replaced = (reviewCaseId: string) => {
@@ -979,7 +993,7 @@ export default function CoversView() {
                 key={work.review_case_id}
                 work={work}
                 index={index}
-                done={done[work.review_case_id]}
+                done={marked[work.review_case_id]}
                 open={selectedId === work.review_case_id}
                 onOpen={() =>
                   select(selectedId === work.review_case_id ? undefined : work.review_case_id)
@@ -993,7 +1007,7 @@ export default function CoversView() {
           <CoverWall
             works={works}
             selectedId={selectedId}
-            done={done}
+            done={marked}
             select={select}
             panel={closable}
           />
@@ -1016,7 +1030,7 @@ export default function CoversView() {
                             work={work}
                             index={works.indexOf(work)}
                             selected={work.review_case_id === selected?.review_case_id}
-                            done={done[work.review_case_id] !== undefined}
+                            done={marked[work.review_case_id] !== undefined}
                             onSelect={() => select(work.review_case_id)}
                           />
                         ))}

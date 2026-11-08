@@ -82,6 +82,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     MetadataReport,
     TargetDestination,
+    TargetField,
     TargetFieldState,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -147,16 +148,20 @@ def cover_consideration_replay_digest(
     ).hexdigest()
 
 
+def _target_cover(report: MetadataReport) -> TargetField:
+    return next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.COVER
+    )
+
+
 def _cover_incumbent(
     report: MetadataReport,
     candidates: list[dict[str, object]],
 ) -> tuple[dict[str, object], str | None]:
     incumbent = next((item for item in candidates if item["incumbent"]), None)
-    target_cover = next(
-        field
-        for field in report.target.fields
-        if field.destination is TargetDestination.COVER
-    )
+    target_cover = _target_cover(report)
     incumbent_state = (
         "available"
         if incumbent is not None
@@ -195,11 +200,12 @@ def _retained_candidate(
     It is offered only when the report carries the work's ``retained``
     source and ``binding`` (digest, plan, decision) is the switch that source
     names, and only while it is not already the current cover or the same
-    image as a reviewed candidate, so one picture is never two cards. It has no
-    identity, no rank and no reviewer evidence: it is a way back, never an
-    automatic choice.
+    image as a reviewed candidate, so one picture is never two cards. Like the
+    proposal's cover alternatives, it is offered only over a populated cover and
+    never fills an empty one. It has no identity, no rank and no reviewer
+    evidence: it is a way back, never an automatic choice.
     """
-    if binding is None:
+    if binding is None or _target_cover(report).state is not TargetFieldState.VALUE:
         return None
     digest, plan_id, decision_id = binding
     if (
