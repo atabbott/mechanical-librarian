@@ -61,9 +61,6 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
-- **Clean rebuild required.** An audiobook sidecar whose author differs only
-  in how initials are written, such as "R.F." for "R. F.", is still set aside,
-  and its report now gives that as the reason (#1780).
 - **Clean rebuild required.** Hardcover now finds a widely published ebook by
   its title and author instead of refusing it for having many editions. It
   matches the title whatever its capitals, searches with the EPUB's own authors
@@ -175,12 +172,27 @@ brackets are GitHub issues.
   what to check, the writing box says whether a change was written, and a
   cover comparison that could not be loaded names the button that tries again
   (#1765, #1791).
+- Description work saved while preparation is paused now starts as soon as
+  preparation resumes. Before, it waited for the next library poll, and a
+  library whose last scan had failures was not polled at all. Resuming also
+  retries that library's failed items (#1785).
+- Library has a Covers view beside Works for going through every book's
+  cover: To decide, Kept, Switched (automatic switches, with the cover before
+  and now) and All, 50 books at a time. One tap records a choice and opens the
+  next book, and a book whose covers changed is refused on its own. Keeping an
+  automatic switch releases the replaced cover's copy (#1633).
+- Tooling: a read-only workbench script lists Library links to the ebook
+  series fields where only Hardcover names a series and it differs from yours,
+  so you can label them in the qualification run (#1811).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author
   or narrator. Collection sidecars and CUE sheets naming other audio are too.
   One whose ASIN differs from the file's keeps only series and description.
   Sidecars that disagree drop that field (#1481).
+- **Clean rebuild required.** An audiobook sidecar whose author differs only
+  in how initials are written, such as "R.F." for "R. F.", is still set aside,
+  and its report now gives that as the reason (#1780).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

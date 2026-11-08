@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Generic, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
@@ -165,6 +165,14 @@ _AUTOMATIC_REFUSAL_TEXT = {
 }
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
+
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.review_covers import (
+        CoverKey,
+        CoverPageSnapshot,
+        CoverView,
+    )
 
 
 class BrowseFetchingChanged(MetadataReportError):
@@ -507,6 +515,14 @@ class ReviewLibraryStore(Protocol):
     def read_current_report_document(
         self, connection: str, library: str, item: str
     ) -> str | None: ...
+    def read_review_covers(
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
+    ) -> CoverPageSnapshot: ...
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]: ...
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
