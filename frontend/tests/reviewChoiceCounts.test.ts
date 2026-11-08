@@ -10,6 +10,7 @@ const field = (coverConsideration: NonNullable<Field['coverConsideration']> | nu
   automaticWithheldReason: null,
   choiceContexts: [],
   classification: 'needs_attention',
+  classificationCause: 'review_needed',
   classificationReason: 'This field needs your review.',
   corroborationSources: [],
   coverConsideration,
