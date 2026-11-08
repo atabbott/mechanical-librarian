@@ -327,14 +327,14 @@ A Hardcover edition row becomes a listed-edition descriptor only after a
 pre-filter on what the row states, before any request is built. Its stated
 width and height must each be 1 to 8,192 pixels, with at most 16,777,216
 pixels in all and a short side of at least 300. An ebook's cover must be
-portrait, between 1.2 and 2.0 times as tall as it is wide, and an
-audiobook's must be square within 5 percent. These acquisition bands are
-narrower than the election bands of
+portrait, between 1.2 and 2.0 times as tall as it is wide, and an audiobook's
+must be square within 5 percent. These acquisition bands are narrower than the
+election bands of
 [ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md).
 The row's stated language (`code2`, else `code3`) must be compatible with one
-of the library's languages, and its URL must be on `assets.hardcover.app`. A refused row is counted, never
-fetched. The stated size only filters and orders rows. It never reaches the
-report.
+of the library's languages, and its URL must be on `assets.hardcover.app`. A
+refused row is counted, never fetched. The stated size only filters and orders
+rows. It never reaches the report.
 
 After retrieval, two listed-edition covers from the same provider whose
 decoded measures are the same art by the measured cover rule
