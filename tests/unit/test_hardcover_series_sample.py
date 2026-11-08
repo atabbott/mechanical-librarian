@@ -29,6 +29,8 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _REVIEW_FIELD_ATTENTION_CLEAR_SQL,
+    _active_generation_automatic_sql,
+    _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import _SINGLE_SOURCE_CHOICE_SQL
 from mechanical_librarian.adapters.providers.open_library_metadata import (
@@ -76,6 +78,7 @@ _OPEN_LIBRARY_PAYLOAD = (
 )
 _ONE = "Only Hardcover disputes the series of 1 ebook. Choose its series in Library."
 _EMPTY = "No ebook has a series that only Hardcover disputes."
+_KEPT = "  Automatic kept your series."
 _OTHER_ONE = (
     "One source other than Hardcover disputes the series of 1 more ebook. "
     "It is not listed."
@@ -383,17 +386,46 @@ def test_a_decided_field_drops_out_and_a_withdrawn_one_returns(
     assert _run(database) == [_ONE, _link(case_id)]
 
 
-def test_an_automatic_decision_settles_the_field(tmp_path: Path) -> None:
-    """Qualified Automatic keeps the current series, which settles the field."""
+@pytest.mark.parametrize(
+    ("option", "kept"),
+    (
+        ("primary_narrative", True),
+        ("source_order", True),
+        ("all_qualified", True),
+        ("add_qualified", False),
+        ("replace_qualified", False),
+    ),
+    ids=(
+        "primary_narrative",
+        "source_order",
+        "all_qualified",
+        "add_qualified",
+        "replace_qualified",
+    ),
+)
+def test_a_field_automatic_kept_is_listed_and_marked_until_the_owner_decides(
+    tmp_path: Path, option: str, kept: bool
+) -> None:
+    """Automatic keeping the owner's series leaves the label to the owner.
+
+    Under qualified Automatic the series options that decide this held field
+    keep the current series; the others record nothing, and none takes
+    Hardcover's value. An owner decision afterwards settles the field.
+    """
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database)
     try:
         case_id, _ = publish_audiobook_preview(
-            repository, _item(_hardcover_ebook(), "lantern-ledger"), ("series",)
+            repository,
+            _item(_hardcover_ebook(), "lantern-ledger"),
+            ("series",),
+            selected_options={"series": option},
         )
     finally:
         repository.close()
-    assert _run(database) == [_ONE, _link(case_id)]
+    before = _run(database)
+    assert before == [_ONE, _link(case_id)]
+    assert not before[1].endswith(_KEPT)
 
     repository = open_repository(database, create=False)
     try:
@@ -403,9 +435,40 @@ def test_an_automatic_decision_settles_the_field(tmp_path: Path) -> None:
         ]
     finally:
         repository.close()
-    assert [(value["destination"], value["outcome"]) for value in decisions] == [
-        ("series", "keep_current")
-    ]
+    assert [(value["destination"], value["outcome"]) for value in decisions] == (
+        [("series", "keep_current")] if kept else []
+    )
+    assert _run(database) == [_ONE, _link(case_id) + (_KEPT if kept else "")]
+
+    repository = open_repository(database, create=False)
+    try:
+        _decide(repository, case_id, "keep_current", "after-automatic")
+    finally:
+        repository.close()
+    assert _run(database) == [_EMPTY]
+
+
+@pytest.mark.parametrize("scope", ("destination", "connection"))
+def test_a_suspended_field_stays_dropped(tmp_path: Path, scope: str) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    try:
+        case_id = _publish(repository, _item(_hardcover_ebook(), "lantern-ledger"))
+    finally:
+        repository.close()
+    assert _run(database) == [_ONE, _link(case_id)]
+
+    repository = open_repository(database, create=False)
+    try:
+        repository.suspend_field_effect_capability(
+            scope=scope,
+            connection="primary",
+            destination="series",
+            reason="field_unavailable",
+            changed_at=1_000,
+        )
+    finally:
+        repository.close()
     assert _run(database) == [_EMPTY]
 
 
@@ -518,6 +581,8 @@ def test_main_is_read_only_and_prints_links_and_counts_only(tmp_path: Path) -> N
         r"^(http://localhost:8080|https://library\.home\.example)/library\?lens=all"
         r"&preview=review_case_[0-9a-f]{64}&field=series$"
     )
+    # No field here is Automatic's, so no line carries the marker or a trailing
+    # space.
     for lines in outputs:
         text = "\n".join(lines)
         for secret in (
@@ -538,6 +603,7 @@ def test_main_is_read_only_and_prints_links_and_counts_only(tmp_path: Path) -> N
             assert secret not in text
         for line in lines:
             assert line in {_ONE, _OTHER_ONE} or link.fullmatch(line), line
+            assert not line.endswith((" ", _KEPT.strip())), line
 
 
 def test_the_read_only_uri_encodes_filename_syntax(tmp_path: Path) -> None:
@@ -626,9 +692,23 @@ def test_flags_refuse_a_bad_origin_or_limit(
 
 
 def test_the_statement_carries_the_product_fragments_verbatim() -> None:
+    """The exclusion is the clear fragment's owner and suspension clauses.
+
+    Both are sliced from `_REVIEW_FIELD_ATTENTION_CLEAR_SQL` unchanged and
+    together are that fragment less its description, automatic and cover
+    clauses, so a field Automatic decided is never excluded.
+    """
+    owner = sample._OWNER_DECISION_CLEAR_SQL
+    suspension = sample._SUSPENSION_CLEAR_SQL
     for fragment in (
         _CURRENT_REVIEW_FROM_SQL,
-        _REVIEW_FIELD_ATTENTION_CLEAR_SQL,
         _SINGLE_SOURCE_CHOICE_SQL,
+        owner + suspension,
+        _active_generation_automatic_sql("automatic"),
     ):
         assert sample._FIELDS_SQL.count(fragment) == 1
+    assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL.startswith(owner)
+    assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL.endswith(suspension)
+    assert _episode_decision_sql("decision") in owner
+    assert "automatic_decisions" not in owner + suspension
+    assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL not in sample._FIELDS_SQL

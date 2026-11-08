@@ -22,9 +22,10 @@ uv run python scripts/hardcover_series_sample.py \
 
 It opens the copy read-only, writes nothing and prints one Library link per
 field, oldest first, up to `--limit`. Opening a link selects the work's Series
-field. A field you or Automatic already decided is left out, so take a new copy
-to see what is left. A field your policy asks about is listed and is also in
-Attention.
+field. A field you already decided is left out, so take a new copy to see what
+is left. A field Automatic kept is still listed, marked "Automatic kept your
+series."; choosing a series there is still your label. A field your policy asks
+about is listed and is also in Attention.
 
 The output is links and counts only. The copy holds your library's records
 and, with settings stored in the app, its secrets: keep it owner-only and
