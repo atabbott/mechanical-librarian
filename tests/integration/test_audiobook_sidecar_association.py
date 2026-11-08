@@ -297,6 +297,63 @@ def test_a_libation_export_for_the_track_supplies_its_asin_and_opens_its_lane(
     assert ("audible_catalog", ProviderQueryKind.ASIN) in calls
 
 
+def test_a_marked_libation_export_supplies_nothing_and_records_its_asin(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """T12 (#1796): as I3's file with a leading mark does on 905cc06.
+
+    No `sidecar` claim and no ASIN lane come from it; its manifest entry's
+    record holds the ASIN; and a synthetic creator only that reading finds
+    reaches neither the report nor a provider query (T8).
+    """
+    marker = "Zqx Marker Author Never Published"
+    export = "\ufeff" + json.dumps(
+        {
+            "asin": _SIDECAR_ASIN,
+            "title": _TITLE,
+            "authors": [{"name": _AUTHOR}, {"name": marker}],
+            "narrators": [{"name": "Example Narrator"}],
+        }
+    )
+    own = _library(tmp_path, {"book.metadata.json": export})
+
+    report, calls, _ = _publish(tmp_path, own)
+
+    assert _claims(report, "sidecar") == []
+    assert ("audible_catalog", ProviderQueryKind.ASIN) not in calls
+    assert report.audio is not None
+    [entry] = report.audio.sidecars
+    assert (entry.binding.value, entry.claims) == ("track", ())
+    assert entry.byte_order_mark is not None
+    assert ("asin", _SIDECAR_ASIN) in {
+        (fact.field.value, fact.canonical) for fact in entry.byte_order_mark.facts
+    }
+    assert entry.byte_order_mark.refusals == ()
+    assert marker not in report.to_json()
+    assert marker not in repr(calls)
+
+
+def test_the_same_export_without_its_mark_still_opens_its_lane(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """T12 guard: without the mark the export behaves as I3 and has no record."""
+    export = json.dumps(
+        {
+            "asin": _SIDECAR_ASIN,
+            "title": _TITLE,
+            "authors": [{"name": _AUTHOR}],
+        }
+    )
+    own = _library(tmp_path, {"book.metadata.json": export})
+
+    report, calls, _ = _publish(tmp_path, own)
+
+    assert ("asin", _SIDECAR_ASIN) in _claims(report, "sidecar")
+    assert ("audible_catalog", ProviderQueryKind.ASIN) in calls
+    assert report.audio is not None
+    assert report.audio.sidecars[0].byte_order_mark is None
+
+
 def test_a_foreign_file_added_to_the_folder_makes_the_report_stale(
     tmp_path: Path, child: GrammarChild
 ) -> None:

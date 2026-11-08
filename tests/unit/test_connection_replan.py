@@ -810,7 +810,7 @@ def test_a_lone_waiting_plan_ends_once_the_service_answers(
     if answer == "key_rejected":
         row = next(event for event in _ledger(effects) if event["state"] == "stale")
         assert _facts(row)["What happens next"].endswith(
-            "Not prepared again yet; up to 3 times."
+            "Not prepared again yet (up to 3 times)."
         )
 
 
@@ -1299,7 +1299,8 @@ def test_a_cover_waits_three_times_then_stops_and_is_cleaned_up(
     assert (stopped.state, stopped.failure) == ("stale", "connection_exhausted")
     assert effects.repository.field_effect_cleanup_pending(plan_id)
     row = next(event for event in _ledger(effects) if event["state"] == "stale")
-    assert _facts(row)["Why it stopped"] == (
+    assert "Why it stopped" not in _facts(row)
+    assert _facts(row)["What happened"] == (
         "Audiobookshelf could not be reached for this book, and this change "
         "stopped after it was prepared again 3 times"
     )

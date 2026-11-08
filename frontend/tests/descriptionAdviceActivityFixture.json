@@ -134,16 +134,16 @@
       "event_type": "metadata",
       "evidence": [
         {
-          "label": "Application",
-          "value": "Preparation grants no write authority. Review current Description choices in Library."
+          "label": "What happens next",
+          "value": "Nothing is written until you choose a description in Library."
         },
         {
           "label": "Retry",
-          "value": "Request another attempt from Description in Library; no automatic retry."
+          "value": "Request it again from Description in Library. It is not retried on its own."
         },
         {
-          "label": "Provenance",
-          "value": "Advised \u00b7 Authored content"
+          "label": "Written by",
+          "value": "Description adviser"
         },
         {
           "label": "Adviser",
@@ -175,12 +175,12 @@
       "event_type": "metadata",
       "evidence": [
         {
-          "label": "Application",
-          "value": "Preparation grants no write authority. Review current Description choices in Library."
+          "label": "What happens next",
+          "value": "Nothing is written until you choose a description in Library."
         },
         {
-          "label": "Provenance",
-          "value": "Advised \u00b7 Authored content"
+          "label": "Written by",
+          "value": "Description adviser"
         },
         {
           "label": "Adviser",
@@ -204,11 +204,11 @@
       "category": "automatic",
       "change": "Kept Existing description.",
       "change_detail": "Kept Description as Existing description.",
-      "change_id": "automatic_decision_85da7d64c98d2df999f1c646860d6c04fc13317142e44d49bf0eeefdec93d8f4",
-      "check_group": "report_c8acfbe1b4c2a2a09d30dda64327c42541ef16093817d3e4fc52e8462e53faa3",
+      "change_id": "automatic_decision_51fcf1b0908f6379d4e800fa42bdcf369d62826710d45503fbde0a440b2c7a42",
+      "check_group": "report_9fd0a3ab861b4a3c757b9cb8b5fb99c7e88cbd431dfa7352a1a5c35870e30b98",
       "destination": "description",
       "diagnostic": null,
-      "event_id": "automatic_decision_85da7d64c98d2df999f1c646860d6c04fc13317142e44d49bf0eeefdec93d8f4",
+      "event_id": "automatic_decision_51fcf1b0908f6379d4e800fa42bdcf369d62826710d45503fbde0a440b2c7a42",
       "event_type": "metadata",
       "evidence": [
         {
@@ -224,8 +224,8 @@
           "value": "Automatic policy"
         },
         {
-          "label": "Policy setting",
-          "value": "Description fill: Safe plain text"
+          "label": "Policy option",
+          "value": "Description: Fill empty with safe plain text"
         },
         {
           "label": "Policy generation",
@@ -258,15 +258,11 @@
       "evidence": [
         {
           "label": "Changed by",
-          "value": "Library owner"
+          "value": "You"
         },
         {
           "label": "Policy generation",
           "value": "Policy generation 2"
-        },
-        {
-          "label": "Active policy",
-          "value": "Updated with all 10 changes"
         }
       ],
       "failure": null,
@@ -277,19 +273,19 @@
       "origin": "policy",
       "policy_changes": [
         {
-          "field": "Contributor names",
+          "field": "Authors and narrators",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
         },
         {
-          "field": "Cover order",
+          "field": "Cover",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
         },
         {
-          "field": "Date precision",
+          "field": "Publication date and year",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
@@ -301,25 +297,25 @@
           "setting": "Setting"
         },
         {
-          "field": "Isbn form",
+          "field": "ISBN",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
         },
         {
-          "field": "Language rendering",
+          "field": "Language",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
         },
         {
-          "field": "Publisher preference",
+          "field": "Publisher",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
         },
         {
-          "field": "Series",
+          "field": "Series memberships",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
@@ -331,7 +327,7 @@
           "setting": "Setting"
         },
         {
-          "field": "Title layout",
+          "field": "Title and subtitle",
           "next": "Ask me",
           "previous": "Automatic",
           "setting": "Setting"
@@ -356,15 +352,11 @@
       "evidence": [
         {
           "label": "Changed by",
-          "value": "Library owner"
+          "value": "You"
         },
         {
           "label": "Policy generation",
           "value": "Policy generation 1"
-        },
-        {
-          "label": "Active policy",
-          "value": "Updated with all 0 changes"
         }
       ],
       "failure": null,

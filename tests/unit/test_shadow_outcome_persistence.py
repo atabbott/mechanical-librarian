@@ -4281,7 +4281,9 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         assert automatic_activity[0]["origin"] == "automatic_policy"
         assert not [
             event
-            for event in activity_service.activity(search="Library owner")["events"]
+            # The automatic row is never credited to you: search text joins
+            # each label to its value with a newline (#1765).
+            for event in activity_service.activity(search="chosen by\nyou")["events"]
             if event["event_id"] == automatic.decision_id
         ]
 
@@ -10293,6 +10295,10 @@ def test_supported_current_title_conflict_stays_manual_without_suspension(
             "The sources disagree about the work or title. Choose the title yourself."
             if mode == "automatic"
             else None
+        )
+        # The reason states the title condition, so Library shows it once (#1802).
+        assert field["automatic_withheld_condition"] == (
+            "isbn_title_material_conflict" if mode == "automatic" else None
         )
         assert repository.persist_shadow_outcome(case_id, 6) == persisted
     with closing(open_repository(path, create=False)) as reopened:

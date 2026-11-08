@@ -3499,6 +3499,8 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
             series["automatic_withheld_reason"]
             == "Changes made for you are paused for this field. An ISBN lookup did not return a usable answer."
         )
+        # The paused reason states no comparison condition (#1802).
+        assert series["automatic_withheld_condition"] is None
         assert (
             reader.read_current_review_case(case_id, None).final_outcome_document
             == before

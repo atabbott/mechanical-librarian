@@ -72,7 +72,10 @@ from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
 )
-from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.application.review_web import (
+    AutomaticWithheldCondition,
+    ReviewWebError,
+)
 from mechanical_librarian.application.reviewer_access import (
     CodexDescriptionDisclosure,
     ReviewerAccessApplicationError,
@@ -686,6 +689,7 @@ class _ReviewField(_ClosedModel):
         _AutomaticDecisionProjection | _CoverAutomaticDecisionProjection | None
     )
     automatic_withheld_reason: str | None = Field(default=None, max_length=512)
+    automatic_withheld_condition: AutomaticWithheldCondition | None
     earlier_automatic_value: _ProposedValue | None = None
     automatic_selection_sources: list[str]
     manual_hold: bool
@@ -711,6 +715,7 @@ class _ReviewField(_ClosedModel):
 
 
 class _ChoiceEvidence(_ClosedModel):
+    language: str | None
     observation: str
     role: Literal["external_corroboration", "local_presence", "external_observation"]
     source: str
@@ -883,6 +888,7 @@ class _EvidenceItem(_ClosedModel):
         Field(min_length=1, max_length=16, json_schema_extra={"uniqueItems": True}),
         AfterValidator(_distinct),
     ]
+    language: str | None = Field(max_length=1024)
     observation: str = Field(max_length=1024)
     role: Literal["external_corroboration", "external_observation", "local_presence"]
     source: str = Field(max_length=128)

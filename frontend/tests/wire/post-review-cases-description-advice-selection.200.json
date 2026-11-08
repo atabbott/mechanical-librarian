@@ -11,6 +11,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -26,11 +27,13 @@
                 "alternative_id": "alternative_1eefb174ae59e4445606ec7d8ab8cc8b3d1d66f84b61a78c9d8722d90605a9f7",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Series position: 3",
                     "role": "external_corroboration",
                     "source": "Hardcover"
                   },
                   {
+                    "language": null,
                     "observation": "Series membership: Slough House",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -72,7 +75,7 @@
             "notices": ["unique_typed_candidate"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_3974f13b443d1177c9f58f852c20b68b2ed5d510698c20325aa1f7c2b5b61644",
+            "proposal_id": "review_proposal_b83ef6277b1ce7efa3cd91a9f7af644f1aeced8fce7fb6373472f8bce38c74d5",
             "proposed_values": [
               {
                 "kind": "series",
@@ -95,6 +98,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -110,6 +114,7 @@
                 "alternative_id": "alternative_e60dad4dce063390296b837737177625a2fd7143ffc557307666e08cd3b774af",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Genre: Mystery",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -165,7 +170,7 @@
               "withdraw": null
             },
             "preservation_only": false,
-            "proposal_id": "review_proposal_6f2a8faa57e75530550edd4f14c26db451c93527bafd65a9dfc34b174c80c5c0",
+            "proposal_id": "review_proposal_1b7906ad28957b38464682f8ec8cb78014659215e287c3c00363e0abcd51ed8c",
             "proposed_values": [
               {
                 "kind": "list",
@@ -182,6 +187,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -197,16 +203,19 @@
                 "alternative_id": "alternative_2eb8a4c331fe3a2c14d7d9b7833f40f59a0abeb32210f325f2f9d2d54d5383ae",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "ISBN: 9780306406157",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
                   {
+                    "language": null,
                     "observation": "ISBN: 0306406152",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
                   {
+                    "language": null,
                     "observation": "ISBN: 9780306406157",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -248,7 +257,7 @@
             "notices": ["manifestation_verification_required"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_64a1a9dc68b0dd2fea0c93b8d3a55114278fbcb7f0310b2b6b864e119bf1d5b5",
+            "proposal_id": "review_proposal_2edac7f9839755d5ddba15d1661ed7ff2ac9b1c59433347d6654789f0018cb03",
             "proposed_values": [
               {
                 "kind": "text",
@@ -267,17 +276,20 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Your current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
                   {
+                    "language": null,
                     "observation": "Title: Real Tigers",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -293,6 +305,7 @@
                 "alternative_id": "alternative_34ae580e00a343c1c8d75942faa76e827587bfbd550b76cb501d636324aca54b",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Title: Real Tigers",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -341,7 +354,7 @@
               "withdraw": null
             },
             "preservation_only": true,
-            "proposal_id": "review_proposal_399a25ba87aff6a281863f5d2615ae7ced2af61c07bf78be308d629df866ec66",
+            "proposal_id": "review_proposal_13d5b5c6772aa78aa61b0d40af39dac39db874906341d4548f24f7abb3f4b2c5",
             "proposed_values": [],
             "provenance": [
               "provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"
@@ -353,6 +366,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -394,7 +408,7 @@
             "notices": ["no_supported_evidence"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_a8902a3a4d4c23eae7127078fb4409b84878d566296802630f62b28bfff6e241",
+            "proposal_id": "review_proposal_9ed5071e1314facd3ebe44b148e775c57e51625bcecdb208181118f22bb4f3b6",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -404,17 +418,20 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Your current value.",
                     "role": "local_presence",
                     "source": "Local library record"
                   },
                   {
+                    "language": null,
                     "observation": "Author: Mick Herron",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -430,6 +447,7 @@
                 "alternative_id": "alternative_e4f80543aa92d81848e85b7df46baf25e3aa25f4c26463161be08e11540e75f9",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Author: Mick Herron",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -471,7 +489,7 @@
             "notices": ["positive_preservation_evidence"],
             "owner_control": null,
             "preservation_only": true,
-            "proposal_id": "review_proposal_6164aaee900e7c15d18d04a39b0fd4c5a462e1dbabc53cfcf07cb07ba457074d",
+            "proposal_id": "review_proposal_0468e64f2a8b621cf79a9b6e3fa575d1373df6b52656dffc33a7686acbc0aa37",
             "proposed_values": [],
             "provenance": [
               "provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"
@@ -483,6 +501,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -524,7 +543,7 @@
             "notices": ["no_supported_evidence"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_51ef580ce7dec5ab092284bfd9dbed4e1e45260c89923972ba4b6f8d4c5fae19",
+            "proposal_id": "review_proposal_509aece23d64ba2554d32b5312df04e82e85456bc4cb88ffa263d9032010e9a9",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -534,6 +553,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -575,7 +595,7 @@
             "notices": ["no_supported_evidence"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_92ecbd1ae989b8edd94706827040ef9ba2abc0176fc706d01d3134d542a73dd2",
+            "proposal_id": "review_proposal_e374ba1ff1e064c92b80a655053bbb41910e1540472963fb8e051580ef9ac3b1",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -585,12 +605,14 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Your current value.",
                     "role": "local_presence",
                     "source": "Local library record"
@@ -606,6 +628,7 @@
                 "alternative_id": "alternative_fb3c646d64076432433b3798fc56e0705e58fbdb1760152f7943021cdd428b86",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Description: A qualified description.",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -638,9 +661,9 @@
                 "access_revision": 2,
                 "policy_generation": 2,
                 "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                "proposal_set_id": "proposal_set_146716c778e4c7beb69a1dde11c202d4d04a731b902761a0fb0200988a55717f",
-                "report_id": "report_c8acfbe1b4c2a2a09d30dda64327c42541ef16093817d3e4fc52e8462e53faa3",
-                "review_case_id": "review_case_3f0012d5a458a66b161c42ca2aeb5e9c30a36d966b7c752941f69acc3dd2c509",
+                "proposal_set_id": "proposal_set_832e2ff6487143f5184b6fc4a494f5b94e915d2b459a3a10856a25d8a8b9f78a",
+                "report_id": "report_9fd0a3ab861b4a3c757b9cb8b5fb99c7e88cbd431dfa7352a1a5c35870e30b98",
+                "review_case_id": "review_case_dda79c25a035b2e2e000eee4c20001510de45efbba5b55823d148fa5853cf508",
                 "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
               },
               "candidate": {
@@ -673,9 +696,9 @@
                   "access_revision": 2,
                   "policy_generation": 2,
                   "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                  "proposal_set_id": "proposal_set_146716c778e4c7beb69a1dde11c202d4d04a731b902761a0fb0200988a55717f",
-                  "report_id": "report_c8acfbe1b4c2a2a09d30dda64327c42541ef16093817d3e4fc52e8462e53faa3",
-                  "review_case_id": "review_case_3f0012d5a458a66b161c42ca2aeb5e9c30a36d966b7c752941f69acc3dd2c509",
+                  "proposal_set_id": "proposal_set_832e2ff6487143f5184b6fc4a494f5b94e915d2b459a3a10856a25d8a8b9f78a",
+                  "report_id": "report_9fd0a3ab861b4a3c757b9cb8b5fb99c7e88cbd431dfa7352a1a5c35870e30b98",
+                  "review_case_id": "review_case_dda79c25a035b2e2e000eee4c20001510de45efbba5b55823d148fa5853cf508",
                   "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
                 },
                 "candidate": {
@@ -707,9 +730,9 @@
                   "access_revision": 2,
                   "policy_generation": 2,
                   "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                  "proposal_set_id": "proposal_set_146716c778e4c7beb69a1dde11c202d4d04a731b902761a0fb0200988a55717f",
-                  "report_id": "report_c8acfbe1b4c2a2a09d30dda64327c42541ef16093817d3e4fc52e8462e53faa3",
-                  "review_case_id": "review_case_3f0012d5a458a66b161c42ca2aeb5e9c30a36d966b7c752941f69acc3dd2c509",
+                  "proposal_set_id": "proposal_set_832e2ff6487143f5184b6fc4a494f5b94e915d2b459a3a10856a25d8a8b9f78a",
+                  "report_id": "report_9fd0a3ab861b4a3c757b9cb8b5fb99c7e88cbd431dfa7352a1a5c35870e30b98",
+                  "review_case_id": "review_case_dda79c25a035b2e2e000eee4c20001510de45efbba5b55823d148fa5853cf508",
                   "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
                 },
                 "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -740,7 +763,7 @@
             "notices": ["populated_subjective_field", "populated_value_meets_floor"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_190416ec5b784de8afddb59e8faf3d4ef45f0694031c38e5c5cca377534e01d6",
+            "proposal_id": "review_proposal_12eb643a7ea68d449526f2b035e9260348d87d2f58f2f7aa98dfae52d9bb59ae",
             "proposed_values": [
               {
                 "kind": "text",
@@ -757,6 +780,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -798,7 +822,7 @@
             "notices": ["no_supported_evidence"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_cc162cc1cd859309770ac7dfcc4861496f2f5b7dc378076b8c756b3d190bc76d",
+            "proposal_id": "review_proposal_b38ed1598d76564777bac46d4b5370dccfa18532a4a2b712f544402c9ad6caae",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -808,6 +832,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -849,7 +874,7 @@
             "notices": ["no_supported_evidence"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_ec6df647c897e45c3e457189ef0fd80fbf8c0cd04bc6154d61620b99023009bc",
+            "proposal_id": "review_proposal_e4b3e00265cb71e9e29d160ef83ca585f362941cdd6937cbbf0ca11a065f104a",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -859,6 +884,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -874,6 +900,7 @@
                 "alternative_id": "alternative_ac56de9cfdac126ab8f6347f1e34942d28fcb775cf5d2fd93938cc414246dbe8",
                 "evidence": [
                   {
+                    "language": null,
                     "observation": "Tag: Espionage",
                     "role": "external_corroboration",
                     "source": "Hardcover"
@@ -915,7 +942,7 @@
             "notices": ["unique_typed_candidate"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_81e877ed23c83871b9ec88587a0b9ed496ceb7873e539b0ab1199603bfc9d48a",
+            "proposal_id": "review_proposal_dd878d949b5c90be48c800ce80150c2c010134b88dfe7511b1017db2a11f11be",
             "proposed_values": [
               {
                 "kind": "list",
@@ -932,6 +959,7 @@
             "automatic_decision": null,
             "automatic_selection_sources": [],
             "automatic_withheld_reason": null,
+            "automatic_withheld_condition": null,
             "earlier_automatic_value": null,
             "choice_contexts": [
               {
@@ -973,7 +1001,7 @@
             "notices": ["no_supported_evidence"],
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_6dc1165eafc9adc24dee3d97e332a45512e5a518721592051b03e4dda72ef850",
+            "proposal_id": "review_proposal_650494db7b7e6f89c19ad8e1c59e3466e6d14a44650c8e3a99ceeea21048b721",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -983,7 +1011,7 @@
         "media_health": [],
         "recording_admission_basis": null,
         "recording_identity_basis": null,
-        "review_case_id": "review_case_3f0012d5a458a66b161c42ca2aeb5e9c30a36d966b7c752941f69acc3dd2c509",
+        "review_case_id": "review_case_dda79c25a035b2e2e000eee4c20001510de45efbba5b55823d148fa5853cf508",
         "schema_version": "review-case-detail-v7",
         "target": {
           "authors": ["Mick Herron"],
@@ -1003,6 +1031,6 @@
     "schema_version": "description-selection-ack-v1"
   },
   "method": "POST",
-  "path": "/api/v1/review-cases/review_case_3f0012d5a458a66b161c42ca2aeb5e9c30a36d966b7c752941f69acc3dd2c509/description-advice/selection",
+  "path": "/api/v1/review-cases/review_case_dda79c25a035b2e2e000eee4c20001510de45efbba5b55823d148fa5853cf508/description-advice/selection",
   "status": 200
 }

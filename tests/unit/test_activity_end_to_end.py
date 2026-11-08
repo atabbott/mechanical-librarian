@@ -556,7 +556,7 @@ def test_a_real_write_reaches_the_owner_as_one_exact_sentence(
     assert _facts(written) == {
         "Previous value": "Paper Moons: Larkspur",
         "New value": "Paper Moons over Larkspur Station",
-        "Chosen by": "Library owner",
+        "Chosen by": "You",
         "Confirmed in Audiobookshelf": "Not confirmed yet",
     }
 
@@ -1108,8 +1108,8 @@ def test_a_write_the_library_refused_never_claims_a_before_and_after(
     assert stopped["change"] == "Prepared change closed"
     assert _facts(stopped) == {
         "Prepared value": "Paper Moons over Larkspur Station",
-        "Why it stopped": "Audiobookshelf did not offer this field",
-        "Chosen by": "Library owner",
+        "What happened": "Audiobookshelf did not offer this field",
+        "Chosen by": "You",
         "Confirmed in Audiobookshelf": "The selected change was not confirmed",
     }
 
@@ -1932,7 +1932,7 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
             + (
                 f"Prepared again {prepared} of 3 times."
                 if prepared
-                else "Not prepared again yet; up to 3 times."
+                else "Not prepared again yet (up to 3 times)."
             )
         )
         revived = _replan(effects, **arguments)
@@ -1944,7 +1944,8 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
     assert (again.state, again.failure) == ("stale", "connection_exhausted")
     row = next(event for event in _ledger(effects) if event["state"] == "stale")
     assert row["change"] == "Prepared change closed"
-    assert _facts(row)["Why it stopped"] == (
+    assert "Why it stopped" not in _facts(row)
+    assert _facts(row)["What happened"] == (
         "Audiobookshelf could not be reached for this book, and this change "
         "stopped after it was prepared again 3 times"
     )
@@ -1961,8 +1962,8 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
 @pytest.mark.parametrize(
     ("withdrawn", "reason"),
     (
-        ("authority", "The authority behind this change was replaced"),
-        ("consent", "Write permission was withdrawn"),
+        ("authority", "A newer decision replaced the one behind this change"),
+        ("consent", "Write permission was removed"),
     ),
 )
 def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
@@ -1997,8 +1998,10 @@ def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
         event for event in _ledger(effects) if event["category"] == "recovery"
     )
     assert latest["state"] == "superseded"
-    assert latest["change"] == "Prepared change closed"
-    assert _facts(latest)["Why it stopped"] == reason
+    # The summary takes its result column's word, Replaced (#1765).
+    assert latest["change"] == "Prepared change replaced"
+    assert _facts(latest)["What happened"] == reason
+    assert "Why it stopped" not in _facts(latest)
     # The waiting change never reached Audiobookshelf (#1402).
     assert _facts(latest)["Confirmed in Audiobookshelf"] == (
         "Nothing was sent to Audiobookshelf"

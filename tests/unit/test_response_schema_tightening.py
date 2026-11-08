@@ -489,6 +489,14 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "enum",
         _strings(ReviewFieldClassificationCause),
     ),
+    # The condition a withheld reason states, never its sentence (#1802).
+    (
+        "S89",
+        "_ReviewField",
+        "/properties/automatic_withheld_condition/anyOf/0",
+        "enum",
+        _strings(review_web.AutomaticWithheldCondition),
+    ),
 )
 
 
@@ -616,6 +624,12 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._AttentionItem, "work_attention_count", -1, "greater_than_equal"),
     (app._ReviewField, "decision_actions", ["accept"], "too_long"),
     (app._ReviewField, "classification_cause", "queued", "literal_error"),
+    (
+        app._ReviewField,
+        "automatic_withheld_condition",
+        "subtitle_segment_provider_dissent",
+        "literal_error",
+    ),
     (app._TargetIdentity, "media_kind", "ebook", "literal_error"),
     (app._DecisionProjection, "outcome", "approve", "literal_error"),
     (app._AutomaticDecisionProjection, "outcome", "accept", "literal_error"),
@@ -626,6 +640,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
         "string_pattern_mismatch",
     ),
     (app._EvidenceItem, "destinations", ["asin", "asin"], "value_error"),
+    (app._EvidenceItem, "language", "x" * 1025, "string_too_long"),
     (app._ProviderOutcome, "lane_kind", "identity", "literal_error"),
     (app._MediaHealthObservation, "tracks", [-1], "greater_than_equal"),
     (app._HistoryTransitionItem, "kind", "invented", "literal_error"),

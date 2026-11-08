@@ -92,6 +92,10 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.readable_activity import (
+    policy_option_label,
+    policy_setting_label,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support import audiobookshelf_targets
 from tests.support.audiobook_covers import audiobook_cover_environment
@@ -481,10 +485,15 @@ def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
         "Option",
     }
     review_mode = next(change for change in changes if change["setting"] == "Setting")
-    assert (review_mode["previous"], review_mode["next"]) == ("Ask me", "Skip it")
+    assert (review_mode["previous"], review_mode["next"]) == ("Ask me", "Ignore")
+    # Each field, setting and option is named as the Policy page names it.
+    assert review_mode["field"] == policy_setting_label(moved_destination)
     representation = next(change for change in changes if change["setting"] == "Option")
+    assert representation["field"] == policy_setting_label(moved_option)
     assert representation["previous"] != representation["next"]
-    assert representation["next"][:1].isupper()
+    assert representation["next"] == policy_option_label(
+        replacement_option, moved_option
+    )
     # Only what moved is named; the profile's other settings are not listed.
     assert len(changes) == 2
 
@@ -5759,7 +5768,7 @@ def test_audiobook_pair_paired_activity_words(
     readable_activity_event(event, audiobook_pair.report)
     assert event["field_label"] == "Title and subtitle"
     if state == "reconciling":
-        assert event["change"] == "Paired title and subtitle change unconfirmed"
+        assert event["change"] == "Title and subtitle change not confirmed yet"
     assert (event["change"] == "Split title and subtitle") == confirmed
     assert ("Both title and subtitle confirmed" in str(event["evidence"])) == confirmed
     assert "No write was applied" not in str(event["evidence"])
@@ -6990,7 +6999,8 @@ def test_actual_audiobook_author_activity_names_the_policy_without_operation_ide
             else "Set Authors from Example Author to Example Author, Second Author"
         )
         facts = {item["label"]: item["value"] for item in event["evidence"]}
-        assert facts["Policy setting"] == "Contributor names: Canonical form"
+        assert facts["Policy option"] == "Authors and narrators: Use canonical names"
+        assert "Policy setting" not in facts
         assert facts["New value"] == "Example Author, Second Author"
         assert repository.get_review_case_decisions(case_id) == documents
     finally:
@@ -7310,8 +7320,9 @@ def test_paired_post_write_readback_projects_unconfirmed(audiobook_pair):
     )
     event = next(event for event in page["events"] if event["state"] == "reconciling")
     readable_activity_event(event, audiobook_pair.report)
-    assert event["change"] == "Paired title and subtitle change unconfirmed"
-    assert "Both fields have not been confirmed" in str(event["evidence"])
+    assert event["change"] == "Title and subtitle change not confirmed yet"
+    assert "Title and subtitle not confirmed" in str(event["evidence"])
+    assert "Both fields have not been confirmed" not in str(event["evidence"])
     assert "stopped" not in event["change"]
 
 

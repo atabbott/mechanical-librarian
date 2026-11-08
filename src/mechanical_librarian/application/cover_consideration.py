@@ -2012,8 +2012,8 @@ def _cover_choice_contexts(
         )
     )
 
-    def evidence(reference: str, incumbent: bool) -> list[dict[str, str]]:
-        rows = []
+    def evidence(reference: str, incumbent: bool) -> list[dict[str, str | None]]:
+        rows: list[dict[str, str | None]] = []
         for binding in bindings.get(reference, []):
             source = sources.get(binding.get("reference"))
             if source is None:
@@ -2021,13 +2021,21 @@ def _cover_choice_contexts(
             label, role, observation = _COVER_EVIDENCE_STATEMENTS.get(
                 source.kind, _UNNAMED_COVER_EVIDENCE_STATEMENT
             )
-            rows.append({"source": label, "role": role, "observation": observation})
+            rows.append(
+                {
+                    "source": label,
+                    "role": role,
+                    "observation": observation,
+                    "language": None,
+                }
+            )
         return rows or (
             [
                 {
                     "source": "Local library record",
                     "role": "local_presence",
                     "observation": "Your current cover.",
+                    "language": None,
                 }
             ]
             if incumbent

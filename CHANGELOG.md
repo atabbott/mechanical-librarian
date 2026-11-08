@@ -164,6 +164,11 @@ brackets are GitHub issues.
   and a "review mode"; the chapters lose their captions; the impact preview
   counts undecided works; lost answers say "No answer came back"; and
   "authoritative", "retained", "reconciled" and "safely" are gone (#1765).
+- Activity reads in your words. The page is "Activity", without an
+  introduction; writes are paused with "Pause writes"; a stopped change says
+  the same word as its result; a policy change names each field, setting and
+  option as Policy does; lost answers say "No answer came back"; and
+  "authoritative server", "safely", "provider" and "owner" are gone (#1765).
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).
@@ -190,6 +195,12 @@ brackets are GitHub issues.
   or narrator. Collection sidecars and CUE sheets naming other audio are too.
   One whose ASIN differs from the file's keeps only series and description.
   Sidecars that disagree drop that field (#1481).
+- **Clean rebuild required.** An audiobook sidecar file that starts with a
+  byte-order mark is now also read without the mark. What that adds is recorded
+  in the report and not used until a run measures how often such files occur
+  and whether they agree with the audio file's tags (#1796).
+- A paused field's reason is no longer repeated beside it as a comparison
+  condition (#1802).
 - **Clean rebuild required.** An automatic cover switch can be put back. While
   the replaced cover's copy is kept, Covers' Switched row and the book's
   comparison offer it as **Replaced cover**, and **Put back** writes it to

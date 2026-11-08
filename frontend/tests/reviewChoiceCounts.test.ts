@@ -8,6 +8,7 @@ type Field = CaseDetailView['fields'][number]
 const field = (coverConsideration: NonNullable<Field['coverConsideration']> | null): Field => ({
   automaticDecision: null,
   automaticWithheldReason: null,
+  automaticWithheldCondition: null,
   choiceContexts: [],
   classification: 'needs_attention',
   classificationCause: 'review_needed',

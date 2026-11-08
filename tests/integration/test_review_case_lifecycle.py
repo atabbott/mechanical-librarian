@@ -947,8 +947,8 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             assert library.requests == []
             assert library.detail["media"]["metadata"]["description"] == desired
             assert failure_reason("restore_unavailable") == (
-                "This description has formatting that can't be restored from "
-                "here; restore it in Audiobookshelf"
+                "This description's formatting can't be restored from here. "
+                "Restore it in Audiobookshelf"
             )
             # The refusal asks the owner to act; it is not healthy progress.
             assert [

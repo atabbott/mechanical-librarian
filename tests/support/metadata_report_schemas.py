@@ -60,6 +60,7 @@ from mechanical_librarian.domain.work_identity import (
     admit_provider_work_identity,
     work_query_ladder,
 )
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 
 def synthetic_report(title: str = "Current title") -> MetadataReport:
@@ -282,16 +283,16 @@ def retained_report_as_current(document: str) -> MetadataReport:
     cover search for an audiobook (#1779), which a v49 report, being an ebook's,
     never needed.
     v75 gave an audiobook's sidecar manifest entries their classification,
-    and a v49 report holds no audio section. v76 reports each cover
-    artifact's width and height as oriented and adds the `retained` cover
-    source, neither of which a v49 report, holding no automatic switch, could
-    carry (#1363).
+    and v76 their byte-order-mark record (#1796); a v49 report holds no audio
+    section. v77 reports each cover artifact's width and height as oriented
+    and adds the `retained` cover source, neither of which a v49 report,
+    holding no automatic switch, could carry (#1363).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v76"
+    data["schema_version"] = CURRENT_REPORT_SCHEMA
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -525,7 +526,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v76'", "= 'metadata-report-v1'"
+            f"= '{CURRENT_REPORT_SCHEMA}'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -544,10 +545,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v76'" in persistence_schema._REPORTS_SQL
+    assert f"= '{CURRENT_REPORT_SCHEMA}'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v76'", f"= '{version}'"
+            f"= '{CURRENT_REPORT_SCHEMA}'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

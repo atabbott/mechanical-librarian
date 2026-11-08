@@ -80,6 +80,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   automatic_decision: null,
   automatic_selection_sources: [],
   automatic_withheld_reason: null,
+  automatic_withheld_condition: null,
   choice_contexts: [choiceContext()],
   classification: 'needs_attention',
   classification_cause: 'review_needed',
