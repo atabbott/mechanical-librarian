@@ -3,47 +3,52 @@
 Mechanical Librarian keeps the metadata and covers in a self-hosted ebook and
 audiobook library correct. It runs as one container beside
 [Audiobookshelf](https://www.audiobookshelf.org/). It reads the library and the
-book files, gathers evidence from public catalogues, decides each field from
-that evidence, and asks the owner only where a person's judgement is likely to
-help.
+book files and gathers evidence from public catalogues. It decides each field
+from that evidence and asks you only where your judgement is likely to help.
 
 It is evidence-first rather than AI-first. Every proposed value carries the
-evidence behind it. Routine decisions follow deterministic, qualified rules.
-Nothing is written to the library until the owner grants consent for that
-library, and every write goes through Audiobookshelf's own API and is read back
-to confirm it.
+evidence behind it. Routine decisions follow rules that give the same answer
+for the same evidence, and measurement has qualified each one. Mechanical
+Librarian writes nothing to a library until you give write permission for that
+library. Each write goes through Audiobookshelf's own API, and Mechanical
+Librarian then reads the new value back to confirm it.
 
 ## Status
 
-**Pre-release.** There is no published image or supported release yet. You
-can build and run it from source, but each checkpoint may require a clean
-rebuild of its state (see the [changelog](CHANGELOG.md)).
+Mechanical Librarian is pre-release. It has no published image or supported
+release yet. You can build and run it from source. An upgrade that changes
+stored state needs a clean rebuild, and the [changelog](CHANGELOG.md) marks each
+change that needs one.
 
 What works today:
 
-- Guided first run in the browser: claim the install, connect
-  Audiobookshelf, choose libraries and metadata providers.
-- Background preparation of every ebook and audiobook: local evidence from
-  EPUB packages and audio files, plus catalogue evidence from Hardcover, Open
-  Library, Inventaire, Google Books and iTunes Search for ebooks, and Audible,
-  Audnexus, AudioSilo, Hardcover and Open Library for audiobooks.
-- One owner workspace: Library (with Attention and work detail), Policy,
-  Activity and Settings. Attention holds only the fields that need a decision.
-- Automatic decisions for qualified field categories, with every outcome
-  recorded in history.
-- Guarded writes to Audiobookshelf. Each write needs library consent, backup
-  readiness, an exact-current plan, and read-back verification.
+- Guided first-run setup in the browser. You claim the install, connect
+  Audiobookshelf, choose metadata sources and libraries, and check the
+  read-only mounts.
+- Background preparation of every ebook and audiobook. Local evidence comes
+  from EPUB packages and audio files. Ebook catalogue evidence comes from
+  Hardcover, Open Library, Inventaire, Google Books and iTunes Search.
+  Audiobook catalogue evidence comes from Audible, Audnexus, AudioSilo,
+  Hardcover and Open Library. With its Cover evidence switch on, iTunes Search
+  also supplies an audiobook's cover.
+- The workspace you sign in to: Library (with Attention and work detail),
+  Policy, Activity and Settings. Attention holds only the fields that need a
+  decision.
+- Automatic decisions for the options that a qualification record names.
+  Mechanical Librarian records every outcome in History.
+- Writes to Audiobookshelf. Before each write, Mechanical Librarian checks that
+  its own database is consistent and that the planned change still matches the
+  library.
 - An optional AI cover reviewer (Codex or an OpenRouter model) and optional
   description advice. Reviewers are advisory only and never receive library
   credentials.
-- A workspace in plain words, built to WCAG 2.2 AA, that works by keyboard
-  and stays usable on phones and at 200% text.
+- Plain words throughout the workspace, which is built to WCAG 2.2 AA. It works
+  by keyboard and stays usable on phones and at 200% text.
 
-What comes next is tracked as
 [GitHub milestones](https://github.com/atabbott/mechanical-librarian/milestones)
-and summarised in the [roadmap](docs/product/roadmap.md). The next
-checkpoints improve audiobook matching, cover choice and series handling, and
-lead to the 1.0.0 first public release.
+hold what comes next, and the [roadmap](docs/product/roadmap.md) summarises
+them. The next milestones improve audiobook matching, cover choice and series
+handling, and lead to the 1.0.0 first public release.
 
 ## Running it
 
@@ -61,8 +66,8 @@ docker compose logs mechanical-librarian   # shows the setup claim token
 Then open `http://localhost:8080` and enter the claim token to start first-run
 setup.
 
-Media mounts stay read-only, and the product never edits Audiobookshelf's
-database directly.
+Mechanical Librarian reads your media folders through read-only mounts. It
+never edits Audiobookshelf's database directly.
 
 ## Documentation
 
