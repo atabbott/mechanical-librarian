@@ -117,6 +117,7 @@ export const detail: CaseDetailView = {
   fields: [
     {
       classification: 'needs_attention',
+      classificationCause: 'review_needed',
       classificationReason: 'This field needs your review.',
       destination: 'title',
       decisionActions: ['keep_current', 'accept'],
