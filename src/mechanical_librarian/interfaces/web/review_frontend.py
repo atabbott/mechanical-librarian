@@ -19,14 +19,14 @@ def login_html(return_path: str | None = None) -> str:
   <meta charset="utf-8">
   <script src="/assets/theme.js"></script>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Owner sign in</title>
+  <title>Sign in · Mechanical Librarian</title>
   <link rel="stylesheet" href="/assets/login.css">
 </head>
 <body>
   <a class="skip-link" href="#workspace">Skip to sign in</a>
   <header class="topbar">
     <span class="brand"><span class="brand-mark" aria-hidden="true">ML</span>
-      <span><strong>Mechanical Librarian</strong><small>Private review workspace</small></span>
+      <span><strong>Mechanical Librarian</strong></span>
     </span>
     <button class="theme-toggle" type="button" aria-pressed="false">
       <span aria-hidden="true">◐</span> <span class="theme-label">Dark mode</span>
@@ -34,9 +34,7 @@ def login_html(return_path: str | None = None) -> str:
   </header>
   <main id="workspace" class="login-page">
     <section class="login-card" aria-labelledby="login-title">
-      <p class="eyebrow">Private owner access</p>
-      <h1 id="login-title">Review your library with confidence.</h1>
-      <p class="lede">Sign in to see what needs your attention in your library. Nothing changes in your library until you give write permission, and every change is checked before it is written.</p>
+      <h1 id="login-title">Sign in to review your library</h1>
       <form id="login" novalidate"""
         + next_attribute
         + """>
@@ -49,10 +47,11 @@ def login_html(return_path: str | None = None) -> str:
         <p id="login-status" role="alert"></p>
       </form>
       <details class="forgotten">
-        <summary>Forgotten the owner password?</summary>
-        <p>Mechanical Librarian keeps only a verifier, so it cannot show or reset the password here.</p>
-        <p>If this deployment reads an owner password hash file, write a new Argon2id hash to that file and restart; every browser is signed out. If the password was created in guided setup, this release has no reset: restore a backup of the data volume from when you knew the password, or start again from an empty volume.</p>
-        <p><a href="https://github.com/atabbott/mechanical-librarian/blob/main/docs/operations/deployment.md#forgotten-owner-password" rel="noreferrer">Read the recovery steps in the deployment guide</a></p>
+        <summary>Forgot the owner password?</summary>
+        <p>It can't be shown or reset here.</p>
+        <p>If you set it with a password hash file, write a new Argon2id hash to that file and restart Mechanical Librarian. Every browser is signed out.</p>
+        <p>If you set it during setup, there is no reset yet. Restore a backup of the data volume from when you knew the password, or start again with an empty volume.</p>
+        <p><a href="https://github.com/atabbott/mechanical-librarian/blob/main/docs/operations/deployment.md#forgotten-owner-password" rel="noreferrer">Recovery steps in the deployment guide</a></p>
       </details>
     </section>
   </main>
@@ -125,14 +124,11 @@ button:focus-visible,input:focus-visible,a:focus-visible,summary:focus-visible{o
 .topbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem clamp(1rem,3vw,2.6rem);border-bottom:1px solid var(--line);background:var(--surface)}
 .brand{display:flex;align-items:center;gap:.75rem}
 .brand span:last-child{display:grid}
-.brand small{color:var(--soft);font-size:.78rem}
 .brand-mark{display:grid;place-items:center;width:32px;height:38px;border-radius:2px 7px 7px 2px;background:var(--accent-strong);color:var(--surface);font:700 .75rem Georgia,serif}
 .theme-toggle{display:inline-flex;align-items:center;gap:.4rem;min-height:44px;border:1px solid var(--line-strong);border-radius:999px;background:transparent;color:var(--ink);padding:.55rem .9rem;font-weight:700}
 .login-page{display:grid;place-items:center;padding:3rem 1rem}
 .login-card{width:min(32rem,100%);padding:clamp(1.25rem,4vw,2rem);border:1px solid var(--line);border-radius:1rem;background:var(--surface)}
-.eyebrow{margin:0;text-transform:uppercase;letter-spacing:.08em;font-size:.75rem;font-weight:800;color:var(--accent-strong)}
-h1{margin:.5rem 0 .75rem;font-family:Georgia,"Times New Roman",serif;font-size:clamp(1.65rem,3vw,2.5rem);line-height:1.12;letter-spacing:-.025em}
-.lede{line-height:1.55;color:var(--soft)}
+h1{margin:0 0 .75rem;font-family:Georgia,"Times New Roman",serif;font-size:clamp(1.65rem,3vw,2.5rem);line-height:1.12;letter-spacing:-.025em}
 form{display:grid;gap:.75rem;margin-top:1.5rem}
 label{font-weight:800;font-size:.85rem}
 .password-row{display:flex;gap:.5rem}
@@ -231,7 +227,7 @@ LOGIN_JS = r"""
     } catch (_) {
       status = 0;
     }
-    message.textContent = refusals[status] ?? 'Sign-in is unavailable right now. Wait a moment, then try again.';
+    message.textContent = refusals[status] ?? "Sign-in isn't available right now. Wait a moment, then try again.";
     // A refused password is cleared; focus returns to the field to type it again.
     if (status === 401) {
       password.value = '';

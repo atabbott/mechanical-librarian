@@ -7925,9 +7925,15 @@ def test_sign_in_failures_are_specific_and_recoverable() -> None:
                     )
                     page.unroute("**/api/v1/session/login", throttle)
 
-                    page.get_by_text("Forgotten the owner password?").click()
+                    # One heading, with no eyebrow, tagline or reassurance
+                    # stacked around it (#1765 entry 1).
+                    expect(page.get_by_role("heading", level=1)).to_have_text(
+                        "Sign in to review your library"
+                    )
+                    assert page.locator(".eyebrow, .lede").count() == 0
+                    page.get_by_text("Forgot the owner password?").click()
                     guide = page.get_by_role(
-                        "link", name="Read the recovery steps in the deployment guide"
+                        "link", name="Recovery steps in the deployment guide"
                     )
                     expect(guide).to_be_visible()
                     expect(guide).to_have_attribute(

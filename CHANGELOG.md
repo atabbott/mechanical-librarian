@@ -146,6 +146,9 @@ brackets are GitHub issues.
   heading in a sentence, and Evidence and History drop "retained", "durable"
   and "observations". The notice that the app was updated now says "Reload",
   like every other reload button (#1765).
+- The sign-in page has one heading, "Sign in to review your library", without
+  the eyebrow, tagline and paragraph about write permission around it, and the
+  forgotten-password steps say what to do in short sentences (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
