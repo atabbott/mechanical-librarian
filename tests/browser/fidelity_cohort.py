@@ -395,6 +395,7 @@ def _field(
     provenance: list[str] | None = None,
     corroboration_sources: list[str] | None = None,
     classification: str | None = None,
+    classification_cause: str | None = None,
     classification_reason: str | None = None,
     editable: bool | None = None,
     navigation_role: str | None = None,
@@ -452,6 +453,16 @@ def _field(
         else "unsupported"
     )
     resolved_classification = classification or inferred_classification
+    # Library keys a field's row on this code; the reason is only printed (#1791).
+    inferred_cause = (
+        "human_decided"
+        if human_decision is not None
+        else "automatic_decided"
+        if automatic_decision is not None
+        else "review_needed"
+        if needs_attention
+        else "nothing_to_decide"
+    )
     inferred_reason = (
         "This field needs your review."
         if needs_attention
@@ -461,6 +472,7 @@ def _field(
     )
     return {
         "classification": resolved_classification,
+        "classification_cause": classification_cause or inferred_cause,
         "classification_reason": classification_reason or inferred_reason,
         "destination": destination,
         "decision_actions": decision_actions,
@@ -741,6 +753,9 @@ def _case(case_id: str) -> dict[str, object]:
                 "No eligible proposed value is supported by the retained evidence."
             ],
             classification="unsupported",
+            classification_cause=(
+                "nothing_to_decide" if current_only else "unsupported"
+            ),
             classification_reason=(
                 "Nothing to decide for this field."
                 if current_only
@@ -759,6 +774,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "No eligible proposed value is supported by the retained evidence."
             ],
             classification="unsupported",
+            classification_cause="unsupported",
             classification_reason="Your library service cannot change this field.",
             editable=False,
             navigation_role="inspect",
