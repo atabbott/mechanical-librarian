@@ -855,6 +855,20 @@ def request_description_preparation(
         repository.request_review_scan(target, library, library_id, producer, now)
 
 
+def pending_description_libraries(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, str], ...]:
+    """Name the libraries whose current cases have description work waiting."""
+    return tuple(
+        (target, library)
+        for target, library in connection.execute(
+            "SELECT DISTINCT c.connection_name,c.library_name "
+            "FROM description_preparation_pending p JOIN current_review_case_lineages c "
+            "ON c.review_case_id=p.review_case_id ORDER BY 1,2"
+        ).fetchall()
+    )
+
+
 def validate_description_history(connection: sqlite3.Connection) -> None:
     """Startup validates document identities and cross-table immutable bindings."""
     from mechanical_librarian.domain.description_advice import (
