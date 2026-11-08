@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
@@ -172,15 +172,17 @@ function CoverImage({
   /** Too small to hold the words: the frame alone, the state read beside it. */
   quiet?: boolean
 }) {
-  const [failed, setFailed] = useState(false)
-  if (cover && !failed)
+  // A failure belongs to the preview that failed: a refresh that names a
+  // new preview for the same book tries it.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  if (cover && failedUrl !== cover.url)
     return (
       <img
         src={cover.url}
         alt={alt}
         loading="lazy"
         decoding="async"
-        onError={() => setFailed(true)}
+        onError={() => setFailedUrl(cover.url)}
       />
     )
   const state = cover || unreadable ? 'Image unavailable' : 'No cover'
@@ -761,6 +763,14 @@ export default function CoversView() {
       current = false
     }
   }, [countRead, http])
+  // An acknowledgement can arrive after the owner has opened another book
+  // or tab: the outcome is still recorded, but only the book still open
+  // moves on, so a slow answer never takes over the comparison in use.
+  const router = useRouter()
+  const stillShown = (work: CoverWorkView) => {
+    const current = router.state.location.search as { tab?: CoverTab; cover?: string }
+    return (current.tab ?? 'decide') === tab && current.cover === work.review_case_id
+  }
   // After a choice or a skip the next book opens, so one tap moves on.
   const advance = (work: CoverWorkView, outcome: Outcome) => {
     setNotice(outcomeCopy(outcome, work.title))
@@ -776,6 +786,7 @@ export default function CoversView() {
       void queryClient.invalidateQueries({ queryKey: ['library'] })
       recordCounts()
     }
+    if (!stillShown(work)) return
     if (tab === 'switched' || tab === 'all') {
       select(undefined)
       return
@@ -858,6 +869,14 @@ export default function CoversView() {
         {notice}
       </p>
       {selected && !listed && tab !== 'decide' && tab !== 'kept' ? closable(selected) : null}
+      {selectedId && !listed && linked.isError ? (
+        <div className="covers-failure" role="alert">
+          <p>{routeFailureCopy(linked.error).message}</p>
+          <button type="button" onClick={() => void linked.refetch()}>
+            Reload
+          </button>
+        </div>
+      ) : null}
       <div className="covers-list">
         {pages.isPending ? (
           <p role="status">Loading covers…</p>

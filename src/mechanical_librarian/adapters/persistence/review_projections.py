@@ -47,7 +47,7 @@ from mechanical_librarian.adapters.persistence.review_cases import (
 )
 from mechanical_librarian.adapters.persistence.review_covers import (
     read_cover_page,
-    read_replaced_preview,
+    read_switch_previews,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
@@ -990,9 +990,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 self._current_cover_authority(),
             )
 
-    def read_replaced_cover_preview(self, plan_id: str) -> str | None:
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:
         with self._consistent_review_read():
-            return read_replaced_preview(self._connection, plan_id)
+            return read_switch_previews(self._connection, plan_id)
 
     def read_review_attention(
         self,

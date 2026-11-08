@@ -12257,7 +12257,7 @@
     },
     "/api/v1/covers/replaced": {
       "get": {
-        "description": "Read-only: the preview of the cover an automatic switch replaced.\n\nServed only while the switch is listed with its original retained, and\nonly by the preview digest bound to that original; once the original\nis released the route has nothing to serve.",
+        "description": "Read-only: a preview of one automatic switch's Before or Now.\n\nBefore is served only while the switch is listed with its original\nretained, by the preview digest bound to that original; once the\noriginal is released the route has nothing to serve for it. Now is\nthe cover the verified write put in place, by its preview digest.",
         "operationId": "replaced_cover_api_v1_covers_replaced_get",
         "parameters": [
           {

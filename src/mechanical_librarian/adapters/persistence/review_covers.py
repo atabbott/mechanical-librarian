@@ -28,7 +28,7 @@ from mechanical_librarian.application.review_covers import (
     CoverPageSnapshot,
     CoverRow,
     CoverView,
-    ReplacedCover,
+    SwitchCover,
 )
 
 _PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
@@ -37,7 +37,8 @@ _PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 _SWITCH_SQL = (
     "switch AS (SELECT effect.connection_name,effect.library_name,"
     "effect.work_id,effect.plan_id,effect.updated_at AS switched_at,"
-    "listing.sequence AS sequence,binding.original_digest AS original_digest "
+    "listing.sequence AS sequence,binding.original_digest AS original_digest,"
+    "json_extract(effect.document,'$.plan.desired_value') AS replacement "
     "FROM field_effects effect "
     "LEFT JOIN retained_cover_bindings binding ON binding.plan_id=effect.plan_id "
     "LEFT JOIN retained_cover_listings listing ON listing.plan_id=effect.plan_id "
@@ -102,7 +103,7 @@ _WORKS_SQL = (
     "substr(facts.title_key,1,256) AS title_key,ml.item_id,"
     + _CHOOSABLE_SQL
     + " AS choosable,switch.plan_id,switch.switched_at,switch.sequence,"
-    "switch.original_digest,CASE WHEN "
+    "switch.original_digest,switch.replacement,CASE WHEN "
     + _DECIDING_SQL
     + " THEN CASE WHEN "
     + _COVER_OUTCOME_SQL
@@ -150,18 +151,37 @@ _REPLACED_SQL = (
 )
 
 
-def _replaced(
-    connection: sqlite3.Connection, plan_id: str, digest: str
-) -> ReplacedCover | None:
-    row = connection.execute(
-        _REPLACED_SQL, ("cover_" + digest, _PREVIEW_VARIANT)
-    ).fetchone()
+def _observed_preview(
+    connection: sqlite3.Connection, artifact_id: str
+) -> tuple[str, int, int] | None:
+    row = connection.execute(_REPLACED_SQL, (artifact_id, _PREVIEW_VARIANT)).fetchone()
     if row is None:
         return None
     preview, width, height = row
     if type(preview) is not str or type(width) is not int or type(height) is not int:
         raise MetadataReportError("review covers are unavailable")
-    return ReplacedCover(plan_id, preview, width, height)
+    return preview, width, height
+
+
+def _replaced(
+    connection: sqlite3.Connection, plan_id: str, digest: str
+) -> SwitchCover | None:
+    found = _observed_preview(connection, "cover_" + digest)
+    return None if found is None else SwitchCover(plan_id, *found)
+
+
+def _replacement(
+    connection: sqlite3.Connection, plan_id: str, artifact_id: object
+) -> SwitchCover | None:
+    """The cover an automatic write put in place, from a report that offered it.
+
+    The work's report still shows the cover it observed before the write until
+    the next scan, so Switched names its Now from the verified plan.
+    """
+    if type(artifact_id) is not str:
+        return None
+    found = _observed_preview(connection, artifact_id)
+    return None if found is None else SwitchCover(plan_id, *found)
 
 
 def read_cover_page(
@@ -194,7 +214,9 @@ def read_cover_page(
         parameters.append(review_case_id)
     rows = connection.execute(
         _WORKS_SQL + "SELECT review_case_id,report_document,cover_group,choosable,"
-        "switched_at,plan_id,original_digest," + _VIEW_KEY_SQL[view] + " FROM work "
+        "switched_at,plan_id,original_digest,replacement,"
+        + _VIEW_KEY_SQL[view]
+        + " FROM work "
         "WHERE "
         + " AND ".join(where)
         + " ORDER BY "
@@ -211,7 +233,11 @@ def read_cover_page(
     if any(group not in COVER_GROUPS for group in grouped):
         raise MetadataReportError("review covers are unavailable")
     page: list[CoverRow] = []
-    for case_id, report, group, choosable, switched_at, plan_id, digest, *key in rows:
+    for row in rows:
+        case_id, report, group, choosable, switched_at, plan_id, digest, replacement = (
+            row[:8]
+        )
+        key = row[8:]
         if (
             type(case_id) is not str
             or type(report) is not str
@@ -232,6 +258,9 @@ def read_cover_page(
                 _replaced(connection, cast(str, plan_id), cast(str, digest))
                 if auto and digest is not None
                 else None,
+                _replacement(connection, cast(str, plan_id), replacement)
+                if auto
+                else None,
                 tuple(key),
             )
         )
@@ -246,8 +275,26 @@ def read_cover_page(
     )
 
 
-def read_replaced_preview(connection: sqlite3.Connection, plan_id: str) -> str | None:
-    """The preview of a listed switch's original while it has no removal."""
+def read_switch_previews(
+    connection: sqlite3.Connection, plan_id: str
+) -> frozenset[str]:
+    """The previews a Switched row may show for one switch.
+
+    Its original's while listed with no removal, and the cover the verified
+    automatic write put in place.
+    """
+    previews: set[str] = set()
+    written = connection.execute(
+        "SELECT json_extract(document,'$.plan.desired_value') FROM field_effects "
+        "WHERE plan_id=? AND destination='cover' AND state='verified' "
+        "AND json_extract(document,'$.plan.authority.origin')='automatic_policy'",
+        (plan_id,),
+    ).fetchone()
+    replacement = (
+        None if written is None else _replacement(connection, plan_id, written[0])
+    )
+    if replacement is not None:
+        previews.add(replacement.preview_digest)
     row = connection.execute(
         "SELECT binding.original_digest FROM retained_cover_listings listing "
         "JOIN retained_cover_bindings binding ON binding.plan_id=listing.plan_id "
@@ -255,7 +302,7 @@ def read_replaced_preview(connection: sqlite3.Connection, plan_id: str) -> str |
         "retained_cover_removals removal WHERE removal.plan_id=listing.plan_id)",
         (plan_id,),
     ).fetchone()
-    if row is None:
-        return None
-    replaced = _replaced(connection, plan_id, str(row[0]))
-    return None if replaced is None else replaced.preview_digest
+    replaced = None if row is None else _replaced(connection, plan_id, str(row[0]))
+    if replaced is not None:
+        previews.add(replaced.preview_digest)
+    return frozenset(previews)

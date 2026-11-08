@@ -1165,7 +1165,8 @@ class _LibraryCover(_ClosedModel):
 
 class _CoverPreview(_ClosedModel):
     # A preview only, named by digest: the library cover route for a current
-    # cover, the replaced route for a listed switch's original (#1633).
+    # cover, the replaced route for a switch's retained original or the cover
+    # an automatic write put in place (#1633).
     height: int = Field(ge=1, le=8192)
     preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     url: str = Field(pattern=r"^/api/v1/(library/cover|covers/replaced)\?")
@@ -4326,11 +4327,12 @@ def _register_cover_routes(
         preview: str = Query(max_length=64),
         ml_session: str | None = Security(session_cookie),
     ) -> Response:
-        """Read-only: the preview of the cover an automatic switch replaced.
+        """Read-only: a preview of one automatic switch's Before or Now.
 
-        Served only while the switch is listed with its original retained, and
-        only by the preview digest bound to that original; once the original
-        is released the route has nothing to serve.
+        Before is served only while the switch is listed with its original
+        retained, by the preview digest bound to that original; once the
+        original is released the route has nothing to serve for it. Now is
+        the cover the verified write put in place, by its preview digest.
         """
         _require_session(sessions, ml_session)
         try:

@@ -954,9 +954,9 @@ class FakeReviewRepository:
         del view, limit, after, review_case_id
         return CoverPageSnapshot((), {"decide": 0, "kept": 0, "switched": 0, "all": 0})
 
-    def read_replaced_cover_preview(self, plan_id: str) -> str | None:
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:
         del plan_id
-        return None
+        return frozenset()
 
 
 class FakePreparation:

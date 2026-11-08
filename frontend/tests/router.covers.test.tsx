@@ -249,6 +249,35 @@ describe('Covers view (#1633)', () => {
     expect(screen.getByRole('button', { name: /^First Book.*Reviewed$/u })).toBeVisible()
   })
 
+  it('records a late acknowledgement without leaving the book opened since', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({
+      decide: page('decide', [...decide.items, work('case-3', 'choice')]),
+    })
+    const recorded = http.recordDecision.getMockImplementation()
+    if (!recorded) throw new Error('a decision double is required')
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    http.recordDecision.mockImplementationOnce(async (...args) => {
+      await gate
+      return recorded(...args)
+    })
+    const { router } = renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
+    await chooseOther(user)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    await user.click(screen.getByRole('button', { name: /^Third Book/u }))
+    await waitFor(() => expect(router.state.location.search.cover).toBe('case-3'))
+    await act(async () => {
+      release()
+      await gate
+    })
+    expect(await screen.findByText('Switched First Book.')).toBeVisible()
+    expect(router.state.location.search.cover).toBe('case-3')
+    expect(screen.getByRole('heading', { level: 2, name: 'Third Book' })).toBeVisible()
+  })
+
   it('moves on with Skip for now and decides nothing', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ decide })
@@ -655,6 +684,42 @@ describe('Covers view (#1633)', () => {
       { cover: 'case-77' },
       expect.anything(),
       'foreground',
+    )
+  })
+
+  it('offers Reload when a linked book past the loaded pages cannot be read', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({})
+    let failing = true
+    http.getCovers.mockImplementation(async (view, at) => {
+      if (at?.cover !== 'case-77') return page(view, [work('case-1', 'kept')], 'cursor-2')
+      if (failing) throw new ApiError(503, 'unavailable')
+      return page(view, [work('case-77', 'kept')])
+    })
+    renderRoute('/library?lens=all&view=covers&tab=all&cover=case-77', http)
+    const alert = await screen.findByRole('alert')
+    failing = false
+    await user.click(within(alert).getByRole('button', { name: 'Reload' }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Late Book' })).toBeVisible()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('tries a new preview for the same book after an earlier one failed to load', async () => {
+    const updates = createLiveStream()
+    const http = coversHttp({ all: page('all', [work('case-1', 'kept')]) })
+    renderRoute('/library?lens=all&view=covers&tab=all', http, updates)
+    await screen.findByText('First Book')
+    const image = document.querySelector('.covers-list img')
+    if (!image) throw new Error('a cover image is required')
+    fireEvent.error(image)
+    expect(document.querySelector('.covers-list img')).toBeNull()
+    http.getCovers.mockResolvedValue(page('all', [work('case-1', 'kept', { cover: preview('c') })]))
+    await act(async () => {
+      updates.announce({ sequence: 5, subject: 'case-1', topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    await waitFor(() =>
+      expect(document.querySelector('.covers-list img')).toHaveAttribute('src', preview('c').url),
     )
   })
 

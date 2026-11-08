@@ -1711,9 +1711,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise MetadataReportError("review covers are unavailable") from error
 
-    def read_replaced_cover_preview(self, plan_id: str) -> str | None:
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:
         try:
-            return self._review_projections.read_replaced_cover_preview(plan_id)
+            return self._review_projections.read_switch_cover_previews(plan_id)
         except sqlite3.Error as error:
             raise MetadataReportError("review covers are unavailable") from error
 

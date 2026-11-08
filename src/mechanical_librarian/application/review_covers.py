@@ -59,8 +59,9 @@ _CURSOR_LIMIT = 6144
 
 
 @dataclass(frozen=True, slots=True)
-class ReplacedCover:
-    """The retained original an automatic switch replaced, named by preview."""
+class SwitchCover:
+    """A cover one automatic switch names by preview: its retained original,
+    or the cover it put in place."""
 
     plan_id: str
     preview_digest: str
@@ -79,7 +80,10 @@ class CoverRow:
     switched_at: int | None
     # An automatic fill replaced nothing; a replacement names its original.
     filled: bool
-    replaced: ReplacedCover | None
+    replaced: SwitchCover | None
+    # The cover the automatic write put in place, for an ``auto`` row: the
+    # report keeps its pre-write cover until the next scan.
+    replacement: SwitchCover | None
     key: CoverKey
 
 
@@ -97,7 +101,7 @@ class CoverBrowseStore(Protocol):
         after: CoverKey | None,
         review_case_id: str | None = None,
     ) -> CoverPageSnapshot: ...
-    def read_replaced_cover_preview(self, plan_id: str) -> str | None: ...
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]: ...
 
 
 def _preview(
@@ -120,6 +124,28 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
         "item": target.item,
     }
     switched = None
+    # An automatic write's Now is the cover it verified, until a scan
+    # republishes the work with it.
+    now = row.replacement if row.group == "auto" else None
+    cover = (
+        _preview(
+            "/api/v1/covers/replaced",
+            {"plan": now.plan_id},
+            now.preview_digest,
+            now.width,
+            now.height,
+        )
+        if now is not None
+        else None
+        if report.cover is None
+        else _preview(
+            "/api/v1/library/cover",
+            identity,
+            report.cover.preview_digest,
+            report.cover.width,
+            report.cover.height,
+        )
+    )
     if row.group == "auto":
         if row.switched_at is None:
             raise ReviewWebError("unavailable")
@@ -142,21 +168,13 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
     return {
         "authors": _report_authors(target),
         "choosable": row.choosable,
-        "cover": None
-        if report.cover is None
-        else _preview(
-            "/api/v1/library/cover",
-            identity,
-            report.cover.preview_digest,
-            report.cover.width,
-            report.cover.height,
-        ),
+        "cover": cover,
         "group": row.group,
         "media_kind": report.file.format,
         "review_case_id": row.review_case_id,
         "switched": switched,
         "title": target.current_title or "Untitled",
-        "unreadable_cover": report.cover is None and report.cover_unreadable,
+        "unreadable_cover": cover is None and report.cover_unreadable,
     }
 
 
@@ -243,10 +261,12 @@ def cover_page(
 
 
 def replaced_cover_preview(store: CoverBrowseStore, plan: str, preview: str) -> str:
-    """Name the preview of a listed original, only while its copy is retained.
+    """Name a preview a Switched row shows: Before or Now of one switch.
 
-    A released or unlisted switch, another plan's preview or a guessed digest
-    is missing, so the route serves nothing a Switched row could not show.
+    Before is the listed original, only while its copy is retained; Now is
+    the cover the verified automatic write put in place. A released or
+    unlisted switch, another plan's preview or a guessed digest is missing,
+    so the route serves nothing a Switched row could not show.
     """
     if (
         type(plan) is not str
@@ -258,9 +278,9 @@ def replaced_cover_preview(store: CoverBrowseStore, plan: str, preview: str) -> 
     ):
         raise ReviewWebError("missing")
     try:
-        bound = store.read_replaced_cover_preview(plan)
+        bound = store.read_switch_cover_previews(plan)
     except Exception as error:
         raise ReviewWebError("unavailable") from error
-    if bound is None or bound != preview:
+    if preview not in bound:
         raise ReviewWebError("missing")
     return preview

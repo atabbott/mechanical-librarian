@@ -150,6 +150,7 @@ def _switch(
     at: int,
     original: str | None,
     sequence: int | None = None,
+    desired: str | None = None,
 ) -> str:
     """Record a verified automatic cover write, and its listed binding if any."""
     plan_id = "effect_plan_" + plan * 64
@@ -170,6 +171,7 @@ def _switch(
                     "plan": {
                         "authority": {"origin": "automatic_policy"},
                         "pre_value": None if original is None else "cover_" + original,
+                        "desired_value": desired,
                     }
                 }
             ),
@@ -289,6 +291,49 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
         assert _page(library.repository, "kept", None)["counts"]["kept"] == 1
         with pytest.raises(ReviewWebError) as missing:
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
+        assert missing.value.code == "missing"
+
+
+def test_a_switch_shows_the_cover_it_wrote_as_now_before_a_scan(
+    tmp_path: Path,
+) -> None:
+    with _library(tmp_path) as library:
+        written = next(
+            source.artifact
+            for source in library.report.cover_sources
+            if source.artifact is not None
+            and source.artifact.original_digest != _abs_digest(library.report)
+        )
+        plan = _switch(
+            library,
+            "item-1",
+            plan="1",
+            at=100,
+            original=_abs_digest(library.report),
+            sequence=1,
+            desired=written.artifact_id,
+        )
+        (item,) = _page(library.repository, "switched", None)["items"]
+        now, before = item["cover"], item["switched"]["before"]
+        # The report still holds the pre-write cover until the next scan, so
+        # Now comes from the verified plan, not the report.
+        assert str(now["url"]).startswith(f"/api/v1/covers/replaced?plan={plan}")
+        assert now["preview_sha256"] != before["preview_sha256"]
+        assert item["unreadable_cover"] is False
+        for preview in (now, before):
+            assert (
+                replaced_cover_preview(
+                    library.repository, plan, preview["preview_sha256"]
+                )
+                == preview["preview_sha256"]
+            )
+        _release(library, plan)
+        assert (
+            replaced_cover_preview(library.repository, plan, now["preview_sha256"])
+            == now["preview_sha256"]
+        )
+        with pytest.raises(ReviewWebError) as missing:
+            replaced_cover_preview(library.repository, plan, before["preview_sha256"])
         assert missing.value.code == "missing"
 
 
