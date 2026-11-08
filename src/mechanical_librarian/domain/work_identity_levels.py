@@ -10,14 +10,16 @@ predicate over a target's and a record's already-admitted title and creators:
   decoration grammar and the two share at least one creator.
 
 A side with no title or no creator never meets either predicate. Creators are
-compared under the report's closed creator comparison key, then with dotted
-initials folded (#1780): "J. R. Example", "J.R. Example" and "J R Example" are
-one creator. The fold applies only to a name that carries a token of dotted
-single letters and keeps a longer token, so names without initials, and names
-of initials only, compare unfolded; if folding would merge two of one side's
-creators, that side compares unfolded. Letter count and order still matter,
-and there is no comma inversion. `fold_initials=False` compares unfolded
-throughout; sidecar belonging passes it until #1418 qualifies the fold.
+compared under the report's closed creator comparison key, and also with
+dotted initials folded (#1780): "J. R. Example", "J.R. Example" and
+"J R Example" are one creator. The fold applies only to a name whose dotted
+tokens are letters and that keeps a token of two or more letters, so names
+without initials, and names of initials only, never agree by it. If folding
+would merge two of one side's creators, only the unfolded comparison runs. The
+folded comparison is tried beside the unfolded one, never instead of it, so
+the fold only widens. Letter count and order still matter, and there is no
+comma inversion. `fold_initials=False` compares unfolded only; sidecar
+belonging passes it until #1418 qualifies the fold.
 
 The predicates cover only title and creator. Callers keep every other refusal
 ADR-0096 names, at every level: an omnibus or box set against one of its
@@ -98,18 +100,32 @@ def _stated_title(reference: IdentityReference) -> str | None:
     return reference.title
 
 
-def _creator_keys(reference: IdentityReference, fold_initials: bool) -> frozenset[str]:
-    keys = frozenset(
-        creator_comparison_key(value) for value in reference.creators if value.strip()
-    )
+def _creator_key_sets(
+    target: IdentityReference, record: IdentityReference, fold_initials: bool
+) -> tuple[tuple[frozenset[str], frozenset[str]], ...]:
+    """The unfolded creator key sets, then the folded ones when folding.
+
+    A predicate meets if either pair meets, so the fold only ever adds an
+    agreement and never removes one the unfolded comparison makes.
+    """
     if not boolean(fold_initials):
         raise ValueError("work identity creator comparison input is invalid")
+    unfolded = tuple(
+        frozenset(
+            creator_comparison_key(value) for value in side.creators if value.strip()
+        )
+        for side in (target, record)
+    )
     if not fold_initials:
-        return keys
-    folded = frozenset(initials_folded_name(key) or key for key in keys)
-    # The collapse guard: a fold that merges two listed creators compares
-    # that side unfolded rather than letting a set shrink into agreement.
-    return folded if len(folded) == len(keys) else keys
+        return ((unfolded[0], unfolded[1]),)
+    folded = tuple(
+        frozenset(initials_folded_name(key) or key for key in keys) for keys in unfolded
+    )
+    # The collapse guard: a fold that merges two listed creators on either side
+    # adds no folded comparison, so a set never shrinks into agreement.
+    if any(len(a) != len(b) for a, b in zip(folded, unfolded, strict=True)):
+        return ((unfolded[0], unfolded[1]),)
+    return ((unfolded[0], unfolded[1]), (folded[0], folded[1]))
 
 
 def _titles_closed_equal(left: str, right: str) -> bool:
@@ -142,13 +158,15 @@ def title_and_creator_exact(
 ) -> bool:
     """Closed-equal titles and equal creator sets, both sides stating each."""
     target_title, record_title = _stated_title(target), _stated_title(record)
-    target_creators = _creator_keys(target, fold_initials)
-    record_creators = _creator_keys(record, fold_initials)
     return (
         target_title is not None
         and record_title is not None
-        and bool(target_creators)
-        and target_creators == record_creators
+        and any(
+            bool(target_keys) and target_keys == record_keys
+            for target_keys, record_keys in _creator_key_sets(
+                target, record, fold_initials
+            )
+        )
         and _titles_closed_equal(target_title, record_title)
     )
 
@@ -164,8 +182,11 @@ def title_and_creator(
     return (
         target_title is not None
         and record_title is not None
-        and bool(
-            _creator_keys(target, fold_initials) & _creator_keys(record, fold_initials)
+        and any(
+            target_keys & record_keys
+            for target_keys, record_keys in _creator_key_sets(
+                target, record, fold_initials
+            )
         )
         and _titles_decoration_equal(target_title, record_title)
     )

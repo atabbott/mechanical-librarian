@@ -326,9 +326,9 @@ with track-bound documents now going to their track.
    own `album` and person tags, or against the target's title with its authors
    and narrators. Narrators are creator inputs on both sides, because a CUE
    `PERFORMER` or a `composer` tag is often the narrator; the title must still
-   match. Creators compare exactly until #1418; a document refused only
-   because its creators agree after ADR-0096's initials fold is
-   `initials_spelling` (#1780). Otherwise the document is `collection` when it
+   match. Creators compare exactly until #1418; a document whose creators
+   agree only once ADR-0096's initials fold applies is `initials_spelling`
+   (#1780). Otherwise the document is `collection` when it
    describes a collection the audiobook is one volume of, which takes
    precedence over `initials_spelling`, and `other_book` otherwise. A
    CUE sheet whose first `FILE` value names none of the item's tracks, or is

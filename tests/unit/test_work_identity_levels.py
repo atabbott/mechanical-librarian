@@ -286,6 +286,8 @@ def test_dotted_initials_fold_at_both_levels(
         ("Jane\u202fExample", "Jane Example"),
         ("R. F.", "R.F."),
         ("R. F.", "R F"),
+        ("A. B. 12", "A.B. 12"),
+        ("A. B. ?!", "A.B. ?!"),
     ),
     ids=[
         "initials_vs_full_names",
@@ -298,6 +300,8 @@ def test_dotted_initials_fold_at_both_levels(
         "narrow_no_break_space_without_initials",
         "initials_only",
         "initials_only_undotted",
+        "initials_with_digits",
+        "initials_with_punctuation",
     ],
 )
 def test_fold_never_widens_beyond_respelled_initials(
@@ -319,6 +323,8 @@ def test_fold_never_widens_beyond_respelled_initials(
         ("Q\u0301. R. Example", "Q\u0301.R. Example"),
         ("R.F.Example", "R. F. Example"),
         ("J.-P. Example", "J. P. Example"),
+        ("A. \u00b2. Example", "A.\u00b2. Example"),
+        ("\u2160. R. Example", "\u2160.R. Example"),
     ),
     ids=[
         "fullwidth_letter",
@@ -330,6 +336,8 @@ def test_fold_never_widens_beyond_respelled_initials(
         "mark_with_no_precomposed_form",
         "no_space_before_surname",
         "hyphenated_initials",
+        "superscript_digit_initial",
+        "roman_numeral_initial",
     ],
 )
 def test_unicode_initials_fail_closed(target_creator: str, record_creator: str) -> None:
@@ -340,6 +348,14 @@ def test_unicode_initials_fail_closed(target_creator: str, record_creator: str) 
 def test_fold_collapse_keeps_creators_unfolded() -> None:
     """Guard: a fold merging two listed creators leaves that side unfolded."""
     assert _agree(("R. F. Example", "R.F. Example"), ("R F Example",)) == NEITHER
+
+
+def test_fold_never_loses_an_unfolded_admission() -> None:
+    """Guard: one side's collapse never undoes a creator shared exactly."""
+    target = ("R. F. Example", "R.F. Example")
+    record = ("R. F. Example", "Jane Doe")
+
+    assert _agree(target, record) == (False, True, False, True)
 
 
 def test_same_initials_different_book_is_refused_by_title() -> None:
@@ -590,3 +606,35 @@ def test_omnibus_against_volume_is_closed_and_directional(
 def test_omnibus_against_volume_refuses_a_non_text_input() -> None:
     with pytest.raises(ValueError):
         omnibus_against_volume(None, "The Synthetic Saga")  # type: ignore[arg-type]
+
+
+_FOLD_CREATORS: tuple[tuple[str, ...], ...] = (
+    *_CREATORS,
+    ("R. F. Example",),
+    ("R.F. Example",),
+    ("R F Example",),
+    ("R. F. Example", "R.F. Example"),
+    ("R. F. Example", ALDER),
+    ("R.F. Example", "R. F. Example", BIRCH),
+    ("F.R. Example",),
+    ("R. F.",),
+)
+_FOLD_REFERENCES = tuple(
+    IdentityReference(title, creators)
+    for title in ("Lantern Harbour", "Lantern Harbour (2001)", "Lantern Harbor")
+    for creators in _FOLD_CREATORS
+)
+
+
+def test_the_fold_only_ever_widens_over_every_synthetic_pair() -> None:
+    """Guard: whatever the unfolded comparison admits, the folded one admits."""
+    widened = 0
+    for target, record in itertools.product(_FOLD_REFERENCES, repeat=2):
+        for level in STRICTNESS:
+            plain = admitting_level(level, target, record, fold_initials=False)
+            folded = admitting_level(level, target, record)
+            if plain is not None:
+                assert folded is not None
+                assert STRICTNESS.index(folded) <= STRICTNESS.index(plain)
+            widened += plain is None and folded is not None
+    assert widened

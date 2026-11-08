@@ -2329,16 +2329,25 @@ def initials_folded_name(value: str) -> str | None:
     The fold of #1260: "R. F. Example", "R.F. Example" and "R F Example" all
     give "r f example".  A name with no token of dotted single letters gives
     None, so whitespace or Unicode differences alone never make two names
-    agree; so does a name of initials only, which keeps no longer token.
+    agree.  So does a name whose dotted token holds a character that is not a
+    letter ("2.", a superscript, a Roman numeral), and a name that keeps no
+    token of two or more letters (initials only, or initials beside digits or
+    punctuation).
     """
     if not exact_text(value):
         raise ValueError("initials fold input is invalid")
-    if not any(
-        _DOTTED_INITIALS.fullmatch(token) for token in _comparison_text(value).split()
-    ):
+    dotted = [
+        token
+        for token in _comparison_text(value).split()
+        if _DOTTED_INITIALS.fullmatch(token)
+    ]
+    if not dotted or not all(token[::2].isalpha() for token in dotted):
         return None
     folded = _initials_fold(value)
-    if all(len(token) == 1 for token in folded.split(" ")):
+    if not any(
+        sum(character.isalpha() for character in token) > 1
+        for token in folded.split(" ")
+    ):
         return None
     return folded
 

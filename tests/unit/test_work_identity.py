@@ -1991,6 +1991,10 @@ def test_initials_fold_refusals(
         ("Jane\u2009Example", None),
         ("R. F.", None),
         ("R.F.", None),
+        ("A. B. 12", None),
+        ("A. B. ?!", None),
+        ("A. \u00b2. Example", None),
+        ("\u2160. R. Example", None),
         ("", None),
     ),
     ids=(
@@ -2002,6 +2006,10 @@ def test_initials_fold_refusals(
         "thin_space_without_initials",
         "initials_only",
         "joined_initials_only",
+        "initials_with_digits",
+        "initials_with_punctuation",
+        "superscript_digit_initial",
+        "roman_numeral_initial",
         "empty",
     ),
 )
