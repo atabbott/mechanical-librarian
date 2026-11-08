@@ -48,7 +48,6 @@ import {
   normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
-import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
 import {
   actionable,
@@ -61,7 +60,6 @@ import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
 import {
   authoredOwnerRecorded,
-  completionOutcome,
   decisionValue,
   valueText,
   shownAdvice,
@@ -75,6 +73,8 @@ import {
 import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import { ReviewCompletion } from './ReviewCompletion'
+import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
 import {
   AsinAutomaticStatement,
@@ -178,7 +178,8 @@ export default function LibraryPage({
   failed: boolean
   /** The works read's failure, which a build mismatch makes unrecoverable by another try. */
   error: unknown
-  retry: () => void
+  /** Reads the works again; settles when the read does. */
+  retry: () => Promise<unknown>
   /** Reports whether the attention rail is showing a retained queue. */
   onRailRetaining?: (retaining: boolean) => void
 }) {
@@ -339,13 +340,6 @@ export default function LibraryPage({
   // The case whose owner form was open, or whose owner control had focus,
   // when the Library said it changed; the refetch that follows can unmount it.
   const ownerEngaged = useRef<string | null>(null)
-  const staleCoverRecoveryButton = useRef<HTMLButtonElement>(null)
-  const [staleCoverReview, setStaleCoverReview] = useState<{
-    caseId: string
-    title: string
-    failed: boolean
-    loading: boolean
-  } | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -861,7 +855,6 @@ export default function LibraryPage({
             !complete.priorAttention.has(`${item.id}:${item.destination}`),
         ) ?? null)
       : null
-  const nextWorkError = attention.isError
   const coverPrepareFailure = useCoverPrepareFailure(selectedReviewCaseId)
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
@@ -931,7 +924,7 @@ export default function LibraryPage({
     },
     onRecorded: (caseId, destination) => {
       if (destination !== 'cover') return
-      setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
+      staleCover.clear(caseId)
     },
     onStale: async (command) => {
       if (ownerOutcome(command.outcome)) {
@@ -964,73 +957,25 @@ export default function LibraryPage({
         setSuccessorPending(null)
       }
       if (selected?.destination === 'cover') {
-        setStaleCoverReview({
-          caseId: selectedReviewCaseId,
-          title: selectedIdentityRef.current?.title ?? 'Cover comparison',
-          failed: false,
-          loading: false,
-        })
+        staleCover.open(
+          selectedReviewCaseId,
+          selectedIdentityRef.current?.title ?? 'Cover comparison',
+        )
         return
       }
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
-  const reviewCurrentCoverComparison = async () => {
-    const stale = staleCoverReview
-    if (!stale || stale.loading) return
-    setStaleCoverReview({ ...stale, failed: false, loading: true })
-    try {
-      await controller.settle()
-      const successor = await http.getCaseSuccessor(stale.caseId)
-      const currentCaseId = successor ?? stale.caseId
-      const currentDetail = await http.getCaseDetail(currentCaseId)
-      const currentCover = currentDetail.fields.find(
-        (field) => field.destination === 'cover' && field.coverConsideration !== null,
-      )
-      if (!currentDetail.current || currentCover === undefined) throw new Error('stale cover')
-      if (successor !== null) setReconciledSuccessorIdentity(currentCaseId)
-      await navigate({
-        replace: true,
-        search: (current) =>
-          current.preview === stale.caseId
-            ? { ...current, preview: currentCaseId, field: 'cover' }
-            : current,
-      })
-      setStaleCoverReview(null)
-    } catch {
-      setStaleCoverReview({ ...stale, failed: true, loading: false })
-    }
-  }
-  const staleCoverCaseId = staleCoverReview?.caseId
-  const staleCoverIdentityAvailable = Boolean(displayedIdentity)
-  useEffect(() => {
-    if (!staleCoverCaseId) return
-    const frame = requestAnimationFrame(() => {
-      if (document.activeElement === document.body) staleCoverRecoveryButton.current?.focus()
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [staleCoverCaseId, staleCoverIdentityAvailable])
-  const staleCoverNotice =
-    staleCoverReview?.caseId === selectedReviewCaseId ? (
-      <aside className="comparison-notice" role="alert">
-        {!displayedIdentity || detail.isError ? <h2>{staleCoverReview.title}</h2> : null}
-        <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
-        {staleCoverReview.failed ? (
-          <p>
-            The current comparison could not be loaded. Choose Review current comparison to try
-            again.
-          </p>
-        ) : null}
-        <button
-          type="button"
-          ref={staleCoverRecoveryButton}
-          disabled={staleCoverReview.loading}
-          onClick={() => void reviewCurrentCoverComparison()}
-        >
-          {staleCoverReview.loading ? 'Loading current comparison…' : 'Review current comparison'}
-        </button>
-      </aside>
-    ) : null
+  const staleCover = useStaleCoverReview({
+    http,
+    settle: () => controller.settle(),
+    navigate,
+    selectedReviewCaseId,
+    setReconciledSuccessorIdentity,
+    identityShown: Boolean(displayedIdentity),
+    detailFailed: detail.isError,
+  })
+  const staleCoverNotice = staleCover.notice
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
   useRouteReadyFocus(routeIdentity, true)
   useEffect(() => {
@@ -1058,7 +1003,12 @@ export default function LibraryPage({
     activeLineageReconciliation ||
     controller.recording ||
     (reconciledSuccessorIdentity === search.preview && detail.isPending)
-  const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
+  // Exactly when the workspace shows "Loading selected work…": a retry settles
+  // only once this clears, since until then its Try again or Reload is not there
+  // to take focus, even when every read has already failed (#1742).
+  const selectedReadLoading = !displayedIdentity
+    ? !staleCoverNotice && (identityPending || leaving || successorPending === search.preview)
+    : detail.isPending || (detail.isError && leaving)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   // A works retry that meets a newer build can leave the identity in error
   // throughout, so the switch to the reload is what settles the retry.
@@ -1068,22 +1018,35 @@ export default function LibraryPage({
     Boolean(search.preview) &&
     search.attention !== 'open' &&
     Boolean(displayedIdentity) &&
-    !selectedReadPending &&
+    !selectedReadLoading &&
     !selectedReadError
   useEffect(() => {
     selectedDetailRetry.current = null
     selectedDetailShown.current = null
   }, [search.preview])
+  // A read with no data goes back to pending when retried, so the loading line
+  // replaces its Try again: the workspace, which stays, holds focus until the
+  // settled read takes it. A read that still holds data keeps Try again
+  // mounted, and focus stays on it.
+  const holdSelectedRetry = (replaced: boolean) => {
+    selectedDetailRetry.current = search.preview ?? null
+    if (replaced)
+      document
+        .querySelector<HTMLElement>('#main-content .workspace-detail')
+        ?.focus({ preventScroll: true })
+  }
   useEffect(() => {
     // An error is settled only once it renders: while another read is still
     // in flight the work shows as loading, and its Try again or Reload does
     // not exist yet to take focus.
-    const selectedDetailSettled = selectedDetailReady || (selectedReadError && !selectedReadPending)
+    const selectedDetailSettled = selectedDetailReady || (selectedReadError && !selectedReadLoading)
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
+    // A selected-work retry holds focus on the workspace while it reads.
     const restoreAfterRetry =
-      selectedDetailRetry.current === search.preview && active === document.body
+      selectedDetailRetry.current === search.preview &&
+      (active === document.body || active === workspace)
     if (workspace && active === workspace && selectedDetailReady)
       workspace.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     else if (restoreAfterRetry) {
@@ -1093,12 +1056,16 @@ export default function LibraryPage({
     }
     selectedDetailRetry.current = null
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
+    // A retried read that fails again with its Try again still mounted
+    // changes none of the states above: its new error is what settles it.
   }, [
     selectedReadError,
-    selectedReadPending,
+    selectedReadLoading,
     selectedReadStale,
     search.preview,
     selectedDetailReady,
+    detail.errorUpdateCount,
+    attention.errorUpdateCount,
   ])
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
@@ -1469,10 +1436,6 @@ export default function LibraryPage({
     })
     return idempotencyKey
   }
-  const retryNextWork = () => {
-    if (attention.isFetchNextPageError) void attention.fetchNextPage()
-    else void attention.refetch()
-  }
   const clearSelection = () => {
     workSelectionGeneration.current += 1
     revealWorkspace.current = false
@@ -1817,7 +1780,7 @@ export default function LibraryPage({
           {...(!selectedWork &&
           search.preview &&
           search.attention !== 'open' &&
-          (!displayedIdentity || selectedReadPending || selectedReadError)
+          (!displayedIdentity || selectedReadLoading || selectedReadError)
             ? { 'data-route-focus': 'true' }
             : {})}
         >
@@ -1840,7 +1803,7 @@ export default function LibraryPage({
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
           ) : !displayedIdentity ? (
-            identityPending || leaving || successorPending === search.preview ? (
+            selectedReadLoading ? (
               <p role="status">Loading selected work…</p>
             ) : identityStale ? (
               <StaleBuildRead
@@ -1853,8 +1816,12 @@ export default function LibraryPage({
                 <button
                   ref={selectedDetailRetryButton}
                   onClick={() => {
-                    selectedDetailRetry.current = search.preview ?? null
-                    retry()
+                    holdSelectedRetry(
+                      data === undefined ||
+                        attention.data === undefined ||
+                        (detail.isError && detail.data === undefined),
+                    )
+                    void retry()
                     void attention.refetch()
                     // The case read names the work too, so it is read again (#1365).
                     if (detail.isError) void detail.refetch()
@@ -1879,7 +1846,9 @@ export default function LibraryPage({
                 <p role="status">This work is not in the current list of works.</p>
               </div>
             )
-          ) : detail.isPending || (detail.isError && leaving) ? (
+          ) : // `detail.isPending` is part of `selectedReadLoading` here; naming it
+          // narrows the read for the branches below.
+          selectedReadLoading || detail.isPending ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
@@ -1892,7 +1861,7 @@ export default function LibraryPage({
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
-                  selectedDetailRetry.current = search.preview ?? null
+                  holdSelectedRetry(detail.data === undefined)
                   void detail.refetch()
                 }}
               >
@@ -2040,85 +2009,30 @@ export default function LibraryPage({
               </section>
               {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
-                <article
-                  className="review-complete"
-                  aria-live="polite"
-                  tabIndex={-1}
-                  ref={completionRegion}
-                >
-                  <span className="review-complete-mark">✓</span>
-                  <div>
-                    <h3>Review complete</h3>
-                    <span>
-                      {`${String(complete.fields.length)} ${complete.fields.length === 1 ? 'field' : 'fields'} recorded.${writesActive ? ' Each started applying when you chose it.' : ''}`}
-                    </span>
-                  </div>
-                  <ol>
-                    {complete.fields.map((field) => (
-                      <li key={field.destination}>
-                        <button
-                          type="button"
-                          aria-label={
-                            field.destination === 'description' && decisionValue(field).length > 240
-                              ? `Revisit description: ${completionOutcome(field)}`
-                              : undefined
-                          }
-                          onClick={() => {
-                            setCompletionInspection(field.destination)
-                            selectCase(selectedReviewCaseId, field.destination)
-                          }}
-                        >
-                          <small>
-                            {destinationLabel(field.destination)} · {completionOutcome(field)}
-                          </small>
-                          <strong>{decisionValue(field)}</strong>
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                  {writesActive ? <p>Every write is logged in Activity.</p> : null}
-                  <footer>
-                    {nextWork ? (
-                      <Button
-                        variant="primary"
-                        type="button"
-                        onClick={() => {
-                          setComplete(null)
-                          setCompletionInspection(null)
-                          selectCase(nextWork.id, nextWork.destination, {
-                            cursor: nextWork.attentionCursor,
-                          })
-                        }}
-                      >
-                        Review next work →
-                      </Button>
-                    ) : attention.isPending ||
-                      attention.isPlaceholderData ||
-                      attention.isFetchingNextPage ? (
-                      <span>Finding the next work…</span>
-                    ) : nextWorkError && attention.error instanceof BuildMismatchError ? (
-                      <StaleBuildRead lead="The next work was not loaded." />
-                    ) : nextWorkError ? (
-                      <>
-                        <span>{`The next work could not be loaded.${restartSentence}`}</span>
-                        <Button variant="primary" type="button" onClick={retryNextWork}>
-                          Try again
-                        </Button>
-                      </>
-                    ) : !search.q ? (
-                      <span>No other work needs a decision.</span>
-                    ) : (
-                      <span>
-                        {summaryAttention !== undefined && data && outsideSearch === 0
-                          ? 'No other work needs a decision.'
-                          : 'No other work matching this search needs a decision.'}
-                        {summaryAttention === undefined || !data || outsideSearch === 0
-                          ? null
-                          : ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} one outside this search.`}
-                      </span>
-                    )}
-                  </footer>
-                </article>
+                <ReviewCompletion
+                  restartSentence={restartSentence}
+                  fields={complete.fields}
+                  writesActive={writesActive}
+                  completionRegion={completionRegion}
+                  attention={attention}
+                  hasNextWork={Boolean(nextWork)}
+                  searching={Boolean(search.q)}
+                  outsideSearch={
+                    summaryAttention === undefined || !data ? undefined : outsideSearch
+                  }
+                  inspect={(destination) => {
+                    setCompletionInspection(destination)
+                    selectCase(selectedReviewCaseId, destination)
+                  }}
+                  reviewNextWork={() => {
+                    if (!nextWork) return
+                    setComplete(null)
+                    setCompletionInspection(null)
+                    selectCase(nextWork.id, nextWork.destination, {
+                      cursor: nextWork.attentionCursor,
+                    })
+                  }}
+                />
               ) : selected ? (
                 <article
                   key={selected.destination}
@@ -2135,7 +2049,8 @@ export default function LibraryPage({
                   ) : null}
                   <header>
                     <div>
-                      <h3>
+                      {/* Takes focus when a retry below it leaves nothing in its place. */}
+                      <h3 className="decision-question" tabIndex={-1}>
                         {selectedActionable
                           ? decisionQuestion(selected.destination)
                           : destinationLabel(selected.destination)}
