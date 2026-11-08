@@ -354,7 +354,8 @@ def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
     ``_classify_sources`` matches: same provider and work identity, narrowed to
     the stated edition when there is one. A work-level cover (a default, work
     or related cover without an edition) binds every record of that work at
-    that provider.
+    that provider, and so does a listed edition, whose edition is never a
+    record (#1380).
     """
     works: dict[tuple[str, str], list[str]] = {}
     for provider in case.providers():
@@ -374,7 +375,11 @@ def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
         work = _text(provenance.get("work_identity"))
         if artifact is None or name is None or work is None:
             continue
-        edition = _text(provenance.get("edition_identity"))
+        edition = (
+            None
+            if provenance.get("designation") == "listed_edition"
+            else _text(provenance.get("edition_identity"))
+        )
         bound = {
             identity
             for identity in works.get((name, work), [])

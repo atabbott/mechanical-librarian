@@ -260,7 +260,13 @@ class Fixture:
         )
 
     def cover_candidate(
-        self, outcome: str, provider: int, work: str, identity: str | None
+        self,
+        outcome: str,
+        provider: int,
+        work: str,
+        identity: str | None,
+        *,
+        designation: str | None = None,
     ) -> str:
         """Add a cover candidate; return its report cover source id.
 
@@ -275,7 +281,8 @@ class Fixture:
                 "artifact": {"artifact_id": artifact},
                 "provenance": {
                     "provider": self.provider_names[provider],
-                    "designation": "work" if identity is None else "exact_edition",
+                    "designation": designation
+                    or ("work" if identity is None else "exact_edition"),
                     "work_identity": work,
                     "edition_identity": identity,
                     "context": self.text(),
@@ -1300,6 +1307,34 @@ def test_a_work_level_cover_reaches_every_record_of_its_work(tmp_path: Path) -> 
     # Every record it pictures came by work search alone, so C2 counts it.
     work_search = _snapshot(rows["C2"], "snap-a")
     assert (work_search["fields"], work_search["true_positive"]) == (1, 2)
+
+
+def test_a_listed_edition_cover_reaches_every_record_of_its_book(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, _ = fixture.record(provider, work, lane="work")
+    fixture.record(provider, work, lane="work")
+    fixture.record(provider, text(), lane="work")
+    fixture.bind(provider, accepted, work, "accepted")
+    # A listed edition names an edition that is no record, yet the classifier
+    # binds it by its book's work identity alone (#1380).
+    fixture.cover_candidate(
+        "unknown", provider, work, text(), designation="listed_edition"
+    )
+    fixture.result(
+        "cover",
+        "unresolved_choice",
+        ["cover_gallery_incomplete", "owner_cover_choice_required"],
+    )
+    database = _database(tmp_path / "l.sqlite3", "v26-like", [fixture])
+    code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+    assert code == 0
+    classifier = _snapshot(_rows(stdout)["C1"], "snap-a")
+    assert (classifier["true_positive"], classifier["false_positive"]) == (2, 0)
 
 
 # --- 7. Ranking ------------------------------------------------------------

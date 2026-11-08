@@ -23,6 +23,7 @@ from mechanical_librarian.adapters.providers.google_books_metadata import (
 )
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
+    HardcoverPacer,
 )
 from mechanical_librarian.adapters.providers.inventaire_metadata import (
     InventaireMetadataProvider,
@@ -115,7 +116,12 @@ def test_real_adapter_failure_retains_original_cause_and_first_access(
         name,
         client,
         65536,
-        pacer=ProviderRequestPacer(clock=lambda: 0.0, sleep=lambda _: None),
+        # Hardcover's pacer also paces its asset host (#1380).
+        pacer=(
+            HardcoverPacer
+            if factory is HardcoverMetadataProvider
+            else ProviderRequestPacer
+        )(clock=lambda: 0.0, sleep=lambda _: None),
         clock=lambda: 0.0,
         wall_clock=lambda: 1700000000.0,
         sleep=lambda _: None,

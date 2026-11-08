@@ -105,8 +105,8 @@ each relationship and rejects one that does not match
 
 **Covers.** Cover outcomes come from the target, the media and cover-enabled
 providers. Each keeps a closed designation (exact edition, related edition,
-work, default or truncation), safe provenance and artifact facts. Identical
-bytes share one artifact without losing distinct provenance.
+listed edition, work, default or truncation), safe provenance and artifact
+facts. Identical bytes share one artifact without losing distinct provenance.
 
 **Currentness.** A separate current pointer per target and file names the
 latest report. Moving it never changes an earlier report. Reopening by ID

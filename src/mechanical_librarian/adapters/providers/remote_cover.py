@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import cast
-from urllib.parse import SplitResult, urljoin, urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from mechanical_librarian.application.metadata_report import CoverRedirects
 
@@ -309,27 +309,6 @@ def _chunked_body(
         del buffer[: size + 2]
 
 
-def _redirect_target(current: str, location: str | None) -> str:
-    if not location:
-        raise RemoteCoverError("remote redirect is invalid")
-    try:
-        target = urljoin(current, location)
-    except ValueError as error:
-        raise RemoteCoverError("unsafe remote cover") from error
-    _validate_url(target)
-    parts = _parts(target)
-    if (
-        parts.scheme != "https"
-        or not parts.hostname
-        or parts.port not in (None, 443)
-        or parts.username
-        or parts.password
-        or parts.fragment
-    ):
-        raise RemoteCoverError("remote redirect is invalid")
-    return target
-
-
 def _admitted_media_type(headers: dict[str, str]) -> str:
     get = headers.get
     encoding = get("content-encoding")
@@ -427,7 +406,6 @@ def _open_library_archive_cover(
             current,
             deadline,
             user_agent if position == 0 else None,
-            generic_redirects=False,
         )
         if status in _REDIRECT_STATUSES:
             if position == 2:
@@ -454,8 +432,6 @@ def _pinned_fetch(
     url: str,
     deadline: float | CoverDeadline | None,
     user_agent: str | None = None,
-    *,
-    generic_redirects: bool = True,
 ) -> tuple[int, dict[str, str], bytes]:
     host, address, path = _pinned_address(url, deadline)
     query = _parts(url).query
@@ -474,10 +450,6 @@ def _pinned_fetch(
             )
             secured.sendall(request)
             status, headers = _response_headers(secured, deadline)
-            if status in _REDIRECT_STATUSES:
-                if generic_redirects:
-                    _redirect_target(url, headers.get("location"))
-                return status, headers, b""
             if status != 200:
                 return status, headers, b""
             _admitted_media_type(headers)
@@ -493,10 +465,14 @@ def fetch_remote_cover(
     url: str,
     *,
     deadline: float | CoverDeadline | None = None,
-    redirects: CoverRedirects = CoverRedirects.PUBLIC_HTTPS,
+    redirects: CoverRedirects = CoverRedirects.NONE,
     user_agent: str | None = None,
 ) -> RemoteCover:
-    """One no-retry request chain; every redirect is revalidated before use."""
+    """One no-retry request; only Open Library's fixed route follows redirects.
+
+    `docs/architecture/security.md` › Provider cover admission: every other
+    provider's cover is one pinned request, and any redirect refuses it.
+    """
     if type(redirects) is not CoverRedirects or (
         user_agent is not None
         and (
@@ -510,32 +486,20 @@ def fetch_remote_cover(
         )
     ):
         raise RemoteCoverError("remote cover request is invalid")
-    current = url
     try:
         if redirects is CoverRedirects.OPEN_LIBRARY_ARCHIVE:
             return _open_library_archive_cover(url, deadline, user_agent)
-        for _ in range(4):
-            if type(deadline) is CoverDeadline and deadline.remaining_phase() <= 0:
-                raise RemoteCoverTimeout("aggregate deadline elapsed")
-            if type(deadline) is float and time.monotonic() >= deadline:
-                raise RemoteCoverTimeout("aggregate deadline elapsed")
-            status, headers, content = _pinned_fetch(
-                current,
-                deadline,
-                user_agent,
-            )
-            if status in _REDIRECT_STATUSES:
-                if redirects is CoverRedirects.NONE:
-                    raise RemoteCoverError("remote cover unavailable")
-                current = _redirect_target(current, headers.get("location"))
-                continue
-            if status != 200:
-                raise RemoteCoverError("remote cover unavailable")
-            media_type = _admitted_media_type(headers)
-            if not content:
-                raise RemoteCoverError("remote cover unavailable")
-            return RemoteCover(current, media_type, content)
-        raise RemoteCoverError("remote redirect limit exceeded")
+        if type(deadline) is CoverDeadline and deadline.remaining_phase() <= 0:
+            raise RemoteCoverTimeout("aggregate deadline elapsed")
+        if type(deadline) is float and time.monotonic() >= deadline:
+            raise RemoteCoverTimeout("aggregate deadline elapsed")
+        status, headers, content = _pinned_fetch(url, deadline, user_agent)
+        if status != 200:
+            raise RemoteCoverError("remote cover unavailable")
+        media_type = _admitted_media_type(headers)
+        if not content:
+            raise RemoteCoverError("remote cover unavailable")
+        return RemoteCover(url, media_type, content)
     except (TimeoutError, socket.timeout) as error:
         raise RemoteCoverTimeout("remote cover timed out") from error
     except (OSError, ssl.SSLError, UnicodeError) as error:

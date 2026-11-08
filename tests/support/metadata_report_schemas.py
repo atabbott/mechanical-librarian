@@ -285,7 +285,8 @@ def retained_report_as_current(document: str) -> MetadataReport:
     v75 gave an audiobook's sidecar manifest entries their classification,
     and v76 their byte-order-mark record (#1796), and v77 the
     `initials_spelling` refusal (#1780); a v49 report holds no audio
-    section.
+    section. v78 added no key: it widens the closed cover designation and
+    truncation sets and their bounds for Hardcover's edition covers (#1778).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)

@@ -711,7 +711,7 @@ def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors
         "book_id": 10,
         "isbn_10": "0306406152",
         "isbn_13": "9780140328721",
-        "image": {"url": "https://images.example/accepted.jpg"},
+        "image": {"url": "https://assets.hardcover.app/accepted.jpg"},
     }
     accepted = hardcover_envelope(
         [shared],
@@ -719,7 +719,7 @@ def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors
             {
                 "id": 10,
                 "title": "Current title",
-                "image": {"url": "https://images.example/work.jpg"},
+                "image": {"url": "https://assets.hardcover.app/work.jpg"},
             }
         ],
     )
@@ -730,23 +730,23 @@ def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors
                 "book_id": 20,
                 "isbn_10": "0306406152",
                 "isbn_13": "9780140328721",
-                "image": {"url": "https://images.example/orphan.jpg"},
+                "image": {"url": "https://assets.hardcover.app/orphan.jpg"},
             },
             {
                 **shared,
-                "image": {"url": "https://images.example/conflict.jpg"},
+                "image": {"url": "https://assets.hardcover.app/conflict.jpg"},
             },
         ],
         [
             {
                 "id": 20,
                 "title": "Other title",
-                "image": {"url": "https://images.example/orphan-work.jpg"},
+                "image": {"url": "https://assets.hardcover.app/orphan-work.jpg"},
             },
             {
                 "id": 10,
                 "title": "Current title",
-                "image": {"url": "https://images.example/work.jpg"},
+                "image": {"url": "https://assets.hardcover.app/work.jpg"},
             },
         ],
     )
@@ -830,14 +830,14 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
                 "isbn_13": "9780140328721",
                 "asin": "B012345678",
                 "subtitle": "Edition subtitle",
-                "image": {"url": "https://images.example/edition.jpg"},
+                "image": {"url": "https://assets.hardcover.app/edition.jpg"},
             }
         ],
         [
             {
                 "id": 10,
                 "title": "Current title",
-                "image": {"url": "https://images.example/work.jpg"},
+                "image": {"url": "https://assets.hardcover.app/work.jpg"},
                 "contributions": [
                     {
                         "id": 1,
@@ -929,8 +929,9 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
     }
     assert 2 == len(provider_result.cover_descriptors)
     assert 2 == len({value.source_id for value in provider_result.cover_descriptors})
-    # Hardcover keeps its bounded generic redirects (#1752 leaves it unchanged).
-    assert {CoverRedirects.PUBLIC_HTTPS} == {
+    # Every Hardcover cover is fetched from its asset host with no redirect
+    # (#1380).
+    assert {CoverRedirects.NONE} == {
         value.redirects for value in provider_result.cover_descriptors
     }
     edition_cover = next(
@@ -1303,7 +1304,7 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
                         "id": calls,
                         "book_id": calls,
                         "isbn_13": family,
-                        "image": {"url": f"https://example.invalid/{calls}.jpg"},
+                        "image": {"url": f"https://assets.hardcover.app/{calls}.jpg"},
                     }
                 ],
                 [{"id": calls, "title": "Current title"}],

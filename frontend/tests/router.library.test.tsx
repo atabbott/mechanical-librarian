@@ -5692,6 +5692,34 @@ describe('Library route', () => {
       expect(document.querySelector('.library-cover-excluded')).toBeNull()
     })
 
+    it('never counts an admission truncation as a cover not shown', async () => {
+      // A truncation row stands for covers never fetched, not an image (#1778).
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp(() => ({
+          omissions: [
+            { reason: 'source_truncated', reference: 'truncated-provider-limit' },
+            { reason: 'source_truncated', reference: 'truncated-same-art' },
+            { reason: 'source_unavailable', reference: 'retained-unavailable-source' },
+          ],
+        })),
+      )
+      const comparison = await screen.findByRole('region', { name: 'Choose a cover' })
+      const unavailable = comparison.querySelector('.library-cover-excluded')
+      expect(unavailable?.querySelector('summary')).toHaveTextContent('1 cover not shown')
+      expect(unavailable?.querySelectorAll('p')).toHaveLength(1)
+      expect(within(comparison).queryByText('The image arrived incomplete')).toBeNull()
+      cleanup()
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp(() => ({
+          omissions: [{ reason: 'source_truncated', reference: 'truncated-provider-limit' }],
+        })),
+      )
+      await screen.findByRole('region', { name: 'Choose a cover' })
+      expect(document.querySelector('.library-cover-excluded')).toBeNull()
+    })
+
     it('records a cover in one tap with confirm_unverified_match for an unconfirmed match', async () => {
       const user = userEvent.setup()
       const http = coverHttp()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from mechanical_librarian.adapters.cover_artifacts import (
@@ -32,6 +32,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
     CoverDesignation,
     CoverEvidenceError,
     CoverFinalHost,
@@ -42,6 +43,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverTruncationReason,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures, same_art
 from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderStatus,
@@ -56,6 +58,19 @@ _DATANODE = re.compile(r"ia[0-9]{1,6}\.us\.archive\.org")
 # Every metadata adapter states this one literal when the provider named an
 # edition but no work, so two descriptors carrying it name nothing in common.
 _UNRESOLVED_WORK_IDENTITY = "unresolved"
+# `docs/architecture/security.md` › Provider cover admission: four covers a
+# connection, eight for a Hardcover connection, whose book's edition list is
+# the one source that offers that many (#1380), and twelve a report.
+_CONNECTION_COVERS = 4
+_HARDCOVER_CONNECTION_COVERS = 8
+_REPORT_COVERS = 12
+_DESIGNATION_PRIORITY = {
+    CoverDesignation.EXACT_EDITION: 0,
+    CoverDesignation.DEFAULT: 1,
+    CoverDesignation.WORK: 2,
+    CoverDesignation.RELATED_EDITION: 3,
+    CoverDesignation.LISTED_EDITION: 4,
+}
 
 
 def _final_host(kind: CoverSourceKind, url: str) -> CoverFinalHost | None:
@@ -204,7 +219,8 @@ class CoverEvidenceObserver:
             values = admitted[provider]
             for value in values:
                 results.append(self._remote(value, deadline))
-        return (*results, *truncations)
+        kept, collapsed = self._collapse_same_art(results)
+        return (*kept, *truncations, *collapsed)
 
     def _admit_provider_descriptors(
         self,
@@ -226,6 +242,7 @@ class CoverEvidenceObserver:
                 candidate.identity for candidate in observation.candidates
             }
         values: dict[str, list[ProviderCoverDescriptor]] = {}
+        passed: list[CoverSource] = []
         seen_ids: set[str] = set()
         for descriptor in descriptors:
             configuration = self._providers.get(descriptor.provider)
@@ -236,6 +253,21 @@ class CoverEvidenceObserver:
                 or provenance is None
                 or provenance.provider != descriptor.provider
             ):
+                continue
+            if descriptor.source_id in seen_ids:
+                raise MetadataReportError("provider cover result is invalid")
+            if provenance.designation is CoverDesignation.TRUNCATION:
+                # An adapter's own truncation row (#1380) names no work: it
+                # records a bound the adapter met, and takes no cover slot.
+                seen_ids.add(descriptor.source_id)
+                passed.append(
+                    CoverSource(
+                        descriptor.source_id,
+                        descriptor.kind,
+                        CoverSourceState.TRUNCATED,
+                        provenance=provenance,
+                    )
+                )
                 continue
             if provenance.work_identity == _UNRESOLVED_WORK_IDENTITY:
                 # `docs/architecture/security.md`, "Provider cover admission",
@@ -252,54 +284,115 @@ class CoverEvidenceObserver:
                     continue
             elif provenance.work_identity not in works.get(descriptor.provider, set()):
                 continue
-            if descriptor.source_id in seen_ids:
-                raise MetadataReportError("provider cover result is invalid")
             seen_ids.add(descriptor.source_id)
             values.setdefault(descriptor.provider, []).append(descriptor)
 
-        priority = {
-            CoverDesignation.EXACT_EDITION: 0,
-            CoverDesignation.DEFAULT: 1,
-            CoverDesignation.WORK: 2,
-            CoverDesignation.RELATED_EDITION: 3,
-        }
-        admitted: dict[str, tuple[ProviderCoverDescriptor, ...]] = {}
-        truncations: list[CoverSource] = []
-        remaining = 8
-        for provider in sorted(values):
-            ordered = tuple(
+        ordered = {
+            provider: tuple(
                 sorted(
                     values[provider],
                     key=lambda value: (
-                        priority.get(value.provenance.designation, 99)
+                        _DESIGNATION_PRIORITY.get(value.provenance.designation, 99)
                         if value.provenance is not None
                         else 99,
+                        value.order,
                         value.source_id,
                     ),
                 )
             )
-            provider_values = ordered[:4]
-            kind = ordered[0].kind
-            if len(ordered) > 4:
+            for provider in sorted(values)
+        }
+        caps = {
+            provider: _HARDCOVER_CONNECTION_COVERS
+            if covers[0].kind is CoverSourceKind.HARDCOVER
+            else _CONNECTION_COVERS
+            for provider, covers in ordered.items()
+        }
+        # Two passes: every connection's first four in name order, then each
+        # Hardcover connection's fifth to eighth into the room left.
+        selected: dict[str, list[ProviderCoverDescriptor]] = {}
+        remaining = _REPORT_COVERS
+        for provider, covers in ordered.items():
+            selected[provider] = list(covers[: min(_CONNECTION_COVERS, remaining)])
+            remaining -= len(selected[provider])
+        for provider, covers in ordered.items():
+            extra = covers[_CONNECTION_COVERS : caps[provider]][:remaining]
+            selected[provider].extend(extra)
+            remaining -= len(extra)
+        truncations: list[CoverSource] = []
+        for provider, covers in ordered.items():
+            if len(covers) > caps[provider]:
                 truncations.append(
                     self._truncation_source(
-                        provider,
-                        kind,
-                        CoverTruncationReason.PROVIDER_LIMIT,
+                        provider, covers[0].kind, CoverTruncationReason.PROVIDER_LIMIT
                     )
                 )
-            selected = provider_values[:remaining]
-            admitted[provider] = selected
-            if len(provider_values) > len(selected):
+            if len(selected[provider]) < min(len(covers), caps[provider]):
                 truncations.append(
                     self._truncation_source(
-                        provider,
-                        kind,
-                        CoverTruncationReason.GALLERY_LIMIT,
+                        provider, covers[0].kind, CoverTruncationReason.GALLERY_LIMIT
                     )
                 )
-            remaining -= len(selected)
-        return admitted, tuple(truncations)
+        admitted = {provider: tuple(covers) for provider, covers in selected.items()}
+        return admitted, (*passed, *truncations)
+
+    @classmethod
+    def _collapse_same_art(
+        cls, sources: list[CoverSource]
+    ) -> tuple[list[CoverSource], tuple[CoverSource, ...]]:
+        """Drop a listed edition cover that shows the same art as a larger one.
+
+        Only one connection's retrieved listed-edition covers that both carry
+        measures are compared, under ADR-0093's one same-art relation; the
+        larger pixel area stays, ties to the lower source id, and one
+        `same_art` row records the drop (#1380). Never across connections or
+        designations, and it never admits. A dropped cover is not published:
+        its staged blobs are orphans the artifact store already reclaims.
+        """
+        measured = sorted(
+            (
+                source
+                for source in sources
+                if source.provenance is not None
+                and source.provenance.designation is CoverDesignation.LISTED_EDITION
+                and source.artifact is not None
+                and source.artifact.measures is not None
+            ),
+            key=lambda source: (
+                source.provenance.provider if source.provenance is not None else "",
+                -(source.artifact.width * source.artifact.height)
+                if source.artifact is not None
+                else 0,
+                source.source_id,
+            ),
+        )
+        kept: list[tuple[str, CoverArtifact]] = []
+        dropped: set[str] = set()
+        collapsed: dict[str, CoverSourceKind] = {}
+        for source in measured:
+            assert source.provenance is not None and source.artifact is not None
+            provider, artifact = source.provenance.provider, source.artifact
+            if any(
+                provider == kept_provider
+                and same_art(
+                    cast("CoverMeasures", kept_artifact.measures),
+                    (kept_artifact.width, kept_artifact.height),
+                    cast("CoverMeasures", artifact.measures),
+                    (artifact.width, artifact.height),
+                )
+                for kept_provider, kept_artifact in kept
+            ):
+                dropped.add(source.source_id)
+                collapsed[provider] = source.kind
+            else:
+                kept.append((provider, artifact))
+        return (
+            [source for source in sources if source.source_id not in dropped],
+            tuple(
+                cls._truncation_source(provider, kind, CoverTruncationReason.SAME_ART)
+                for provider, kind in sorted(collapsed.items())
+            ),
+        )
 
     @staticmethod
     def _truncation_source(
