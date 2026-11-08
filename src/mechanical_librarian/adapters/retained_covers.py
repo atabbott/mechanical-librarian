@@ -64,12 +64,15 @@ class RetainedCoverStore:
             information = None
         if information is not None:
             self._require_private_file(information)
-            if information.st_size != len(original):
-                raise ValueError(_ERROR)
-            return
+            if information.st_size == len(original) and self._digest(path) == digest:
+                return
+            # A file under this name that is not these bytes is never trusted:
+            # it is replaced atomically below, taking no new place in the bound.
         entries = 0
         total = 0
         for existing in self._root.glob("*.retained"):
+            if existing == path:
+                continue
             existing_information = existing.lstat()
             self._require_private_file(existing_information)
             entries += 1
@@ -107,6 +110,16 @@ class RetainedCoverStore:
         )
         if removed:
             self._sync_root()
+
+    def _digest(self, path: Path) -> str:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            hasher = hashlib.sha256()
+            while chunk := os.read(descriptor, 1024 * 1024):
+                hasher.update(chunk)
+            return hasher.hexdigest()
+        finally:
+            os.close(descriptor)
 
     def _path(self, digest: str) -> Path:
         if (

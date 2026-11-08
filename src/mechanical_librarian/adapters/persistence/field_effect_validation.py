@@ -1543,6 +1543,16 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 owed = reason is None
             if not owed:
                 raise FieldEffectError("invalid_retained_cover")
+        # Every verified switch that kept an original is listed, and nothing
+        # else is: the list order is the order of verification.
+        listed = {
+            row[0]
+            for row in connection.execute("SELECT plan_id FROM retained_cover_listings")
+        }
+        if listed != {
+            plan_id for plan_id in bound if operations[plan_id].state == "verified"
+        }:
+            raise FieldEffectError("invalid_retained_cover")
     except (
         json.JSONDecodeError,
         KeyError,

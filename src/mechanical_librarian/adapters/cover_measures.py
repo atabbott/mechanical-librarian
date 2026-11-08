@@ -31,6 +31,8 @@ _DCT_ROWS = tuple(
     )
     for k in range(_DCT_BAND)
 )
+# The decimal places a DCT coefficient keeps: residue sits near 1e-9 here.
+_DCT_DIGITS = 6
 _LAYOUT_CELLS = 4
 
 
@@ -81,8 +83,13 @@ def _phash(image: Image.Image) -> str:
         ]
         for basis in _DCT_ROWS
     ]
+    # A coefficient that is exactly zero, such as every non-DC coefficient of a
+    # flat grey, comes out as floating-point residue far below 1e-6, and that
+    # residue would decide hash bits. Rounding to a millionth makes it zero; a
+    # real coefficient moves by under half a millionth, so its bit changes only
+    # if it sits that close to the median, and imagehash's bits otherwise stand.
     band = [
-        sum(basis[n] * line[n] for n in range(_DCT_SIZE))
+        round(sum(basis[n] * line[n] for n in range(_DCT_SIZE)), _DCT_DIGITS)
         for line in columns
         for basis in _DCT_ROWS
     ]

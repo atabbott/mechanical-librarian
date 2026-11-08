@@ -234,6 +234,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP INDEX current_review_case_lineages_case;"
         "DROP INDEX current_review_packages_case;"
         "DROP TABLE review_case_episodes;"
+        "DROP TABLE retained_cover_listings;"
         "DROP TABLE retained_cover_removals;"
         "DROP TABLE retained_cover_bindings;"
     )

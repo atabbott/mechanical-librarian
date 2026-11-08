@@ -691,3 +691,57 @@ def test_composition_wires_retention_into_every_guarded_application(
     finally:
         recovery.close()
         repository.close()
+
+
+def test_switches_verified_in_the_same_second_leave_the_list_oldest_first(
+    effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The list order is the order of verification, never the plan identity."""
+    monkeypatch.setattr(retained_covers, "MAXIMUM_LISTED_SWITCHES", 2)
+    monkeypatch.setattr(effects, "clock", lambda: 100)
+    effects.recovery = PrivateCoverRecoveryStore(
+        Path(effects.temporary.name) / "tied-recovery",
+        lambda plan: f"original-{plan.work_id}".encode(),
+    )
+    store = RetainedCoverStore(_root(effects))
+    service = _service(effects, store)
+    plans = []
+    for index in range(6):
+        work_id = f"book-{index}"
+        original = f"original-{work_id}".encode()
+        planned = _automatic_plan(
+            effects,
+            service,
+            pre="cover_" + hashlib.sha256(original).hexdigest(),
+            work_id=work_id,
+            suffix=hashlib.sha256(work_id.encode()).hexdigest(),
+        )
+        assert service.apply(planned.plan.plan_id).state == "verified"
+        plans.append(planned.plan.plan_id)
+
+    released = {row[0] for row in _removals(effects)}
+    assert released == set(plans[:-2])
+    effects.repository.close()
+    effects.repository = open_repository(
+        effects.database_path, create=False, cross_thread=True
+    )
+
+
+def test_a_corrupt_kept_file_is_replaced_with_the_verified_original(
+    effects: _EffectEnvironment,
+) -> None:
+    store = RetainedCoverStore(_root(effects))
+    kept = _root(effects) / f"{OLD_DIGEST}.retained"
+    descriptor = os.open(kept, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.write(descriptor, b"x" * len(OLD))
+    os.close(descriptor)
+    service = _service(effects, store)
+    planned = _automatic_plan(effects, service)
+
+    assert service.apply(planned.plan.plan_id).state == "verified"
+
+    # The switch verified only behind bytes that are the original.
+    assert kept.read_bytes() == OLD
+    assert stat.S_IMODE(kept.stat().st_mode) == 0o600
+    assert not effects.recovery.exists(planned.plan.plan_id)
+    assert list(_root(effects).glob("*.tmp")) == []

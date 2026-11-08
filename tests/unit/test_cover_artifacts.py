@@ -329,3 +329,89 @@ def test_the_unaltered_child_document_is_accepted_through_the_same_seam() -> Non
         return_value=_AnsweringChild(cover_child._decode(payload)),
     ):
         assert decode_cover(payload).artifact == decode_cover(payload).artifact
+
+
+def _reference_phash(image: Image.Image) -> str:
+    """imagehash's pHash written out directly, with no rounding at all.
+
+    A 32x32 LANCZOS grayscale sample, the unnormalised DCT-II along each axis
+    (scipy's ``dct`` with no norm), the 8x8 low band in row-major order against
+    its median, and the most significant bit first.
+    """
+    import math
+
+    samples = image.convert("L").resize((32, 32), Image.Resampling.LANCZOS)
+    pixels = samples.tobytes()
+    band = [
+        sum(
+            4
+            * math.cos(math.pi * u * (2 * y + 1) / 64)
+            * math.cos(math.pi * v * (2 * x + 1) / 64)
+            * pixels[y * 32 + x]
+            for y in range(32)
+            for x in range(32)
+        )
+        for u in range(8)
+        for v in range(8)
+    ]
+    ordered = sorted(band)
+    median = (ordered[31] + ordered[32]) / 2
+    value = 0
+    for coefficient in band:
+        value = (value << 1) | int(coefficient > median)
+    return f"{value:016x}"
+
+
+def test_flat_previews_hash_alike_whatever_their_grey() -> None:
+    """Residue in a flat preview's zero coefficients never becomes hash bits."""
+    from mechanical_librarian.adapters.cover_measures import measure_preview
+
+    hashes = {
+        grey: measure_preview(Image.new("RGBA", (320, 480), (grey, grey, grey, 255)))[
+            "phash"
+        ]
+        for grey in (1, 11, 12, 128, 254, 255)
+    }
+    assert set(hashes.values()) == {"8000000000000000"}
+    black = measure_preview(Image.new("RGBA", (320, 480), (0, 0, 0, 255)))
+    assert black["phash"] == "0000000000000000"
+
+
+def test_the_flat_grey_regression_holds_through_the_decoder() -> None:
+    def flat(grey: int) -> str:
+        output = io.BytesIO()
+        Image.new("RGB", (320, 480), (grey, grey, grey)).save(output, "PNG")
+        measures = decode_cover(output.getvalue()).artifact.measures
+        assert measures is not None
+        return measures.phash
+
+    assert flat(11) == flat(12)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_perceptual_hash_matches_imagehash_on_ordinary_images(seed: int) -> None:
+    """The stabilised transform keeps imagehash's bits, which the study used."""
+    import random
+
+    from mechanical_librarian.adapters.cover_measures import _phash
+
+    generator = random.Random(seed)
+    image = Image.new("RGB", (320, 480))
+    draw = ImageDraw.Draw(image)
+    for _ in range(40):
+        left, top = generator.randrange(320), generator.randrange(480)
+        right = left + generator.randrange(8, 160)
+        bottom = top + generator.randrange(8, 240)
+        fill = (
+            generator.randrange(256),
+            generator.randrange(256),
+            generator.randrange(256),
+        )
+        draw.rectangle((left, top, right, bottom), fill=fill)
+    noisy = bytes(
+        min(255, max(0, channel + generator.randrange(-6, 7)))
+        for channel in image.tobytes()
+    )
+    image = Image.frombytes("RGB", image.size, noisy)
+
+    assert _phash(image) == _reference_phash(image)

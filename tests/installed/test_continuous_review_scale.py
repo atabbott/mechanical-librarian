@@ -327,7 +327,8 @@ def test_current_authority_and_predecessor_refusal_without_history(
                     f"DROP {kind.upper()} {name};"
                     for kind, name, _ in reversed(schema._ATTENTION_FACT_OBJECTS)
                 )
-                + "DROP TABLE retained_cover_removals;"
+                + "DROP TABLE retained_cover_listings;"
+                "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"

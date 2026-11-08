@@ -56,22 +56,29 @@ def schedule_retained_cover_removal(
 def release_unlisted_retained_covers(
     connection: sqlite3.Connection, plan_id: str, changed_at: int
 ) -> None:
-    """Oblige removal of every verified switch the newest one pushed off the list.
+    """List the newly verified switch and release the ones it pushed off.
 
-    Runs inside the transaction that verifies ``plan_id``, which is the newest
-    entry; older verified switches past the list bound are released through
-    the same retryable obligation as an unverified end.
+    Runs inside the transaction that verifies ``plan_id``. The switch takes the
+    next listing sequence, so the list keeps the order of verification even
+    when switches verify in the same second; verified switches past the list
+    bound are released through the same retryable obligation as an unverified
+    end. A plan with no binding retained nothing and is not listed.
     """
     connection.execute(
+        "INSERT INTO retained_cover_listings(plan_id,sequence) "
+        "SELECT plan_id,(SELECT coalesce(max(sequence),0)+1 FROM "
+        "retained_cover_listings) FROM retained_cover_bindings WHERE plan_id=? "
+        "AND NOT EXISTS (SELECT 1 FROM retained_cover_listings WHERE plan_id=?)",
+        (plan_id, plan_id),
+    )
+    connection.execute(
         "INSERT INTO retained_cover_removals(plan_id,reason,state,attempt,updated_at) "
-        "SELECT binding.plan_id,'released','pending',0,? "
-        "FROM retained_cover_bindings binding JOIN field_effects effect "
-        "USING(plan_id) WHERE effect.state='verified' AND NOT EXISTS ("
+        "SELECT listing.plan_id,'released','pending',0,? "
+        "FROM retained_cover_listings listing WHERE NOT EXISTS ("
         "SELECT 1 FROM retained_cover_removals removal "
-        "WHERE removal.plan_id=binding.plan_id) "
-        "ORDER BY binding.plan_id=? DESC,effect.updated_at DESC,"
-        "binding.retained_at DESC,binding.plan_id DESC LIMIT -1 OFFSET ?",
-        (changed_at, plan_id, MAXIMUM_LISTED_SWITCHES),
+        "WHERE removal.plan_id=listing.plan_id) "
+        "ORDER BY listing.sequence DESC LIMIT -1 OFFSET ?",
+        (changed_at, MAXIMUM_LISTED_SWITCHES),
     )
 
 

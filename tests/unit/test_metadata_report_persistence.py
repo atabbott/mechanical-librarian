@@ -601,6 +601,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_sets",),
             ("provider_recovery_outbox",),
             ("retained_cover_bindings",),
+            ("retained_cover_listings",),
             ("retained_cover_removals",),
             ("review_attention_facts",),
             ("review_case_episodes",),
@@ -851,7 +852,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                         persistence_schema._ATTENTION_FACT_OBJECTS
                     )
                 )
-                + "DROP TABLE retained_cover_removals;"
+                + "DROP TABLE retained_cover_listings;"
+                "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
@@ -2617,7 +2619,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                             persistence_schema._ATTENTION_FACT_OBJECTS
                         )
                     )
-                    + "DROP TABLE retained_cover_removals;"
+                    + "DROP TABLE retained_cover_listings;"
+                    "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
@@ -2642,6 +2645,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                 # resolution index led by the resolved id and #1363's retained
                 # cover tables.
                 repository._connection.executescript(
+                    "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
                     "DROP TABLE review_case_episodes;"

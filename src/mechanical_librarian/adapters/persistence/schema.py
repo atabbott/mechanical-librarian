@@ -1069,6 +1069,15 @@ _RETAINED_COVER_REMOVALS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0)) WITHOUT ROWID"
 )
+# The order verified switches joined the bounded list: a clock tick cannot
+# order switches verified in the same second, so each gets the next sequence.
+_RETAINED_COVER_LISTINGS_SQL = (
+    "CREATE TABLE retained_cover_listings ("
+    "plan_id TEXT PRIMARY KEY NOT NULL REFERENCES retained_cover_bindings(plan_id), "
+    "sequence INTEGER NOT NULL UNIQUE CHECK(sequence>=1)) WITHOUT ROWID"
+)
+_RETAINED_COVER_LISTING_NO_UPDATE_SQL = "CREATE TRIGGER retained_cover_listings_no_update BEFORE UPDATE ON retained_cover_listings BEGIN SELECT RAISE(ABORT, 'retained cover listings are append-only'); END"
+_RETAINED_COVER_LISTING_NO_DELETE_SQL = "CREATE TRIGGER retained_cover_listings_no_delete BEFORE DELETE ON retained_cover_listings BEGIN SELECT RAISE(ABORT, 'retained cover listings are append-only'); END"
 _FIELD_EFFECT_EVENTS_SQL = (
     "CREATE TABLE field_effect_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'effect_event_[0-9a-f]*' AND length(event_id)=77), "
@@ -1569,6 +1578,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_RETAINED_COVER_BINDINGS_TARGET_INDEX_SQL)
     connection.execute(_RETAINED_COVER_BINDINGS_DIGEST_INDEX_SQL)
     connection.execute(_RETAINED_COVER_REMOVALS_SQL)
+    connection.execute(_RETAINED_COVER_LISTINGS_SQL)
     connection.execute(_OWNER_SETTINGS_SQL)
     connection.execute(_OWNER_SETTING_SECRETS_SQL)
     connection.execute(_REVIEWER_ACCESS_SQL)
@@ -1603,6 +1613,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_DELETE_SQL)
     connection.execute(_RETAINED_COVER_BINDING_NO_UPDATE_SQL)
     connection.execute(_RETAINED_COVER_BINDING_NO_DELETE_SQL)
+    connection.execute(_RETAINED_COVER_LISTING_NO_UPDATE_SQL)
+    connection.execute(_RETAINED_COVER_LISTING_NO_DELETE_SQL)
     connection.execute(_AUTOMATIC_DECISION_NO_UPDATE_SQL)
     connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
     connection.execute(_FIELD_EFFECT_EVENT_NO_UPDATE_SQL)
@@ -1869,6 +1881,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "field_effects", _FIELD_EFFECTS_SQL),
             ("table", "retained_cover_bindings", _RETAINED_COVER_BINDINGS_SQL),
             ("table", "retained_cover_removals", _RETAINED_COVER_REMOVALS_SQL),
+            ("table", "retained_cover_listings", _RETAINED_COVER_LISTINGS_SQL),
+            ("index", "sqlite_autoindex_retained_cover_listings_2", None),
             ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
             ("table", "metadata_reports", _REPORTS_SQL),
             ("table", "metadata_report_browse_facts", _REPORT_BROWSE_FACTS_SQL),
@@ -2030,6 +2044,16 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "trigger",
                 "retained_cover_bindings_no_update",
                 _RETAINED_COVER_BINDING_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "retained_cover_listings_no_delete",
+                _RETAINED_COVER_LISTING_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "retained_cover_listings_no_update",
+                _RETAINED_COVER_LISTING_NO_UPDATE_SQL,
             ),
             ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
             (
