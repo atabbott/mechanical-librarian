@@ -138,6 +138,7 @@ export const detail: CaseDetailView = {
       humanDecision: null,
       automaticDecision: null,
       automaticWithheldReason: null,
+      automaticWithheldCondition: null,
       notices: [],
       provenance: [],
       preservationOnly: false,

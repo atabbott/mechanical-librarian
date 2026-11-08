@@ -3316,6 +3316,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                             if context["selection"] == "proposed"
                                             else "Automatic current source"
                                         ),
+                                        "language": None,
                                         "observation": "Synthetic automatic evidence.",
                                         "role": "external_corroboration",
                                     }
@@ -9802,6 +9803,14 @@ def test_isbn_title_reaches_real_library_with_retained_sources(mode):
                         )
                     ).first
                 ).to_be_visible()
+                if mode == "conflict":
+                    # The server names the condition the reason states, so the
+                    # Comparison condition box does not repeat it (#1802).
+                    expect(
+                        page.get_by_text(
+                            "The sources disagree about the work or title. Choose the title yourself"
+                        )
+                    ).to_have_count(1)
                 for width in (1280, 390, 320):
                     page.set_viewport_size({"width": width, "height": 844})
                     assert page.evaluate(
