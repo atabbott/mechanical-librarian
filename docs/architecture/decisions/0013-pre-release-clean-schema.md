@@ -451,10 +451,19 @@ record it. The proposal policy is unchanged. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
 
+Issue #1780 also takes the clean-rebuild branch. `metadata-report-v77` adds
+the sidecar refusal `initials_spelling`, for a document whose creators agree
+with the item's only once dotted initials fold. A stored report would name
+such a document `other_book`, and a report carries forward while its file and
+configuration fingerprints are unchanged. The audio child protocol carries no
+refusal and stays `audio-inspection-v6`. The proposal policy is unchanged.
+Every earlier application database is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.
+
 Issue #1363's Put back also takes the clean-rebuild branch.
-`metadata-report-v77` adds a `retained` cover source: the original an
+`metadata-report-v78` adds a `retained` cover source: the original an
 automatic switch replaced, read from the retained store while its copy is
-listed, and a report decoded under v76 states none. A report carries forward
+listed, and a report decoded under v77 states none. A report carries forward
 while its file and configuration fingerprints are unchanged, so a stored report
 would never offer the original back; a verified cover write therefore marks
 its work for fresh preparation. Every decoded cover reports its oriented size.

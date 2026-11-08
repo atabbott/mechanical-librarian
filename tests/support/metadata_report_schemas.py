@@ -283,8 +283,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
     cover search for an audiobook (#1779), which a v49 report, being an ebook's,
     never needed.
     v75 gave an audiobook's sidecar manifest entries their classification,
-    and v76 their byte-order-mark record (#1796); a v49 report holds no audio
-    section. v77 reports each cover artifact's width and height as oriented
+    and v76 their byte-order-mark record (#1796), and v77 the
+    `initials_spelling` refusal (#1780); a v49 report holds no audio
+    section. v78 reports each cover artifact's width and height as oriented
     and adds the `retained` cover source, neither of which a v49 report,
     holding no automatic switch, could carry (#1363).
     """

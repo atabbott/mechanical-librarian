@@ -461,6 +461,69 @@ def test_a_volume_beside_an_omnibus_recording_is_other_book() -> None:
     assert outcome.refusals == (_R.OTHER_BOOK,)
 
 
+# --- Initials: belonging stays exact, the fold names the refusal (#1780) ----
+_INITIALS = "R. F. Example"
+
+
+@pytest.mark.parametrize(
+    "respelled", ("R.F. Example", "R F Example"), ids=("joined_dotted", "undotted")
+)
+def test_sidecar_with_respelled_initials_refused_as_initials_spelling(
+    respelled: str,
+) -> None:
+    """S6: still refused and terminal; only the code says why."""
+    outcome = _one(
+        _reading("book.opf", _OPF, _fact(_F.ASIN, _OTHER_ASIN), creators=(respelled,)),
+        _context(authors=(_INITIALS,)),
+    )
+    assert outcome.refusals == (_R.INITIALS_SPELLING,)
+    assert outcome.facts == ()
+
+
+@pytest.mark.parametrize(
+    "creator",
+    ("R. Example", "F.R. Example", "R. F."),
+    ids=("dropped_initial", "reversed_initials", "initials_only"),
+)
+def test_sidecar_with_different_initials_refused_as_other_book(creator: str) -> None:
+    """Guard: the fold never names a different person's initials."""
+    outcome = _one(
+        _reading("book.opf", _OPF, creators=(creator,)),
+        _context(authors=(_INITIALS,)),
+    )
+    assert outcome.refusals == (_R.OTHER_BOOK,)
+
+
+def test_initials_spelling_replaces_only_other_book() -> None:
+    """S6 precedence: `collection` wins; a fold-only collection stays other_book.
+
+    The first document passes as a collection against the file's tags and
+    would be admitted by the fold against the target, which names the same
+    collection; it stays `collection`.  The second passes only by the fold,
+    and only as a collection, so the fold admits nowhere and it is another
+    book.  The third would be admitted by the fold against the file's tags
+    alone, while the target names another title.
+    """
+    omnibus = f"{_TITLE}: Books 1-3"
+    collection = _one(
+        _reading("book.opf", _OPF, title=omnibus, creators=(_INITIALS,)),
+        _context(title=omnibus, authors=("R.F. Example",)),
+        _evidence(titles=(_TITLE,), creators=(_INITIALS,)),
+    )
+    fold_only_collection = _one(
+        _reading("book.opf", _OPF, title=omnibus, creators=("R.F. Example",)),
+        _context(authors=(_INITIALS,)),
+    )
+    against_tags = _one(
+        _reading("book.opf", _OPF, creators=("R.F. Example",)),
+        _context(title="Unrelated Synthetic Title"),
+        _evidence(titles=(_TITLE,), creators=(_INITIALS,)),
+    )
+    assert collection.refusals == (_R.COLLECTION,)
+    assert fold_only_collection.refusals == (_R.OTHER_BOOK,)
+    assert against_tags.refusals == (_R.INITIALS_SPELLING,)
+
+
 def test_a_parent_refusal_stands_alone() -> None:
     reading = _reading("folder.opf", _OPF, _fact(_F.ASIN, _ASIN))
     [outcome] = associate_sidecars(
@@ -771,11 +834,12 @@ def test_the_refusal_vocabulary_is_closed_and_ordered() -> None:
         "shared_folder",
         "other_file",
         "other_book",
+        "initials_spelling",
         "collection",
         "other_edition",
         "sidecars_disagree",
     ]
-    assert TERMINAL_SIDECAR_REFUSALS == frozenset(list(AudioSidecarRefusal)[:5])
+    assert TERMINAL_SIDECAR_REFUSALS == frozenset(list(AudioSidecarRefusal)[:6])
     assert PARENT_SIDECAR_REFUSALS == {_R.TARGET_RECORD, _R.SHARED_FOLDER}
 
 
@@ -801,6 +865,19 @@ def test_the_manifest_reads_a_closed_entry() -> None:
     entry = _audio_sidecar_from_data(_entry_data())
     assert entry.refusals == (_R.OTHER_BOOK,)
     assert entry.to_data() == _entry_data()
+
+
+def test_the_manifest_reads_initials_spelling_as_terminal() -> None:
+    """#1780: the new code reads back, stands alone and ends evaluation."""
+    data = _entry_data(refusals=["initials_spelling"])
+    entry = _audio_sidecar_from_data(data)
+    assert entry.refusals == (_R.INITIALS_SPELLING,)
+    assert entry.refused
+    assert entry.to_data() == data
+    with pytest.raises(ReportValueError):
+        _audio_sidecar_from_data(
+            _entry_data(refusals=["other_book", "initials_spelling"])
+        )
 
 
 @pytest.mark.parametrize(
