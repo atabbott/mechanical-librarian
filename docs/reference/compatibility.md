@@ -56,7 +56,7 @@ owner runs it offline, and the changelog says when one ships.
 | Python | 3.13, 3.14 or 3.15. The image ships Python 3.15. |
 | Audiobookshelf | 2.26.0 or later, with no upper-version promise. Writes are qualified against pinned 2.26.0, 2.36.0, 2.37.1 and 2.37.2 images. Each write destination is checked for capability on the running server; a version number alone is not proof. |
 | Libraries | Explicitly configured Audiobookshelf book libraries holding ebooks (EPUB) or audiobooks. Media is read through read-only mounts and never written. |
-| Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for corroboration. |
+| Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for ebook corroboration and audiobook covers. |
 | Browser | The bundled React workspace served by the container. |
 
 Cover reviewers and description advice are optional. Their requirements are
@@ -81,7 +81,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v73` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v74` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v45` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |

@@ -16,9 +16,6 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
 from mechanical_librarian.adapters.providers.audnexus_metadata import (
     _candidate as _audnexus_candidate,
 )
-from mechanical_librarian.adapters.providers.itunes_search_metadata import (
-    _candidate as _itunes_candidate,
-)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -100,19 +97,6 @@ def _audnexus_html_description_candidate(
         marketplace="us",
         chapters=None,
         schema_rejections=lambda _count: None,
-    )
-
-
-def _itunes_html_description_candidate(
-    local_claims: tuple[LocalClaim, ...],
-) -> ProviderCandidate:
-    result = next(
-        value
-        for value in payload("itunes_search")["results"]
-        if value["collectionName"] == "Ember Tide Protocol"
-    )
-    return _itunes_candidate(
-        "itunes", result, local_claims, schema_rejections=lambda _count: None
     )
 
 
@@ -1363,7 +1347,6 @@ def test_non_google_markup_description_is_ineligible() -> None:
     (
         ("audible", "audible_catalog", _audible_html_description_candidate),
         ("audnexus", "audnexus", _audnexus_html_description_candidate),
-        ("itunes", "itunes_search", _itunes_html_description_candidate),
     ),
 )
 def test_generic_html_visible_description_remains_a_manual_alternative(
