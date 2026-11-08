@@ -199,8 +199,9 @@ candidates, but work-identity admission refused them all, for audiobooks and
 ebooks alike), **Providers unavailable** (adding **; will be checked again**
 only while a recovery job is scheduled), **Failed in Mechanical Librarian** (a
 source failed inside Mechanical Librarian itself, which is never retried), or
-**No provider matched**. If the
-recovery store cannot answer, Library drops only that promise and still loads
+**No provider matched**. An audiobook's iTunes listing is only its cover:
+it never matches the audiobook, and an iTunes failure never limits it or makes
+its providers unavailable. If the recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
 
 A work whose latest preparation could not finish is a **Preparation failed

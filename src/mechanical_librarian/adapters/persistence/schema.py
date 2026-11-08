@@ -77,6 +77,7 @@ from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     REPORT_SCHEMA,
     MetadataReport,
     ReportValueError,
@@ -108,7 +109,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v71'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v72'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -143,13 +144,30 @@ _LIMITING_PROVIDER_STATUSES_SQL = (
 )
 
 
+def _cover_only_provider_sql(document: str) -> str:
+    """The provider that `provider_supplies_field_evidence` refuses, in SQL.
+
+    A cover-only authority on an audio report is asked for a cover alone
+    (#1779), so its lanes neither limit nor match the audiobook. The
+    authorities come from the same domain constant as the predicate.
+    """
+    return (
+        "(json_extract(" + document + ",'$.audio') IS NOT NULL AND COALESCE("
+        "json_extract(provider.value,'$.authority') IN ("
+        + ",".join(f"'{value}'" for value in sorted(COVER_ONLY_AUDIOBOOK_AUTHORITIES))
+        + "),0))"
+    )
+
+
 def _provider_lanes_sql(document: str) -> tuple[str, str]:
     # Provider lanes are current evidence, not a second workflow state.
     # Aggregate-only observations have no lanes, so the LEFT JOIN falls back to
     # their own status.
     lanes = (
         "FROM json_each(" + document + ",'$.providers') provider "
-        "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 WHERE "
+        "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 WHERE NOT "
+        + _cover_only_provider_sql(document)
+        + " AND "
     )
     status = "COALESCE(json_extract(lane.value,'$.status'),json_extract(provider.value,'$.status'))"
     return lanes, status

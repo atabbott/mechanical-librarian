@@ -50,6 +50,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetFacts,
     default_target_fields,
+    field_evidence_providers,
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
@@ -67,6 +68,8 @@ from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     audio_local_claims,
     audio_target_fields,
+    audiobook_candidate,
+    manual_audiobook_observation,
     recorded_dispatch,
     recording_lookup_hint_report,
     single_track_audio_facts,
@@ -82,6 +85,7 @@ from tests.support.proposal_evidence import (
 )
 from tests.support.review_cases import _report
 from tests.support.review_web_doubles import (
+    _LIMITING_STATUSES,
     FakeReviewRepository,
     ReviewWebContext,
     review_web_context,
@@ -223,7 +227,7 @@ def _reasoned_library(directory: Path) -> SQLiteMetadataReportRepository:
         # Refusal outranks a provider that could not be reached.
         _refused(
             "refused-and-unavailable",
-            _audio_lane("itunes", "itunes_search", ProviderStatus.UNAVAILABLE),
+            _audio_lane("hardcover", "hardcover", ProviderStatus.UNAVAILABLE),
         ),
         _empty_or_refused("empty-or-refused"),
         _matched_clear("matched"),
@@ -906,5 +910,115 @@ def test_an_ebook_lane_refusal_reads_as_a_refusal_in_library_and_report(
             outcome["reason"]
             for outcome in cast("list[dict[str, object]]", row["preparation_outcomes"])
         ] == ["Found candidates, but none was this work."]
+    finally:
+        repository.close()
+
+
+def _store_matched(item: str, authority: str) -> MetadataReport:
+    """An audiobook only one source matched, next to an Audible miss."""
+    local = work_plan(*audio_local_claims()).local_claims
+    return _audiobook(
+        item,
+        _audio_lane("audible", "audible_catalog", ProviderStatus.NO_MATCH),
+        recorded_dispatch(
+            manual_audiobook_observation(
+                "store",
+                authority,
+                audiobook_candidate(
+                    local, identity="store-collection-1003", provider="store"
+                ),
+            )
+        ),
+    )
+
+
+def _browse_facts(
+    repository: SQLiteMetadataReportRepository,
+) -> dict[str, tuple[int, str]]:
+    return {
+        row[0]: (row[1], row[2])
+        for row in repository._connection.execute(
+            "SELECT mr.item_id,facts.provider_limited,facts.provider_match_state "
+            "FROM metadata_report_browse_facts facts "
+            "JOIN metadata_reports mr USING(report_id)"
+        )
+    }
+
+
+def test_an_itunes_failure_never_limits_an_audiobook(tmp_path: Path) -> None:
+    """#1779: iTunes is an audiobook's cover source, so its outage limits nothing."""
+    miss = _audio_lane("audible", "audible_catalog", ProviderStatus.NO_MATCH)
+    reports = (
+        _audiobook(
+            "store-down",
+            miss,
+            _audio_lane("store", "itunes_search", ProviderStatus.UNAVAILABLE),
+        ),
+        # The control: the same outage from an evidence source limits it.
+        _audiobook(
+            "hardcover-down",
+            miss,
+            _audio_lane("store", "hardcover", ProviderStatus.UNAVAILABLE),
+        ),
+        # An ebook still reads iTunes as the corroborating source it is there.
+        replace_providers(
+            _ebook("ebook-store-down", ProviderStatus.NO_MATCH),
+            (
+                ProviderObservation("provider-0", ProviderStatus.NO_MATCH),
+                ProviderObservation(
+                    "store", ProviderStatus.UNAVAILABLE, authority="itunes_search"
+                ),
+            ),
+        ),
+    )
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        for report in reports:
+            _publish(repository, report)
+        facts = _browse_facts(repository)
+        assert facts == {
+            "store-down": (0, "no_match"),
+            "hardcover-down": (1, "unavailable"),
+            "ebook-store-down": (1, "unavailable"),
+        }
+        # The SQL and `provider_supplies_field_evidence` name the same lanes.
+        for report in reports:
+            assert facts[report.target.item][0] == any(
+                lane.status.value in _LIMITING_STATUSES
+                for provider in field_evidence_providers(report)
+                for lane in provider.lanes or (provider,)
+            )
+        page = BrowseReviewLibrary(repository).library(
+            lens="not_matched", search=None, limit=50, cursor=None
+        )
+        assert {
+            item: value["summary"]["state"] for item, value in _items(page).items()
+        } == {
+            "store-down": "not_matched_no_match",
+            "hardcover-down": "not_matched_unavailable",
+            "ebook-store-down": "not_matched_unavailable",
+        }
+    finally:
+        repository.close()
+
+
+def test_an_audiobook_only_itunes_matched_stays_not_matched(tmp_path: Path) -> None:
+    """#1779: an iTunes listing is a cover, never a match for the audiobook."""
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        for report in (
+            _store_matched("store-only", "itunes_search"),
+            _store_matched("hardcover-only", "hardcover"),
+        ):
+            _publish(repository, report)
+        facts = _browse_facts(repository)
+        assert facts["store-only"] == (0, "no_match")
+        assert facts["hardcover-only"] == (0, "matched")
+        browse = BrowseReviewLibrary(repository)
+        page = browse.library(lens="not_matched", search=None, limit=50, cursor=None)
+        assert _items(page)["store-only"]["summary"]["state"] == (
+            "not_matched_no_match"
+        )
+        assert "hardcover-only" not in _items(page)
     finally:
         repository.close()

@@ -275,12 +275,14 @@ def retained_report_as_current(document: str) -> MetadataReport:
     closed `final_host`: an earlier producer followed no Open Library redirect,
     so a retrieved Open Library cover there was served by
     `covers.openlibrary.org` itself, and every other source states none.
+    v72 added no key: it plans iTunes' one cover search for an audiobook
+    (#1779), which a v49 report, being an ebook's, never needed.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v71"
+    data["schema_version"] = "metadata-report-v72"
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -474,12 +476,22 @@ def _without_match_state(sql: str, document: str) -> str:
 # Nor did they exclude #1498's adapter-faulted lanes from the limited flag.
 _FAULT_EXCLUSION_SQL = " AND NOT " + persistence_schema._LANE_ADAPTER_FAULT_SQL
 
-PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = _without_match_state(
-    persistence_schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
-        ",provider_limited,provider_match_state)", ",provider_limited)"
-    ),
-    "NEW.document",
-).replace(_FAULT_EXCLUSION_SQL, "")
+
+# Nor did they ignore #1779's cover-only lanes on an audio report.
+def _cover_only_exclusion_sql(document: str) -> str:
+    return "NOT " + persistence_schema._cover_only_provider_sql(document) + " AND "
+
+
+PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = (
+    _without_match_state(
+        persistence_schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
+            ",provider_limited,provider_match_state)", ",provider_limited)"
+        ),
+        "NEW.document",
+    )
+    .replace(_FAULT_EXCLUSION_SQL, "")
+    .replace(_cover_only_exclusion_sql("NEW.document"), "")
+)
 
 
 _CURRENT_REPORT_BROWSE_FACT_PAIRS = persistence_schema._report_browse_fact_pairs
@@ -490,9 +502,9 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
     (derived, stored), authors = _CURRENT_REPORT_BROWSE_FACT_PAIRS(key)
     return (
         (
-            _without_match_state(derived, "mr.document").replace(
-                _FAULT_EXCLUSION_SQL, ""
-            ),
+            _without_match_state(derived, "mr.document")
+            .replace(_FAULT_EXCLUSION_SQL, "")
+            .replace(_cover_only_exclusion_sql("mr.document"), ""),
             stored.replace(",provider_match_state FROM", " FROM"),
         ),
         authors,
@@ -502,7 +514,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v71'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v72'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -521,10 +533,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v71'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v72'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v71'", f"= '{version}'"
+            "= 'metadata-report-v72'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,
