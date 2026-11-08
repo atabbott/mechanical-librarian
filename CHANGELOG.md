@@ -176,6 +176,11 @@ brackets are GitHub issues.
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also
   retries that library's failed items (#1785).
+- Library has a Covers view beside Works for going through every book's
+  cover: To decide, Kept, Switched (automatic switches, with the cover before
+  and now) and All, 50 books at a time. One tap records a choice and opens the
+  next book, and a book whose covers changed is refused on its own. Keeping an
+  automatic switch releases the replaced cover's copy (#1633).
 - Tooling: a read-only workbench script lists Library links to the ebook
   series fields where only Hardcover names a series and it differs from yours,
   so you can label them in the qualification run (#1811).

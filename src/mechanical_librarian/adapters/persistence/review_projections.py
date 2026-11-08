@@ -45,6 +45,10 @@ from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewAttentionPage,
     ReviewLibraryPage,
 )
+from mechanical_librarian.adapters.persistence.review_covers import (
+    read_cover_page,
+    read_switch_previews,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _LATEST_PREPARATION_WORK_SQL,
@@ -61,6 +65,11 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_covers import (
+    CoverKey,
+    CoverPageSnapshot,
+    CoverView,
+)
 from mechanical_librarian.application.review_pipeline import PipelineAction
 from mechanical_librarian.application.review_web import (
     BROWSE_SCOPE_REUSE,
@@ -963,6 +972,27 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             if type(row[0]) is not str:
                 raise MetadataReportError("review report is unavailable")
             return row[0]
+
+    def read_review_covers(
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
+    ) -> CoverPageSnapshot:
+        with self._consistent_review_read():
+            return read_cover_page(
+                self._connection,
+                view,
+                limit,
+                after,
+                review_case_id,
+                self._current_cover_authority(),
+            )
+
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:
+        with self._consistent_review_read():
+            return read_switch_previews(self._connection, plan_id)
 
     def read_review_attention(
         self,
