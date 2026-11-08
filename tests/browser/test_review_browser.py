@@ -3479,11 +3479,13 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 selected_history = page.get_by_role(
                     "heading", name="Cover chosen"
                 ).locator("..")
-                selected_history.get_by_text("Visual review", exact=False).wait_for()
                 selected_history.get_by_text(
-                    "Owner-confirmed choice: a proposed cover.", exact=False
+                    "The cover reviewer", exact=False
                 ).wait_for()
-                assert "candidate" in selected_history.inner_text().lower()
+                selected_history.get_by_text(
+                    "You chose a proposed cover.", exact=False
+                ).wait_for()
+                assert re.search(r"\d+ covers?\.", selected_history.inner_text())
                 for identifier in (
                     "cover_consideration_",
                     "cover_ref_",
@@ -3574,7 +3576,7 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                     ".."
                 )
                 selected.get_by_text(
-                    "Owner-confirmed choice: a proposed cover.", exact=False
+                    "You chose a proposed cover.", exact=False
                 ).wait_for()
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
@@ -6239,7 +6241,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
 
                 page.get_by_role("link", name="History").click()
                 expect(
-                    page.get_by_text("Owner selected a proposed value.").first
+                    page.get_by_text("You chose a proposed value.").first
                 ).to_be_visible()
                 assert 0 == page.get_by_text(RECORDED_ONLY_REASON).count()
                 if chapter_runtime:
@@ -7923,9 +7925,15 @@ def test_sign_in_failures_are_specific_and_recoverable() -> None:
                     )
                     page.unroute("**/api/v1/session/login", throttle)
 
-                    page.get_by_text("Forgotten the owner password?").click()
+                    # One heading, with no eyebrow, tagline or reassurance
+                    # stacked around it (#1765 entry 1).
+                    expect(page.get_by_role("heading", level=1)).to_have_text(
+                        "Sign in to review your library"
+                    )
+                    assert page.locator(".eyebrow, .lede").count() == 0
+                    page.get_by_text("Forgot the owner password?").click()
                     guide = page.get_by_role(
-                        "link", name="Read the recovery steps in the deployment guide"
+                        "link", name="Recovery steps in the deployment guide"
                     )
                     expect(guide).to_be_visible()
                     expect(guide).to_have_attribute(
@@ -10338,20 +10346,18 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                     )
                 ).to_have_count(0)
                 expect(
-                    page.get_by_role(
-                        "heading", name="Advised description · Authored content"
-                    ).first
+                    page.get_by_role("heading", name="Description advice").first
                 ).to_be_visible()
                 if state == "automatic":
                     expect(
                         page.get_by_text(
-                            "Applied and verified in the library.", exact=False
+                            "Written to the library and checked.", exact=False
                         )
                     ).to_be_visible()
                 if state == "no_change":
                     expect(
                         page.get_by_text(
-                            "No change needed; the library already had this text.",
+                            "No change needed. The library already had this text.",
                             exact=False,
                         )
                     ).to_be_visible()
@@ -11002,10 +11008,13 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             if destination == "ignore":
+                # An ignored field keeps no source answers, so Evidence
+                # leaves it out once the read has finished.
+                expect(page.locator(".diagnostic-complete").first).to_be_visible()
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_have_count(0)
                 expect(
                     page.get_by_role("heading", name="Genres", exact=True)
-                ).to_be_visible()
+                ).to_have_count(0)
             else:
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_be_visible()
             if destination != "ignore":
@@ -11198,8 +11207,8 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         ).to_be_focused()
         assert "genres" in _attention_destinations(page, case_id)
         page.get_by_role("link", name="History", exact=True).click()
-        expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
-        expect(page.get_by_text("Owner entered a value.")).to_be_visible()
+        expect(page.get_by_text("You withdrew your choice.")).to_be_visible()
+        expect(page.get_by_text("You entered a value.")).to_be_visible()
 
 
 def _choose_previous_title(page: Page, origin: str, case_id: str):
@@ -11608,9 +11617,12 @@ def test_same_name_series_owner_journey(media, destination):
             else:
                 expect(choice).to_have_count(0)
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Series", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 expect(
                     page.get_by_text("Series membership: " + title, exact=False).first
@@ -11979,9 +11991,12 @@ def test_audiobook_synopsis_owner_journey(destination):
                     page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(
@@ -12067,9 +12082,12 @@ def test_ebook_synopsis_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
@@ -12265,7 +12283,12 @@ def test_ebook_isbn_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
-            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_be_visible()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
+            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_have_count(
+                0 if destination == "ignore" else 1
+            )
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
