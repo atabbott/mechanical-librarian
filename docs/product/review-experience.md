@@ -1,93 +1,103 @@
 # Review experience
 
-This is the product contract for the owner workspace: first run, Library,
-Attention, Evidence and History, Policy, Activity and Settings.
+This is the product contract for the workspace you sign in to: first run,
+Library, Attention, Evidence and History, Policy, Activity and Settings.
 [PRODUCT.md](../../PRODUCT.md) sets the boundaries, and the
-[automation policy](automation-policy.md) decides which work may be automatic.
+[automation policy](automation-policy.md) decides which work can be automatic.
 
 ## Principles
 
 - Items stay available in Audiobookshelf while curation runs in the background.
-- Qualified non-destructive work resolves without the owner. Attention holds
-  only work that can benefit from an owner decision.
-- Decisions are independent per target and per field.
-- Review makes no destructive changes; see [PRODUCT.md](../../PRODUCT.md).
+- Mechanical Librarian settles qualified, non-destructive work without you.
+  Attention holds only work where your decision can help.
+- Every decision covers one field of one library item and stands alone.
+- Review makes no destructive changes ([PRODUCT.md](../../PRODUCT.md)).
 - The server holds every decision. A refresh, another device, a restart or an
-  upgrade cannot lose an acknowledged one. Browser storage holds display
-  preferences only.
+  upgrade cannot lose an acknowledged one, unless the upgrade needs a clean
+  rebuild. Browser storage holds display preferences only.
 
-## Cases and authority
+## Review cases
 
-A review case covers one target snapshot: the library connection, the internal
-target identity, the item's fingerprint and the proposal set
-([review cases](../operations/review-case.md)). A new fingerprint or a
-materially changed proposal set supersedes an unresolved case. Recorded cases
-and decisions never change. The same item in two libraries is two targets, and
-titles and authors never decide identity.
+A review case covers one library item as it stood at one moment: its library
+connection, its internal identity, its fingerprint and its proposals
+([review cases](../operations/review-case.md)). A new fingerprint or any change
+to its proposals replaces an unresolved case. Mechanical Librarian never
+changes a recorded case or decision. The same item in two libraries is two
+separate items, and titles and authors never decide identity.
 
-A case holds the current metadata and cover (with explicit missing or unloaded
-states), field proposals, cover and series choices, evidence references, the
-deterministic recommendation and disposition, and the current owner decision.
-Identical candidate values collapse into one choice that keeps every source and
-contradiction. Evidence alone never creates a queue row. An uncertain field
-never holds back a safe field on the same target. Rejected and no-op
-alternatives stay auditable but are never written.
+A case holds the current metadata and cover, and says when either is missing
+or not loaded. It holds the field proposals, the cover and series choices and
+references to their evidence. It also holds the rule-based recommendation,
+what your policy does with each field, and your current decision. Identical
+proposed values become one choice, which keeps every source and every
+disagreement. Evidence alone never adds a row to Attention. A field that needs
+you never holds back a field that is ready on the same item. Rejected
+alternatives and those that change nothing stay on record, and Mechanical
+Librarian never writes them.
 
 An ebook and its audiobook are separate works with separate cases. Deciding
-one never changes the other, and similar titles are never treated as the same
-work.
+one never changes the other. Mechanical Librarian never treats two works as
+the same work because their titles are similar.
 
-These facts stay separate: evidence, the recommendation, the policy
-disposition, the owner decision, write authority, and the write with its
-verification. A recommendation is never authority. An Automatic decision needs
-its own qualification bound to the exact case and policy version
+Mechanical Librarian keeps these apart: the evidence, the recommendation, what
+your policy does with the field, your decision, write permission, and the
+write with its check. A recommendation alone never decides a field or allows a
+write. An Automatic decision needs its own qualification, tied to the exact
+case and policy version
 ([ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md)).
-Every write, owner or automatic, also needs the library's write permission,
-current source and target state and a ready backup, and is verified by
-read-back afterwards ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
+Every write, yours or automatic, also needs the library's write permission and
+unchanged evidence and library values. Before the write, Mechanical Librarian
+checks that its own database is consistent, and afterwards it reads the value
+back ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
 
-The owner can choose the current value or an eligible proposed value, enter a
-value where none fits, withdraw an unwritten decision, choose again a value a
-write replaced, or leave a field undecided. Blocked is a state, not a decision.
-Provider outages and job retries appear as preparation status, never as a
-metadata choice.
+For each field you can keep the current value or choose an eligible proposed
+value. You can enter a value where none fits, or withdraw a decision that has
+not been written. You can choose again a value that a write replaced, or leave
+the field undecided. Blocked is a state, not a decision. Source outages and
+retries show as preparation status, never as a metadata choice.
 
 ## First run
 
-A new store opens a seven-step setup: owner access, Audiobookshelf connection,
-providers, libraries, mounts, an optional cover reviewer, and kickoff.
-[Deployment](../operations/deployment.md) covers the claim token and container.
+An empty data volume opens a seven-step setup: owner access, the
+Audiobookshelf connection, metadata sources, libraries, read-only mounts, an
+optional cover reviewer and kickoff. [Deployment](../operations/deployment.md)
+covers the claim token and container.
 
-- Each step states its rules first. A refusal sits beside its field, clears
-  when the field changes, and gives a safe cause and one remedy, never a code;
-  at 200% text it stays in view.
+- Each step states its rules first. A refusal sits beside its field and clears
+  when the field changes. It gives a safe cause and one remedy, never a code,
+  and stays in view at 200% text.
 - Completed steps collapse to a row with Change. The step list stays beside
-  the step while it fits the window and scrolls inside itself when it does not. Reopening removes only the
-  answers and secrets that depend on it. Resume returns to the first incomplete
-  step, and a change in another tab restores the latest recorded step.
-- A connection failure names its class (name not resolved, refused,
-  certificate not verified, no answer, key not accepted), the origin and one
-  remedy. An address with a path, user name, password, query or fragment is
-  refused before any request.
-- Providers are grouped as Books and ebooks, and Audiobooks, and are optional.
-  Once libraries are read, a group is suggested for those it fits. Nothing is
-  ticked for the owner.
-- Library discovery can be retried and summarises skipped podcast libraries.
-  Two libraries cannot share a name in any letter case. A library's display
-  name is a label: renaming it never changes an identity.
-- A mount comparison reports matched, ambiguous, missing or unavailable, with a
-  remedy only when failing. It never creates a mount.
-- The reviewer choices are equal and name the model and its status. Device
-  sign-in can be cancelled, resumed or retried. Description advice is set up
-  later in Settings.
-- Secrets live only in their inputs, with an accessible reveal control; the
-  reviewer key is cleared after each attempt. An expired session keeps every
-  recorded step.
+  the step while it fits the window, and scrolls inside itself when it does
+  not. Reopening a step removes only the answers and secrets that depend on
+  it. Resuming setup returns to the first incomplete step. A change in another
+  tab restores the latest recorded step.
+- A failed connection names its cause, the address and one remedy. The causes
+  include a name that does not resolve, a refused connection, an unverified
+  certificate, no answer in time and a rejected key. Setup refuses an address
+  with a path, user name, password, query or fragment before it sends any
+  request.
+- Setup groups metadata sources as Books and ebooks, and Audiobooks, and each
+  is optional. Once setup has read your libraries, it suggests a group for
+  those it fits. It ticks nothing for you.
+- You can retry library discovery, and it summarises the podcast libraries it
+  skipped. Two libraries cannot share a name in any letter case. A library's
+  display name is only a label, so renaming it never changes which library it
+  is.
+- The mount check reports Matched, No mapping, More than one mapping or No
+  folder reported, with a remedy for every result except Matched. Setup never
+  creates a mount.
+- Setup presents the reviewer choices as equals, and each names its model and
+  status. You can cancel, resume or retry device sign-in. You set up
+  description advice later, in Settings.
+- Secrets live only in their inputs, each with an accessible reveal control.
+  Setup clears the reviewer key after each attempt. An expired session keeps
+  every recorded step.
 
 Before kickoff a summary lists each answer, and each row reopens its step.
 Kickoff says exactly: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` The same listener then serves the workspace,
-preparation starts, and a handover card appears once one work is ready.
+you turn them on in Activity.` The same address then serves the workspace and
+preparation starts. Library's write handoff appears once a prepared change
+waits for write permission.
 
 ## Workspace shell
 
@@ -96,79 +106,85 @@ and Settings. Every page opens in the saved theme, or the system theme until
 one is saved, on its first frame.
 
 Sign-in has Show password. It says whether the password was wrong or the device
-must wait five minutes after too many attempts. There is no reset in the app;
-see [Forgotten owner password](../operations/deployment.md#forgotten-owner-password).
+must wait five minutes after too many attempts. The app has no password reset
+([Forgotten owner password](../operations/deployment.md#forgotten-owner-password)).
 Signing in returns to the page you opened, or to Library, and opening the
 address while signed in goes straight to Library. Attention has no page of its
 own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
-It is sticky only while it takes at most a quarter of the window; taller, it
-scrolls away, so it never covers content or focus. The current destination is
-marked, and Library stays current while a review or Attention is open.
+It stays at the top only while it takes at most a quarter of the window. When
+it is taller, it scrolls away, so it never covers content or focus. The
+masthead marks the current destination, and Library stays marked while a
+review or Attention is open.
 
-Navigation mounts without waiting for data, and loading reads as one small
-line beside a dot that pulses only when motion is welcome. A pending or failed
-count is never shown as zero, and a failed read keeps a retry. A page that
-cannot load says why and what to do; the status and code are under Technical
-detail. An older response never replaces a newer selection. While a newer read is pending, the last content
-stays, marked busy with its controls inert, and the route is announced only
-when the read settles. Owner actions take priority over background refreshes.
-While preparation publishes works, an active tab refreshes Library and
-Attention at most once every 1.5 seconds. After 10 seconds without input, a tab
-refreshes only the preparation panel; it reads Library again on the owner's
-next input or when the tab returns to the foreground. An unknown review path
-shows a recovery state, not an error.
+Navigation appears without waiting for data. Loading reads as one small line
+beside a dot. The dot pulses unless reduced motion is set in your system or in
+Settings › Appearance. A count that is loading or failed never shows as zero,
+and a failed read keeps a retry. A page that cannot load says why and what to
+do. Its status and code are under Technical detail.
 
-## Preparation and provider status
+An older response never replaces a newer selection. While a newer read is
+pending, the last content stays, marked busy with its controls inert. The page
+announces the new route only when the read settles. Your actions take priority
+over background refreshes. While preparation publishes works, an active tab
+refreshes Library and Attention at most once every 1.5 seconds. After 10
+seconds without input, a tab refreshes only the preparation panel. It reads
+Library again on your next input or when the tab returns to the foreground. An
+unknown review path shows a recovery state, not an error.
 
-The preparation panel states one run in four counts: ready to browse, recorded
-with nothing to decide, could not finish, and still in progress. Ready to
-browse is always shown; the others are hidden at zero, and an unknown count
-reads `…`. Counts describe the run's works as they stand now. Each stage bar
-counts books that first reached it in this run; a book that could not finish
-stops at its last stage. Recent completions record each book's first finish.
-A rate appears only while the run is running. Each book links into Library by
-the name shown.
+## Preparation and source status
+
+The preparation panel states one run in five counts. Their labels are "ready
+to browse", "recorded, nothing to decide", "not matched", "could not finish"
+and "in progress". Ready to browse and in progress always show. The others hide
+at zero, and an unknown count reads `…`. Counts describe the run's books as
+they stand now. Each stage bar counts books that first reached it in this run.
+A book that could not finish stops at its last stage. Recent completions record
+each book's first finish. A rate appears only while the run is running. Each
+book links into Library by the name shown.
 
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
-`Preparation idle` and still offers Scan now and Pause. Pause stops new scans;
-source lookups already waiting keep their schedule. The popover fits the window
-below the masthead, scrolling inside itself when it must. `Escape` closes it and
-returns focus to its trigger. Pending commands are disabled, not removed, so
-focus stays put and a second press sends nothing. When a command's result
-cannot be confirmed, the popover shows the refreshed state, says no answer came
-back, and does not offer to try again.
+`Preparation idle` and still offers Scan now and Pause. Pause stops new scans.
+Source lookups already waiting keep their schedule. The popover fits the window
+below the masthead, and scrolls inside itself when it must. `Escape` closes it
+and returns focus to its trigger. The popover disables a pending command
+instead of removing it, so focus stays put and a second press sends nothing.
+When no answer confirms a command's result, the popover shows the refreshed
+state, says no answer came back and does not offer to try again.
 
-Retry-shaped controls differ:
+These controls retry different things:
 
 - `Scan now` and `Retry` start a new preparation cycle for one library.
 - `Retry now` retries every waiting source lookup in every library.
 - Retrying a cover or description consideration asks the reviewer about that
   one item again.
 
-Limited lookups recover on their own schedule; a failure before a report has
-no automatic retry ([provider recovery](../operations/provider-recovery.md)).
+Lookups that a source is limiting retry on their own schedule. A failure before
+a report has no automatic retry
+([provider recovery](../operations/provider-recovery.md)).
 
-Library and Settings share one provider notice. Each entry names a source, a
-library, the reason, how many lookups wait and when they retry. A refused key
-is not retried automatically: fix it, then use Retry now (or the file
-instruction). An exhausted lane says no retry remains. Each entry links to
-Settings › Metadata sources. Retry now's outcome is announced beside
-it; a file-managed deployment shows the file instruction instead. With nothing
-waiting the notice takes no space.
+Library and Settings share one notice of source lookups waiting to retry. Each
+entry names a source, a library, the reason, how many lookups wait and when
+they retry. Mechanical Librarian does not retry a refused key on its own: fix
+the key, then use Retry now (or the file instruction). An entry with no
+automatic retry left says so. An entry that needs an API key added or checked
+links to Settings › Metadata sources. Mechanical Librarian announces the
+outcome of Retry now beside it. A file-managed deployment shows the file
+instruction instead. With nothing waiting, the notice takes no space.
 
-A work whose preparation could not finish stays in Library as a
-non-interactive row, Could not finish, with its title while the catalogue
-still matches. Each failure code maps to one reason and one next step: a
-change you make and then a scan, an automatic retry, or scanning the library
-again, which queues a failed book again from the step that failed. That retry
-rereads what earlier steps saved, so saved data that could not be read says
-Library has no step that fixes it. Unknown codes are rejected, not given
-invented guidance. The row shows its reason, next step and a copyable
-reference, never a stage code, path or provider payload.
-If its catalogue identity has changed it reads `Preparation unavailable`.
+A work whose preparation could not finish stays in Library as a row that does
+not open, marked Could not finish. It keeps its title while the catalogue
+still matches. Each failure code has one reason and one next step. The next
+step is a change you make followed by a scan, an automatic retry, or a new
+scan of the library. A new scan queues a failed book again from the step that
+failed. That retry rereads what earlier steps saved. So when saved data could
+not be read, the row says "Library has no step that fixes this." Mechanical
+Librarian refuses an unknown code and invents no guidance for it. The row
+shows its reason, next step and a copyable reference, never a stage code, path
+or raw source response. Once the catalogue no longer matches, the row reads
+`Preparation unavailable`.
 
 ## Library
 
