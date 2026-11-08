@@ -3340,6 +3340,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 ),
                             },
                             classification="automatic_recorded",
+                            classification_cause="automatic_decided",
                             classification_reason=(
                                 "Automatic handling recorded this field; "
                                 "you may inspect or override it."

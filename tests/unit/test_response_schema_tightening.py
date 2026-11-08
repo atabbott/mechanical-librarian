@@ -57,6 +57,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome
+from mechanical_librarian.domain.review_field_classification import (
+    ReviewFieldClassificationCause,
+)
 from mechanical_librarian.domain.reviewer_access import _OPENROUTER_MODEL_ID
 from mechanical_librarian.interfaces.web import app
 
@@ -478,6 +481,14 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "minimum",
         1,
     ),
+    # The code Library keys a field's row on, never the sentence (#1791).
+    (
+        "S88",
+        "_ReviewField",
+        "/properties/classification_cause",
+        "enum",
+        _strings(ReviewFieldClassificationCause),
+    ),
 )
 
 
@@ -604,6 +615,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._AttentionResponse, "schema_version", "review-attention-v2", "literal_error"),
     (app._AttentionItem, "work_attention_count", -1, "greater_than_equal"),
     (app._ReviewField, "decision_actions", ["accept"], "too_long"),
+    (app._ReviewField, "classification_cause", "queued", "literal_error"),
     (app._TargetIdentity, "media_kind", "ebook", "literal_error"),
     (app._DecisionProjection, "outcome", "approve", "literal_error"),
     (app._AutomaticDecisionProjection, "outcome", "accept", "literal_error"),
