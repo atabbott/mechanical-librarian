@@ -68,11 +68,9 @@ describe('Library review ownership', () => {
       renderRoute(route, http)
       const section = await screen.findByRole('region', { name: 'How this recording was matched' })
       expect(
-        within(section).getByText(
-          /Complete chapter timing and structure corroborate this recording/u,
-        ),
+        within(section).getByText(/Its chapter timings and structure confirm this recording/u),
       ).toBeVisible()
-      expect(within(section).getByText(/where overall runtime is unavailable/u)).toBeVisible()
+      expect(within(section).getByText(/since no total running time is available/u)).toBeVisible()
       const source = within(section).getByText('Recording source')
       expect(within(section).getByText('Audnexus · recording-1')).not.toBeVisible()
       await userEvent.setup().click(source)
@@ -144,7 +142,7 @@ describe('Library review ownership', () => {
     // Only the fields this case offers are named (C1): this case offers Title.
     expect(
       within(section).getByText(
-        'Book-level evidence supports title choices. The exact recording remains unresolved.',
+        'Book-level evidence supports title choices. The exact recording is not known.',
       ),
     ).toBeVisible()
     // One offered field reads in the singular (#1642).
@@ -184,7 +182,7 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
     expect(
       within(section).getByText(
-        'Book-level evidence supports title, description, and genre choices. The exact recording remains unresolved.',
+        'Book-level evidence supports title, description, and genre choices. The exact recording is not known.',
       ),
     ).toBeVisible()
     expect(within(section).queryByText(/series|ASIN/u)).toBeNull()
@@ -211,13 +209,13 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
     expect(
       within(section).getByText(
-        'Book-level evidence supports title, publication date, and cover choices. A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
+        'Book-level evidence supports title, publication date, and cover choices. A Hardcover audio edition supports a narrator choice. The exact recording is not known.',
       ),
     ).toBeVisible()
     // Covers can now be chosen here, so the note no longer says they cannot.
     expect(
       within(section).getByText(
-        'Your choices apply only to these fields. Recording identifiers and automatic changes are unavailable from this evidence.',
+        'Your choices apply only to these fields. This evidence cannot set recording identifiers or make automatic changes.',
       ),
     ).toBeVisible()
     expect(within(section).queryByText(/covers/u)).toBeNull()
@@ -239,13 +237,13 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
     expect(
       within(section).getByText(
-        'A Hardcover audio edition supports a narrator choice. The exact recording remains unresolved.',
+        'A Hardcover audio edition supports a narrator choice. The exact recording is not known.',
       ),
     ).toBeVisible()
     // Narrators alone are one field, so the note reads in the singular.
     expect(
       within(section).getByText(
-        'Your choice applies only to this field. Recording identifiers and automatic changes are unavailable from this evidence.',
+        'Your choice applies only to this field. This evidence cannot set recording identifiers or make automatic changes.',
       ),
     ).toBeVisible()
     expect(within(section).queryByText(/these fields/u)).toBeNull()
@@ -262,7 +260,7 @@ describe('Library review ownership', () => {
         mediaHealth: [
           {
             bound:
-              "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+              'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
             cited: ['local_abc123', 'audible-product-B0SYNE7P1K'],
             expected: '20 h stated by the matched edition',
             kind: 'runtime_short_of_provider' as const,
@@ -278,7 +276,7 @@ describe('Library review ownership', () => {
     expect(within(section).getByText('Shorter than the edition')).toBeVisible()
     expect(
       within(section).getByText(
-        "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+        'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
       ),
     ).toBeVisible()
     expect(
@@ -365,7 +363,7 @@ describe('Library review ownership', () => {
                 provider: 'Open Library',
                 companionIsbn: false,
                 providerRequests: 2,
-                reason: 'Returned more than the accepted bound, so nothing was retained.',
+                reason: 'Returned more than Mechanical Librarian reads, so nothing was recorded.',
                 status: 'oversized',
               },
             ],
@@ -932,9 +930,7 @@ describe('Library review ownership', () => {
     expect(screen.getByText('<script>untrusted</script>')).toBeVisible()
     expect(document.querySelector('script')).toBeNull()
     expect(
-      screen.getByText(
-        'The recorded outcome is marked below. You can select another eligible value.',
-      ),
+      screen.getByText('The recorded outcome is marked below. You can choose another value.'),
     ).toBeVisible()
     expect(screen.getByRole('radio', { name: /Choose current value/u })).toBeVisible()
     expect(screen.queryByText('Current review case')).toBeNull()
@@ -970,11 +966,7 @@ describe('Library review ownership', () => {
     expect(screen.getByRole('button', { name: 'Requesting fresh checks…' })).toBeDisabled()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     settleRequest?.()
-    expect(
-      await screen.findByText(
-        'Fresh checks requested. Manual handling remains until they complete.',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByText('Fresh checks requested.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
     expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
       'aria-disabled',
@@ -999,7 +991,9 @@ describe('Library review ownership', () => {
     await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
     expect(
-      await screen.findByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      await screen.findByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeVisible()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeEnabled()
@@ -1010,7 +1004,7 @@ describe('Library review ownership', () => {
   const U1 = 'No answer came back. Reloading this work to check…'
   const U2 =
     "No answer came back. This work doesn't show fresh checks as requested. Request them again."
-  const S0 = 'Fresh checks requested. Manual handling remains until they complete.'
+  const S0 = 'Fresh checks requested.'
   const unconfirmed = (reload: (held: CaseDetailView) => Promise<CaseDetailView>) => {
     const field = detail.fields[0]
     if (!field) throw new Error('title fixture required')
@@ -1055,7 +1049,9 @@ describe('Library review ownership', () => {
     expect(warning).toHaveClass('automatic-handling-result', 'is-uncertain')
     expect(screen.queryByRole('alert')).toBeNull()
     expect(
-      screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      screen.queryByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeNull()
     await waitFor(() => expect(run.getCaseDetail.mock.calls.length).toBeGreaterThan(readsBefore))
     // Focus returns to the panel while the case is still reloading, so
@@ -1306,7 +1302,7 @@ describe('Library review ownership', () => {
     await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
     const error = await screen.findByRole('alert')
     expect(error).toHaveTextContent(
-      'Fresh checks could not be requested. Manual handling is unchanged.',
+      'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
     )
     expect(error).toHaveClass('automatic-handling-result', 'is-error')
   })
@@ -1342,14 +1338,10 @@ describe('Library review ownership', () => {
     await user.click(screen.getByRole('button', { name: /^Authors/u }))
     await screen.findByRole('heading', { name: 'Which authors should this work use?' })
     await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
-    expect(
-      screen.queryByText('Fresh checks requested. Manual handling remains until they complete.'),
-    ).toBeNull()
+    expect(screen.queryByText('Fresh checks requested.')).toBeNull()
     resolveRequest?.()
     await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
-    expect(
-      screen.queryByText('Fresh checks requested. Manual handling remains until they complete.'),
-    ).toBeNull()
+    expect(screen.queryByText('Fresh checks requested.')).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Title/u }))
     await screen.findByRole('heading', { name: 'Which title should this work use?' })
     expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
@@ -1392,13 +1384,17 @@ describe('Library review ownership', () => {
     rejectRequest?.(new Error('offline'))
     await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
     expect(
-      screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      screen.queryByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Title/u }))
     await screen.findByRole('heading', { name: 'Which title should this work use?' })
     await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
     expect(
-      await screen.findByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+      await screen.findByText(
+        'Fresh checks could not be requested. Choose Resume after fresh checks to try again.',
+      ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
   })

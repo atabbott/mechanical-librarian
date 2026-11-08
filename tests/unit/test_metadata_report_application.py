@@ -3735,8 +3735,7 @@ def test_an_adapter_fault_is_named_and_never_enrolled_for_recovery(
     } == {
         (
             "adapter_fault",
-            "Failed inside Mechanical Librarian, so nothing was retained and it "
-            "is not retried.",
+            "Nothing was recorded, and it is not retried automatically.",
         )
     }
     assert all(

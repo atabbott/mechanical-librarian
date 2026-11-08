@@ -24,25 +24,21 @@ export function MediaHealth({
   return (
     <section className="library-work-media-health" aria-labelledby={heading}>
       <h4 id={heading}>Media health</h4>
-      {observations.length === 0 ? (
-        <p role="status">No media-health observations were recorded.</p>
-      ) : (
-        <ul>
-          {observations.map((observation, index) => (
-            <li key={`${observation.kind}:${String(index)}`}>
-              <strong>{mediaHealthLabels[observation.kind]}</strong>
-              {observation.observed ? (
-                <span>
-                  {observation.observed}
-                  {observation.expected ? ` · expected ${observation.expected}` : ''}
-                </span>
-              ) : null}
-              <p>{observation.bound}</p>
-              <small>Read from {[...new Set(observation.cited.map(citation))].join(', ')}</small>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul>
+        {observations.map((observation, index) => (
+          <li key={`${observation.kind}:${String(index)}`}>
+            <strong>{mediaHealthLabels[observation.kind]}</strong>
+            {observation.observed ? (
+              <span>
+                {observation.observed}
+                {observation.expected ? ` · expected ${observation.expected}` : ''}
+              </span>
+            ) : null}
+            <p>{observation.bound}</p>
+            <small>Read from {[...new Set(observation.cited.map(citation))].join(', ')}</small>
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
