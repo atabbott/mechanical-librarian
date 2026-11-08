@@ -558,6 +558,157 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
+    "last_scan_state",
+    ["completed", "completed_with_failures"],
+    ids=("completed", "completed_with_failures"),
+)
+def test_resume_starts_pending_description_work_without_waiting_for_a_poll(
+    tmp_path: Path, last_scan_state: str
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.bootstrap import composition
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from tests.support.description_advice import _contained_profile
+    from tests.unit.test_shadow_outcome_persistence import (
+        _pipeline_configuration,
+        _run_qualified_cover_pipeline,
+    )
+
+    profile = _contained_profile(tmp_path)
+    scan_sql = (
+        "SELECT state,requested_at,updated_at FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='ebooks' "
+        "ORDER BY requested_at DESC,scan_id DESC LIMIT 1"
+    )
+    trigger_sql = (
+        "SELECT count(*) FROM review_preparation_presentation WHERE row_kind='trigger'"
+    )
+
+    def pipeline_probe(repository, report, deterministic, access, calls):
+        configuration = _pipeline_configuration()
+        assert configuration.review is not None
+        configuration = replace(
+            configuration,
+            review=replace(
+                configuration.review,
+                description_automatic_application=True,
+                cover_reviewer_profile_file=str(profile),
+            ),
+        )
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            tmp_path / "provider-recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            configuration,
+            tmp_path / "reports.sqlite",
+            tmp_path / "catalogue.sqlite",
+            tmp_path / "artifacts",
+            access,
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        proposal = ProposalSet.from_json(
+            repository._connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (deterministic.proposal_set_id,),
+            ).fetchone()[0]
+        )
+        pipeline = _run_qualified_cover_pipeline(
+            repository,
+            tmp_path,
+            report,
+            proposal,
+            supervisor,
+            repository_factory=supervisor._pipeline._repository_factory,
+        )
+        connection = repository._connection
+
+        def settle(message: str) -> None:
+            for _ in range(64):
+                if not pipeline.run_next(1):
+                    return
+            pytest.fail(message)
+
+        try:
+            settle("description pipeline did not settle")
+            assert len(calls) == 1
+            if last_scan_state == "completed_with_failures":
+                connection.execute(
+                    "UPDATE review_preparation_scans SET state='completed_with_failures' "
+                    "WHERE connection_name='primary' AND library_name='ebooks'"
+                )
+            state, _requested, updated = connection.execute(scan_sql).fetchone()
+            assert state == last_scan_state
+            # Both clocks sit inside one polling interval of the last scan, so
+            # only the resume itself can start the waiting work.
+            now = updated + 1
+            pipeline._clock = lambda: now
+            supervisor._clock = lambda: now
+            supervisor._pipeline = pipeline
+            supervisor.set_paused(True)
+            repository.description_advice_store().request_retry(
+                deterministic.review_case_id, now
+            )
+            supervisor._schedule_due()
+            assert pipeline.run_next(1) is False
+            assert len(calls) == 1
+            assert connection.execute(
+                "SELECT retry FROM description_preparation_pending WHERE review_case_id=?",
+                (deterministic.review_case_id,),
+            ).fetchall() == [(1,)]
+            triggers = connection.execute(trigger_sql).fetchone()
+            attempts = connection.execute(
+                "SELECT count(*) FROM description_advice_attempts"
+            ).fetchone()[0]
+
+            supervisor.set_paused(False)
+
+            state, requested, _updated = connection.execute(scan_sql).fetchone()
+            assert (state, requested) == ("queued", now)
+            assert connection.execute(trigger_sql).fetchone() == triggers
+            settle("description work pending at resume did not settle")
+            assert len(calls) == 2
+            assert connection.execute(
+                "SELECT count(*) FROM description_advice_attempts"
+            ).fetchone() == (attempts + 1,)
+            assert connection.execute(
+                "SELECT count(*) FROM description_preparation_pending"
+            ).fetchone() == (0,)
+
+            # Negative control: a resume with no waiting description work
+            # requests no scan.
+            settled = connection.execute(scan_sql).fetchone()
+            supervisor.set_paused(True)
+            supervisor.set_paused(False)
+            assert connection.execute(scan_sql).fetchone() == settled
+            assert pipeline.run_next(1) is False
+
+            # Negative control: a resume while already running requests
+            # nothing, even with a pending row present.
+            connection.execute(
+                "INSERT INTO description_preparation_pending VALUES(?,0,?)",
+                (deterministic.review_case_id, now),
+            )
+            connection.commit()
+            supervisor.set_paused(False)
+            assert connection.execute(scan_sql).fetchone() == settled
+            assert pipeline.run_next(1) is False
+            connection.execute("DELETE FROM description_preparation_pending")
+            connection.commit()
+        finally:
+            supervisor.stop()
+            recovery.close()
+
+    repository, *_ = _prepared(
+        tmp_path,
+        pipeline_probe=pipeline_probe,
+        contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes()),
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize(
     "malformed", ["not-json", "oversized", "extra", "duplicate", "wrong-request"]
 )
 def test_invalid_adviser_output_is_bounded_failed_history_without_retry(

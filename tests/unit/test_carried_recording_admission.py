@@ -51,6 +51,8 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_recording_asin,
     candidate_edition_asin,
     carried_asin_precedence,
+    recording_admitted,
+    verified_carried_asin,
 )
 from mechanical_librarian.domain.metadata_report import (
     AudioDiscoveryTitle,
@@ -660,17 +662,9 @@ def test_a_narrator_disjoint_product_is_refused_only_on_the_carried_lane() -> No
     )
 
 
-def test_an_echoed_sidecar_narrator_still_refuses_a_disjoint_carried_product() -> None:
-    """An `.opf` narrator withheld as the target's echo refuses as before (#1481).
-
-    The sidecar was the recording's only narrator credit, and it repeated the
-    target's, so association withheld it. The carried lookup's refusal only
-    refuses, so the echoed narrator stands in for it and a product crediting
-    somebody else stays another recording.
-    """
-    claims = _claims(narrator=None)
-    narrators = (_NARRATOR,)
-    audio = replace(
+def _narrator_echo_audio() -> AudioFacts:
+    """One file whose `.opf` repeated the target's first narrator (#1481)."""
+    return replace(
         single_track_audio_facts(_DIGEST),
         sidecars=(
             AudioSidecarDigest(
@@ -683,6 +677,19 @@ def test_an_echoed_sidecar_narrator_still_refuses_a_disjoint_carried_product() -
             ),
         ),
     )
+
+
+def test_an_echoed_sidecar_narrator_still_refuses_a_disjoint_carried_product() -> None:
+    """An `.opf` narrator withheld as the target's echo refuses as before (#1481).
+
+    The sidecar was the recording's only narrator credit, and it repeated the
+    target's, so association withheld it. The carried lookup's refusal only
+    refuses, so the echoed narrator stands in for it and a product crediting
+    somebody else stays another recording.
+    """
+    claims = _claims(narrator=None)
+    narrators = (_NARRATOR,)
+    audio = _narrator_echo_audio()
     plan = audiobook_carried_plan(_plan(claims, audio=audio, narrators=narrators))
     (carried_lane,) = (
         lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ASIN
@@ -715,6 +722,32 @@ def test_an_echoed_sidecar_narrator_still_refuses_a_disjoint_carried_product() -
         assert ClaimKind.DURATION in {
             value.kind for value in admitted.candidates[0].claims
         }
+
+
+def test_the_report_replay_refuses_a_disjoint_product_an_echo_withheld() -> None:
+    """Each replay reads the echoed narrator too, not only the lane (#1481).
+
+    The carried lookup here was not handed the echo, as a lane built before
+    it was, so it kept a product crediting somebody else. The report's own
+    readers replay the narrator refusal with the echoed target narrator and
+    admit nothing, so the lane and its replay cannot drift apart.
+    """
+    claims = _claims(narrator=None)
+    other = _candidate("audible", (_CARRIED,), narrator="Someone Else")
+    kept = _catalogue(claims, carried=(other,))
+    assert ClaimKind.DURATION in {value.kind for value in kept.candidates[0].claims}
+    # Without the sidecar's echo the file credits no narrator, and it stands.
+    unechoed = _report(claims, (kept,))
+    assert recording_admitted(unechoed)
+    assert verified_carried_asin(unechoed) == _CARRIED
+    assert admitted_recording_asin(unechoed) == _CARRIED
+
+    report = _report(
+        claims, (kept,), audio=_narrator_echo_audio(), narrators=(_NARRATOR,)
+    )
+    assert not recording_admitted(report)
+    assert verified_carried_asin(report) is None
+    assert admitted_recording_asin(report) is None
 
 
 @pytest.mark.parametrize(

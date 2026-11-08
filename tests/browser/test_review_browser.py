@@ -2726,10 +2726,10 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.wait_for_url("**/policy?section=curation")
                 expect(page.locator("#policy-curation")).to_be_focused()
                 # A fresh container activated nothing. The seeded built-in
-                # policy is named as the active baseline and never reported as
+                # policy is named as the active policy and never reported as
                 # a completed owner activation over zero works.
                 page.locator(".cm-policy-sidebar > header").get_by_text(
-                    "Active baseline", exact=True
+                    "Active policy", exact=True
                 ).wait_for()
                 policy_body = page.locator("body").inner_text()
                 assert "Activation complete" not in policy_body
@@ -2765,13 +2765,18 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     ).count()
                     == 0
                 )
-                unsupported_description = policy_chapters.get_by_role(
-                    "button", name="Additional fields"
-                ).get_by_text(
+                # #1765: a chapter carries no caption.
+                unsupported_description = page.get_by_text(
                     "Fields with limited support that start off until you enable them.",
                     exact=True,
                 )
-                assert unsupported_description.count() == 1
+                assert unsupported_description.count() == 0
+                assert (
+                    policy_chapters.get_by_role(
+                        "button", name="Additional fields", exact=True
+                    ).inner_text()
+                    == "Additional fields"
+                )
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 390
                 ), page.evaluate(
@@ -2780,16 +2785,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                         .map(node => [node.tagName, node.className, node.textContent?.slice(0, 40), node.clientWidth, node.scrollWidth, getComputedStyle(node).gridTemplateColumns])"""
                 )
                 genres = page.get_by_role("region", name="Genres")
-                representation = genres.get_by_role(
-                    "combobox", name="Genres representation"
-                )
+                representation = genres.get_by_role("combobox", name="Genres option")
                 representation.focus()
                 page.keyboard.press("Enter")
-                page.get_by_role("listbox", name="Genres representation").wait_for()
+                page.get_by_role("listbox", name="Genres option").wait_for()
                 page.keyboard.press("Escape")
                 expect(representation).to_be_focused()
                 representation.click()
-                menu_box = page.get_by_role("listbox", name="Genres representation")
+                menu_box = page.get_by_role("listbox", name="Genres option")
                 expect(menu_box).to_have_css("scale", "none")
                 menu_box = menu_box.bounding_box()  # type: ignore[assignment]  # reason: the name is deliberately rebound from the Locator to its measured bounding box, which the next lines assert on.
                 assert menu_box is not None
@@ -2803,7 +2806,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # directions, instead of leaving for the end of the page (#1288).
                 for leaving in ("Tab", "Shift+Tab"):
                     representation.click()
-                    page.get_by_role("listbox", name="Genres representation").wait_for()
+                    page.get_by_role("listbox", name="Genres option").wait_for()
                     page.keyboard.press(leaving)
                     expect(representation).to_be_focused()
                     assert page.locator(".cm-dropdown-menu").count() == 0
@@ -2826,7 +2829,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 )
                 page.emulate_media(reduced_motion="reduce")
                 assert page.locator(".cm-dropdown-menu").count() == 0
-                genres_mode = genres.get_by_role("group", name="Genres review mode")
+                genres_mode = genres.get_by_role("group", name="Genres setting")
                 original_mode = next(
                     button.inner_text()
                     for button in genres_mode.get_by_role("button").all()
@@ -2842,7 +2845,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.locator(".cm-finish-tray").get_by_text(
                     "Draft matches the active policy", exact=True
                 ).wait_for()
-                page.get_by_text("Draft matches active policy.", exact=True).wait_for()
+                page.get_by_text(
+                    "Draft matches the active policy.", exact=True
+                ).wait_for()
                 assert (
                     page.evaluate("""() => [...document.querySelectorAll('body *')]
                         .filter(node => !node.closest('.sr-only')
@@ -2918,7 +2923,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 set_root_text(page, "")
                 page.get_by_role("button", name="Validate and preview").click()
                 page.get_by_text(
-                    "Impact preview is current. The active policy is unchanged."
+                    "Impact preview ready. The active policy is unchanged."
                 ).wait_for()
                 review_activation = page.get_by_role("button", name="Review activation")
                 set_root_text(page, "200%")
@@ -2946,7 +2951,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 _assert_primary_fill(review_activation, back_to_editing)
                 page.set_viewport_size({"width": 1440, "height": 900})
-                unsupported_description.wait_for()
+                policy_chapters.get_by_role(
+                    "button", name="Additional fields", exact=True
+                ).wait_for()
+                # The wide sidebar has room for a caption and still shows none.
+                assert unsupported_description.count() == 0
                 assert page.get_by_role(
                     "navigation", name="Policy chapters"
                 ).is_visible()
@@ -3340,6 +3349,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 ),
                             },
                             classification="automatic_recorded",
+                            classification_cause="automatic_decided",
                             classification_reason=(
                                 "Automatic handling recorded this field; "
                                 "you may inspect or override it."
@@ -12401,7 +12411,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             # changes: the mixed case a truthful preview has to keep apart.
             page.goto(f"{origin}/policy?section=identity")
             chapters = page.get_by_role("navigation", name="Policy chapters")
-            # Language has one representation, so its destination changes.
+            # Language has one option, so its setting changes.
             page.get_by_role("region", name="Language", exact=True).get_by_role(
                 "button", name="Ignore", exact=True
             ).click()
@@ -12414,7 +12424,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                         "button", name=re.compile(f"^{chapter}")
                     ).click()
                 region = page.get_by_role("region", name=field, exact=True)
-                region.get_by_role("combobox", name=f"{field} representation").click()
+                region.get_by_role("combobox", name=f"{field} option").click()
                 page.get_by_role("option", name=option, exact=True).click()
             tags = page.get_by_role("region", name="Tags", exact=True)
             tags.get_by_role("button", name="Automatic", exact=True).click()
@@ -12455,7 +12465,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 "Not previewed.This rule takes effect on the next preparation."
             )
             expect(
-                result.get_by_text("No policy-caused changes in this sample")
+                result.get_by_text("No changes from the draft in this sample")
             ).to_have_count(0)
             assert page.locator(".cm-policy-preview-list > div").last.evaluate(
                 "node => node.classList.contains('is-unpreviewed')"

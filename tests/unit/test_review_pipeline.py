@@ -3442,6 +3442,196 @@ def test_library_addition_drain_translates_private_sqlite_failure(
     repository.close()
 
 
+_PENDING_DESCRIPTION_LIBRARIES = (
+    "mechanical_librarian.adapters.persistence.description_advice."
+    "pending_description_libraries"
+)
+
+
+def _completed_fiction_scan(application_path: Path):
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 100)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=101"
+    )
+    repository._connection.commit()
+    repository.set_review_pipeline_paused(True, 102)
+    return repository
+
+
+def _scan_rows(repository) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        repository._connection.execute(
+            "SELECT * FROM review_preparation_scans ORDER BY scan_id"
+        )
+    )
+
+
+def test_resume_requests_pending_description_scans_for_configured_libraries_only(
+    application_path: Path,
+) -> None:
+    repository = _completed_fiction_scan(application_path)
+    libraries = (("primary", "fiction", "lib-1", _PRODUCER),)
+    trigger_sql = (
+        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='trigger'"
+    )
+    triggers = repository._connection.execute(trigger_sql).fetchone()
+    before = _scan_rows(repository)
+
+    with patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=()):
+        repository.resume_review_pipeline(libraries, 103)
+
+    assert not repository.review_pipeline_paused()
+    assert _scan_rows(repository) == before
+    repository.set_review_pipeline_paused(True, 104)
+
+    with patch(
+        _PENDING_DESCRIPTION_LIBRARIES,
+        return_value=(("primary", "fiction"), ("primary", "history")),
+    ):
+        repository.resume_review_pipeline(libraries, 105)
+
+    assert not repository.review_pipeline_paused()
+    assert repository._connection.execute(
+        "SELECT state,requested_at FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='fiction' "
+        "ORDER BY requested_at DESC,scan_id DESC LIMIT 1"
+    ).fetchone() == ("queued", 105)
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_scans WHERE library_name='history'"
+    ).fetchone() == (0,)
+    assert repository._connection.execute(trigger_sql).fetchone() == triggers
+    repository.close()
+
+
+def test_resume_rolls_back_when_a_pending_description_scan_fails(
+    application_path: Path,
+) -> None:
+    repository = _completed_fiction_scan(application_path)
+    libraries = (("primary", "fiction", "lib-1", _PRODUCER),)
+    scans = _scan_rows(repository)
+    presentation = tuple(
+        repository._connection.execute("SELECT * FROM review_preparation_presentation")
+    )
+
+    with (
+        patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=(("primary", "fiction"),)),
+        patch.object(
+            repository._review_scans,
+            "_request_review_scan_unpaused",
+            side_effect=sqlite3.OperationalError("private sentinel"),
+        ),
+        pytest.raises(MetadataReportError) as raised,
+    ):
+        repository.resume_review_pipeline(libraries, 103)
+
+    assert str(raised.value) == "review preparation persistence failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert not repository._connection.in_transaction
+    assert repository.review_pipeline_paused()
+    assert _scan_rows(repository) == scans
+    assert (
+        tuple(
+            repository._connection.execute(
+                "SELECT * FROM review_preparation_presentation"
+            )
+        )
+        == presentation
+    )
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(
+            application_path, create=False, authority=repository.authority
+        ),
+        libraries=libraries,
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 104,
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline, clock=lambda: 104)
+    supervisor.set_paused(True)
+    with (
+        patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=(("primary", "fiction"),)),
+        patch.object(
+            SQLiteReviewScanRepository,
+            "_request_review_scan_unpaused",
+            side_effect=sqlite3.OperationalError("private sentinel"),
+        ),
+        pytest.raises(ReviewPipelineError) as refused,
+    ):
+        supervisor.set_paused(False)
+
+    assert refused.value.code == "persistence"
+    assert supervisor._schedule_paused
+    assert repository.review_pipeline_paused()
+    assert _scan_rows(repository) == scans
+
+    with patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=(("primary", "fiction"),)):
+        repository.resume_review_pipeline(libraries, 105)
+
+    assert not repository.review_pipeline_paused()
+    assert repository._connection.execute(
+        "SELECT state,requested_at FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='fiction' "
+        "ORDER BY requested_at DESC,scan_id DESC LIMIT 1"
+    ).fetchone() == ("queued", 105)
+    repository.close()
+
+
+def test_resume_requests_pending_description_scan_during_first_preparation(
+    application_path: Path,
+) -> None:
+    # One library's first scan has finished while another's is still queued:
+    # the poll leaves the finished library alone until the first preparation
+    # completes, and never polls one that ended with failures. A resume with
+    # description work waiting for it still starts its scan.
+    repository = open_repository(application_path)
+    libraries = (
+        ("primary", "fiction", "lib-1", _PRODUCER),
+        ("primary", "history", "lib-2", _PRODUCER),
+    )
+    for _connection, library, library_id, producer in libraries:
+        repository.request_review_scan(
+            "primary", library, library_id, producer, 100, first_boot=True
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',"
+        "updated_at=101 WHERE library_name='fiction'"
+    )
+    repository._connection.commit()
+    repository.set_review_pipeline_paused(True, 102)
+    trigger_sql = (
+        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='trigger'"
+    )
+    triggers = repository._connection.execute(trigger_sql).fetchone()
+    history = repository._connection.execute(
+        "SELECT * FROM review_preparation_scans WHERE library_name='history'"
+    ).fetchall()
+
+    with patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=(("primary", "fiction"),)):
+        repository.resume_review_pipeline(libraries, 103)
+
+    assert not repository.review_pipeline_paused()
+    assert repository._connection.execute(
+        "SELECT state,requested_at FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='fiction' "
+        "ORDER BY requested_at DESC,scan_id DESC LIMIT 1"
+    ).fetchone() == ("queued", 103)
+    assert (
+        repository._connection.execute(
+            "SELECT * FROM review_preparation_scans WHERE library_name='history'"
+        ).fetchall()
+        == history
+    )
+    assert repository._connection.execute(trigger_sql).fetchone() == triggers
+    repository.close()
+
+
 def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
     application_path: Path,
 ) -> None:

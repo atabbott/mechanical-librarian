@@ -963,6 +963,7 @@ describe('Library review ownership', () => {
       ...field,
       needsAttention: false,
       classification: 'automatic_recorded' as const,
+      classificationCause: 'automatic_decided' as const,
       classificationReason: '<script>untrusted</script>',
       currentValue: '<script>untrusted</script>',
       currentRaw: '<script>untrusted</script>',
