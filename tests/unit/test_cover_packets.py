@@ -1375,6 +1375,70 @@ def test_packet_retains_incumbent_deduplicates_and_shortlists_deterministically(
     assert "Synthetic title" not in first.document
 
 
+def test_a_full_gallery_shortlists_twelve_and_keeps_the_incumbent() -> None:
+    """Two local and twelve provider covers, eight of them Hardcover's (#1380)."""
+    payloads = [_preview(index, width=index + 1) for index in range(14)]
+    sources = [
+        _source(0, payloads[0], incumbent=True),
+        _source(1, payloads[1], embedded=True),
+    ]
+    for index in range(2, 10):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.HARDCOVER, f"hardcover:listed:{index}"),
+                CoverSourceKind.HARDCOVER,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"listed-{index}".encode(), payloads[index], "image/png", 400, 600
+                ),
+                provenance=CoverProvenance(
+                    "hardcover",
+                    CoverDesignation.LISTED_EDITION,
+                    "hardcover-work-0000000007",
+                    f"hardcover-edition-{index:010d}",
+                ),
+            )
+        )
+    for index in range(10, 14):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.OPEN_LIBRARY, f"open-library:{index}"),
+                CoverSourceKind.OPEN_LIBRARY,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"open-{index}".encode(), payloads[index], "image/png", 300, 450
+                ),
+                provenance=CoverProvenance(
+                    "open-library", CoverDesignation.WORK, f"OL{index}W"
+                ),
+                final_host=CoverFinalHost.US_ARCHIVE,
+            )
+        )
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    packet = prepare_cover_packet(
+        _report(tuple(sources)).to_json(),
+        lambda artifact, _variant: by_artifact[artifact],
+    )
+    document = json.loads(packet.document)
+
+    assert len(packet.images) == MAX_COVER_PREVIEWS == 12
+    assert document["candidates"][0]["incumbent"]
+    assert [value["reason"] for value in document["omissions"]].count(
+        "shortlist_limit"
+    ) == 2
+    designations = {
+        item["designation"]
+        for candidate in document["candidates"]
+        for item in candidate["provenance"]
+    }
+    assert "listed_edition" not in designations
+    assert "related_edition" in designations
+
+
 def test_changed_preview_and_overbound_incumbent_fail_closed() -> None:
     source = _source(0, _preview(0), incumbent=True)
     report = _report((source,))

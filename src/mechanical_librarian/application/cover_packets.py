@@ -17,6 +17,7 @@ from mechanical_librarian.application.cover_packet_semantics import (
     designation_rank,
     normalize_cover_preview,
     normalize_provenance,
+    packet_designation,
     validate_cover_preview,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -80,7 +81,7 @@ class _Candidate:
     @property
     def identity_rank(self) -> int:
         ranks = [
-            designation_rank(source.provenance.designation.value)
+            designation_rank(packet_designation(source.provenance.designation))
             for source in self.sources
             if source.provenance is not None
         ]
@@ -291,7 +292,11 @@ def _finalize_cover_packet(
                     "context": []
                     if detail is None
                     else [value.to_data() for value in detail.context],
-                    "designation": None if detail is None else detail.designation.value,
+                    "designation": (
+                        None
+                        if detail is None
+                        else packet_designation(detail.designation)
+                    ),
                     "provider": None if detail is None else detail.provider,
                     "source_kind": source.kind.value,
                 }
