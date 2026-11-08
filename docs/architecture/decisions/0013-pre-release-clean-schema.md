@@ -459,3 +459,14 @@ configuration fingerprints are unchanged. The audio child protocol carries no
 refusal and stays `audio-inspection-v6`. The proposal policy is unchanged.
 Every earlier application database is rejected before mutation and needs a
 clean rebuild; no adoption is supplied.
+
+Issue #1778 also takes the clean-rebuild branch, and with it the rest of
+#1380. `metadata-report-v78` adds the `listed_edition` cover designation and
+the `edition_limit`, `edition_fetch_incomplete` and `same_art` truncation
+reasons to their closed sets. A report may now hold eight Hardcover cover
+sources and twelve provider cover sources in all, where a v77 report held four
+for each provider and eight in all. A v77 report has none of a found book's
+edition covers, and a report carries forward while its file and configuration
+fingerprints are unchanged, so a stored report would never offer them. The
+proposal policy is unchanged. Every earlier application database is rejected
+before mutation and needs a clean rebuild; no adoption is supplied.

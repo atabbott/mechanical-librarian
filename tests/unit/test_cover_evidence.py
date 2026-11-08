@@ -87,25 +87,145 @@ def test_timeout_has_explicit_scope() -> None:
         CoverSource(source.source_id, source.kind, CoverSourceState.TIMEOUT)
 
 
-def test_publication_rejects_more_than_eight_provider_outcomes() -> None:
-    sources = tuple(
+def _provider_rows(
+    kind: CoverSourceKind, provider: str, count: int, *, start: int = 0
+) -> tuple[CoverSource, ...]:
+    return tuple(
         CoverSource(
-            cover_source_id(
-                CoverSourceKind.HARDCOVER,
-                f"catalogue-{index // 4}:candidate-{index}",
-            ),
-            CoverSourceKind.HARDCOVER,
+            cover_source_id(kind, f"{provider}:candidate-{index}"),
+            kind,
             CoverSourceState.ABSENT,
             provenance=CoverProvenance(
-                f"catalogue-{index // 4}",
-                CoverDesignation.WORK,
-                f"work-{index}",
+                provider, CoverDesignation.WORK, f"work-{index}"
             ),
         )
-        for index in range(9)
+        for index in range(start, start + count)
+    )
+
+
+def _truncation_rows(
+    kind: CoverSourceKind, provider: str, reasons: tuple[CoverTruncationReason, ...]
+) -> tuple[CoverSource, ...]:
+    return tuple(
+        CoverSource(
+            cover_source_id(kind, f"truncation:{provider}:{reason.value}:{index}"),
+            kind,
+            CoverSourceState.TRUNCATED,
+            provenance=CoverProvenance(
+                provider, CoverDesignation.TRUNCATION, truncation_reason=reason
+            ),
+        )
+        for index, reason in enumerate(reasons)
+    )
+
+
+def test_publication_admits_eight_hardcover_rows_and_twelve_in_all() -> None:
+    sources = (
+        *_provider_rows(CoverSourceKind.HARDCOVER, "hardcover", 8),
+        *_provider_rows(CoverSourceKind.OPEN_LIBRARY, "open-library", 4),
+    )
+    assert publication_ready(sources)
+
+
+def test_publication_refuses_a_thirteenth_provider_row() -> None:
+    sources = (
+        *_provider_rows(CoverSourceKind.HARDCOVER, "hardcover", 8),
+        *_provider_rows(CoverSourceKind.OPEN_LIBRARY, "open-library", 4),
+        *_provider_rows(CoverSourceKind.INVENTAIRE, "inventaire", 1),
     )
     with pytest.raises(CoverEvidenceError):
         publication_ready(sources)
+
+
+def test_publication_refuses_a_ninth_hardcover_row() -> None:
+    with pytest.raises(CoverEvidenceError):
+        publication_ready(_provider_rows(CoverSourceKind.HARDCOVER, "hardcover", 9))
+
+
+def test_publication_refuses_a_fifth_row_from_any_other_provider() -> None:
+    assert publication_ready(
+        _provider_rows(CoverSourceKind.OPEN_LIBRARY, "open-library", 4)
+    )
+    with pytest.raises(CoverEvidenceError):
+        publication_ready(
+            _provider_rows(CoverSourceKind.OPEN_LIBRARY, "open-library", 5)
+        )
+
+
+def test_publication_admits_five_truncation_rows_per_provider_and_no_sixth() -> None:
+    reasons = tuple(CoverTruncationReason)
+    assert len(reasons) == 5
+    assert publication_ready(
+        _truncation_rows(CoverSourceKind.HARDCOVER, "hardcover", reasons)
+    )
+    with pytest.raises(CoverEvidenceError):
+        publication_ready(
+            _truncation_rows(
+                CoverSourceKind.HARDCOVER,
+                "hardcover",
+                (*reasons, CoverTruncationReason.SAME_ART),
+            )
+        )
+
+
+def test_publication_refuses_a_thirteenth_retrieved_provider_cover() -> None:
+    def retrieved(provider: str, index: int) -> CoverSource:
+        return CoverSource(
+            cover_source_id(CoverSourceKind.HARDCOVER, f"{provider}:{index}"),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(
+                f"art-{provider}-{index}".encode(), b"preview", "image/png", 2, 3
+            ),
+            provenance=CoverProvenance(provider, CoverDesignation.WORK, f"w-{index}"),
+        )
+
+    twelve = (
+        *(retrieved("hardcover-a", index) for index in range(8)),
+        *(retrieved("hardcover-b", index) for index in range(4)),
+    )
+    assert publication_ready(twelve)
+    with pytest.raises(CoverEvidenceError):
+        publication_ready((*twelve, retrieved("hardcover-b", 4)))
+
+
+def test_a_listed_edition_provenance_names_the_book_and_the_edition() -> None:
+    provenance = CoverProvenance(
+        "hardcover",
+        CoverDesignation.LISTED_EDITION,
+        "hardcover-work-0000000001",
+        "hardcover-edition-0000000002",
+        (CoverContext(CoverContextField.LANGUAGE, "en"),),
+    )
+    assert provenance.to_data() == {
+        "context": [{"field": "language", "value": "en"}],
+        "designation": "listed_edition",
+        "edition_identity": "hardcover-edition-0000000002",
+        "provider": "hardcover",
+        "truncation_reason": None,
+        "work_identity": "hardcover-work-0000000001",
+    }
+    with pytest.raises(CoverEvidenceError):
+        CoverProvenance(
+            "hardcover", CoverDesignation.LISTED_EDITION, "hardcover-work-0000000001"
+        )
+    with pytest.raises(CoverEvidenceError):
+        CoverProvenance(
+            "hardcover",
+            CoverDesignation.LISTED_EDITION,
+            None,
+            "hardcover-edition-0000000002",
+        )
+
+
+def test_the_truncation_reasons_are_closed() -> None:
+    assert {reason.value for reason in CoverTruncationReason} == {
+        "provider_limit",
+        "gallery_limit",
+        "edition_limit",
+        "edition_fetch_incomplete",
+        "same_art",
+    }
 
 
 @pytest.mark.parametrize(
@@ -143,22 +263,13 @@ def test_an_audiobook_cover_source_is_a_provider_row(kind: CoverSourceKind) -> N
         )
 
 
-def test_an_audiobook_cover_row_still_obeys_the_eight_provider_ceiling() -> None:
+def test_an_audiobook_cover_row_still_obeys_the_twelve_provider_ceiling() -> None:
     sources = tuple(
-        CoverSource(
-            cover_source_id(
-                CoverSourceKind.AUDIBLE_CATALOG,
-                f"authority-{index // 4}:candidate-{index}",
-            ),
-            CoverSourceKind.AUDIBLE_CATALOG,
-            CoverSourceState.ABSENT,
-            provenance=CoverProvenance(
-                f"authority-{index // 4}",
-                CoverDesignation.WORK,
-                f"work-{index}",
-            ),
+        row
+        for index in range(4)
+        for row in _provider_rows(
+            CoverSourceKind.AUDIBLE_CATALOG, f"authority-{index}", 4 if index < 3 else 1
         )
-        for index in range(9)
     )
     with pytest.raises(CoverEvidenceError):
         publication_ready(sources)

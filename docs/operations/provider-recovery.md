@@ -52,6 +52,9 @@ gets at most 20 seconds of it; a provider that runs out of its share records a
 temporary failure. A recovery retry gives its single provider the whole 60
 seconds.
 
+A retry keeps the covers the report already had. Edition covers are fetched
+only when an item is prepared.
+
 ## Retry now
 
 After fixing a dormant cause (a key, a permission, a setting), press

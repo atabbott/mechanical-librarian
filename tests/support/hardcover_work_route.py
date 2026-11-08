@@ -68,6 +68,8 @@ def audio_edition(
         "book_id": 10,
         "asin": asin,
         "audio_seconds": seconds,
+        "image": None,
+        "language": None,
         "contributions": [
             {"id": 7, "contribution": "Author", "author": {"id": 7, "name": AUTHOR}},
             *(

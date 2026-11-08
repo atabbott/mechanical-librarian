@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 from mechanical_librarian.domain.cover_evidence import (
     LOCAL_COVER_SOURCE_KINDS,
     PREVIEW_VARIANT,
+    CoverDesignation,
     CoverSourceKind,
 )
 from mechanical_librarian.domain.evidence_bounds import (
@@ -139,6 +140,19 @@ def candidate_priority(
 
 def designation_rank(value: str | None) -> int:
     return _DESIGNATION_RANK.get(value, 4)
+
+
+def packet_designation(designation: CoverDesignation) -> str:
+    """The reviewer packet's name for a report cover designation.
+
+    A listed edition (#1380) is shown as a related edition, so the packet
+    vocabulary and its review contract stay unchanged. The packet producer and
+    the identity classifier both project through here, so the provenance they
+    each derive agrees byte for byte.
+    """
+    if designation is CoverDesignation.LISTED_EDITION:
+        return CoverDesignation.RELATED_EDITION.value
+    return designation.value
 
 
 def validate_cover_preview(
@@ -825,6 +839,7 @@ __all__ = [
     "designation_rank",
     "normalize_cover_preview",
     "normalize_provenance",
+    "packet_designation",
     "provenance_sort_key",
     "read_cover_packet_document",
 ]
