@@ -1113,6 +1113,8 @@ class _PreparationFailure(_ClosedModel):
 class _ProviderOutcome(_ClosedModel):
     # The companion EPUB's ISBN lane (#1723).
     companion_isbn: bool
+    # iTunes asked for an audiobook's cover alone (#1779).
+    cover_only: bool
     provider_requests: int = Field(ge=0)
     lane_kind: Literal["isbn", "work", "asin", "discovery", "none"]
     provider: str = Field(max_length=128)

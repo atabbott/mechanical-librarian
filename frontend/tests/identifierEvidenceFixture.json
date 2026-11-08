@@ -1061,6 +1061,7 @@
     "source_ledger": [
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 1,
         "lane_kind": "work",
         "provider": "Audible",
@@ -1069,6 +1070,7 @@
       },
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",
@@ -1077,6 +1079,7 @@
       },
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",

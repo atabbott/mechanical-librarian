@@ -116,6 +116,7 @@ TERMINAL_LIBRARY_WORK = _work(
     preparation_outcomes=[
         {
             "companion_isbn": False,
+            "cover_only": False,
             "provider_requests": 1,
             "lane_kind": "work",
             "provider": "hardcover-main",
@@ -232,6 +233,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         preparation_outcomes=[
             {
                 "companion_isbn": False,
+                "cover_only": False,
                 "provider_requests": 2,
                 "lane_kind": "work",
                 "provider": "hardcover-main",
@@ -240,6 +242,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
             },
             {
                 "companion_isbn": False,
+                "cover_only": False,
                 "provider_requests": 0,
                 "lane_kind": "work",
                 "provider": "google-books",
@@ -1891,6 +1894,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "source_ledger": [
                     {
                         "companion_isbn": False,
+                        "cover_only": False,
                         "provider_requests": 1,
                         "lane_kind": "work",
                         "provider": "Open Library",
@@ -1899,6 +1903,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     },
                     {
                         "companion_isbn": False,
+                        "cover_only": False,
                         "provider_requests": 2,
                         "lane_kind": "isbn",
                         "provider": "Hardcover",

@@ -9267,6 +9267,10 @@
             "title": "Companion Isbn",
             "type": "boolean"
           },
+          "cover_only": {
+            "title": "Cover Only",
+            "type": "boolean"
+          },
           "lane_kind": {
             "enum": [
               "isbn",
@@ -9317,6 +9321,7 @@
         },
         "required": [
           "companion_isbn",
+          "cover_only",
           "provider_requests",
           "lane_kind",
           "provider",

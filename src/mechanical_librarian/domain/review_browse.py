@@ -29,6 +29,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     MAX_REPORT_BYTES,
     PROVIDER_AUTHORITIES,
     PROVIDER_LANE_KINDS,
@@ -44,6 +45,7 @@ from mechanical_librarian.domain.metadata_report import (
     _provider_lane_dispatch_from_data,
     _request_accounting,
     companion_isbn_lane,
+    provider_supplies_field_evidence,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -201,6 +203,9 @@ class ProviderLaneFacts:
     # The ISBN lane an audiobook's companion EPUB planned (#1468), so Sources
     # can say where the ISBN came from (#1723).
     companion_isbn: bool = False
+    # A cover-only authority's lane on an audio report: iTunes, asked for a
+    # cover alone, so it neither matches nor limits the work (#1779).
+    cover_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +264,7 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
                 for value in diagnostics
             ),
             identity is not None and identity == companion_identity,
+            not provider_supplies_field_evidence(report, provider),
         )
         for provider in report.providers
         for kind, status, dispatch, diagnostics, identity in (
@@ -321,9 +327,13 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
             raise ValueError
         companion = companion_isbn_lane(_companion_from_data(report["companion"]))
         companion_identity = None if companion is None else companion.identity
+        # `provider_supplies_field_evidence` over the stored report: a
+        # validated report states `audio` as an object or null.
+        audio = report["audio"] is not None
         lanes: list[ProviderLaneFacts] = []
         for provider in providers:
             authority = provider["authority"]
+            cover_only = audio and authority in COVER_ONLY_AUDIOBOOK_AUTHORITIES
             kind = ProviderQueryKind(provider["query_kind"])
             status = ProviderStatus(provider["status"])
             requests = _request_accounting(provider["request_accounting"])
@@ -365,6 +375,7 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     fault,
                     refused,
                     companion_lane,
+                    cover_only,
                 )
                 for value, state, dispatch, fault, refused, companion_lane in pairs
                 or [
