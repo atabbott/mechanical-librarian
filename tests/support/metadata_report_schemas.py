@@ -276,15 +276,17 @@ def retained_report_as_current(document: str) -> MetadataReport:
     so a retrieved Open Library cover there was served by
     `covers.openlibrary.org` itself, and every other source states none. v72
     made a Hardcover WORK lane's candidates books and planned an ebook lane
-    over its EPUB creators, neither of which a v49 report holds. v73 added no
-    key: it plans iTunes' one cover search for an audiobook (#1779), which a
-    v49 report, being an ebook's, never needed.
+    over its EPUB creators, neither of which a v49 report holds. v73
+    added each cover artifact's same-art `measures`: null here, since an
+    earlier producer measured no preview. v75 added no key: it plans iTunes' one
+    cover search for an audiobook (#1779), which a v49 report, being an ebook's,
+    never needed.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v73"
+    data["schema_version"] = "metadata-report-v75"
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -296,6 +298,8 @@ def retained_report_as_current(document: str) -> MetadataReport:
             and cover["state"] == CoverSourceState.RETRIEVED.value
             else None
         )
+        if cover["artifact"] is not None:
+            cover["artifact"]["measures"] = None
     for provider in data["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []
@@ -516,7 +520,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v73'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v75'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -535,10 +539,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v73'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v75'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v73'", f"= '{version}'"
+            "= 'metadata-report-v75'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

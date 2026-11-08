@@ -47,6 +47,7 @@ from mechanical_librarian.domain.cover_evidence import (
     EpubCoverRecovery,
     publication_ready,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -97,7 +98,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v73"
+REPORT_SCHEMA = "metadata-report-v75"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -7835,12 +7836,13 @@ def _cover_source_from_data(value: object) -> CoverSource:
     )
     artifact = None
     if item["artifact"] is not None:
-        artifact = CoverArtifact(
-            **_object(
+        fields = dict(
+            _object(
                 item["artifact"],
                 {
                     "artifact_id",
                     "height",
+                    "measures",
                     "media_type",
                     "original_digest",
                     "perceptual_hash",
@@ -7849,6 +7851,11 @@ def _cover_source_from_data(value: object) -> CoverSource:
                     "width",
                 },
             )
+        )
+        measures = fields.pop("measures")
+        artifact = CoverArtifact(
+            **fields,
+            measures=None if measures is None else CoverMeasures.from_data(measures),
         )
     provenance = None
     if item["provenance"] is not None:

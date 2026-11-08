@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
@@ -198,8 +199,14 @@ class CoverArtifact:
     # decoded before this field existed and for any child that could not state
     # one; a reader treats absence as "no hash", never as a hash of zero.
     perceptual_hash: str | None = None
+    # The same-art measures of the decoded 320x480 preview (ADR-0093): pHash,
+    # dHash, colour histogram and layout, computed in the same child from the
+    # same pixels, never from a stated size. ``None`` means "not measured".
+    measures: CoverMeasures | None = None
 
     def __post_init__(self) -> None:
+        if self.measures is not None and type(self.measures) is not CoverMeasures:
+            raise CoverEvidenceError("cover artifact is invalid")
         if self.perceptual_hash is not None and (
             type(self.perceptual_hash) is not str
             or _PERCEPTUAL_HASH.fullmatch(self.perceptual_hash) is None
@@ -231,6 +238,7 @@ class CoverArtifact:
         width: int,
         height: int,
         perceptual_hash: str | None = None,
+        measures: CoverMeasures | None = None,
     ) -> "CoverArtifact":
         if type(original) is not bytes or type(preview) is not bytes:
             raise CoverEvidenceError("cover artifact bytes are invalid")
@@ -245,11 +253,13 @@ class CoverArtifact:
             width,
             height,
             perceptual_hash,
+            measures,
         )
 
     def to_data(self) -> dict[str, object]:
         return {
             "artifact_id": self.artifact_id,
+            "measures": None if self.measures is None else self.measures.to_data(),
             "media_type": self.media_type,
             "original_digest": self.original_digest,
             "perceptual_hash": self.perceptual_hash,

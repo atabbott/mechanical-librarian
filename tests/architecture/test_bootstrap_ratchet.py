@@ -54,7 +54,9 @@ SLACK = 10
 # are exempt from the construct rules but pinned by ncnc size.
 ENTRY_POINTS = {
     "audio_child.py": 264,
-    "cover_child.py": 164,
+    # 149 since #1363 moved the hash into adapters/cover_measures.py beside
+    # the same-art measures, which the child imports and calls.
+    "cover_child.py": 149,
     "epub_child.py": 667,
     "probe_shim.py": 66,
     "container.py": 77,
@@ -62,7 +64,9 @@ ENTRY_POINTS = {
 }
 CEILING = {
     "__init__.py": 8,
-    "composition.py": 3204,
+    # 3214 since #1363 wired the retained-cover store and its lookup:
+    # straight-line construction and two keyword arguments.
+    "composition.py": 3214,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
@@ -88,7 +92,7 @@ RESIDUAL: dict[str, int | None] = {
     _C + "_StoreRuntimeActivation": 118,
     # Builds each configured library's Audiobookshelf target, capability
     # observer and guarded application from adapters: construction only.
-    _C + "compose_continuous_guarded_application": 84,
+    _C + "compose_continuous_guarded_application": 91,
     # Report composer shared by the CLI, run_batch and the review pipeline;
     # builds the target reader, artifact store and provider adapters per call.
     _C + "run_metadata_report_loaded": 179,
@@ -117,7 +121,7 @@ RESIDUAL: dict[str, int | None] = {
     _C + "_compose_reviewer_access": 167,
     # Opens the cover artifact store and binds the SQLite repository's cover
     # hooks to CoverConsiderationService; both are adapter calls.
-    _C + "_compose_cover_considerations": 74,
+    _C + "_compose_cover_considerations": 75,
     # Fail-closed session store for run_cover_review, its only user; the
     # optional move to application was not taken (A-U4).
     _C + "_OfflineSessionStore": 40,

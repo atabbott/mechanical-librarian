@@ -211,7 +211,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v73",
+                "metadata-report-v75",
                 "fixed-conservative-v6",
             ),
         ),
@@ -440,17 +440,24 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v72",
+            "previous v72",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v72",
             ),
         ),
         (
-            "previous proposal policy v3",
+            "immediate previous v73",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v73",
+            ),
+        ),
+        (
+            "previous proposal policy v3",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v75",
                 "fixed-conservative-v3",
             ),
         ),
@@ -458,7 +465,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v73",
+                "metadata-report-v75",
                 "fixed-conservative-v4",
             ),
         ),
@@ -466,7 +473,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v73",
+                "metadata-report-v75",
                 "fixed-conservative-v5",
             ),
         ),
@@ -474,7 +481,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v73",
+                "metadata-report-v75",
                 "fixed-conservative-v7",
             ),
         ),
@@ -614,6 +621,9 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
+            ("retained_cover_bindings",),
+            ("retained_cover_listings",),
+            ("retained_cover_removals",),
             ("review_attention_facts",),
             ("review_case_episodes",),
             ("review_case_field_facts",),
@@ -631,7 +641,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v73",)
+        assert schema_version == ("metadata-report-v75",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -815,7 +825,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v73'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v75'", "= 'metadata-report-v49'"
             ),
         )
         # Reconstruct the frozen producer's reviewer table too; never update
@@ -854,8 +864,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         old.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
-            # history indexes, #1204's indexes, #1211's case indexes and #1232's
-            # attention facts.
+            # history indexes, #1204's indexes, #1211's case indexes, #1232's
+            # attention facts and #1363's retained cover tables.
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
@@ -863,7 +873,10 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                         persistence_schema._ATTENTION_FACT_OBJECTS
                     )
                 )
-                + "DROP TRIGGER metadata_reports_project_browse_facts;"
+                + "DROP TABLE retained_cover_listings;"
+                "DROP TABLE retained_cover_removals;"
+                "DROP TABLE retained_cover_bindings;"
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_browse_facts;"
                 "DROP TRIGGER proposal_sets_project_browse_facts;"
@@ -2073,7 +2086,7 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v73"
+        assert restored.schema_version == "metadata-report-v75"
     finally:
         reopened.close()
 
@@ -2202,7 +2215,7 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
 
     published = _current_audio_report()
     current = json.loads(published.to_json())
-    assert current["schema_version"] == "metadata-report-v73"
+    assert current["schema_version"] == "metadata-report-v75"
     assert MetadataReport.from_json(published.to_json()) == published
 
     previous = json.loads(json.dumps(current))
@@ -2394,7 +2407,7 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
             Path(__file__).parents[1] / "fixtures/metadata-report-v46/report-v46.json"
         ).read_text()
     )
-    document["schema_version"] = "metadata-report-v73"
+    document["schema_version"] = "metadata-report-v75"
     document["library_languages"] = []
     # v61 added each provider's refused products (#1307); an empty record
     # keeps the falsely valid title the first thing refused.
@@ -2609,7 +2622,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v73'",
+                "= 'metadata-report-v75'",
                 "= 'metadata-report-v54'"
                 if current_scaffolding
                 else "= 'metadata-report-v49'",
@@ -2618,8 +2631,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         with closing(open_repository(path)) as repository:
             if not current_scaffolding:
                 # The earlier producers predate #1199's report browse facts,
-                # #1202's history indexes, #1204's indexes, #1211's case indexes
-                # and #1232's attention facts.
+                # #1202's history indexes, #1204's indexes, #1211's case indexes,
+                # #1232's attention facts and #1363's retained cover tables.
                 repository._connection.executescript(
                     "".join(
                         f"DROP {kind.upper()} {name};"
@@ -2627,7 +2640,10 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                             persistence_schema._ATTENTION_FACT_OBJECTS
                         )
                     )
-                    + "DROP TRIGGER metadata_reports_project_browse_facts;"
+                    + "DROP TABLE retained_cover_listings;"
+                    "DROP TABLE retained_cover_removals;"
+                    "DROP TABLE retained_cover_bindings;"
+                    "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_browse_facts;"
                     "DROP TRIGGER proposal_sets_project_browse_facts;"
@@ -2646,9 +2662,13 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE review_case_episodes;"
                 )
             else:
-                # The v20 producer predates #1358's case episodes and #1310's
-                # resolution index led by the resolved id.
+                # The v20 producer predates #1358's case episodes, #1310's
+                # resolution index led by the resolved id and #1363's retained
+                # cover tables.
                 repository._connection.executescript(
+                    "DROP TABLE retained_cover_listings;"
+                    "DROP TABLE retained_cover_removals;"
+                    "DROP TABLE retained_cover_bindings;"
                     "DROP TABLE review_case_episodes;"
                     "DROP INDEX metadata_policy_resolutions_resolved;"
                     "CREATE INDEX metadata_policy_resolutions_resolved "
@@ -2864,7 +2884,7 @@ def test_a_current_document_with_a_forged_dispatch_record_is_refused(
     )
 
     data = json.loads(_walked_audible_report().to_json())
-    assert data["schema_version"] == "metadata-report-v73"
+    assert data["schema_version"] == "metadata-report-v75"
     forge(data)
     identity = {key: value for key, value in data.items() if key != "report_id"}
     data["report_id"] = (

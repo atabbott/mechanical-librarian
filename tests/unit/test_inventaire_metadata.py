@@ -196,7 +196,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v73"
+    assert report.schema_version == "metadata-report-v75"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -1471,7 +1471,7 @@ def test_complete_discovery_preserves_negative_only_creator_equivalence(
         1 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 0
     )
     assert observation.lanes
-    assert report.schema_version == "metadata-report-v73"
+    assert report.schema_version == "metadata-report-v75"
 
 
 @pytest.mark.parametrize(
