@@ -197,6 +197,9 @@ export interface PolicySearch {
 export interface ProviderOutcomeView {
   // The companion EPUB's ISBN lane (#1723).
   companionIsbn: boolean
+  // iTunes asked for an audiobook's cover alone, so it neither matches nor
+  // limits the work (#1779).
+  coverOnly: boolean
   providerRequests: number
   laneKind: ProviderQueryKind
   provider: string
@@ -2356,6 +2359,7 @@ const mapMediaHealth = (value: readonly MediaHealthDto[]): MediaHealthObservatio
 
 const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => ({
   companionIsbn: value.companion_isbn,
+  coverOnly: value.cover_only,
   providerRequests: value.provider_requests,
   laneKind: value.lane_kind,
   provider: value.provider,

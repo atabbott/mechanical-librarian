@@ -152,6 +152,11 @@ qualification.
   no longer fire. They are evidence only: the identity outcome and
   `material_audiobook_cover_reference` do not read them, so no decision changes,
   and no other audiobook cover authority is admitted in its place.
+  Amendment (#1779): iTunes Search is back in the set as a cover source only,
+  so where a library connects it with covers on, its art is the second
+  audiobook cover authority again and the cover-hash reasons fire against the
+  Audible art. They remain evidence only, and nothing else iTunes states is
+  read for an audiobook (ADR-0061 clause 9 amendment, #1779).
 
 ## Alternatives considered
 

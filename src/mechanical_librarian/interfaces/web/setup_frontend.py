@@ -558,7 +558,7 @@ const renderConnect=()=>{
   section.append(form);
   endpoint.focus()
 };
-// itunes_search only corroborates ebooks: no audiobook is sent to it (#1254),
+// itunes_search corroborates ebooks and gives audiobooks only a cover (#1779),
 // so it is grouped, and suggested, with the book providers (#1458).
 const providerGroups=[['books','Books and ebooks',[['inventaire','inventaire'],['open','open_library'],['hardcover','hardcover'],['google','google_books'],['itunes','itunes_search']]],['audiobooks','Audiobooks',[['audible','audible_catalog'],['audnexus','audnexus'],['audiosilo','audiosilo']]]];
 const renderProviders=async()=>{
