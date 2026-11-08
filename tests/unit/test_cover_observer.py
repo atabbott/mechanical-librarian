@@ -714,20 +714,22 @@ def test_open_library_retrieved_cover_records_only_the_closed_host_family(
 def test_other_retrieved_provider_covers_record_no_final_host(tmp_path: Path) -> None:
     with patch(
         "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
-        return_value=RemoteCover("https://example.com/c.jpg", "image/jpeg", _jpeg()),
+        return_value=RemoteCover(
+            "https://assets.hardcover.app/c.jpg", "image/jpeg", _jpeg()
+        ),
     ) as fetch:
         source = CoverEvidenceObserver(
             _Target(None), CoverArtifactStore(tmp_path)
         )._remote(
             _open_library_descriptor(
-                "https://example.com/c.jpg",
+                "https://assets.hardcover.app/c.jpg",
                 CoverSourceKind.HARDCOVER,
-                CoverRedirects.PUBLIC_HTTPS,
+                CoverRedirects.NONE,
             ),
             _deadline(),
         )
     assert (source.state, source.final_host) == (CoverSourceState.RETRIEVED, None)
-    assert fetch.call_args.kwargs["redirects"] is CoverRedirects.PUBLIC_HTTPS
+    assert fetch.call_args.kwargs["redirects"] is CoverRedirects.NONE
 
 
 def test_an_unmapped_open_library_final_host_is_an_invariant_failure(

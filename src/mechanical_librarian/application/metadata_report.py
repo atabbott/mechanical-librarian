@@ -2021,15 +2021,14 @@ class CoverRedirects(StrEnum):
     """How a provider cover request treats a redirect: a closed code constant.
 
     `docs/architecture/security.md` › Provider cover admission is the
-    authority. ``NONE`` refuses every redirect. ``PUBLIC_HTTPS`` follows
-    bounded, revalidated HTTPS redirects (Hardcover). ``OPEN_LIBRARY_ARCHIVE``
+    authority. ``NONE`` refuses every redirect; it is the default, so a
+    descriptor that states nothing fails closed. ``OPEN_LIBRARY_ARCHIVE``
     follows only Open Library's fixed two-redirect route through
     ``archive.org`` to an ``ia<N>.us.archive.org`` datanode, each hop bound to
     the requested cover id. It is never configuration.
     """
 
     NONE = "none"
-    PUBLIC_HTTPS = "public_https"
     OPEN_LIBRARY_ARCHIVE = "open_library_archive"
 
 
@@ -2041,9 +2040,13 @@ class ProviderCoverDescriptor:
     url: str | None
     provenance: CoverProvenance | None = None
     wait: Callable[[float | None], bool] | None = None
-    redirects: CoverRedirects = CoverRedirects.PUBLIC_HTTPS
+    redirects: CoverRedirects = CoverRedirects.NONE
     user_agent: str | None = None
     terminal_state: CoverSourceState | None = None
+    # The adapter's order among its own listed-edition covers (#1380), which
+    # the cover observer reads after the designation. Process-local: it is
+    # never persisted.
+    order: int = 0
 
 
 @dataclass(frozen=True, slots=True)

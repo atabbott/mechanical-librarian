@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import time
 import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
+from enum import Enum
 from typing import Any, Callable, cast
 from urllib.parse import urlsplit
 
@@ -32,6 +34,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
+    CoverRedirects,
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
@@ -60,8 +63,10 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverProvenance,
     CoverSourceKind,
     CoverSourceState,
+    CoverTruncationReason,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import COVER_FLOOR_SHORT_EDGE
 from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -75,6 +80,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureDiagnostic,
     FailureStage,
 )
+from mechanical_librarian.domain.field_outcomes import language_outcomes_compatible
 from mechanical_librarian.domain.metadata_report import (
     MAX_AUDIO_EDITIONS,
     MAX_CANDIDATES,
@@ -151,20 +157,42 @@ _BOOKS_QUERY = (
     "{id tag tag_category{id category}}}"
 )
 _QUERY = _ISBN_QUERY
-# One admitted book's audio-format editions (#962, ADR-0089). The projection is
-# closed: edition id, book id, ASIN, audio runtime and the credited people.
-_AUDIO_EDITION_PAGE = 100
-_AUDIO_EDITION_PAGES = 2
-_AUDIO_EDITION_BOOKS = 2
+# One accepted book's edition list is read in at most two pages of 100, for at
+# most two books an observation: its audio-format editions (#962, ADR-0089) and
+# an ebook's edition covers (#1380, ADR-0056).
+_EDITION_PAGE = 100
+_EDITION_PAGES = 2
+_EDITION_BOOKS = 2
 _AUDIO_READING_FORMAT = 2
 _MAX_AUDIO_SECONDS = 604_800
+# The audio editions' projection is closed: edition id, book id, ASIN, audio
+# runtime, the stated cover and language, and the credited people.
+_AUDIO_EDITION_KEYS = frozenset(
+    {"id", "book_id", "asin", "audio_seconds", "image", "language", "contributions"}
+)
 _AUDIO_EDITIONS_QUERY = (
     "query AudioEditions($book:Int!,$offset:Int!){"
     f"editions(where:{{book_id:{{_eq:$book}},reading_format_id:{{_eq:{_AUDIO_READING_FORMAT}}}}},"
-    f"order_by:{{id:asc}},limit:{_AUDIO_EDITION_PAGE},offset:$offset)"
-    "{id book_id asin audio_seconds contributions(order_by:{id:asc},limit:17)"
-    "{id contribution author{id name}}}}"
+    f"order_by:{{id:asc}},limit:{_EDITION_PAGE},offset:$offset)"
+    "{id book_id asin audio_seconds image{url width height} language{code2 code3} "
+    "contributions(order_by:{id:asc},limit:17){id contribution author{id name}}}}"
 )
+_EDITION_COVER_KEYS = frozenset({"id", "book_id", "image", "language"})
+_EDITION_COVERS_QUERY = (
+    "query EditionCovers($book:Int!,$offset:Int!){"
+    f"editions(where:{{book_id:{{_eq:$book}}}},order_by:{{id:asc}},limit:{_EDITION_PAGE},offset:$offset)"
+    "{id book_id image{url width height} language{code2 code3}}}"
+)
+# Every Hardcover cover is served from this one host, on port 443, with no
+# redirect (`docs/architecture/security.md` › Provider cover admission).
+_HARDCOVER_ASSET_HOST = "assets.hardcover.app"
+_HARDCOVER_WORK = re.compile(r"hardcover-work-[0-9]{10}")
+# The stated sizes an edition cover must have before it is fetched (#1380):
+# within the decoded artifact's bounds, at least the election floor on its
+# short side, and the shape of its medium. These acquisition bands are
+# narrower than ADR-0093's election bands, which judge decoded pixels.
+_MAX_STATED_EDGE = 8_192
+_MAX_STATED_PIXELS = 16_777_216
 
 
 class _OptionalRejections:
@@ -177,7 +205,26 @@ class _OptionalRejections:
         self.count = min(MAX_DIAGNOSTIC_COUNT, self.count + 1)
 
 
-HardcoverPacer = ProviderRequestPacer
+class HardcoverPacer(ProviderRequestPacer):
+    """Hardcover's shared request pacer, with a second one for its asset host.
+
+    API requests start at most once a second on the inherited clock. Cover
+    fetches from `assets.hardcover.app` keep their own one-second clock, so a
+    gallery of edition covers never crowds the API (#1380).
+    """
+
+    def __init__(
+        self,
+        minimum_interval_seconds: float = 1.0,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        super().__init__(minimum_interval_seconds, clock=clock, sleep=sleep)
+        self._assets = ProviderRequestPacer(1.0, clock=clock, sleep=sleep)
+
+    def asset_wait(self, deadline: float | None = None) -> bool:
+        return self._assets.wait(deadline)
 
 
 class HardcoverMetadataProvider:
@@ -221,6 +268,8 @@ class HardcoverMetadataProvider:
         self._schema_rejections = 0
         self._optional_rejections = _OptionalRejections()
         self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        self._compilation_books: frozenset[int] = frozenset()
+        self._asset_wait = None if pacer is None else pacer.asset_wait
 
     # The response budget is the session's own state.  It stays readable and
     # settable under its adapter-local name so a caller can position an
@@ -338,6 +387,7 @@ class HardcoverMetadataProvider:
             )
         self._session.ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        fan_out = _EditionCoverFanOut()
         with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(served):
                 if identifier_suppresses_discovery(served, results, lane):
@@ -350,6 +400,7 @@ class HardcoverMetadataProvider:
                     )
                     continue
                 self._cover_descriptors = ()
+                self._compilation_books = frozenset()
                 lookup = MetadataLookup(
                     lane.kind,
                     plan.local_claims,
@@ -377,13 +428,26 @@ class HardcoverMetadataProvider:
                     execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
-                audio_editions = self._audio_editions(
-                    observation, lookup, deadline=deadline
+                audio_editions, audio_covers = self._audio_editions(
+                    observation, lookup, served.library_languages, deadline=deadline
                 )
                 if lookup.kind is ProviderQueryKind.ISBN and lookup.audio is not None:
                     observation, audio_editions = _companion_isbn_answer(
                         observation, audio_editions, lookup
                     )
+                kept_books = {
+                    candidate.identity for candidate in observation.candidates
+                }
+                fan_out.covers.extend(
+                    cover for cover in audio_covers if cover.book_identity in kept_books
+                )
+                self._edition_covers(
+                    observation,
+                    lookup,
+                    served.library_languages,
+                    fan_out,
+                    deadline=deadline,
+                )
                 diagnostics = provider_attempt_diagnostics(
                     self._session.attempt_records[attempts_before:],
                     status=observation.status.value,
@@ -414,6 +478,14 @@ class HardcoverMetadataProvider:
                 )
                 if merged is not None:
                     descriptors = merged
+        merged = merge_provider_cover_descriptors(
+            descriptors,
+            _listed_edition_descriptors(
+                self._name, fan_out, descriptors, self._asset_wait
+            ),
+        )
+        if merged is not None:
+            descriptors = merged
         self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
@@ -575,6 +647,9 @@ class HardcoverMetadataProvider:
             self._reject_schema_members(
                 _optional_projection_rejections(payload, books_query=books_query)
             )
+            compilations = (
+                _compilation_book_ids(payload) if books_query else frozenset()
+            )
             if (
                 lookup.kind is ProviderQueryKind.ISBN
                 and lookup.matched_family is not None
@@ -604,8 +679,14 @@ class HardcoverMetadataProvider:
         ):
             self._session.mark_response_attempt("response_malformed")
             return result(ProviderStatus.MALFORMED)
+        self._compilation_books = compilations
         self._cover_descriptors = _kept_cover_descriptors(
-            payload, self._name, lookup.kind, candidates, books_query=books_query
+            payload,
+            self._name,
+            lookup.kind,
+            candidates,
+            books_query=books_query,
+            wait=self._asset_wait,
         )
         observation = result(
             ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
@@ -664,9 +745,10 @@ class HardcoverMetadataProvider:
         self,
         observation: ProviderObservation,
         lookup: MetadataLookup,
+        library_languages: tuple[str, ...],
         *,
         deadline: float | None,
-    ) -> tuple[ProviderCandidate, ...]:
+    ) -> tuple[tuple[ProviderCandidate, ...], tuple[_ListedCover, ...]]:
         """Read the admitted books' audio editions that witness this recording.
 
         Only an audiobook WORK lane, or its companion ISBN lane (#1468), whose
@@ -675,6 +757,8 @@ class HardcoverMetadataProvider:
         inside the tight band of the recording's (#962, ADR-0089). Any failed
         or malformed page ends the fan-out with no editions: the admitted work
         stands, and a failed read is never a statement that no edition exists.
+        Every returned row may also offer its square cover (#1380); a refused
+        fan-out offers none.
         """
         local_runtime = local_claim_runtime_seconds(lookup.local_claims)
         books = tuple(
@@ -689,74 +773,174 @@ class HardcoverMetadataProvider:
             or observation.status is not ProviderStatus.CANDIDATES
             or local_runtime is None
             or not books
-            or len(books) > _AUDIO_EDITION_BOOKS
+            or len(books) > _EDITION_BOOKS
             or len(books) != len(observation.candidates)
         ):
-            return ()
+            return (), ()
         editions: list[ProviderCandidate] = []
+        covers: list[_ListedCover] = []
         for book in books:
-            book_id = int(book.identity.removeprefix("hardcover-work-"))
-            rows: list[dict[str, Any]] = []
-            for page in range(_AUDIO_EDITION_PAGES + 1):
-                if page == _AUDIO_EDITION_PAGES:
-                    # More rows than the bounded pages hold: no prefix is a
-                    # fair sample, and a witness over only the other book
-                    # would judge a recording this one may contradict.
-                    return ()
-                offset = page * _AUDIO_EDITION_PAGE
-
-                def execute(
-                    book_id: int = book_id, offset: int = offset
-                ) -> _AudioEditionPage:
-                    try:
-                        payload = self._request(
-                            {
-                                "operationName": "AudioEditions",
-                                "query": _AUDIO_EDITIONS_QUERY,
-                                "variables": {"book": book_id, "offset": offset},
-                            },
-                            deadline=deadline,
-                        )
-                    except ProviderFailure as error:
-                        return _AudioEditionPage((), error.status)
-                    try:
-                        if _has_graphql_errors(payload):
-                            self._session.mark_response_attempt(
-                                "provider_declared_error"
-                            )
-                            return _AudioEditionPage((), ProviderStatus.UNAVAILABLE)
-                        return _AudioEditionPage(
-                            _parse_audio_edition_rows(payload, book_id), None
-                        )
-                    except (
-                        ValueError,
-                        TypeError,
-                        UnicodeError,
-                        RecursionError,
-                        json.JSONDecodeError,
-                    ):
-                        self._session.mark_response_attempt("response_malformed")
-                        return _AudioEditionPage((), ProviderStatus.MALFORMED)
-
-                value, _replayed = self._session.ledger.resolve_detail(
-                    f"audio-editions/{book_id}/{offset}", execute=execute
-                )
-                if value.status is not None:
-                    return ()
-                rows.extend(value.rows)
-                if len(value.rows) < _AUDIO_EDITION_PAGE:
-                    break
-            if len({row["id"] for row in rows}) != len(rows):
-                return ()
+            rows = self._edition_rows(
+                int(book.identity.removeprefix("hardcover-work-")),
+                operation="AudioEditions",
+                query=_AUDIO_EDITIONS_QUERY,
+                detail="audio-editions",
+                keys=_AUDIO_EDITION_KEYS,
+                deadline=deadline,
+            )
+            if not isinstance(rows, tuple):
+                # More rows than the bounded pages hold is no fair sample,
+                # and a witness over only the other book would judge a
+                # recording this one may contradict.
+                return (), ()
             for row in rows:
                 edition = _audio_edition(
                     self._name, book.identity, row, lookup.local_claims, local_runtime
                 )
                 if edition is not None:
                     editions.append(edition)
+                cover = _listed_edition_cover(
+                    book.identity,
+                    row,
+                    audio=True,
+                    library_languages=library_languages,
+                    rejected=self._optional_rejections,
+                )
+                if cover is not None:
+                    covers.append(cover)
         if len(editions) > MAX_AUDIO_EDITIONS:
-            return ()
-        return tuple(sorted(editions, key=lambda value: value.identity))
+            return (), ()
+        return tuple(sorted(editions, key=lambda value: value.identity)), tuple(covers)
+
+    def _edition_covers(
+        self,
+        observation: ProviderObservation,
+        lookup: MetadataLookup,
+        library_languages: tuple[str, ...],
+        fan_out: _EditionCoverFanOut,
+        *,
+        deadline: float | None,
+    ) -> None:
+        """Read the covers of the books an ebook lane accepted (#1380, ADR-0056).
+
+        An ebook ISBN or WORK lane whose qualified answer accepted Hardcover
+        books asks for each book's edition list, when the library lists
+        languages. Two books an observation, in lane order and then book id
+        order, each once; a WORK-lane compilation is skipped. A failed or
+        malformed page ends the fan-out as incomplete: books read before it
+        keep their covers, and the lane keeps its status and candidates.
+        """
+        if (
+            lookup.audio is not None
+            or lookup.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            or observation.status is not ProviderStatus.CANDIDATES
+            or not library_languages
+            or fan_out.stopped
+        ):
+            return
+        books = sorted(
+            {
+                int(candidate.work_identity.removeprefix("hardcover-work-"))
+                for candidate in observation.candidates
+                if _HARDCOVER_WORK.fullmatch(candidate.work_identity)
+            }
+            - self._compilation_books
+            - set(fan_out.books)
+        )
+        for book_id in books:
+            if len(fan_out.books) == _EDITION_BOOKS:
+                fan_out.truncations.add(CoverTruncationReason.EDITION_LIMIT)
+                return
+            fan_out.books.append(book_id)
+            rows = self._edition_rows(
+                book_id,
+                operation="EditionCovers",
+                query=_EDITION_COVERS_QUERY,
+                detail="editions",
+                keys=_EDITION_COVER_KEYS,
+                deadline=deadline,
+            )
+            if rows is _EditionStop.FULL:
+                fan_out.truncations.add(CoverTruncationReason.EDITION_LIMIT)
+                continue
+            if rows is _EditionStop.FAILED:
+                fan_out.truncations.add(CoverTruncationReason.EDITION_FETCH_INCOMPLETE)
+                fan_out.stopped = True
+                return
+            for row in rows:
+                cover = _listed_edition_cover(
+                    f"hardcover-work-{book_id:010d}",
+                    row,
+                    audio=False,
+                    library_languages=library_languages,
+                    rejected=self._optional_rejections,
+                )
+                if cover is not None:
+                    fan_out.covers.append(cover)
+
+    def _edition_rows(
+        self,
+        book_id: int,
+        *,
+        operation: str,
+        query: str,
+        detail: str,
+        keys: frozenset[str],
+        deadline: float | None,
+    ) -> tuple[dict[str, Any], ...] | _EditionStop:
+        """Read one book's edition list in at most two pages of 100.
+
+        A page shorter than 100 ends the list. Two full pages are `FULL`: no
+        prefix is a fair sample. A failed or malformed page, a row naming
+        another book, or an edition id repeated across the pages is `FAILED`.
+        Each page is one ledger detail request.
+        """
+        rows: list[dict[str, Any]] = []
+        for page in range(_EDITION_PAGES):
+            offset = page * _EDITION_PAGE
+
+            def execute(offset: int = offset) -> _EditionPage:
+                try:
+                    payload = self._request(
+                        {
+                            "operationName": operation,
+                            "query": query,
+                            "variables": {"book": book_id, "offset": offset},
+                        },
+                        deadline=deadline,
+                    )
+                except ProviderFailure as error:
+                    return _EditionPage((), error.status)
+                try:
+                    if _has_graphql_errors(payload):
+                        self._session.mark_response_attempt("provider_declared_error")
+                        return _EditionPage((), ProviderStatus.UNAVAILABLE)
+                    return _EditionPage(
+                        _parse_edition_rows(payload, book_id, keys), None
+                    )
+                except (
+                    ValueError,
+                    TypeError,
+                    UnicodeError,
+                    RecursionError,
+                    json.JSONDecodeError,
+                ):
+                    self._session.mark_response_attempt("response_malformed")
+                    return _EditionPage((), ProviderStatus.MALFORMED)
+
+            value, _replayed = self._session.ledger.resolve_detail(
+                f"{detail}/{book_id}/{offset}", execute=execute
+            )
+            if value.status is not None:
+                return _EditionStop.FAILED
+            rows.extend(value.rows)
+            if len(value.rows) < _EDITION_PAGE:
+                break
+        else:
+            return _EditionStop.FULL
+        if len({row["id"] for row in rows}) != len(rows):
+            return _EditionStop.FAILED
+        return tuple(rows)
 
     def _reject_schema_members(self, count: int) -> None:
         if count > 0:
@@ -837,15 +1021,47 @@ def _classify(facts: ProviderResponseFacts) -> ProviderFailure:
 
 
 @dataclass(frozen=True, slots=True)
-class _AudioEditionPage:
+class _EditionPage:
     rows: tuple[dict[str, Any], ...]
     status: ProviderStatus | None
 
 
-def _parse_audio_edition_rows(
-    payload: bytes, book_id: int
+class _EditionStop(Enum):
+    """Why one book's edition list was not read to its end."""
+
+    FULL = "full"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class _ListedCover:
+    """One edition row that passed the stated-size, shape and language filter.
+
+    The stated size orders the edition covers and is never persisted.
+    """
+
+    book_identity: str
+    edition_id: int
+    url: str
+    width: int
+    height: int
+    language: str
+
+
+@dataclass(slots=True)
+class _EditionCoverFanOut:
+    """One observation's edition covers, gathered across its lanes (#1380)."""
+
+    books: list[int] = field(default_factory=list)
+    covers: list[_ListedCover] = field(default_factory=list)
+    truncations: set[CoverTruncationReason] = field(default_factory=set)
+    stopped: bool = False
+
+
+def _parse_edition_rows(
+    payload: bytes, book_id: int, keys: frozenset[str]
 ) -> tuple[dict[str, Any], ...]:
-    """Read one page of a book's audio editions, refusing any foreign row."""
+    """Read one page of a book's editions, refusing any foreign row."""
     source = json.loads(
         payload.decode("utf-8", "strict"),
         object_pairs_hook=_unique_object,
@@ -853,18 +1069,135 @@ def _parse_audio_edition_rows(
         parse_float=Decimal,
     )
     data = _closed(_closed(source, {"data"})["data"], {"editions"})
-    rows, overflow = _bounded_list(
-        data["editions"],
-        _AUDIO_EDITION_PAGE,
-        {"id", "book_id", "asin", "audio_seconds", "contributions"},
-    )
+    rows, overflow = _bounded_list(data["editions"], _EDITION_PAGE, set(keys))
     if overflow:
-        raise ValueError("provider audio editions overflow")
+        raise ValueError("provider editions overflow")
     for row in rows:
         _identifier(row["id"])
         if _identifier(row["book_id"]) != book_id:
-            raise ValueError("provider audio edition names another book")
+            raise ValueError("provider edition names another book")
     return tuple(rows)
+
+
+def _listed_edition_cover(
+    book_identity: str,
+    row: dict[str, Any],
+    *,
+    audio: bool,
+    library_languages: tuple[str, ...],
+    rejected: _OptionalRejections,
+) -> _ListedCover | None:
+    """One edition row's cover, or ``None``, decided before any descriptor.
+
+    The cover must be on the asset host, state an exact integer size inside
+    the decoded artifact's bounds with a short side of at least the election
+    floor, have its medium's shape (an ebook portrait, height 1.2 to 2 times
+    the width; an audiobook square, long side at most 1.05 times the short),
+    and state a language in the class of one of the library's. An off-host or
+    malformed image is counted as an optional rejection.
+    """
+    image = _optional_closed(row["image"], {"url", "width", "height"}, rejected)
+    language = _optional_closed(row["language"], {"code2", "code3"}, rejected)
+    if image is None or language is None:
+        return None
+    url, _state = _cover_url_text(image["url"], rejected)
+    width, height = image["width"], image["height"]
+    if (
+        url is None
+        or type(width) is not int
+        or type(height) is not int
+        or not 1 <= width <= _MAX_STATED_EDGE
+        or not 1 <= height <= _MAX_STATED_EDGE
+        or width * height > _MAX_STATED_PIXELS
+        or min(width, height) < COVER_FLOOR_SHORT_EDGE
+        or (
+            100 * max(width, height) > 105 * min(width, height)
+            if audio
+            else not 6 * width <= 5 * height <= 10 * width
+        )
+    ):
+        return None
+    stated = _stated_language(language)
+    if stated is None or not any(
+        language_outcomes_compatible(stated, value) for value in library_languages
+    ):
+        return None
+    return _ListedCover(book_identity, row["id"], url, width, height, stated)
+
+
+def _stated_language(language: dict[str, Any]) -> str | None:
+    """An edition's language: its `code2`, else its `code3`."""
+    for key in ("code2", "code3"):
+        try:
+            return _text(language.get(key), MAX_SCALAR_CHARACTERS)
+        except ValueError:
+            continue
+    return None
+
+
+def _listed_edition_descriptors(
+    provider: str,
+    fan_out: _EditionCoverFanOut,
+    built: tuple[ProviderCoverDescriptor, ...],
+    wait: Callable[[float | None], bool] | None,
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """The observation's listed-edition descriptors and its truncation rows.
+
+    A cover whose URL another Hardcover descriptor already holds is skipped,
+    and identical URLs keep the lowest edition id. The rest are ordered by
+    stated short side, then stated area, both descending, then edition id;
+    that order rides to the observer and is never persisted.
+    """
+    taken = {value.url for value in built if value.url is not None}
+    by_url: dict[str, _ListedCover] = {}
+    for cover in sorted(fan_out.covers, key=lambda value: value.edition_id):
+        if cover.url not in taken:
+            by_url.setdefault(cover.url, cover)
+    ordered = sorted(
+        by_url.values(),
+        key=lambda value: (
+            -min(value.width, value.height),
+            -value.width * value.height,
+            value.edition_id,
+        ),
+    )
+    listed = tuple(
+        ProviderCoverDescriptor(
+            provider,
+            CoverSourceKind.HARDCOVER,
+            cover_source_id(
+                CoverSourceKind.HARDCOVER, f"{provider}:listed:{cover.edition_id}"
+            ),
+            cover.url,
+            CoverProvenance(
+                provider,
+                CoverDesignation.LISTED_EDITION,
+                cover.book_identity,
+                f"hardcover-edition-{cover.edition_id:010d}",
+                (CoverContext(CoverContextField.LANGUAGE, cover.language),),
+            ),
+            wait=wait,
+            redirects=CoverRedirects.NONE,
+            order=index,
+        )
+        for index, cover in enumerate(ordered)
+    )
+    truncations = tuple(
+        ProviderCoverDescriptor(
+            provider,
+            CoverSourceKind.HARDCOVER,
+            cover_source_id(
+                CoverSourceKind.HARDCOVER, f"truncation:{provider}:{reason.value}"
+            ),
+            None,
+            CoverProvenance(
+                provider, CoverDesignation.TRUNCATION, truncation_reason=reason
+            ),
+            terminal_state=CoverSourceState.TRUNCATED,
+        )
+        for reason in sorted(fan_out.truncations, key=lambda value: value.value)
+    )
+    return (*listed, *truncations)
 
 
 def _audio_edition(
@@ -1152,6 +1485,7 @@ def _kept_cover_descriptors(
     candidates: tuple[ProviderCandidate, ...],
     *,
     books_query: bool,
+    wait: Callable[[float | None], bool] | None,
 ) -> tuple[ProviderCoverDescriptor, ...]:
     """An answer's cover descriptors; a book the collapse removed brings none."""
     try:
@@ -1159,7 +1493,7 @@ def _kept_cover_descriptors(
         return tuple(
             descriptor
             for descriptor in _parse_cover_descriptors(
-                payload, provider, kind, books_query=books_query
+                payload, provider, kind, books_query=books_query, wait=wait
             )
             if not books_query
             or (
@@ -1175,6 +1509,25 @@ def _kept_cover_descriptors(
         json.JSONDecodeError,
     ):
         return ()
+
+
+def _compilation_book_ids(payload: bytes) -> frozenset[int]:
+    """The books a books-first answer marks as compilations (#1380).
+
+    `_parse_candidates` has already read this answer, so its books are
+    objects with valid ids; only `compilation: true` marks one.
+    """
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
+    return frozenset(
+        book["id"]
+        for book in source["data"]["books"]
+        if book.get("compilation") is True
+    )
 
 
 def _usable_isbn_claims(lookup: MetadataLookup) -> tuple[LocalClaim, ...]:
@@ -1761,7 +2114,13 @@ def _parse_cover_descriptors(
     rejected: _OptionalRejections | None = None,
     *,
     books_query: bool = False,
+    wait: Callable[[float | None], bool] | None = None,
 ) -> tuple[ProviderCoverDescriptor, ...]:
+    """An answer's exact or related edition and book default covers.
+
+    Every one is fetched from the asset host with no redirect, paced on the
+    asset host's own clock when `wait` is given (#1380).
+    """
     rejected = rejected or _OptionalRejections()
     source = json.loads(
         payload.decode("utf-8", "strict"),
@@ -1846,6 +2205,8 @@ def _parse_cover_descriptors(
                     edition_identity,
                     _edition_cover_context(row, rejected),
                 ),
+                wait=wait,
+                redirects=CoverRedirects.NONE,
                 terminal_state=terminal_state,
             )
         )
@@ -1870,6 +2231,8 @@ def _parse_cover_descriptors(
                     f"hardcover-work-{book_id:010d}",
                     context=_work_cover_context(book, rejected),
                 ),
+                wait=wait,
+                redirects=CoverRedirects.NONE,
                 terminal_state=terminal_state,
             )
         )
@@ -1887,7 +2250,16 @@ def _cover_url(
         return None, CoverSourceState.UNSAFE_REMOTE
     if image is None:
         return None, None
-    url = image["url"]
+    return _cover_url_text(image["url"], rejected)
+
+
+def _cover_url_text(
+    url: object, rejected: _OptionalRejections | None = None
+) -> tuple[str | None, CoverSourceState | None]:
+    """Admit one Hardcover cover URL: HTTPS on the asset host's port 443.
+
+    Anything else is `unsafe_remote` with no URL, so no socket is opened.
+    """
     if type(url) is not str or not url:
         if rejected:
             rejected.reject()
@@ -1906,7 +2278,7 @@ def _cover_url(
         or any(ord(character) < 0x21 or ord(character) > 0x7E for character in url)
         or "\\" in url
         or parts.scheme != "https"
-        or not parts.hostname
+        or parts.hostname != _HARDCOVER_ASSET_HOST
         or parts.port not in (None, 443)
         or parts.username is not None
         or parts.password is not None

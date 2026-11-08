@@ -78,6 +78,8 @@ def _edition(
         "book_id": book_id,
         "asin": asin,
         "audio_seconds": seconds,
+        "image": None,
+        "language": None,
         "contributions": [
             {"id": 7, "contribution": "Author", "author": {"id": 7, "name": _AUTHOR}},
             *(
@@ -351,3 +353,125 @@ def test_an_ebook_lane_states_no_work_first_publication_claim() -> None:
         for candidate in observation.candidates
         for claim in candidate.claims
     )
+
+
+# --- Hardcover audiobook covers from the same rows (#1380 D, #1778) --------
+
+_AUDIO_DOCUMENT = (
+    "query AudioEditions($book:Int!,$offset:Int!){editions(where:{book_id:{_eq:$book},"
+    "reading_format_id:{_eq:2}},order_by:{id:asc},limit:100,offset:$offset)"
+    "{id book_id asin audio_seconds image{url width height} language{code2 code3} "
+    "contributions(order_by:{id:asc},limit:17){id contribution author{id name}}}}"
+)
+
+
+def _pictured(
+    edition_id: int,
+    seconds: int | None,
+    width: int,
+    height: int,
+    *,
+    code2: str = "en",
+    book_id: int = 10,
+) -> dict[str, object]:
+    return {
+        **_edition(edition_id, seconds, book_id=book_id),
+        "image": {
+            "url": f"https://assets.hardcover.app/editions/{edition_id}.jpg",
+            "width": width,
+            "height": height,
+        },
+        "language": {"code2": code2, "code3": None},
+    }
+
+
+def _audio_covers(
+    pages: Callable[[int, int], httpx.Response],
+    *,
+    languages: tuple[str, ...] = ("en",),
+) -> tuple[ProviderObservation, list[str]]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["operationName"] == "AudioEditions":
+            return pages(body["variables"]["book"], body["variables"]["offset"])
+        return httpx.Response(200, json=_work_response())
+
+    result = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        262_144,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_700_000_000.0,
+        sleep=lambda _seconds: None,
+        jitter=lambda: 0.0,
+    ).observe(replace(_plan(), library_languages=languages))
+    return result.observation, [
+        str(value.provenance.edition_identity)
+        for value in result.cover_descriptors
+        if value.provenance is not None
+        and value.provenance.designation.value == "listed_edition"
+    ]
+
+
+def test_the_audio_edition_document_also_reads_the_cover_and_language() -> None:
+    from mechanical_librarian.adapters.providers import hardcover_metadata
+
+    assert _AUDIO_DOCUMENT == hardcover_metadata._AUDIO_EDITIONS_QUERY
+
+
+def test_every_returned_audio_row_offers_its_square_cover_and_only_that() -> None:
+    observation, covers = _audio_covers(
+        lambda _book, _offset: _page(
+            _pictured(3, _LOCAL_SECONDS + 40, 600, 600),
+            # Not a witness (another recording), yet its square cover stands.
+            _pictured(4, _LOCAL_SECONDS + 3_600, 500, 520),
+            _pictured(5, _LOCAL_SECONDS, 400, 600),
+            _pictured(6, _LOCAL_SECONDS, 600, 600, code2="de"),
+        )
+    )
+
+    assert [
+        "hardcover-edition-0000000003",
+        "hardcover-edition-0000000005",
+        "hardcover-edition-0000000006",
+    ] == [edition.identity for edition in observation.audio_editions]
+    assert {"hardcover-edition-0000000003", "hardcover-edition-0000000004"} == set(
+        covers
+    )
+
+
+def test_a_pictured_row_leaves_the_witness_outcome_unchanged() -> None:
+    plain, _covers = _audio_covers(
+        lambda _book, _offset: _page(_edition(3, _LOCAL_SECONDS + 40))
+    )
+    pictured, covers = _audio_covers(
+        lambda _book, _offset: _page(_pictured(3, _LOCAL_SECONDS + 40, 600, 600))
+    )
+
+    assert ["hardcover-edition-0000000003"] == covers
+    assert plain.audio_editions == pictured.audio_editions
+    assert plain.candidates == pictured.candidates
+
+
+def test_a_refused_audio_fan_out_offers_no_cover() -> None:
+    _failed, covers = _audio_covers(lambda _book, _offset: httpx.Response(500, json={}))
+    assert [] == covers
+
+    def full(book: int, offset: int) -> httpx.Response:
+        return _page(
+            *(
+                _pictured(offset + index + 1, _LOCAL_SECONDS, 600, 600, book_id=book)
+                for index in range(100)
+            )
+        )
+
+    _full, covers = _audio_covers(full)
+    assert [] == covers
+
+
+def test_a_library_with_no_languages_gets_no_audiobook_cover() -> None:
+    _observation, covers = _audio_covers(
+        lambda _book, _offset: _page(_pictured(3, _LOCAL_SECONDS + 40, 600, 600)),
+        languages=(),
+    )
+    assert [] == covers
