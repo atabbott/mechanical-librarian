@@ -28,6 +28,11 @@ type LibraryDto = ResponseSchema<'_LibraryResponse'>
 type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
 type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
 type AttentionDto = ResponseSchema<'_AttentionResponse'>
+// The Covers view reads its page as decoded: every member is already the
+// closed shape a tab renders, so nothing is renamed (#1633).
+export type CoversView = ResponseSchema<'_CoversResponse'>
+export type CoverWorkView = CoversView['items'][number]
+export type CoverTab = CoversView['view']
 type CaseDetailDto = ResponseSchema<'_CaseDetailResponse'>
 type ReviewFieldDto = ResponseSchema<'_ReviewField'>
 type DescriptionCandidateDto = ResponseSchema<'DescriptionAdviceCandidate'>
@@ -167,6 +172,11 @@ export type DecisionAction = Extract<DecisionOutcome, 'accept' | 'keep_current'>
 
 export interface LibrarySearch {
   lens: LibraryLens
+  /** Library's Covers view (#1633); absent is Works. */
+  view?: 'covers'
+  /** The Covers tab, and the book whose covers are open in it. */
+  tab?: CoverTab
+  cover?: string
   q?: string
   cursor?: string
   attentionCursor?: string
@@ -340,7 +350,6 @@ export const AUDIO_SURFACES = [
   'mp4_freeform_tone',
   'id3_frame',
   'id3_user_text',
-  'sidecar_audiobookshelf',
   'sidecar_libation',
   'sidecar_opf',
   'sidecar_nfo',
@@ -1203,6 +1212,13 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<AttentionView>
+  /** A Covers tab's page after `cursor`, or only the book `cover` under it. */
+  getCovers(
+    view: CoverTab,
+    at?: { cursor?: string; cover?: string },
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<CoversView>
   getCaseDetail(
     reviewCaseId: string,
     signal?: AbortSignal,
@@ -1655,6 +1671,17 @@ export class ReviewApiClient implements ReviewHttp {
       false,
       reviewerAccess,
     )
+  }
+  async getCovers(
+    view: CoverTab,
+    at: { cursor?: string; cover?: string } = {},
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
+    const p = new URLSearchParams({ view })
+    if (at.cursor) p.set('cursor', at.cursor)
+    if (at.cover) p.set('cover', at.cover)
+    return await this.read(`/api/v1/covers?${p}`, signal, workClass)
   }
   async getAttention(
     search: AttentionSearch,

@@ -990,13 +990,14 @@ describe('live invalidation', () => {
     expect(invalidationKeys({ sequence: 1, subject: null, topic: 'library' })).toEqual([
       ['library'],
       ['attention'],
+      ['covers'],
     ])
     expect(invalidationKeys({ sequence: 1, subject: null, topic: 'activity' })).toEqual([
       ['activity'],
     ])
     // Only a resync, which is the server admitting it cannot say what changed,
     // is answered by asking about everything.
-    expect(invalidationKeys({ sequence: 1, subject: null, topic: 'resync' })).toHaveLength(5)
+    expect(invalidationKeys({ sequence: 1, subject: null, topic: 'resync' })).toHaveLength(6)
   })
 
   it('collapses a burst of announcements into one refetch of each distinct query', () => {
@@ -1032,6 +1033,7 @@ describe('live invalidation', () => {
     expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
       ['library'],
       ['attention'],
+      ['covers'],
     ])
     stop()
   })
@@ -1078,6 +1080,7 @@ describe('live invalidation', () => {
       ['review-preparation'],
       ['library'],
       ['attention'],
+      ['covers'],
       ['activity'],
       ['review-case'],
     ])
@@ -1128,6 +1131,7 @@ describe('live invalidation', () => {
       ['review-preparation'],
       ['library'],
       ['attention'],
+      ['covers'],
       ['activity'],
       ['review-case'],
     ])
@@ -1195,6 +1199,7 @@ describe('live invalidation', () => {
     expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
       ['library'],
       ['attention'],
+      ['covers'],
       ['activity'],
       ['review-case'],
     ])

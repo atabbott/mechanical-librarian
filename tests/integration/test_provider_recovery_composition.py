@@ -141,7 +141,7 @@ class _Inspector:
     def __init__(self, _artifacts) -> None:
         pass
 
-    def unchanged(self, *_args) -> bool:
+    def unchanged(self, *_args, **_keywords) -> bool:
         return True
 
 
@@ -1536,7 +1536,7 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
                 )
             )
 
-    def unchanged(inspector, *_args):
+    def unchanged(inspector, *_args, **_keywords):
         assert isinstance(inspector, composition.IsolatedAudioInspector)
         inspections.append(inspector)
         return scenario != "changed"

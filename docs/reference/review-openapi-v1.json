@@ -4439,6 +4439,39 @@
         "title": "_CoverConsiderationResponse",
         "type": "object"
       },
+      "_CoverCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "all": {
+            "minimum": 0.0,
+            "title": "All",
+            "type": "integer"
+          },
+          "decide": {
+            "minimum": 0.0,
+            "title": "Decide",
+            "type": "integer"
+          },
+          "kept": {
+            "minimum": 0.0,
+            "title": "Kept",
+            "type": "integer"
+          },
+          "switched": {
+            "minimum": 0.0,
+            "title": "Switched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decide",
+          "kept",
+          "switched",
+          "all"
+        ],
+        "title": "_CoverCounts",
+        "type": "object"
+      },
       "_CoverIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -4857,6 +4890,41 @@
         "title": "_CoverPolicyReport",
         "type": "object"
       },
+      "_CoverPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "preview_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Preview Sha256",
+            "type": "string"
+          },
+          "url": {
+            "pattern": "^/api/v1/(library/cover|covers/replaced)\\?",
+            "title": "Url",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "height",
+          "preview_sha256",
+          "url",
+          "width"
+        ],
+        "title": "_CoverPreview",
+        "type": "object"
+      },
       "_CoverQualification": {
         "additionalProperties": false,
         "properties": {
@@ -4911,6 +4979,172 @@
           "option"
         ],
         "title": "_CoverQualification",
+        "type": "object"
+      },
+      "_CoverSwitch": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "minimum": 0.0,
+            "title": "At",
+            "type": "integer"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filled": {
+            "title": "Filled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "at",
+          "before",
+          "filled"
+        ],
+        "title": "_CoverSwitch",
+        "type": "object"
+      },
+      "_CoverWork": {
+        "additionalProperties": false,
+        "properties": {
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "choosable": {
+            "title": "Choosable",
+            "type": "boolean"
+          },
+          "cover": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "enum": [
+              "proposal",
+              "choice",
+              "kept",
+              "auto",
+              "none"
+            ],
+            "title": "Group",
+            "type": "string"
+          },
+          "media_kind": {
+            "enum": [
+              "epub",
+              "m4b",
+              "m4a",
+              "mp3",
+              "audio",
+              "unknown"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "switched": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverSwitch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unreadable_cover": {
+            "title": "Unreadable Cover",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "authors",
+          "choosable",
+          "cover",
+          "group",
+          "media_kind",
+          "review_case_id",
+          "switched",
+          "title",
+          "unreadable_cover"
+        ],
+        "title": "_CoverWork",
+        "type": "object"
+      },
+      "_CoversResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/_CoverCounts"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverWork"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "schema_version": {
+            "const": "review-covers-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "view": {
+            "enum": [
+              "decide",
+              "kept",
+              "switched",
+              "all"
+            ],
+            "title": "View",
+            "type": "string"
+          }
+        },
+        "required": [
+          "counts",
+          "items",
+          "next_cursor",
+          "schema_version",
+          "view"
+        ],
+        "title": "_CoversResponse",
         "type": "object"
       },
       "_DateEbookQualification": {
@@ -9775,7 +10009,6 @@
                   "mp4_freeform_tone",
                   "id3_frame",
                   "id3_user_text",
-                  "sidecar_audiobookshelf",
                   "sidecar_libation",
                   "sidecar_opf",
                   "sidecar_nfo",
@@ -11903,6 +12136,209 @@
           }
         ],
         "summary": "Attention"
+      }
+    },
+    "/api/v1/covers": {
+      "get": {
+        "description": "Read-only: one page of 50 books under a Covers tab, with each count.\n\nWith ``cover``, the page holds only that book, wherever it falls in\nthe tab, so a link opens it without reading the pages before it.",
+        "operationId": "covers_api_v1_covers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "default": "decide",
+              "enum": [
+                "decide",
+                "kept",
+                "switched",
+                "all"
+              ],
+              "title": "View",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 6144,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cover",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 76,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cover"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CoversResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Covers"
+      }
+    },
+    "/api/v1/covers/replaced": {
+      "get": {
+        "description": "Read-only: a preview of one automatic switch's Before or Now.\n\nBefore is served only while the switch is listed with its original\nretained, by the preview digest bound to that original; once the\noriginal is released the route has nothing to serve for it. Now is\nthe cover the verified write put in place, by its preview digest.",
+        "operationId": "replaced_cover_api_v1_covers_replaced_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "plan",
+            "required": true,
+            "schema": {
+              "maxLength": 76,
+              "title": "Plan",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "preview",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Preview",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Replaced Cover"
       }
     },
     "/api/v1/field-effects/pause": {

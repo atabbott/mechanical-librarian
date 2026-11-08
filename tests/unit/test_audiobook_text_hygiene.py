@@ -4,6 +4,12 @@ from dataclasses import replace
 
 import pytest
 
+from mechanical_librarian.domain.audio_inspection import (
+    AudioInspectionField,
+    AudioSidecarBinding,
+    AudioSidecarDigest,
+    AudioSidecarKind,
+)
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
 )
@@ -29,6 +35,8 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderEvidenceKind,
     TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
@@ -513,3 +521,45 @@ def test_a_lone_foreign_synopsis_asks_and_says_why():
     field, proposal = _preview(report, "description_fill")
     assert (field.outcome, field.reason) == ("abstain", "candidate_language_differs")
     assert len(_result(proposal, TargetDestination.DESCRIPTION).alternatives) == 1
+
+
+def test_a_sidecar_language_withheld_as_an_echo_still_withholds_a_foreign_list():
+    """An `.opf` language that repeated the target's still gates (#1481).
+
+    Echo withholding took the recording's only language claim; the gate only
+    withholds, so the target's language stands in for it as the claim did.
+    """
+    base = _regional(
+        audiobook_genre_report(None, ("Fantasy",), ("Fantastique",)),
+        {"B000000002": "fr"},
+    )
+    assert base.audio is not None
+    report = MetadataReport.create(
+        target=replace(
+            base.target,
+            fields=tuple(
+                TargetField(TargetDestination.LANGUAGE, TargetFieldState.VALUE, "en")
+                if field.destination is TargetDestination.LANGUAGE
+                else field
+                for field in base.target.fields
+            ),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=replace(
+            base.audio,
+            sidecars=(
+                AudioSidecarDigest(
+                    "book.opf",
+                    "c" * 64,
+                    AudioSidecarKind.OPF,
+                    AudioSidecarBinding.TRACK,
+                    echoed=(AudioInspectionField.LANGUAGE,),
+                ),
+            ),
+        ),
+    )
+    field, _proposal = _preview(report, "genres")
+    assert (field.outcome, field.desired_value) == ("projected", ("Fantasy",))

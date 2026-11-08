@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Generic, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
@@ -38,7 +38,10 @@ from mechanical_librarian.domain.audio_health import (
     hours_minutes,
     media_unreadable_observation,
 )
-from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
+    AudioInspectionField,
+)
 from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
 )
@@ -79,6 +82,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
     TargetField,
+    echoed_target_values,
     field_evidence_providers,
     recording_variant_conflict,
 )
@@ -161,6 +165,14 @@ _AUTOMATIC_REFUSAL_TEXT = {
 }
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
+
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.review_covers import (
+        CoverKey,
+        CoverPageSnapshot,
+        CoverView,
+    )
 
 
 class BrowseFetchingChanged(MetadataReportError):
@@ -503,6 +515,14 @@ class ReviewLibraryStore(Protocol):
     def read_current_report_document(
         self, connection: str, library: str, item: str
     ) -> str | None: ...
+    def read_review_covers(
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
+    ) -> CoverPageSnapshot: ...
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]: ...
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
@@ -2968,6 +2988,11 @@ def _review_unselectable_evidence(
                             report.local_claims,
                             report.target.current_title or "",
                             report.library_languages,
+                            echoed_target_values(
+                                report.audio,
+                                report.target.fields,
+                                AudioInspectionField.LANGUAGE,
+                            ),
                         )
                         is not None
                         or candidate_recording_runtime_veto(
@@ -2996,6 +3021,11 @@ def _review_unselectable_evidence(
                         report.local_claims,
                         report.target.current_title or "",
                         report.library_languages,
+                        echoed_target_values(
+                            report.audio,
+                            report.target.fields,
+                            AudioInspectionField.LANGUAGE,
+                        ),
                     )
                     if narrator
                     else None

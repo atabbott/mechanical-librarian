@@ -1131,7 +1131,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v74" == report.schema_version
+    assert "metadata-report-v75" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -4415,3 +4415,34 @@ def test_the_epub_creators_basis_is_refused_outside_an_ebook_work_lane() -> None
     assert audio_plan((replace(lane, author_basis=None),)).lanes
     with pytest.raises(MetadataReportError):
         audio_plan((lane,))
+
+
+class _TextSubclass(str):
+    pass
+
+
+_MALFORMED_NAME_TUPLES: tuple[object, ...] = (
+    ["book.m4b"],
+    ("book.m4b", ""),
+    ("book.m4b", 1),
+    ("book.m4b", _TextSubclass("other.m4b")),
+    ("book.m4b", None),
+)
+
+
+@pytest.mark.parametrize("names", _MALFORMED_NAME_TUPLES)
+def test_target_snapshot_refuses_malformed_own_file_names(names: object) -> None:
+    for valid in (None, (), ("book.m4b", "book.cue")):
+        TargetSnapshot("audiobook", "Synthetic title", (), own_file_names=valid)
+    with pytest.raises(MetadataReportError, match="target file names are invalid"):
+        TargetSnapshot("audiobook", "Synthetic title", (), own_file_names=names)
+
+
+@pytest.mark.parametrize("languages", (*_MALFORMED_NAME_TUPLES, None))
+def test_lookup_and_plan_refuse_malformed_echoed_languages(languages: object) -> None:
+    MetadataLookup(ProviderQueryKind.ISBN, (), echoed_languages=("en", "EN"))
+    MetadataDiscoveryPlan((), (), echoed_languages=("en", "EN"))
+    with pytest.raises(MetadataReportError, match="provider lookup is invalid"):
+        MetadataLookup(ProviderQueryKind.ISBN, (), echoed_languages=languages)
+    with pytest.raises(MetadataReportError, match="provider discovery plan is invalid"):
+        MetadataDiscoveryPlan((), (), echoed_languages=languages)

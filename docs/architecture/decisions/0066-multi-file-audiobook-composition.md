@@ -263,3 +263,13 @@ chapter endpoint substitutes for the durations this composition requires.
 A multi-file item contributes its common folder leaf as a discovery title and
 never a title tag: a track's tag names a chapter, not the work. A set split
 across directories contributes neither (ADR-0063).
+
+## Track-bound sidecars (#1481)
+
+Clause 3's folder surfaces are now `path_folder` and the folder-level
+sidecars only. A sidecar named for one track (`<track stem>.metadata.json`,
+`.opf`, `.nfo` or `.cue`) is that track's: it goes to that track's child and
+carries that track's provenance. Folder-level sidecars are still read once, by
+track 1's child, and carry none; they belong to the item only when no other
+item's audio or ebook file shares the folder
+([ADR-0061](0061-audiobook-provider-posture.md#sidecar-association-1481)).
