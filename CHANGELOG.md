@@ -161,6 +161,9 @@ brackets are GitHub issues.
   cover checks and decision failures drop internal words, a lost answer says
   what to check, and the writing box says whether a change was written
   (#1765).
+- Tooling: a read-only workbench script lists Library links to the ebook
+  series fields where only Hardcover names a series and it differs from yours,
+  so you can label them in the qualification run (#1811).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
