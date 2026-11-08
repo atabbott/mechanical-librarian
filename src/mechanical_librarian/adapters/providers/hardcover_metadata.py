@@ -435,18 +435,8 @@ class HardcoverMetadataProvider:
                     observation, audio_editions = _companion_isbn_answer(
                         observation, audio_editions, lookup
                     )
-                kept_books = {
-                    candidate.identity for candidate in observation.candidates
-                }
-                fan_out.covers.extend(
-                    cover for cover in audio_covers if cover.book_identity in kept_books
-                )
                 self._edition_covers(
-                    observation,
-                    lookup,
-                    served.library_languages,
-                    fan_out,
-                    deadline=deadline,
+                    observation, lookup, served, fan_out, audio_covers, deadline
                 )
                 diagnostics = provider_attempt_diagnostics(
                     self._session.attempt_records[attempts_before:],
@@ -478,15 +468,15 @@ class HardcoverMetadataProvider:
                 )
                 if merged is not None:
                     descriptors = merged
-        merged = merge_provider_cover_descriptors(
-            descriptors,
-            _listed_edition_descriptors(
-                self._name, fan_out, descriptors, self._asset_wait
-            ),
+        self._cover_descriptors = (
+            merge_provider_cover_descriptors(
+                descriptors,
+                _listed_edition_descriptors(
+                    self._name, fan_out, descriptors, self._asset_wait
+                ),
+            )
+            or descriptors
         )
-        if merged is not None:
-            descriptors = merged
-        self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
             refit_companion_books(tuple(results), plan),
@@ -816,20 +806,27 @@ class HardcoverMetadataProvider:
         self,
         observation: ProviderObservation,
         lookup: MetadataLookup,
-        library_languages: tuple[str, ...],
+        plan: MetadataDiscoveryPlan,
         fan_out: _EditionCoverFanOut,
-        *,
+        audio_covers: tuple[_ListedCover, ...],
         deadline: float | None,
     ) -> None:
-        """Read the covers of the books an ebook lane accepted (#1380, ADR-0056).
+        """Read the covers of the books a lane accepted (#1380, ADR-0056).
 
-        An ebook ISBN or WORK lane whose qualified answer accepted Hardcover
-        books asks for each book's edition list, when the library lists
-        languages. Two books an observation, in lane order and then book id
-        order, each once; a WORK-lane compilation is skipped. A failed or
-        malformed page ends the fan-out as incomplete: books read before it
-        keep their covers, and the lane keeps its status and candidates.
+        An audiobook lane's audio-edition covers are kept only for the books
+        its qualified answer still holds. An ebook ISBN or WORK lane whose
+        qualified answer accepted Hardcover books asks for each book's edition
+        list, when the library lists languages. Two books an observation, in
+        lane order and then book id order, each once; a WORK-lane compilation
+        is skipped. A failed or malformed page ends the fan-out as incomplete:
+        books read before it keep their covers, and the lane keeps its status
+        and candidates.
         """
+        kept_books = {candidate.identity for candidate in observation.candidates}
+        fan_out.covers.extend(
+            cover for cover in audio_covers if cover.book_identity in kept_books
+        )
+        library_languages = plan.library_languages
         if (
             lookup.audio is not None
             or lookup.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
