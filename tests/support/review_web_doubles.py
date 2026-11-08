@@ -36,6 +36,11 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyTransition,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_covers import (
+    CoverKey,
+    CoverPageSnapshot,
+    CoverView,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineProgress,
 )
@@ -936,6 +941,22 @@ class FakeReviewRepository:
             ),
             total=self.count_current_attention_fields(search, library_labels),
         )
+
+    def read_review_covers(
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
+    ) -> CoverPageSnapshot:
+        # The served double holds no cover groups; the Covers view's own
+        # suite reads them from real reports (tests/unit/test_review_covers.py).
+        del view, limit, after, review_case_id
+        return CoverPageSnapshot((), {"decide": 0, "kept": 0, "switched": 0, "all": 0})
+
+    def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:
+        del plan_id
+        return frozenset()
 
 
 class FakePreparation:

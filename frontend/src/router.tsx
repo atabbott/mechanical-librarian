@@ -64,6 +64,7 @@ import { handoffNeedsLibraryNames } from './writeConsent'
 import { DirectEntryFallback, RouteFailure, RoutePending } from './components/RouteStates'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
+const CoversView = recoverableLazy(() => import('./routes/CoversView'))
 const DetailPage = recoverableLazy(() => import('./routes/DetailPage'))
 const PolicyPage = recoverableLazy(() => import('./routes/PolicyPage'))
 const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
@@ -92,8 +93,15 @@ const libraryLens = (value: unknown): LibraryLens =>
   value === 'preparation_failed'
     ? value
     : 'all'
+const coverTab = (value: unknown) =>
+  value === 'kept' || value === 'switched' || value === 'all' ? value : 'decide'
 export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => {
   const lens = libraryLens(search.lens)
+  // The Covers view keeps its own tab and open book; Works ignores both.
+  if (search.view === 'covers') {
+    const cover = bounded(search.cover)
+    return { lens, view: 'covers', tab: coverTab(search.tab), ...(cover ? { cover } : {}) }
+  }
   const q = bounded(search.q)
   const cursor = bounded(search.cursor)
   const attentionCursor = bounded(search.attentionCursor)
@@ -346,6 +354,7 @@ export const usePreparation = () => {
     void Promise.all([
       invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
       invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['covers'] }),
     ])
   }, [data?.presentation?.state, live, queryClient, snapshot])
   const adoptDismissal = useCallback(
@@ -1277,7 +1286,16 @@ const indexRoute = createRoute({
   path: '/',
   component: () => <Navigate to="/library" search={{ lens: 'all' }} replace />,
 })
-const LibraryRouteComponent = () => {
+// Library shows Works or Covers; each view owns its own reads (#1633).
+const LibraryRouteComponent = () =>
+  libraryRoute.useSearch().view === 'covers' ? (
+    <Suspense fallback={<RoutePending title="Library" />}>
+      <CoversView />
+    </Suspense>
+  ) : (
+    <LibraryWorksRoute />
+  )
+const LibraryWorksRoute = () => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
@@ -1352,7 +1370,9 @@ export const libraryRoute = createRoute({
   path: '/library',
   validateSearch: normalizeLibrarySearch,
   // Each route component preloads its page chunk on intent through the lazy wrapper.
-  component: Object.assign(LibraryRouteComponent, { preload: () => LibraryPage.preload?.() }),
+  component: Object.assign(LibraryRouteComponent, {
+    preload: () => (LibraryPage.preload?.(), CoversView.preload?.()),
+  }),
 })
 export const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
