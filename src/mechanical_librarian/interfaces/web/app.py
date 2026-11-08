@@ -104,7 +104,10 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     SettingsView,
 )
-from mechanical_librarian.domain.review_field_classification import ReviewFieldState
+from mechanical_librarian.domain.review_field_classification import (
+    ReviewFieldClassificationCause,
+    ReviewFieldState,
+)
 from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
@@ -649,6 +652,7 @@ class _OwnerControl(_ClosedModel):
 
 class _ReviewField(_ClosedModel):
     classification: ReviewFieldState
+    classification_cause: ReviewFieldClassificationCause
     classification_reason: str
     current: _TargetField
     deterministic_disposition: Literal[

@@ -6,6 +6,7 @@ import type {
   AutomaticOutcome,
   ChoiceContextView,
   DecisionOutcome,
+  FieldCause,
   ProposalOutcome,
 } from './api/http'
 import { audioFileFormat, sameSelectedValue } from './fieldDecision'
@@ -45,12 +46,34 @@ export const fieldReason = (field: ReviewField) =>
         ? field.classificationReason || automaticReasons[field.automaticDecision.outcome]
         : actionable(field)
           ? field.classificationReason || dispositionReasons[field.disposition]
-          : field.classificationReason &&
-              !/needs (?:your )?review/iu.test(field.classificationReason)
+          : field.classificationReason && field.classificationCause !== 'review_needed'
             ? field.classificationReason
             : 'Nothing to decide for this field.',
     'No reason can be shown.',
   )
+// A field with nothing to decide is either unchanged, because no source
+// offered a different value, or held: unavailable to this service, or waiting
+// on a recovery. The server's cause code tells them apart, never the wording of
+// its reason, so a reworded reason moves no row (#1514, #1791). A new code
+// fails the typecheck here until its row is decided.
+const contextKinds = {
+  unsupported: 'unavailable',
+  automatic_safety_suspended: 'waiting',
+  external_field_failure: 'waiting',
+  external_connection_failure: 'waiting',
+  external_recovered: 'unavailable',
+  human_decided: 'unavailable',
+  automatic_abstained: 'unavailable',
+  automatic_decided: 'unavailable',
+  review_needed: 'unavailable',
+  owner_choosable: 'unavailable',
+  nothing_to_decide: 'unchanged',
+} as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
+// A held field never reads unchanged.
+export const contextKind = (field: ReviewField) => {
+  const kind = contextKinds[field.classificationCause]
+  return field.manualHold && kind === 'unchanged' ? 'unavailable' : kind
+}
 // An optional choice already says no review is needed, so a limitation worded
 // as asking the owner to choose is left off its evidence too (#1557).
 export const ownerContext = (field: ReviewField, context: ChoiceContextView) =>

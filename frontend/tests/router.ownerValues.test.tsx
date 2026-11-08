@@ -45,6 +45,7 @@ const entry = control({
 const contextTitle: Field = {
   ...base,
   classification: 'unsupported',
+  classificationCause: 'nothing_to_decide',
   classificationReason: 'No source offered a different value. You can enter your own.',
   decisionActions: [],
   editable: false,
@@ -74,6 +75,7 @@ const decision = (
 const enteredTitle: Field = {
   ...contextTitle,
   classification: 'human_recorded',
+  classificationCause: 'human_decided',
   classificationReason: 'You decided this field. You can change it here.',
   editable: true,
   humanDecision: decision('owner_entered', { kind: 'text', value: 'The Silent Orchard' }),
@@ -545,6 +547,7 @@ describe('owner review fixes', () => {
       ...base,
       needsAttention: false,
       classification: 'automatic_recorded',
+      classificationCause: 'automatic_decided',
       manualHold: true,
       automaticDecision: {
         candidate_id: null,
