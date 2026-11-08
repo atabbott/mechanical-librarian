@@ -109,8 +109,9 @@ document refused only because its creators agree after the fold is recorded
 as `initials_spelling`, so #1418 counts what the fold would admit there. On
 the #744 ebook snapshot's natural controls, the fold adds 22 retained
 candidates in 17 reports at `title_and_creator_exact` (14 positive, 0
-negative, 8 unlabelled) and none at `title_and_creator`; on the #1294
-audiobook snapshot it adds 1 unlabelled pair.
+negative, 8 unlabelled). `title_and_creator` gains those and 3 unlabelled
+candidates whose titles agree only by decoration. No level loses an
+admission. On the #1294 audiobook snapshot it adds 1 unlabelled candidate.
 
 ### Scope
 
