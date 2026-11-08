@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
+import { coalesceMilliseconds } from '../src/liveInvalidation'
 import type {
   CaseDetailView,
   CoverTab,
@@ -10,7 +11,15 @@ import type {
   CoverWorkView,
   ReviewHttp,
 } from '../src/api/http'
-import { createHttp, detail, idlePreparation, library, renderRoute } from './fixtures'
+import {
+  createHttp,
+  createLiveStream,
+  detail,
+  idlePreparation,
+  library,
+  recordedAcknowledgement,
+  renderRoute,
+} from './fixtures'
 
 afterEach(cleanup)
 
@@ -355,6 +364,101 @@ describe('Covers view (#1633)', () => {
     expect(await screen.findByText('Kept First Book.')).toBeVisible()
     expect(within(first).getByText('Kept')).toBeVisible()
     await waitFor(() => expect(within(first).getByRole('button', { name: 'Change' })).toHaveFocus())
+  })
+
+  it('reads Covers again on a library update and keeps the decided book in place', async () => {
+    const user = userEvent.setup()
+    const updates = createLiveStream()
+    const http = coversHttp({ decide })
+    renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http, updates)
+    await chooseOther(user)
+    expect(await screen.findByText('Switched First Book.')).toBeVisible()
+    // The server no longer lists the decided book, and a new one has arrived.
+    http.getCovers.mockResolvedValue(
+      page('decide', [work('case-2', 'choice'), work('case-3', 'choice')]),
+    )
+    await act(async () => {
+      updates.announce({ sequence: 5, subject: 'case-1', topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    const choose = screen.getByRole('region', { name: 'Choose' })
+    expect(await within(choose).findByText('Third Book')).toBeVisible()
+    expect(within(choose).getByText('Second Book')).toBeVisible()
+    const suggested = screen.getByRole('region', { name: 'Switch suggested' })
+    expect(within(suggested).getByText('First Book')).toBeVisible()
+    expect(within(suggested).getByText('Reviewed')).toBeVisible()
+  })
+
+  it('reads Covers again when a polled snapshot changes while the stream is down', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ decide })
+    const { queryClient } = renderRoute(
+      '/library?lens=all&view=covers&tab=decide&cover=case-1',
+      http,
+    )
+    await chooseOther(user)
+    expect(await screen.findByText('Switched First Book.')).toBeVisible()
+    http.getCovers.mockResolvedValue(
+      page('decide', [work('case-2', 'choice'), work('case-3', 'choice')]),
+    )
+    http.getPreparation = vi.fn(async () => ({ ...idlePreparation, libraries: [library0] }))
+    await act(() => queryClient.refetchQueries({ queryKey: ['review-preparation'] }))
+    const choose = screen.getByRole('region', { name: 'Choose' })
+    expect(await within(choose).findByText('Third Book')).toBeVisible()
+    const suggested = screen.getByRole('region', { name: 'Switch suggested' })
+    expect(within(suggested).getByText('Reviewed')).toBeVisible()
+  })
+
+  it('chooses again after Keep with the case Keep confirmed, without Reload', async () => {
+    const user = userEvent.setup()
+    const switched = page('switched', [
+      work('case-1', 'auto', {
+        switched: { at: Math.floor(Date.now() / 1000) - 60, before: preview('b'), filled: false },
+      }),
+    ])
+    const http = coversHttp({ switched })
+    // The server holds one selection at a time: each decision must name the
+    // one the last decision left, or it is refused as stale.
+    let selection: string | null = null
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      if (command.coverConfirmation?.expected_selection_id !== selection)
+        throw new ApiError(409, 'stale')
+      selection = `selection-${String(http.recordDecision.mock.calls.length)}`
+      const before = coverDetail(caseId, titles[caseId] ?? caseId)
+      return recordedAcknowledgement(
+        {
+          ...before,
+          fields: before.fields.map((field) => ({ ...field, currentCoverSelectionId: selection })),
+        },
+        {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1',
+          actor: 'owner',
+          application: 'apply' as const,
+          application_reason: null,
+          decision_id: 'decision-1',
+          destination: command.destination,
+          occurred_at: 1,
+          outcome: command.outcome,
+          proposal_id: command.proposalId,
+          review_case_id: caseId,
+          selected_value: command.selectedValue ?? null,
+          target_fingerprint: command.targetFingerprint,
+        },
+      )
+    })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Keep' }))
+    await user.click(await within(row).findByRole('button', { name: 'Change' }))
+    await chooseOther(user)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
+    expect(http.recordDecision.mock.calls[1]?.[1].coverConfirmation).toMatchObject({
+      expected_selection_id: 'selection-1',
+    })
+    expect(await screen.findByText('Changed First Book.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
   it('tells an unreadable cover from a missing one', async () => {

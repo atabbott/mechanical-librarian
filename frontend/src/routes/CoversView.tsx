@@ -12,6 +12,7 @@ import type {
 } from '../api/http'
 import { useCoverPrepareFailure } from '../coverChoices'
 import { formatClock } from '../dates'
+import { submitDecisionCase } from '../decisionEcho'
 import type { ChoiceProgress, ReviewField } from '../fieldDecision'
 import { mediaKindLabels } from '../labels'
 import { invalidateForegroundQueries, useRequiredQuery as useQuery } from '../queryWork'
@@ -127,6 +128,27 @@ const coverCommand = (
 })
 const coverField = (fields: readonly ReviewField[] | undefined) =>
   fields?.find((field) => field.destination === 'cover')
+/**
+ * Send the book's decision and adopt the case its acknowledgement confirms
+ * into the exact case read, as the book's own page does, so a later choice
+ * answers the selection this one made. With no confirmed case the read is
+ * renewed instead of trusted.
+ */
+const submitCover = async (
+  http: ReturnType<typeof useReviewContext>['http'],
+  queryClient: ReturnType<typeof useReviewContext>['queryClient'],
+  reviewCaseId: string,
+  command: DecisionCommand,
+) => {
+  const { confirmed } = await submitDecisionCase(queryClient, reviewCaseId, () =>
+    http.recordDecision(reviewCaseId, command),
+  )
+  if (!confirmed)
+    void invalidateForegroundQueries(queryClient, {
+      queryKey: ['review-case', reviewCaseId],
+      exact: true,
+    })
+}
 
 /**
  * A cover preview, or the state in its place: "No cover" for an empty cover
@@ -227,7 +249,7 @@ function CoverComparison({
     const command = coverCommand(field, outcome, value ?? null)
     setFailure(null)
     setProgress({ command, phase: 'recording' })
-    http.recordDecision(work.review_case_id, command).then(
+    submitCover(http, queryClient, work.review_case_id, command).then(
       () => {
         setProgress({ command, phase: 'confirmed' })
         onRecorded(
@@ -359,7 +381,12 @@ function SwitchedRow({
       })
       field = coverField(detail.fields)
       if (!field) throw new ApiError(409, 'stale')
-      await http.recordDecision(work.review_case_id, coverCommand(field, 'keep_current', null))
+      await submitCover(
+        http,
+        queryClient,
+        work.review_case_id,
+        coverCommand(field, 'keep_current', null),
+      )
       onRecorded('kept')
     } catch (error) {
       setFailure(failureOf(error, field))
@@ -590,6 +617,36 @@ function CoverWall({
   )
 }
 
+/** A decided book kept on its tab's list, after the book it followed. */
+interface Retained {
+  tab: CoverTab
+  work: CoverWorkView
+  after: string | null
+}
+/**
+ * The listed books with each decided one the newest read left out put back
+ * after the book it followed, or first when it led the list. A book whose
+ * predecessor was decided too follows it wherever that one was put back.
+ */
+const withRetained = (listed: CoverWorkView[], retained: readonly Retained[]) => {
+  const ids = new Set(listed.map((work) => work.review_case_id))
+  const missing = retained.filter((row) => !ids.has(row.work.review_case_id))
+  if (missing.length === 0) return listed
+  const merged = [...listed]
+  const pending = [...missing]
+  while (pending.length) {
+    const ready = pending.findIndex(
+      (row) => row.after === null || merged.some((work) => work.review_case_id === row.after),
+    )
+    // A book whose predecessor is nowhere to be found leads the list.
+    const [row] = pending.splice(Math.max(ready, 0), 1)
+    if (!row) break
+    const at = ready < 0 ? -1 : merged.findIndex((work) => work.review_case_id === row.after)
+    merged.splice(at + 1, 0, row.work)
+  }
+  return merged
+}
+
 export default function CoversView() {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
@@ -619,7 +676,13 @@ export default function CoversView() {
     counts: CoversPage['counts']
     pageAt: number
   }>()
-  const works = pages.data?.pages.flatMap((page) => page.items) ?? []
+  // A decided book stays where it was when the list is read again, after a
+  // library update or a full resync, even once its tab no longer holds it.
+  const [retained, setRetained] = useState<readonly Retained[]>([])
+  const works = withRetained(
+    pages.data?.pages.flatMap((page) => page.items) ?? [],
+    retained.filter((row) => row.tab === tab),
+  )
   const counts =
     (liveCounts?.tab === tab && liveCounts.pageAt === pages.dataUpdatedAt
       ? liveCounts.counts
@@ -691,6 +754,13 @@ export default function CoversView() {
     setNotice(outcomeCopy(outcome, work.title))
     if (outcome !== 'skipped') {
       setDone((current) => ({ ...current, [work.review_case_id]: outcome }))
+      const at = works.indexOf(work)
+      setRetained((current) => [
+        ...current.filter(
+          (row) => row.tab !== tab || row.work.review_case_id !== work.review_case_id,
+        ),
+        { tab, work, after: at > 0 ? (works[at - 1]?.review_case_id ?? null) : null },
+      ])
       void queryClient.invalidateQueries({ queryKey: ['library'] })
       recordCounts()
     }

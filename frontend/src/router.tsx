@@ -354,6 +354,7 @@ export const usePreparation = () => {
     void Promise.all([
       invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
       invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['covers'] }),
     ])
   }, [data?.presentation?.state, live, queryClient, snapshot])
   const adoptDismissal = useCallback(
