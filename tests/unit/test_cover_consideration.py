@@ -32,10 +32,25 @@ from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterFailure,
     ReviewerDispatch,
 )
-from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverSourceKind
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+)
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    ProviderCandidate,
+)
+from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 from mechanical_librarian.domain.reviewer_access import ReviewerEngine
 from tests.support.audiobook_reports import asserted_asin_report
+from tests.support.hardcover_work_route import (
+    WORK,
+    hardcover_work_report,
+    work_cover_source,
+)
 from tests.support.metadata_report_schemas import retained_report_as_current
 from tests.unit.test_cover_packets import (
     _audiobook_cover_source,
@@ -1842,6 +1857,69 @@ def test_a_work_route_gallery_holds_only_the_offered_covers() -> None:
                         "value": cast("CoverArtifact", refused.artifact).artifact_id,
                     },
                 )
+
+
+_LISTED_EDITION = "hardcover-edition-0000000031"
+
+
+def _edition_cover(designation: CoverDesignation, index: int) -> CoverSource:
+    """A square Hardcover cover naming an edition no candidate is."""
+    return replace(
+        work_cover_source(600, 600, index=index),
+        provenance=CoverProvenance("hardcover", designation, WORK, _LISTED_EDITION),
+    )
+
+
+def test_a_work_route_offers_a_listed_edition_cover_of_its_book() -> None:
+    """A listed edition binds by its book alone on the work route (#1778).
+
+    Hardcover's audio-edition covers name an edition, never a candidate, so
+    the route binds them by the book's work identity, as cover identity does.
+    The book must still be an exact work source, and the cover stays an owner
+    choice.
+    """
+    listed = _edition_cover(CoverDesignation.LISTED_EDITION, 1)
+
+    assert (listed,) == work_route_cover_sources(
+        hardcover_work_report(cover_sources=(listed,))
+    )
+
+
+def test_a_listed_edition_cover_needs_its_book_to_be_an_exact_work_source() -> None:
+    """The book a listed edition names must pass `_supported_work_source`.
+
+    A recording-less report whose book fails it cannot be built with this
+    fixture (its lanes are derived from the same target), so the predicate is
+    held false here, and each call is checked to name the cover's book.
+    """
+    listed = _edition_cover(CoverDesignation.LISTED_EDITION, 1)
+    report = hardcover_work_report(cover_sources=(listed,))
+    asked: list[str] = []
+
+    def unsupported(_report: object, _provider: object, candidate: object) -> bool:
+        asked.append(cast("ProviderCandidate", candidate).work_identity)
+        return False
+
+    with patch(
+        "mechanical_librarian.domain.proposal_set._supported_work_source",
+        unsupported,
+    ):
+        assert () == work_route_cover_sources(report)
+    assert [WORK] == asked
+
+
+@pytest.mark.parametrize(
+    "designation",
+    (CoverDesignation.EXACT_EDITION, CoverDesignation.RELATED_EDITION),
+)
+def test_an_edition_cover_naming_no_candidate_is_still_not_offered(
+    designation: CoverDesignation,
+) -> None:
+    edition = _edition_cover(designation, 1)
+    listed = _edition_cover(CoverDesignation.LISTED_EDITION, 2)
+    report = hardcover_work_report(cover_sources=(edition, listed))
+
+    assert (listed,) == work_route_cover_sources(report)
 
 
 def test_a_verified_work_route_cover_never_gains_automatic_authority(
