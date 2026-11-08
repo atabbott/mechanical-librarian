@@ -17,6 +17,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
     qualified_policy_bases,
 )
+from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.field_outcomes import language_equivalence_class
 from mechanical_librarian.domain.field_value_comparison import (
     DESCRIPTION_VISIBLE_CUTOFFS,
@@ -58,6 +59,7 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
     normalize_title,
     provider_candidate_work_identity_contradiction,
+    echoed_target_values,
     target_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -271,13 +273,23 @@ def _language_gated(
 
 
 def _item_languages(report: MetadataReport) -> frozenset[tuple[str, str | None]]:
+    # An `.opf` or `.nfo` language withheld as the target's echo still gates:
+    # this only withholds, so the target's value stands in for it (#1481).
     local = frozenset(
         language
-        for claim in report.local_claims
-        if claim.kind is ClaimKind.LANGUAGE
-        and claim.state is FieldState.VALID
-        and claim.canonical is not None
-        and (language := language_equivalence_class(claim.canonical)) is not None
+        for value in (
+            *(
+                claim.canonical
+                for claim in report.local_claims
+                if claim.kind is ClaimKind.LANGUAGE
+                and claim.state is FieldState.VALID
+            ),
+            *echoed_target_values(
+                report.audio, report.target.fields, AudioInspectionField.LANGUAGE
+            ),
+        )
+        if value is not None
+        and (language := language_equivalence_class(value)) is not None
     )
     if local or len(report.library_languages) != 1:
         return local

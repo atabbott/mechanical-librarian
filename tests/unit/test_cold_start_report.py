@@ -930,7 +930,7 @@ def test_main_rejects_a_malformed_mount_root() -> None:
 
 
 def test_the_schema_is_pinned_at_its_sixth_version() -> None:
-    assert "cold-start-report-v8" == cold_start.COLD_START_REPORT_SCHEMA
+    assert "cold-start-report-v9" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:
@@ -2055,3 +2055,81 @@ def test_recovery_events_count_attempts_requests_and_health(tmp_path: Path) -> N
         ],
     } == report["recovery_events"]
     assert {"jobs": 0, "groups": []} == report["recovery_jobs"]
+
+
+def test_audiobook_sidecars_count_entries_refusals_echoes_and_disputes() -> None:
+    """R2 (#1481): closed codes only, by kind, binding, refusal and field."""
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioInspectionField,
+        AudioSidecarBinding,
+        AudioSidecarDigest,
+        AudioSidecarKind,
+        AudioSidecarRefusal,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    def entry(
+        name: str,
+        kind: AudioSidecarKind,
+        binding: AudioSidecarBinding,
+        refusals: tuple[AudioSidecarRefusal, ...] = (),
+        *,
+        echoed: tuple[AudioInspectionField, ...] = (),
+        disputed: tuple[AudioInspectionField, ...] = (),
+    ) -> AudioSidecarDigest:
+        return AudioSidecarDigest(
+            name,
+            "a" * 64,
+            kind,
+            binding,
+            refusals,
+            disputed=disputed,
+            echoed=echoed,
+        )
+
+    audio = replace(
+        single_track_audio_facts(),
+        sidecars=(
+            entry(
+                "book.nfo",
+                AudioSidecarKind.NFO,
+                AudioSidecarBinding.TRACK,
+                (AudioSidecarRefusal.SIDECARS_DISAGREE,),
+                disputed=(AudioInspectionField.CONTRIBUTOR,),
+            ),
+            entry(
+                "book.opf",
+                AudioSidecarKind.OPF,
+                AudioSidecarBinding.TRACK,
+                (AudioSidecarRefusal.SIDECARS_DISAGREE,),
+                echoed=(AudioInspectionField.ASIN,),
+                disputed=(AudioInspectionField.CONTRIBUTOR,),
+            ),
+            entry(
+                "metadata.json",
+                AudioSidecarKind.AUDIOBOOKSHELF_RECORD,
+                AudioSidecarBinding.FOLDER,
+                (AudioSidecarRefusal.TARGET_RECORD,),
+            ),
+        ),
+    )
+    with_manifest = (None,) * 10 + (cold_start._sidecar_entries(audio),)
+    without = (None,) * 10 + (cold_start._sidecar_entries(single_track_audio_facts()),)
+
+    assert cold_start._audiobook_sidecars([with_manifest, without]) == {
+        "reports": 1,
+        "entries": [
+            {"kind": "audiobookshelf_record", "binding": "folder", "count": 1},
+            {"kind": "nfo", "binding": "track", "count": 1},
+            {"kind": "opf", "binding": "track", "count": 1},
+        ],
+        "refusals": {"sidecars_disagree": 2, "target_record": 1},
+        "echoed": {"asin": 1},
+        "disputed": {"contributor": 2},
+    }
+    serialized = json.dumps(cold_start._sidecar_entries(audio))
+    assert not any(
+        name in serialized for name in ("book.nfo", "book.opf", "metadata.json")
+    )

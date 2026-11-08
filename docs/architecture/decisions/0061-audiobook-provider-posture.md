@@ -323,3 +323,85 @@ edition an earlier preparation of the same track set admitted, recorded as a
 `prior_admission` claim. Like a target assertion it only obtains evidence: it
 is never one of the item's identifier surfaces, never settles identity, and is
 never offered as a local value.
+
+## Sidecar association (#1481)
+
+An audiobook's sidecar documents count only when they belong to it. This
+amends the identifier-surface rules above; the manifest shape is
+[ADR-0064](0064-audiobook-provider-evidence-vocabularies.md)'s, and the
+folder surfaces are [ADR-0066](0066-multi-file-audiobook-composition.md)'s,
+with track-bound documents now going to their track.
+
+1. **The target's own metadata file.** Audiobookshelf writes its record beside
+   the item as `metadata.json` or `metadata.abs`. That file is the target's
+   assertion, not a second source: it is digested into the manifest as
+   `audiobookshelf_record` with the refusal `target_record`, never handed to a
+   child, and yields no claim and no lane. The asserted ASIN still feeds phase
+   two through the target's own claim. A per-track `<track stem>.metadata.json`
+   is Libation's export of the Audible product and is read only for what
+   Libation writes.
+2. **A shared folder.** A folder-level document beside an audio or ebook file
+   that is not one of the item's own files (`libraryFiles`, or every ebook and
+   audio record) belongs to no item: `shared_folder`. An unknown file list
+   fails closed the same way. A document named for a track is bound to it and
+   stays associated.
+3. **Association.** A document belongs only when
+   [ADR-0096](0096-owner-chosen-work-identity-strictness.md)'s
+   `title_and_creator` level admits its title and creators against the file's
+   own `album` and person tags, or against the target's title with its authors
+   and narrators. Narrators are creator inputs on both sides, because a CUE
+   `PERFORMER` or a `composer` tag is often the narrator; the title must still
+   match. Otherwise the document is `collection` when it describes a
+   collection the audiobook is one volume of, and `other_book` otherwise. A
+   CUE sheet whose first `FILE` value names none of the item's tracks, or is
+   not a bare name, is `other_file`. A document's title, creators and `FILE`
+   value are association text only: never a claim, persisted, logged or query
+   text.
+4. **Precedence.** The order is file, then associated sidecar, then target.
+   When the embedded tags state an ASIN and a document states another, the
+   document is another edition's: its ASIN, narrator, performance type and
+   language are withheld (`other_edition`), and the rest still counts. Only an
+   embedded tag is the file's own identifier. A path ASIN is not: a folder or
+   file name is written by whoever filed the item and can be copied with it,
+   so it outranks nothing and binds no item identity.
+5. **Disagreement.** Documents that state different values for a field all
+   lose it (`sidecars_disagree`, with the field in `disputed`). There is no
+   majority.
+6. **Echo withholding.** An `.opf` or `.nfo` value that repeats the target's
+   record -- its asserted ASIN, a narrator, its language, its description, a
+   series name, or a sequence beside that series' name -- is withheld after
+   the rules above and recorded in `echoed`, because Audiobookshelf reads those
+   files into its record itself, so agreement cannot be told from a copy. The
+   target counts once, through its own claims. `MetadataReport` refuses a
+   report holding such a claim. Embedded tags are not echoes: they are bytes of
+   the recording, its identifier surface under this ADR. Audiobookshelf's
+   embed tool can write its record into tags; that echo cannot be detected,
+   and is a stated limit.
+7. **A deliberate departure.** The issue asked that consumers which compare
+   nothing stay unchanged. Withholding echoes before claims exist also changes
+   the ASIN consumers -- lane opening, candidate representation and
+   manifestation binding. On the earlier rules those treated the target's own
+   assertion as if it had been read off the recording, which this ADR forbids
+   everywhere, so the change is deliberate. Echo withholding withholds belief,
+   never a refusal: a reader that can only refuse -- the recording-conflict
+   language check and the narrator guard on a qualified replacement -- reads
+   the target's value for any field an entry recorded in `echoed` -- for
+   narrators, only the ones a document repeated, by their positions in
+   `echoed_narrators` -- which is the input the withheld claim gave it, so a
+   product in another language is still refused and a disjoint narrator
+   replacement still goes to the owner. The narrator corroboration guard
+   tightens instead: an echoed narrator is not the file's mention, so a cast
+   only one source stated is held for the owner, as for an item with no
+   sidecar. A description echo is compared only for a plain description short
+   enough to have a canonical value; a longer one is never an echo.
+8. **Manifest fields.** Each entry records `name`, `digest`, `kind`
+   (`audiobookshelf_record`, `libation`, `opf`, `nfo`, `cue`), `binding`
+   (`track` or `folder`), `refusals` (the seven closed codes, the first five
+   terminal), `claims` (the claims it supplied), `disputed`, `echoed`,
+   `echoed_narrators` (positions in the target's narrators), and `shadow`
+   (Libation's `series[].title` and `format_type`, recorded and never claimed
+   until measured, #1482). Currentness re-derives kind, binding and the
+   parent-side refusals from the listing and the re-read file list.
+
+This is `metadata-report-v75` and `audio-inspection-v5`, a clean rebuild under
+[ADR-0013](0013-pre-release-clean-schema.md).

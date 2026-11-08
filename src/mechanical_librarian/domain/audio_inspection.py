@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import ClassVar, Final, Mapping, cast
+from typing import Any, ClassVar, Final, Mapping, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -22,13 +22,24 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_role_projection,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+from mechanical_librarian.domain.validation import (
+    boolean,
+    closed_document,
+    exact_type,
+    matching,
+    non_negative_integer,
+    optional,
+    tuple_of,
+)
+from mechanical_librarian.domain.validation import text as exact_text
 
-# `v3` adds exactly one nullable member, `container_facts`, so the parent can
-# say what a file's own headers stated about its container and its stream.  The
-# child still reads one file, still answers about that file alone, and still
-# names no ordinal: which track a fact came from is the parent's knowledge, and
-# composing it into an observation is the parent's job.
-AUDIO_INSPECTION_SCHEMA = "audio-inspection-v4"
+# `v5` returns each interpreted sidecar on its own -- its name, its facts and
+# its association text -- beside the file's own association text, so the
+# parent can decide which documents belong to the item before any fact becomes
+# a claim (#1481).  The child still reads one file and names no ordinal: which
+# track a fact came from, and whether a sidecar belongs, is the parent's
+# knowledge.
+AUDIO_INSPECTION_SCHEMA = "audio-inspection-v5"
 AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
 # The retained report's own ceiling, and deliberately not a smaller one.  A
 # legal inspection of a file with 1,024 chapters titled to the full 280
@@ -54,6 +65,14 @@ MAX_DURATION_MILLISECONDS = 604_800_000
 # manifest records names the sibling listing already proved are single
 # components, so nothing wider can reach it.
 MAX_SIDECAR_NAME_CHARACTERS = 255
+# Association text: a sidecar's or a file's title and creators, read only so the
+# parent can ask whether a document belongs to the item (#1481).  A value past
+# the bound, or one the projection grammar refuses, is refused whole and counts
+# as none, so association fails closed.
+MAX_ASSOCIATION_CHARACTERS = 255
+MAX_ASSOCIATION_CREATORS = 16
+# The newly read Libation keys a manifest entry records as shadow evidence.
+MAX_SIDECAR_SHADOW = 16
 # The largest track set one item may be composed from.  The reference library's
 # widest audiobook is 352 files, and every count, byte, and second below is
 # bounded against this number rather than against whatever a target answers.
@@ -203,7 +222,6 @@ class AudioEvidenceSurface(StrEnum):
     MP4_FREEFORM_TONE = "mp4_freeform_tone"
     ID3_FRAME = "id3_frame"
     ID3_USER_TEXT = "id3_user_text"
-    SIDECAR_AUDIOBOOKSHELF = "sidecar_audiobookshelf"
     SIDECAR_LIBATION = "sidecar_libation"
     SIDECAR_OPF = "sidecar_opf"
     SIDECAR_NFO = "sidecar_nfo"
@@ -224,7 +242,6 @@ AUDIO_SURFACE_BASIS: Mapping[AudioEvidenceSurface, str] = MappingProxyType(
         AudioEvidenceSurface.MP4_FREEFORM_TONE: "embedded_tag",
         AudioEvidenceSurface.ID3_FRAME: "embedded_tag",
         AudioEvidenceSurface.ID3_USER_TEXT: "embedded_tag",
-        AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF: "sidecar",
         AudioEvidenceSurface.SIDECAR_LIBATION: "sidecar",
         AudioEvidenceSurface.SIDECAR_OPF: "sidecar",
         AudioEvidenceSurface.SIDECAR_NFO: "sidecar",
@@ -253,6 +270,138 @@ class AudioPerformanceType(StrEnum):
     DRAMATIZED = "dramatized"
     FULL_CAST = "full_cast"
     UNKNOWN = "unknown"
+
+
+class AudioSidecarKind(StrEnum):
+    """What one recognised document beside an audiobook is (#1481).
+
+    ``audiobookshelf_record`` is Audiobookshelf's own ``metadata.json`` or
+    ``metadata.abs``: a copy of the target's record, digested for currentness
+    and never read.  The other four are the sidecar grammars.
+    """
+
+    AUDIOBOOKSHELF_RECORD = "audiobookshelf_record"
+    LIBATION = "libation"
+    OPF = "opf"
+    NFO = "nfo"
+    CUE = "cue"
+
+
+class AudioSidecarBinding(StrEnum):
+    """Whether a document is named for one track or belongs to the folder."""
+
+    TRACK = "track"
+    FOLDER = "folder"
+
+
+class AudioSidecarRefusal(StrEnum):
+    """Why a document, or part of one, does not speak for the item (#1481).
+
+    Closed and value-free, recorded in the report's sidecar manifest only.
+    The first five end evaluation for the document; the last two withhold
+    part of it.  Declaration order is the order a manifest entry lists them.
+    """
+
+    TARGET_RECORD = "target_record"
+    SHARED_FOLDER = "shared_folder"
+    OTHER_FILE = "other_file"
+    OTHER_BOOK = "other_book"
+    COLLECTION = "collection"
+    OTHER_EDITION = "other_edition"
+    SIDECARS_DISAGREE = "sidecars_disagree"
+
+
+TERMINAL_SIDECAR_REFUSALS: Final = frozenset(
+    {
+        AudioSidecarRefusal.TARGET_RECORD,
+        AudioSidecarRefusal.SHARED_FOLDER,
+        AudioSidecarRefusal.OTHER_FILE,
+        AudioSidecarRefusal.OTHER_BOOK,
+        AudioSidecarRefusal.COLLECTION,
+    }
+)
+# The refusals the parent decides from the listing alone, before any child
+# reads a byte, and which currentness therefore recomputes.
+PARENT_SIDECAR_REFUSALS: Final = frozenset(
+    {AudioSidecarRefusal.TARGET_RECORD, AudioSidecarRefusal.SHARED_FOLDER}
+)
+# The surface each readable kind is interpreted under.  The target's record has
+# none: it never reaches the child.
+SIDECAR_KIND_SURFACES: Final[Mapping[AudioSidecarKind, AudioEvidenceSurface]] = (
+    MappingProxyType(
+        {
+            AudioSidecarKind.LIBATION: AudioEvidenceSurface.SIDECAR_LIBATION,
+            AudioSidecarKind.OPF: AudioEvidenceSurface.SIDECAR_OPF,
+            AudioSidecarKind.NFO: AudioEvidenceSurface.SIDECAR_NFO,
+            AudioSidecarKind.CUE: AudioEvidenceSurface.SIDECAR_CUE,
+        }
+    )
+)
+# The fields a sidecar can carry, and so the fields a manifest entry can name
+# as disputed or echoed.  Performance type is never an echo: no target field
+# holds it.
+SIDECAR_FIELDS: Final = frozenset(AudioInspectionField) - {
+    AudioInspectionField.DURATION
+}
+ECHO_FIELDS: Final = SIDECAR_FIELDS - {AudioInspectionField.PERFORMANCE_TYPE}
+
+
+class AudioSidecarShadowField(StrEnum):
+    """Libation keys read as shadow evidence only, until #1482 qualifies them."""
+
+    SERIES_TITLE = "series_title"
+    FORMAT_TYPE = "format_type"
+
+
+def association_text(value: object) -> str | None:
+    """Return one title or creator as association text, or none at all.
+
+    Whitespace is collapsed first.  A value past the bound, or one holding a
+    code point the projection grammar refuses, is refused whole.
+    """
+    if type(value) is not str:
+        return None
+    text = " ".join(value.split())
+    if not text or len(text) > MAX_ASSOCIATION_CHARACTERS:
+        return None
+    try:
+        return validate_projection_text(
+            text, "audio association text", MAX_ASSOCIATION_CHARACTERS
+        )
+    except EvidenceValueError:
+        return None
+
+
+def association_file_reference(value: object) -> str | None:
+    """Return a CUE `FILE` value as association text, its whitespace kept.
+
+    It is compared exactly against the item's track names, which keep their
+    inner whitespace, so only the ends are trimmed, as a track name's are;
+    collapsing would make `Book  One.m4b` name another file.  The bound and
+    the projection grammar are association text's own.
+    """
+    if type(value) is not str:
+        return None
+    text = value.strip()
+    if not text or len(text) > MAX_ASSOCIATION_CHARACTERS:
+        return None
+    try:
+        return validate_projection_text(
+            text, "audio association text", MAX_ASSOCIATION_CHARACTERS
+        )
+    except EvidenceValueError:
+        return None
+
+
+def _valid_association(value: object) -> bool:
+    return exact_text(value) and association_text(value) == value
+
+
+def _valid_file_reference(value: object) -> bool:
+    return exact_text(value) and association_file_reference(value) == value
+
+
+_valid_creators = tuple_of(_valid_association, MAX_ASSOCIATION_CREATORS)
 
 
 def normalize_duration_seconds(value: str) -> str:
@@ -674,19 +823,82 @@ class AudioTrackDigest:
 
 
 @dataclass(frozen=True, repr=False)
-class AudioSidecarDigest:
-    """One recognized sidecar present beside the audio file when it was read.
+class AudioSidecarShadow:
+    """One newly read Libation value, recorded and never a claim (#1482)."""
 
-    The pair is a currentness witness rather than evidence: the digest names
-    the exact bytes an observation was interpreted from, so a sidecar that is
-    added, removed, or edited after publication makes the report stale.
+    field: AudioSidecarShadowField
+    observed: str
+    canonical: str | None = None
+
+    def __post_init__(self) -> None:
+        if not exact_type(AudioSidecarShadowField)(self.field):
+            raise ValueError("audio sidecar shadow is malformed")
+        try:
+            validate_projection_text(
+                self.observed, "audio sidecar shadow", MAX_OBSERVED_CHARACTERS
+            )
+            if self.canonical is not None:
+                validate_projection_text(
+                    self.canonical, "audio sidecar shadow", MAX_OBSERVED_CHARACTERS
+                )
+        except EvidenceValueError as error:
+            raise ValueError("audio sidecar shadow is malformed") from error
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "canonical": self.canonical,
+            "field": self.field.value,
+            "observed": self.observed,
+        }
+
+    def __repr__(self) -> str:
+        return "AudioSidecarShadow(<redacted>)"
+
+
+_valid_shadow = tuple_of(exact_type(AudioSidecarShadow), MAX_SIDECAR_SHADOW)
+_list = exact_type(list)
+
+
+def _ordered_members(value: object, vocabulary: type[StrEnum]) -> bool:
+    """A tuple of distinct members of one closed vocabulary, in its own order."""
+    if not tuple_of(exact_type(vocabulary))(value):
+        return False
+    order = list(vocabulary)
+    positions = [order.index(item) for item in cast("tuple[StrEnum, ...]", value)]
+    return positions == sorted(set(positions))
+
+
+@dataclass(frozen=True, repr=False)
+class AudioSidecarDigest:
+    """One recognized document present beside the audio file when it was read.
+
+    The name and digest are a currentness witness rather than evidence: the
+    digest names the exact bytes an observation was interpreted from, so a
+    document that is added, removed, or edited after publication makes the
+    report stale -- including one that was refused.
+
+    The rest is the document's closed, value-free classification (#1481):
+    which kind it is and what it is bound to, the refusals that withheld it or
+    part of it, the claims it contributed, the fields withheld because
+    sidecars disagreed on them or because they repeat the target's own record,
+    and the Libation keys read as shadow evidence only.
     """
 
     name: str
     digest: str
+    kind: AudioSidecarKind
+    binding: AudioSidecarBinding
+    refusals: tuple[AudioSidecarRefusal, ...] = ()
+    claims: tuple[str, ...] = ()
+    disputed: tuple[AudioInspectionField, ...] = ()
+    echoed: tuple[AudioInspectionField, ...] = ()
+    shadow: tuple[AudioSidecarShadow, ...] = ()
+    # Positions in the target's narrator list of the narrators echoed, value
+    # free like the rest; present exactly when a narrator was echoed.
+    echoed_narrators: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.digest) is not str or _SHA256.fullmatch(self.digest) is None:
+        if not matching(_SHA256)(self.digest):
             raise ValueError("audio sidecar digest is malformed")
         try:
             validate_projection_text(
@@ -694,9 +906,71 @@ class AudioSidecarDigest:
             )
         except EvidenceValueError as error:
             raise ValueError("audio sidecar name is malformed") from error
+        if (
+            not exact_type(AudioSidecarKind)(self.kind)
+            or not exact_type(AudioSidecarBinding)(self.binding)
+            or not _ordered_members(self.refusals, AudioSidecarRefusal)
+            or not _ordered_members(self.disputed, AudioInspectionField)
+            or not _ordered_members(self.echoed, AudioInspectionField)
+            or not _valid_shadow(self.shadow)
+            or not tuple_of(non_negative_integer, MAX_FACTS)(self.echoed_narrators)
+            or list(self.echoed_narrators) != sorted(set(self.echoed_narrators))
+        ):
+            raise ValueError("audio sidecar classification is malformed")
+        if not tuple_of(matching(_CLAIM_REFERENCE), MAX_FACTS)(self.claims) or len(
+            set(self.claims)
+        ) != len(self.claims):
+            raise ValueError("audio sidecar claim provenance is malformed")
+        refusals = set(self.refusals)
+        terminal = refusals & TERMINAL_SIDECAR_REFUSALS
+        record = self.kind is AudioSidecarKind.AUDIOBOOKSHELF_RECORD
+        if (
+            # A terminal refusal ends evaluation, so it stands alone and the
+            # document contributed nothing.
+            (terminal and (len(self.refusals) != 1 or self.claims))
+            or (terminal and (self.disputed or self.echoed or self.shadow))
+            or record != (AudioSidecarRefusal.TARGET_RECORD in refusals)
+            or (record and self.binding is not AudioSidecarBinding.FOLDER)
+            or (
+                AudioSidecarRefusal.SHARED_FOLDER in refusals
+                and self.binding is not AudioSidecarBinding.FOLDER
+            )
+            or (
+                AudioSidecarRefusal.OTHER_FILE in refusals
+                and self.kind is not AudioSidecarKind.CUE
+            )
+            or bool(self.disputed)
+            != (AudioSidecarRefusal.SIDECARS_DISAGREE in refusals)
+            or not set(self.disputed) <= SIDECAR_FIELDS
+            or not set(self.echoed) <= ECHO_FIELDS
+            or bool(self.echoed_narrators)
+            != (AudioInspectionField.CONTRIBUTOR in self.echoed)
+            or (
+                self.echoed
+                and self.kind not in {AudioSidecarKind.OPF, AudioSidecarKind.NFO}
+            )
+            or (self.shadow and self.kind is not AudioSidecarKind.LIBATION)
+        ):
+            raise ValueError("audio sidecar classification is inconsistent")
+
+    @property
+    def refused(self) -> bool:
+        """Whether a refusal ended evaluation, so nothing was taken from it."""
+        return bool(set(self.refusals) & TERMINAL_SIDECAR_REFUSALS)
 
     def to_data(self) -> dict[str, object]:
-        return {"digest": self.digest, "name": self.name}
+        return {
+            "binding": self.binding.value,
+            "claims": list(self.claims),
+            "digest": self.digest,
+            "disputed": [value.value for value in self.disputed],
+            "echoed": [value.value for value in self.echoed],
+            "echoed_narrators": list(self.echoed_narrators),
+            "kind": self.kind.value,
+            "name": self.name,
+            "refusals": [value.value for value in self.refusals],
+            "shadow": [value.to_data() for value in self.shadow],
+        }
 
     def __repr__(self) -> str:
         return "AudioSidecarDigest(<redacted>)"
@@ -811,6 +1085,151 @@ def _valid_role(value: object) -> bool:
 
 
 @dataclass(frozen=True, repr=False)
+class AudioSidecarReading:
+    """What the child read from one sidecar, kept apart from every other.
+
+    ``facts`` are the document's evidence, which become claims only if the
+    parent associates the document with the item.  ``title``, ``creators`` and
+    ``file_reference`` (a CUE sheet's first ``FILE`` value, compared as a bare
+    string and never opened) are association text: they serve the parent's
+    belonging rules and never leave the inspector (#1481).
+    """
+
+    name: str
+    surface: AudioEvidenceSurface
+    facts: tuple[AudioInspectionFact, ...] = ()
+    title: str | None = None
+    creators: tuple[str, ...] = ()
+    file_reference: str | None = None
+    shadow: tuple[AudioSidecarShadow, ...] = ()
+    # A CUE sheet whose first `FILE` value is not readable association text --
+    # a path, a control character, an over-long name -- names no track of the
+    # item, so it is recorded as naming another file rather than none.
+    file_refused: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            validate_projection_text(
+                self.name, "audio sidecar name", MAX_SIDECAR_NAME_CHARACTERS
+            )
+        except EvidenceValueError as error:
+            raise ValueError("audio sidecar reading is malformed") from error
+        if (
+            self.surface not in SIDECAR_KIND_SURFACES.values()
+            or not exact_type(AudioEvidenceSurface)(self.surface)
+            or not tuple_of(
+                lambda value: (
+                    exact_type(AudioInspectionFact)(value)
+                    and cast("AudioInspectionFact", value).surface == self.surface
+                ),
+                MAX_FACTS,
+            )(self.facts)
+            or not optional(_valid_association)(self.title)
+            or not _valid_creators(self.creators)
+            or not optional(_valid_file_reference)(self.file_reference)
+            or (
+                self.file_reference is not None
+                and self.surface is not AudioEvidenceSurface.SIDECAR_CUE
+            )
+            or not boolean(self.file_refused)
+            or (
+                self.file_refused
+                and (
+                    self.file_reference is not None
+                    or self.surface is not AudioEvidenceSurface.SIDECAR_CUE
+                )
+            )
+            or not _valid_shadow(self.shadow)
+            or (
+                self.shadow
+                and self.surface is not AudioEvidenceSurface.SIDECAR_LIBATION
+            )
+        ):
+            raise ValueError("audio sidecar reading is malformed")
+
+    @property
+    def kind(self) -> AudioSidecarKind:
+        return next(
+            kind
+            for kind, surface in SIDECAR_KIND_SURFACES.items()
+            if surface is self.surface
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "creators": list(self.creators),
+            "facts": [value.to_data() for value in self.facts],
+            "file": self.file_reference,
+            "file_refused": self.file_refused,
+            "name": self.name,
+            "shadow": [value.to_data() for value in self.shadow],
+            "surface": self.surface.value,
+            "title": self.title,
+        }
+
+    def __repr__(self) -> str:
+        return "AudioSidecarReading(<redacted>)"
+
+
+_FACT_KEYS = frozenset(
+    {"canonical", "field", "observed", "role", "state", "support", "surface"}
+)
+
+
+def _fact_from_data(item: object, source: Fingerprint | None) -> AudioInspectionFact:
+    if not closed_document(*_FACT_KEYS)(item):
+        raise ValueError("audio inspection protocol is invalid")
+    item = cast("dict[str, Any]", item)
+    # A fact-bearing document always carries a source: `AudioInspectionFact`
+    # rejects a `None` source, and the `ValueError` it raises is caught by the
+    # caller as an invalid protocol.
+    return AudioInspectionFact(
+        AudioInspectionField(item["field"]),
+        cast("Fingerprint", source),
+        item["observed"],
+        item["canonical"],
+        item["support"],
+        AudioEvidenceSurface(item["surface"]),
+        item["state"],
+        item["role"],
+    )
+
+
+def _shadow_from_data(item: object) -> AudioSidecarShadow:
+    if not closed_document("canonical", "field", "observed")(item):
+        raise ValueError("audio sidecar shadow is malformed")
+    item = cast("dict[str, Any]", item)
+    return AudioSidecarShadow(
+        AudioSidecarShadowField(item["field"]), item["observed"], item["canonical"]
+    )
+
+
+def _reading_from_data(item: object, source: Fingerprint | None) -> AudioSidecarReading:
+    if not closed_document(
+        "file",
+        "file_refused",
+        "name",
+        "surface",
+        "title",
+        facts=_list,
+        creators=_list,
+        shadow=_list,
+    )(item):
+        raise ValueError("audio inspection protocol is invalid")
+    item = cast("dict[str, Any]", item)
+    return AudioSidecarReading(
+        item["name"],
+        AudioEvidenceSurface(item["surface"]),
+        tuple(_fact_from_data(value, source) for value in item["facts"]),
+        item["title"],
+        tuple(item["creators"]),
+        item["file"],
+        tuple(_shadow_from_data(value) for value in item["shadow"]),
+        item["file_refused"],
+    )
+
+
+@dataclass(frozen=True, repr=False)
 class AudioInspection:
     """The one private projection consumed by the retained audiobook report."""
 
@@ -827,8 +1246,32 @@ class AudioInspection:
     # compose an observation.
     container_facts: AudioContainerFacts | None = None
     chapter_rows_omitted: bool = False
+    # Association text and per-sidecar readings (#1481).  The parent decides
+    # which sidecars belong to the item from these, and never publishes them:
+    # the `album` tag and the person tags serve the belonging rules only.
+    album: str | None = None
+    creators: tuple[str, ...] = ()
+    sidecars: tuple[AudioSidecarReading, ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            not optional(_valid_association)(self.album)
+            or not _valid_creators(self.creators)
+            or not tuple_of(
+                exact_type(AudioSidecarReading),
+                AudioInspectionLimits.HARD_CAPS["sidecar_documents"],
+            )(self.sidecars)
+            or len({value.name for value in self.sidecars}) != len(self.sidecars)
+            or len(self.facts) + sum(len(value.facts) for value in self.sidecars)
+            > MAX_FACTS
+        ):
+            raise ValueError("audio inspection is malformed")
+        if self.source is not None and any(
+            fact.source != self.source
+            for value in self.sidecars
+            for fact in value.facts
+        ):
+            raise ValueError("audio inspection fact source is inconsistent")
         if self.title is not None:
             try:
                 validate_projection_text(
@@ -876,6 +1319,9 @@ class AudioInspection:
             or self.chapter_rows_omitted
             or self.title is not None
             or self.container_facts is not None
+            or self.album is not None
+            or self.creators
+            or self.sidecars
         ):
             raise ValueError("failed audio inspection cannot retain evidence")
 
@@ -883,16 +1329,19 @@ class AudioInspection:
         """Canonical closed protocol payload for the isolated child boundary."""
         return json.dumps(
             {
+                "album": self.album,
                 "chapters": [value.to_data() for value in self.chapters],
                 "chapters_truncated": self.chapters_truncated,
                 "chapter_rows_omitted": self.chapter_rows_omitted,
                 "container_facts": None
                 if self.container_facts is None
                 else self.container_facts.to_protocol_data(),
+                "creators": list(self.creators),
                 "embedded_cover": self.embedded_cover.to_protocol_data(),
                 "facts": [value.to_data() for value in self.facts],
                 "outcome": self.outcome.value,
                 "schema": AUDIO_INSPECTION_SCHEMA,
+                "sidecars": [value.to_data() for value in self.sidecars],
                 "title": self.title,
                 "source": None
                 if self.source is None
@@ -920,14 +1369,17 @@ class AudioInspection:
                 type(value) is not dict
                 or set(value)
                 != {
+                    "album",
                     "chapters",
                     "chapters_truncated",
                     "chapter_rows_omitted",
                     "container_facts",
+                    "creators",
                     "embedded_cover",
                     "facts",
                     "outcome",
                     "schema",
+                    "sidecars",
                     "source",
                     "title",
                 }
@@ -957,32 +1409,18 @@ class AudioInspection:
                 != {"codec", "codec_tag", "container", "duration_stated"}
             ):
                 raise ValueError
-            # A fact-bearing document always carries a source: `AudioInspectionFact`
-            # rejects a `None` source, and the `ValueError` it raises is caught
-            # below as an invalid protocol.
             facts = tuple(
-                AudioInspectionFact(
-                    AudioInspectionField(item["field"]),
-                    cast("Fingerprint", source),
-                    item["observed"],
-                    item["canonical"],
-                    item["support"],
-                    AudioEvidenceSurface(item["surface"]),
-                    item["state"],
-                    item["role"],
-                )
+                _fact_from_data(item, source)
                 for item in value["facts"]
-                if type(item) is dict
-                and set(item)
-                == {
-                    "canonical",
-                    "field",
-                    "observed",
-                    "role",
-                    "state",
-                    "support",
-                    "surface",
-                }
+                if type(item) is dict and set(item) == _FACT_KEYS
+            )
+            if (
+                type(value["creators"]) is not list
+                or type(value["sidecars"]) is not list
+            ):
+                raise ValueError
+            sidecars = tuple(
+                _reading_from_data(item, source) for item in value["sidecars"]
             )
             chapters = tuple(
                 AudioChapter(
@@ -1018,6 +1456,9 @@ class AudioInspection:
                     container_data["duration_stated"],
                 ),
                 value["chapter_rows_omitted"],
+                value["album"],
+                tuple(value["creators"]),
+                sidecars,
             )
         except (KeyError, TypeError, ValueError):
             raise ValueError("audio inspection protocol is invalid") from None
@@ -1051,8 +1492,23 @@ __all__ = [
     "AudioObservation",
     "AudioObservationKind",
     "AudioPerformanceType",
+    "AudioSidecarBinding",
     "AudioSidecarDigest",
+    "AudioSidecarKind",
+    "AudioSidecarReading",
+    "AudioSidecarRefusal",
+    "AudioSidecarShadow",
+    "AudioSidecarShadowField",
     "AudioTrackDigest",
+    "ECHO_FIELDS",
+    "MAX_ASSOCIATION_CHARACTERS",
+    "MAX_ASSOCIATION_CREATORS",
+    "PARENT_SIDECAR_REFUSALS",
+    "SIDECAR_FIELDS",
+    "SIDECAR_KIND_SURFACES",
+    "TERMINAL_SIDECAR_REFUSALS",
+    "association_file_reference",
+    "association_text",
     "MAX_AUDIO_FILE_RECORDS",
     "MAX_AUDIO_TRACKS",
     "MAX_CHAPTERS",

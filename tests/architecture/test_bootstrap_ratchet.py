@@ -53,7 +53,7 @@ SLACK = 10
 # Child, probe and container entry points stay in bootstrap by design. They
 # are exempt from the construct rules but pinned by ncnc size.
 ENTRY_POINTS = {
-    "audio_child.py": 264,
+    "audio_child.py": 267,
     # 150 since #1363 moved the hash into adapters/cover_measures.py beside
     # the same-art measures, which the child imports and calls, and reports
     # the oriented size the preview and measures read.

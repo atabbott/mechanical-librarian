@@ -282,6 +282,9 @@ def main(argv: list[str] | None = None) -> int:
                 result.title,
                 result.container_facts,
                 result.chapter_rows_omitted,
+                result.album,
+                result.creators,
+                result.sidecars,
             )
         )
         return 0

@@ -8,6 +8,8 @@ provenance are decided.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from mechanical_librarian.domain.audio_composition import (
@@ -493,29 +495,71 @@ def test_a_silent_track_has_not_disagreed_with_a_speaking_one() -> None:
 
 
 def test_folder_evidence_is_item_level_and_carries_no_track_provenance() -> None:
-    """A sidecar belongs to the folder, so no file may claim to have held it."""
-    composed = compose_audio_inspections(
+    """A folder name or folder-level sidecar is the item's, not one file's."""
+    first = _track(
+        1,
         (
-            _track(
+            _duration(1, 1_000),
+            _fact(
                 1,
-                (
-                    _duration(1, 1_000),
-                    _fact(
-                        1,
-                        AudioInspectionField.ASIN,
-                        "B0CW1KL2QD",
-                        surface=AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-                    ),
-                ),
+                AudioInspectionField.ASIN,
+                "B0SYNTH001",
+                surface=AudioEvidenceSurface.PATH_FOLDER,
             ),
-            _track(2, (_duration(2, 1_000),)),
-        )
+        ),
     )
+    first = dataclasses.replace(
+        first,
+        folder_facts=(
+            _fact(
+                1,
+                AudioInspectionField.DESCRIPTION,
+                "A synthetic description.",
+                surface=AudioEvidenceSurface.SIDECAR_OPF,
+            ),
+        ),
+    )
+    composed = compose_audio_inspections((first, _track(2, (_duration(2, 1_000),))))
+    assert {value.field for value in composed.facts} >= {
+        AudioInspectionField.ASIN,
+        AudioInspectionField.DESCRIPTION,
+    }
 
     manifest = attach_claim_references(
         composed, tuple(f"local_{index:064x}" for index in range(len(composed.facts)))
     )
     assert all(value.claims == () for value in manifest)
+
+
+def test_a_track_bound_sidecar_carries_its_tracks_provenance() -> None:
+    """T4: track 2's Libation document is cited by track 2 alone."""
+    composed = compose_audio_inspections(
+        (
+            _track(1, (_duration(1, 1_000),)),
+            _track(
+                2,
+                (
+                    _duration(2, 1_000),
+                    _fact(
+                        2,
+                        AudioInspectionField.ASIN,
+                        "B0SYNTH001",
+                        surface=AudioEvidenceSurface.SIDECAR_LIBATION,
+                    ),
+                ),
+            ),
+        )
+    )
+
+    references = tuple(f"local_{index:064x}" for index in range(len(composed.facts)))
+    manifest = attach_claim_references(composed, references)
+    asin = next(
+        index
+        for index, value in enumerate(composed.facts)
+        if value.field is AudioInspectionField.ASIN
+    )
+    holders = [value for value in manifest if references[asin] in value.claims]
+    assert [value.ordinal for value in holders] == [2]
 
 
 def test_any_track_carrying_art_makes_the_item_carry_it_with_its_ordinals() -> None:

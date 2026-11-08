@@ -54,6 +54,9 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioTrackDigest,
 )
+from mechanical_librarian.domain.audio_sidecar_association import (
+    AudioAssociationContext,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -156,7 +159,9 @@ class _AudioInspector:
     def __init__(self, *_args, **_kwargs) -> None:
         pass
 
-    def inspect(self, _mount, _tracks, _maximum_bytes) -> AudioInspectionResult:
+    def inspect(
+        self, _mount, _tracks, _maximum_bytes, *, association
+    ) -> AudioInspectionResult:
         return _audio_result()
 
     def unchanged(
@@ -167,6 +172,8 @@ class _AudioInspector:
         _maximum_bytes,
         expected_sidecars=(),
         expected_tracks=(),
+        *,
+        own_file_names=None,
     ) -> bool:
         return expected_digest == _CONTENT_DIGEST and not expected_sidecars
 
@@ -979,6 +986,7 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
             268435456,
+            association=AudioAssociationContext(None, (), None),
         )
     assert [
         (c.start_milliseconds, c.end_milliseconds) for c in inspected.audio.chapters
@@ -1284,6 +1292,7 @@ def test_recording_collision_cannot_add_owner_choices(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
             268435456,
+            association=AudioAssociationContext(None, (), None),
         )
     assert [
         (c.start_milliseconds, c.end_milliseconds) for c in inspected.audio.chapters
@@ -1709,6 +1718,7 @@ def _alternative_flow(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
             (target_file,),
             268435456,
+            association=AudioAssociationContext(None, (), None),
         )
     replaced = {
         TargetDestination.AUTHORS: TargetField(

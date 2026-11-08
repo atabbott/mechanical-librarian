@@ -280,10 +280,12 @@ def retained_report_as_current(document: str) -> MetadataReport:
     added each cover artifact's same-art `measures`: null here, since an
     earlier producer measured no preview. v74 added no key: it plans iTunes' one
     cover search for an audiobook (#1779), which a v49 report, being an ebook's,
-    never needed. v76 reports each cover artifact's width and height as
-    oriented and adds the `retained` cover source, neither of which a v49
-    report, holding no automatic switch, could carry (#1363). v75 is another
-    branch's number, so this producer has no v75.
+    never needed.
+    v75 gave an audiobook's sidecar manifest entries their classification,
+    and a v49 report holds no audio section. v76 reports each cover
+    artifact's width and height as oriented and adds the `retained` cover
+    source, neither of which a v49 report, holding no automatic switch, could
+    carry (#1363).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)

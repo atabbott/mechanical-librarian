@@ -2465,7 +2465,7 @@ def _recorded_audiobook() -> MetadataReport:
                         "asin": "B0CW1KL2QD",
                         "narrators": [{"name": "Recorded Narrator"}],
                         "publisherSummary": "A recorded summary.",
-                        "series": [{"name": "Discworld", "sequence": "3"}],
+                        "series": [{"title": "Synthetic Series", "sequence": "3"}],
                         "title": "Recorded work",
                     }
                 ),
@@ -2489,7 +2489,13 @@ def _recorded_audiobook() -> MetadataReport:
             role=fact.role,
             occurrence=occurrence,
         )
-        for occurrence, fact in enumerate(interpretation.facts, 1)
+        for occurrence, fact in enumerate(
+            (
+                *interpretation.facts,
+                *(fact for value in interpretation.sidecars for fact in value.facts),
+            ),
+            1,
+        )
     )
     return MetadataReport.create(
         target=TargetFacts(
@@ -2553,7 +2559,6 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
         ("duration", None, "43200.000", "valid"),
         ("language", None, "eng", "valid"),
         ("performance_type", None, "unabridged", "valid"),
-        ("series", None, "Discworld", "valid"),
         ("series_sequence", None, "3", "valid"),
     } <= evidence
     # Every claim states where it came from and what the extraction made of

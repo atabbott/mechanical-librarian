@@ -1017,7 +1017,9 @@ def test_credential_and_private_path_target_titles_fail_without_raw_values(
     assert hostile not in str(raised.value)
 
 
-def _audiobook_snapshot(media: dict[str, object]) -> TargetSnapshot:
+def _audiobook_snapshot(
+    media: dict[str, object], root: dict[str, object] | None = None
+) -> TargetSnapshot:
     payload = {
         "id": "item-1",
         "libraryId": "library-id",
@@ -1025,6 +1027,7 @@ def _audiobook_snapshot(media: dict[str, object]) -> TargetSnapshot:
         "isMissing": False,
         "mediaType": "book",
         "media": {"metadata": {"title": "Recorded title"}, **media},
+        **(root or {}),
     }
     return AudiobookshelfItemReader(
         client_factory=lambda: httpx.Client(
@@ -1039,7 +1042,7 @@ def _audiobook_snapshot(media: dict[str, object]) -> TargetSnapshot:
         endpoint="https://example.invalid",
         library_id="library-id",
         service_path="/library",
-        maximum_bytes=65_536,
+        maximum_bytes=262_144,
     ).read("item-1")
 
 
@@ -1479,3 +1482,62 @@ def test_an_escaped_incumbent_is_not_proposed_again_as_its_own_text(
     result = _result(evaluate_report(report), TargetDestination.DESCRIPTION)
     assert [value.assessment.value for value in result.alternatives] == [assessment]
     assert result.outcome.value == outcome
+
+
+def _library_file(name: str) -> dict[str, object]:
+    return {"ino": f"ino-{name}", "metadata": {"filename": name, "relPath": name}}
+
+
+def test_the_items_own_file_names_come_from_its_library_files() -> None:
+    """T6b: every file of the item, a second ebook or PDF included (#1481)."""
+    names = ("book.m4b", "excluded.mp3", "companion.epub", "supplement.pdf")
+    snapshot = _audiobook_snapshot(
+        {"audioFiles": [_audio_file("book.m4b")]},
+        {"libraryFiles": [_library_file(name) for name in names]},
+    )
+    assert snapshot.own_file_names == names
+
+
+def test_without_library_files_every_ebook_and_audio_record_is_read() -> None:
+    """T6c: the fallback reads the ebook and every audio record, excluded too."""
+    excluded = {**_audio_file("excluded.mp3", ".mp3", "inode-2"), "exclude": True}
+    snapshot = _audiobook_snapshot(
+        {
+            "ebookFile": {
+                **_epub_record(),
+                "metadata": {"filename": "book.epub", "relPath": "book.epub"},
+            },
+            "audioFiles": [_audio_file("book.m4b"), excluded],
+        }
+    )
+    assert snapshot.own_file_names == ("book.epub", "book.m4b", "excluded.mp3")
+
+
+@pytest.mark.parametrize(
+    "library_files",
+    (
+        "book.m4b",
+        [{"ino": "1", "metadata": {"relPath": "book.m4b"}}],
+        [_library_file("CD1/book.m4b")],
+        [_library_file(" book.m4b")],
+        [_library_file("book.m4b")] * 1_153,
+    ),
+    ids=("not_a_list", "no_filename", "path_not_name", "untrimmed", "past_bound"),
+)
+def test_a_malformed_file_list_is_unknown_and_fails_closed(
+    library_files: object,
+) -> None:
+    """T6c: a malformed list makes every folder-level sidecar `shared_folder`."""
+    snapshot = _audiobook_snapshot(
+        {"audioFiles": [_audio_file("book.m4b")]}, {"libraryFiles": library_files}
+    )
+    assert snapshot.own_file_names is None
+
+
+def test_an_ebook_item_states_no_own_file_names() -> None:
+    snapshot = _audiobook_snapshot(
+        {"ebookFile": _epub_record()},
+        {"libraryFiles": [_library_file("book.epub")]},
+    )
+    assert snapshot.media_kind != "audiobook"
+    assert snapshot.own_file_names is None

@@ -25,7 +25,12 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioObservation,
     AudioObservationKind,
+    AudioSidecarBinding,
     AudioSidecarDigest,
+    AudioSidecarKind,
+    AudioSidecarRefusal,
+    AudioSidecarShadow,
+    AudioSidecarShadowField,
     AudioTrackDigest,
     normalize_duration_seconds,
 )
@@ -3427,11 +3432,56 @@ class ProviderObservation:
         }
 
 
+def echoed_target_values(
+    audio: AudioFacts | None,
+    fields: tuple[TargetField, ...],
+    field: AudioInspectionField,
+) -> tuple[str, ...]:
+    """The target's values for a field an `.opf` or `.nfo` echoed (#1481).
+
+    Echo withholding withholds belief, never a refusal. A reader that can
+    only refuse -- the recording-conflict language check, the narrator guard
+    on a qualified replacement -- reads these beside the local claims, so an
+    echoed value refuses exactly as the sidecar's own claim did before it
+    was withheld. An echo equals the target's value by definition, and these
+    are never belief: no reader that counts support reads them.
+    """
+    if audio is None or not any(field in entry.echoed for entry in audio.sidecars):
+        return ()
+    destination = {
+        AudioInspectionField.LANGUAGE: TargetDestination.LANGUAGE,
+        AudioInspectionField.CONTRIBUTOR: TargetDestination.NARRATORS,
+    }.get(field)
+    value = next(
+        (
+            item.value
+            for item in fields
+            if item.destination is destination and item.state is TargetFieldState.VALUE
+        ),
+        None,
+    )
+    if type(value) is str:
+        return (value,) if value else ()
+    if type(value) is not tuple:
+        return ()
+    # Only the narrators a document repeated were withheld, so only those
+    # stand in for it; the manifest records their positions (#1481).
+    positions = sorted(
+        {position for entry in audio.sidecars for position in entry.echoed_narrators}
+    )
+    return tuple(
+        item
+        for item in (value[position] for position in positions if position < len(value))
+        if type(item) is str and item
+    )
+
+
 def recording_variant_conflict(
     candidate: ProviderCandidate,
     local_claims: tuple[LocalClaim, ...],
     local_title: str,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> str | None:
     """Compare explicit recording facts without filling unknown variant facts.
 
@@ -3440,6 +3490,10 @@ def recording_variant_conflict(
     one of them is refused, with its own reason so a reader can tell it from
     a claim conflict. One declared language is therefore exactly a language
     claim, and several accept any of them without choosing one.
+
+    `echoed_languages` is the target's language when an `.opf` or `.nfo`
+    stated it and the claim was withheld as an echo (#1481). It refuses as
+    the withheld claim did; see `echoed_target_values`.
     """
     from mechanical_librarian.domain.field_outcomes import (
         language_identity,
@@ -3466,7 +3520,7 @@ def recording_variant_conflict(
         if claim.kind is ClaimKind.LANGUAGE
         and claim.state is FieldState.VALID
         and known(claim.canonical)
-    ]
+    ] + [value for value in echoed_languages if known(value)]
     if any(
         not language_outcomes_compatible(left, right)
         for left in local_languages
@@ -4575,6 +4629,7 @@ def provider_candidate_set_work_identity_admission(
     corroboration: RecordingCorroboration | None = None,
     leading_number: bool = False,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set.
 
@@ -4602,7 +4657,8 @@ def provider_candidate_set_work_identity_admission(
     dispatches the `leading_number_stripped` rung (#1307).
 
     `library_languages` reach only the band's recording-conflict check, so they
-    never change a set admitted without the band (#1315).
+    never change a set admitted without the band (#1315). `echoed_languages`
+    reach the same check alone (#1481).
     """
 
     def admit(
@@ -4650,7 +4706,11 @@ def provider_candidate_set_work_identity_admission(
                 ).outcome
                 is CorroborationOutcome.CORROBORATED
                 and recording_variant_conflict(
-                    candidate, band_claims, local_title, library_languages
+                    candidate,
+                    band_claims,
+                    local_title,
+                    library_languages,
+                    echoed_languages,
                 )
                 is None
             )
@@ -4673,6 +4733,7 @@ def provider_candidate_set_work_identity_admission(
         corroboration,
         tight,
         library_languages,
+        echoed_languages,
     )
 
 
@@ -4685,6 +4746,7 @@ def _corroborated_set_admission(
     corroboration: RecordingCorroboration,
     tight: Callable[[ProviderCandidate], bool],
     library_languages: tuple[str, ...],
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderWorkIdentitySetAdmission:
     """Try the band-first set rule, then the corroborated rule (#1307)."""
     from mechanical_librarian.domain.audiobook_corroboration import (
@@ -4717,7 +4779,12 @@ def _corroborated_set_admission(
     )
     if admitted:
         chosen = band_first_candidate(
-            admitted, local_title, band_claims, corroboration, library_languages
+            admitted,
+            local_title,
+            band_claims,
+            corroboration,
+            library_languages,
+            echoed_languages,
         )
         if chosen is None:
             return refused
@@ -4732,6 +4799,7 @@ def _corroborated_set_admission(
             band_claims=band_claims,
             leading_number=True,
             library_languages=library_languages,
+            echoed_languages=echoed_languages,
         )
     chosen = corroborated_recording_candidate(
         eligible,
@@ -4740,6 +4808,7 @@ def _corroborated_set_admission(
         band_claims,
         corroboration,
         library_languages,
+        echoed_languages,
     )
     if chosen is None:
         return refused
@@ -4955,6 +5024,56 @@ def _unbound_manifestation_link_allowed(
     )
 
 
+def _validate_sidecar_claims(
+    audio: AudioFacts,
+    local_claims: tuple[LocalClaim, ...],
+    fields: tuple[TargetField, ...],
+) -> None:
+    """Hold a sidecar manifest's claim provenance to what the report carries.
+
+    A document names only `sidecar` claims this report carries.  And no claim
+    from an `.opf` or `.nfo` document repeats the target's own record: such a
+    value is Audiobookshelf's record echoed back, withheld before it can
+    become a claim, so no consumer can count the target twice (#1481).
+    """
+    if not audio.sidecars:
+        return
+    from mechanical_librarian.domain.audio_sidecar_association import (
+        AudioAssociationContext,
+        target_echo,
+    )
+
+    claims = {claim.reference: claim for claim in local_claims}
+    context = AudioAssociationContext(None, fields, None)
+    for entry in audio.sidecars:
+        stated = tuple(
+            claims[reference]
+            for reference in entry.claims
+            if reference in claims and claims[reference].basis == "sidecar"
+        )
+        if len(stated) != len(entry.claims):
+            raise ReportValueError("audio sidecar claim provenance is unresolved")
+        if any(
+            position >= len(context.narrators) for position in entry.echoed_narrators
+        ):
+            raise ReportValueError("audio sidecar echoed narrator is unresolved")
+        if entry.kind not in {AudioSidecarKind.OPF, AudioSidecarKind.NFO}:
+            continue
+        series_names = tuple(
+            claim.canonical
+            for claim in stated
+            if claim.kind is ClaimKind.SERIES and claim.canonical is not None
+        )
+        for claim in stated:
+            if claim.canonical is not None and target_echo(
+                context,
+                AudioInspectionField(claim.kind.value),
+                claim.canonical,
+                series_names,
+            ):
+                raise ReportValueError("audio sidecar claim echoes the target")
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataReport:
     report_id: str
@@ -5115,6 +5234,7 @@ class MetadataReport:
                 for reference in track.claims
             ):
                 raise ReportValueError("audio track claim provenance is unresolved")
+            _validate_sidecar_claims(self.audio, self.local_claims, self.target.fields)
             if self.file.content_digest != audio_set_content_digest(
                 tuple(track.digest for track in self.audio.tracks)
             ):
@@ -5359,6 +5479,9 @@ class MetadataReport:
                     corroboration=corroboration,
                     leading_number=corroboration is not None,
                     library_languages=self.library_languages,
+                    echoed_languages=echoed_target_values(
+                        self.audio, self.target.fields, AudioInspectionField.LANGUAGE
+                    ),
                 )
                 if (
                     not set_admission.admitted
@@ -5408,6 +5531,9 @@ class MetadataReport:
                     and payload is not None
                     and payload.title_basis is None,
                     library_languages=self.library_languages,
+                    echoed_languages=echoed_target_values(
+                        self.audio, self.target.fields, AudioInspectionField.LANGUAGE
+                    ),
                 )
                 if (
                     not set_admission.admitted
@@ -6167,12 +6293,14 @@ def recording_association_references(
         or _provider_candidate_has_work_identity_veto(candidate)
     ):
         return ()
+    # Item identity binds from an ASIN read off the recording's own embedded
+    # tags and from nothing else: not a sidecar, not a path (#1481).
     item = tuple(
         c.reference
         for c in local_claims
         if c.kind is ClaimKind.ASIN
         and c.state is FieldState.VALID
-        and c.basis in {"embedded_tag", "filename"}
+        and c.basis == "embedded_tag"
         and canonical_asin(c.canonical) == asins[0].value
     )
     if item:
@@ -7720,9 +7848,44 @@ def _audio_observation_from_data(value: object) -> AudioObservation:
 
 
 def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
-    item = _object(value, {"digest", "name"})
+    item = _object(
+        value,
+        {
+            "binding",
+            "claims",
+            "digest",
+            "disputed",
+            "echoed",
+            "echoed_narrators",
+            "kind",
+            "name",
+            "refusals",
+            "shadow",
+        },
+    )
     try:
-        return AudioSidecarDigest(item["name"], item["digest"])
+        return AudioSidecarDigest(
+            item["name"],
+            item["digest"],
+            AudioSidecarKind(item["kind"]),
+            AudioSidecarBinding(item["binding"]),
+            tuple(AudioSidecarRefusal(value) for value in _strings(item["refusals"])),
+            tuple(_strings(item["claims"])),
+            tuple(AudioInspectionField(value) for value in _strings(item["disputed"])),
+            tuple(AudioInspectionField(value) for value in _strings(item["echoed"])),
+            tuple(
+                AudioSidecarShadow(
+                    AudioSidecarShadowField(shadow["field"]),
+                    shadow["observed"],
+                    shadow["canonical"],
+                )
+                for shadow in (
+                    _object(entry, {"canonical", "field", "observed"})
+                    for entry in _list(item["shadow"])
+                )
+            ),
+            _integers(item["echoed_narrators"]),
+        )
     except ValueError as error:
         raise ReportValueError("audio sidecar manifest is invalid") from error
 

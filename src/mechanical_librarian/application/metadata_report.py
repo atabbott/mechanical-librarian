@@ -37,10 +37,14 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    AudioInspectionField,
     AudioObservation,
     AudioObservationKind,
     AudioSidecarDigest,
     AudioTrackDigest,
+)
+from mechanical_librarian.domain.audio_sidecar_association import (
+    AudioAssociationContext,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
@@ -148,6 +152,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     derive_field_results,
     discovery_lane_identity,
+    echoed_target_values,
     edition_marketplace_evidence,
     identifier_only_candidate,
     isbn_family,
@@ -167,6 +172,11 @@ from mechanical_librarian.domain.metadata_report import (
     validate_provider_access_time,
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
+)
+from mechanical_librarian.domain.validation import (
+    nonempty_text,
+    optional,
+    tuple_of,
 )
 from mechanical_librarian.domain.work_identity import (
     CORROBORATED_TITLE_PRODUCTION,
@@ -278,8 +288,14 @@ class TargetSnapshot:
     # The one EPUB an audiobook item holds beside its tracks, read only as
     # corroborating evidence and never prepared on its own (#1319).
     companion: TargetFile | None = None
+    # The item's full file list as bare names, which tells an audiobook's own
+    # files from another item's in a shared folder (#1481).  `None` when the
+    # target stated none this build could read, which fails closed.
+    own_file_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        if not optional(tuple_of(nonempty_text))(self.own_file_names):
+            raise MetadataReportError("target file names are invalid")
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
         if self.companion is not None and (
@@ -341,6 +357,13 @@ class MetadataLookup:
     # The library's declared languages, which an audiobook's recording-conflict
     # check holds a product to when the item states no language (#1315).
     library_languages: tuple[str, ...] = ()
+    # The target's language where an `.opf` or `.nfo` echoed it: withheld as
+    # belief, it still refuses a product in another language (#1481).
+    echoed_languages: tuple[str, ...] = ()
+    # The target's narrators an `.opf` or `.nfo` echoed: withheld as belief,
+    # they still refuse a carried product crediting nobody the recording does
+    # (#1481). Never support.
+    echoed_narrators: tuple[str, ...] = ()
     # An audiobook's companion EPUB (#1468): its ISBN may be asked and its
     # title may be an alternative, but its claims are never compared with a
     # provider's, so they are never `local_claims`.
@@ -385,6 +408,8 @@ class MetadataLookup:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
+            or not tuple_of(nonempty_text)(self.echoed_languages)
+            or not tuple_of(nonempty_text)(self.echoed_narrators)
             or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -538,6 +563,8 @@ class MetadataDiscoveryPlan:
     recording_corroboration: RecordingCorroboration | None = None
     corroborated_rule: bool = True
     library_languages: tuple[str, ...] = ()
+    echoed_languages: tuple[str, ...] = ()
+    echoed_narrators: tuple[str, ...] = ()
     # See `MetadataLookup`: the companion EPUB and the ASINs its book links.
     companion: CompanionEbook | None = None
     companion_linked_asins: tuple[str, ...] = ()
@@ -564,6 +591,8 @@ class MetadataDiscoveryPlan:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
+            or not tuple_of(nonempty_text)(self.echoed_languages)
+            or not tuple_of(nonempty_text)(self.echoed_narrators)
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
@@ -1190,6 +1219,16 @@ def audiobook_discovery_plan(
             None if audio is None else recording_corroboration(target.fields)
         ),
         library_languages=library_languages,
+        # The target's language where a sidecar echoed it, for the
+        # recording-conflict refusal alone (#1481).
+        echoed_languages=echoed_target_values(
+            audio, target.fields, AudioInspectionField.LANGUAGE
+        ),
+        # The target's narrators where a sidecar echoed them, for the
+        # carried-edition narrator refusal alone (#1481).
+        echoed_narrators=echoed_target_values(
+            audio, target.fields, AudioInspectionField.CONTRIBUTOR
+        ),
         companion=None if audio is None else companion,
     )
 
@@ -1493,6 +1532,8 @@ def audiobook_asin_feed_plan(
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
+        echoed_languages=plan.echoed_languages,
+        echoed_narrators=plan.echoed_narrators,
         companion=plan.companion,
         companion_linked_asins=companion_linked_asins(
             plan.local_claims, plan.audio, observations, plan.companion
@@ -2177,6 +2218,8 @@ class AudioInspector(Protocol):
         mount: MediaMountConfiguration,
         tracks: tuple[TargetFile, ...],
         maximum_bytes: int,
+        *,
+        association: AudioAssociationContext,
     ) -> AudioInspectionResult: ...
     def unchanged(
         self,
@@ -2186,6 +2229,8 @@ class AudioInspector(Protocol):
         maximum_bytes: int,
         expected_sidecars: tuple[AudioSidecarDigest, ...] = (),
         expected_tracks: tuple[AudioTrackDigest, ...] = (),
+        *,
+        own_file_names: tuple[str, ...] | None = None,
     ) -> bool: ...
 
 
@@ -2325,6 +2370,7 @@ def _audiosilo_not_needed(
             plan.local_claims,
             title,
             plan.library_languages,
+            plan.echoed_languages,
         )
     )
 
@@ -2589,6 +2635,7 @@ def _identifier_lane_candidates(
                     lookup.local_claims,
                     lookup.work_title or "",
                     lookup.library_languages,
+                    lookup.echoed_languages,
                 )
                 is None,
                 lookup.local_claims,
@@ -2609,7 +2656,8 @@ def _identifier_lane_candidates(
     narrator_refused = {
         c.identity
         for c in observation.candidates
-        if carried_lane and candidate_narrator_disjoint(c, lookup.local_claims)
+        if carried_lane
+        and candidate_narrator_disjoint(c, lookup.local_claims, lookup.echoed_narrators)
     }
     # A requested identifier and equal duration are not evidence of the work.
     work_admitted = {
@@ -2681,6 +2729,7 @@ def _identifier_lane_candidates(
                 lookup.local_claims,
                 lookup.recording_corroboration,
                 lookup.library_languages,
+                lookup.echoed_languages,
             )
             is not None
         }
@@ -2701,14 +2750,20 @@ def _identifier_lane_candidates(
         and lookup.requested_asin in lookup.companion_linked_asins
         and lookup.requested_asin in _candidate_valid_asins(c)
         # Narrators the file never credits name another recording of the work.
-        and not candidate_narrator_disjoint(c, lookup.local_claims)
+        and not candidate_narrator_disjoint(
+            c, lookup.local_claims, lookup.echoed_narrators
+        )
     }
     alternative_admitted = title_admitted | corroborated_admitted | linked_admitted
     runtime_candidates = tuple(
         c
         for c in observation.candidates
         if recording_variant_conflict(
-            c, lookup.local_claims, lookup.work_title or "", lookup.library_languages
+            c,
+            lookup.local_claims,
+            lookup.work_title or "",
+            lookup.library_languages,
+            lookup.echoed_languages,
         )
         is None
         and (c.identity in work_admitted or c.identity in alternative_admitted)
@@ -2738,6 +2793,7 @@ def _identifier_lane_candidates(
                 lookup.work_authors,
                 lookup.requested_asin,
                 lookup.library_languages,
+                lookup.echoed_languages,
             )
         )
         if chapter:
@@ -2983,6 +3039,7 @@ def qualify_provider_observation(
         leading_number=asserted_band
         and observation.authority == CORROBORATED_RULE_AUTHORITY,
         library_languages=lookup.library_languages,
+        echoed_languages=lookup.echoed_languages,
     )
     if not set_admission.admitted:
         return ProviderObservation(
@@ -3031,6 +3088,7 @@ def qualify_provider_observation(
                     lookup.local_claims,
                     lookup.work_title or "",
                     lookup.library_languages,
+                    lookup.echoed_languages,
                 )
                 is None
             ),
@@ -3769,6 +3827,11 @@ class GenerateMetadataReport:
                             self._mount,
                             initial.files,
                             self._limits.audio_source_bytes,
+                            # What sidecar association reads about the
+                            # target item (#1481).
+                            association=AudioAssociationContext(
+                                initial.title, initial.fields, initial.own_file_names
+                            ),
                         )
                         # An audiobook is planned from its facts, so a result
                         # that states none is no inspection at all. Refuse it
@@ -4557,6 +4620,7 @@ def require_report_current(
             limits.audio_source_bytes,
             retained.sidecars,
             retained.tracks,
+            own_file_names=final.own_file_names,
         )
     else:
         matches = tuple(
