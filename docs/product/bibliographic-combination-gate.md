@@ -9,7 +9,7 @@ go to manual review with the reason "no safe bibliographic combination"
 (`no_safe_bibliographic_combination`). This page measures that row (#1746).
 The tables are the unedited Markdown output of
 [`scripts/admission_rule_ledger.py`](../../scripts/admission_rule_ledger.py)
-with `--a3-combination`, over the ledger's two retained snapshots.
+with `--a3-combination`, over the ledger's two snapshots.
 [ADR-0097](../architecture/decisions/0097-keep-the-bibliographic-combination-gate.md)
 records the decision they support: keep the gate.
 

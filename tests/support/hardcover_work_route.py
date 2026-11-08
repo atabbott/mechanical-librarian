@@ -44,7 +44,7 @@ from tests.support.audiobook_providers import (
     work_plan,
 )
 from tests.support.audiobook_reports import recorded_dispatch
-from tests.support.hardcover_evidence import hardcover_envelope
+from tests.support.hardcover_evidence import hardcover_answer
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 TITLE = "Ember Tide Protocol"
@@ -99,7 +99,8 @@ def hardcover_work_observation(
             return httpx.Response(200, json={"data": {"editions": list(rows)}})
         return httpx.Response(
             200,
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [],
                 [
                     {

@@ -397,3 +397,12 @@ forward while its file and configuration fingerprints are unchanged, so a
 stored report would keep its `unavailable` Open Library covers. The proposal
 policy is unchanged. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1777 also takes the clean-rebuild branch. `metadata-report-v72` makes a
+Hardcover WORK lane hold books rather than editions on both media, and adds a
+WORK lane an ebook asks with its EPUB creators when the target names no author,
+which carries that basis in its identity. A v71 report replays neither, and a
+report carries forward while its file and configuration fingerprints are
+unchanged, so a stored report would keep the earlier lanes. The proposal policy
+is unchanged. Every earlier application database is rejected before mutation
+and needs a clean rebuild; no adoption is supplied.
