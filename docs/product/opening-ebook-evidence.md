@@ -62,8 +62,8 @@ pass, a size limit ends the inspection. So does a size limit on all the opening
 pages together, but one opening document over its own limit is skipped with a
 warning. Malformed or unsafe markup at the back fails the whole inspection as
 `malformed`, as in the package pass. In the opening pages, such a document is
-skipped with a warning. Front and back use the same rules to decide what
-counts, and a fact's position adds no weight.
+skipped with a warning. Front and back use the same rules to recognise facts,
+and a fact's position adds no weight.
 
 The extractor follows the
 [EPUB 3.3 Recommendation](https://www.w3.org/TR/2026/REC-epub-33-20260113/).
