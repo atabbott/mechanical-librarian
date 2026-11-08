@@ -722,13 +722,18 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const hasAuthority = enabled.length > 0 || suspensions.length > 0
   const cardOffers = consentActionable && (consentState === 'off' || consentState === 'enabling')
   const statusEntry = needsConsent && !cardOffers
+  // The write card states waiting changes and a lapse itself, so the status
+  // repeats neither (#639, #1765).
   const showOperationalSummary =
-    !permissionNeeded ||
+    !(permissionNeeded || cardLapse) ||
     Boolean(connection) ||
     recoveryCount > 0 ||
     ownerAction > 0 ||
     throttled ||
     data.paused
+  // A checking or failed connection is said by the shell's connection notice
+  // directly above, so the status panel adds no heading of its own (#1765).
+  const statusCopy = showOperationalSummary && !connection
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
   // Pause, resume and revoke report beside the controls that issued them. The
   // authority and page lines both stay mounted, so a live region is never
@@ -1342,23 +1347,23 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       {commandStatus(!authorityFeedback && !consentFeedback)}
       <section
         className="cm-activity-status"
-        aria-labelledby={showOperationalSummary ? 'activity-status-title' : undefined}
+        aria-labelledby={statusCopy ? 'activity-status-title' : undefined}
       >
-        {showOperationalSummary ? (
+        {statusCopy || (showOperationalSummary && statusEntry) ? (
           <div className="cm-activity-status-copy">
-            <ActivityStatusCopy
-              connection={connection}
-              recoveryCount={recoveryCount}
-              dormantRecovery={dormantRecovery}
-              ownerAction={ownerAction}
-              filtered={Boolean(search.q) || search.eventType !== 'all'}
-              throttled={throttled}
-              throttleRemedy={throttleRemedy}
-              paused={data.paused}
-              writesHeld={writesHeld}
-              lapse={lapse}
-              cardLapse={cardLapse}
-            />
+            {statusCopy ? (
+              <ActivityStatusCopy
+                recoveryCount={recoveryCount}
+                dormantRecovery={dormantRecovery}
+                ownerAction={ownerAction}
+                filtered={Boolean(search.q) || search.eventType !== 'all'}
+                throttled={throttled}
+                throttleRemedy={throttleRemedy}
+                paused={data.paused}
+                writesHeld={writesHeld}
+                lapse={lapse}
+              />
+            ) : null}
             {statusEntry ? (
               <button
                 type="button"
@@ -1421,11 +1426,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <summary>
               <span>
                 <strong>Writes and recovery</strong>
-                {recoveryCount || data.paused ? (
+                {recoveryCount ? (
                   <small>
-                    {recoveryCount
-                      ? `${String(recoveryCount)} ${recoveryCount === 1 ? 'item needs' : 'items need'} recovery`
-                      : 'Writes are paused'}
+                    {recoveryCount} {recoveryCount === 1 ? 'item needs' : 'items need'} recovery
                   </small>
                 ) : null}
               </span>

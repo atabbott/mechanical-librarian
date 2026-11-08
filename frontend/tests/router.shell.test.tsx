@@ -807,8 +807,14 @@ describe('Application shell', () => {
         ),
       ).toBe(true)
       expect(screen.getByText('In Library').nextElementSibling).toHaveTextContent(/^7$/u)
-      const activityTitle = state === 'paused' ? 'Library connection failed' : title
-      expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
+      // The shell's notice says the connection state; the Activity status adds
+      // no heading or paragraph of its own while it holds (#1765).
+      expect(
+        within(screen.getByRole('region', { name: 'Library connection' })).getByText(title),
+      ).toBeVisible()
+      expect(screen.queryByRole('heading', { name: title })).toBeNull()
+      expect(document.querySelector('.cm-activity-status h2')).toBeNull()
+      expect(document.querySelector('.cm-activity-status p')).toBeNull()
       expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('2')
       expect(screen.queryByRole('heading', { name: 'No action needed' })).toBeNull()
       expect(screen.queryByText('No action needed')).toBeNull()
@@ -927,7 +933,10 @@ describe('Application shell', () => {
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Library connection failed' })).toBeVisible()
+    const notice = await screen.findByRole('region', { name: 'Library connection' })
+    expect(await within(notice).findByText('Library connection failed')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Library connection failed' })).toBeNull()
+    expect(document.querySelector('.cm-activity-status h2')).toBeNull()
     expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('5')
   })
 

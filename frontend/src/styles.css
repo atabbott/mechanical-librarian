@@ -104,7 +104,7 @@ h2 { margin-bottom:.35rem; }
   .shell-status { grid-template-columns:minmax(0,1fr); } .shell-status > .preparation-activity { grid-column:1; }
   .masthead nav { grid-template-columns:repeat(2,minmax(0,1fr)); } .masthead nav a { padding-inline:.25rem; }
 }
-.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty, .activity-consent-ledger > p[role='status']:empty { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .shell-error { margin:0; padding:.75rem 1rem; color:var(--danger); text-align:center; }
 .shell-error.is-uncertain { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }
 .build-mismatch { display:flex; gap:1rem; align-items:center; justify-content:center; padding:.75rem; color:#211500; background:#ffd27a; }

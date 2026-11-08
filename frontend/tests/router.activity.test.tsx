@@ -1992,6 +1992,13 @@ describe('Activity route', () => {
     // The offer and the status panel read the same consent state, so the page
     // cannot claim calm directly above the count that refutes it (#639).
     expect(await screen.findByText('Writes are off.')).toBeVisible()
+    // No library writes yet, so nothing at all is written (#1765).
+    expect(
+      within(screen.getByRole('region', { name: 'Writes are off.' })).getByText(
+        'Nothing is written until you give permission.',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText('Nothing else is written until you give permission.')).toBeNull()
     expect(
       screen.queryByRole('heading', { name: 'Prepared work needs your permission' }),
     ).toBeNull()
@@ -2038,6 +2045,11 @@ describe('Activity route', () => {
     expect(failure).toHaveFocus()
     expect(failure.closest('#activity-consent')).not.toBeNull()
     expect(screen.getAllByRole('alert')).toHaveLength(1)
+    // The readiness live region stays mounted while it has nothing to say, so
+    // its next line is announced; it is hidden from view while empty (#1765).
+    const readiness = document.querySelector('#activity-consent > p[role="status"]')
+    expect(readiness).not.toBeNull()
+    expect(readiness).toBeEmptyDOMElement()
     await user.click(screen.getByRole('button', { name: 'Check write permissions' }))
     await user.click(await screen.findByRole('checkbox', { name: /fiction/ }))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -2125,25 +2137,31 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Writes are off' })).toBeVisible()
-    expect(await screen.findByText(why)).toBeVisible()
+    // A lapse opens the consent card, in its existing slot, with the reason;
+    // with nothing waiting, the status copy is hidden rather than restating
+    // it (#1370, #1765).
+    const reason =
+      'Write permission for fiction lapsed because this version of Mechanical Librarian can write a different set of fields.'
+    if (lapsed.length) {
+      const card = await screen.findByRole('region', { name: 'Writes are off.' })
+      expect(card).toHaveTextContent(reason)
+      expect(
+        within(card).getByText(`${reason} Nothing is written until you give permission.`),
+      ).toBeVisible()
+      expect(screen.getAllByText(reason, { exact: false })).toHaveLength(1)
+      expect(screen.queryByRole('heading', { name: 'Writes are off' })).toBeNull()
+      expect(screen.queryByText(why)).toBeNull()
+      expect(document.querySelector('.cm-activity-status h2')).toBeNull()
+      expect(document.querySelector('.cm-activity-status p')).toBeNull()
+    } else {
+      expect(await screen.findByRole('heading', { name: 'Writes are off' })).toBeVisible()
+      expect(await screen.findByText(why)).toBeVisible()
+    }
     for (const calm of [
       'No action needed',
       'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
     ])
       expect(screen.queryByText(calm)).toBeNull()
-    // A lapse opens the consent card, in its existing slot, with the reason;
-    // the status below says something else rather than repeating it (#1370).
-    const reason =
-      'Write permission for fiction lapsed because this version of Mechanical Librarian can write a different set of fields.'
-    if (lapsed.length) {
-      expect(
-        await screen.findByRole('region', {
-          name: 'Writes are off.',
-        }),
-      ).toHaveTextContent(reason)
-      expect(screen.getAllByText(reason, { exact: false })).toHaveLength(1)
-    }
   })
 
   it('states a lapse beside a library that kept its permission (#1370)', async () => {
@@ -3914,9 +3932,13 @@ it.each([
       vi.mocked(http.getPreparation).mockResolvedValue(pausedConnection('paused'))
     renderRoute('/activity', http)
     await screen.findByRole('heading', { name: 'Activity' })
-    // The status heading and the shell's connection notice say it the same way.
-    if (name === 'connection condition')
-      await screen.findByText('Library connection failed', { selector: '.cm-activity-status h2' })
+    // The shell's connection notice says it; the status panel keeps its review
+    // entry but adds no heading of its own (#1765).
+    if (name === 'connection condition') {
+      const notice = await screen.findByRole('region', { name: 'Library connection' })
+      expect(await within(notice).findByText('Library connection failed')).toBeVisible()
+      expect(document.querySelector('.cm-activity-status h2')).toBeNull()
+    }
     // The card waits for the one Settings read that names its libraries (#1286).
     const entries =
       owner === 'none'
@@ -4787,6 +4809,11 @@ describe('owner language in Activity (#1286)', () => {
     if (!card) throw new Error('the consent card is a section')
     expect(within(card).queryByText(/readiness/iu)).toBeNull()
     expect(within(card).getAllByText(/until you give permission/u)).toHaveLength(1)
+    // Fiction Shelf already writes, so the card says nothing else is (#1765).
+    expect(
+      within(card).getByText('Nothing else is written until you give permission.'),
+    ).toBeVisible()
+    expect(within(card).queryByText('Nothing is written until you give permission.')).toBeNull()
     // The review says the same: the held library is held, not waiting.
     await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
     await screen.findByRole('list', { name: 'Research Shelf fields' })
@@ -5130,4 +5157,81 @@ describe('owner language in Activity (#1286)', () => {
     renderRoute('/activity', http)
     expect(await screen.findByText(summary)).toBeVisible()
   })
+
+  it.each([
+    [1, '1 source needs a settings change before lookups retry.', '1 item needs recovery'],
+    [2, '2 sources need a settings change before lookups retry.', '2 items need recovery'],
+  ])(
+    'sends %i dormant source to Settings from the status (#1765)',
+    async (count, paragraph, summary) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () =>
+          activity({
+            enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+            provider_recovery: [
+              {
+                state: 'dormant',
+                affected_count: count,
+                next_eligible_at: null,
+                dispatch_reasons: [],
+                failure_reasons: [],
+              },
+            ],
+          }),
+        ),
+      }
+      renderRoute('/activity', http)
+      expect(await screen.findByRole('heading', { name: 'Recovery needs attention' })).toBeVisible()
+      const status = document.querySelector('.cm-activity-status')
+      if (!(status instanceof HTMLElement)) throw new Error('the status panel renders')
+      expect(within(status).getByText(paragraph)).toBeVisible()
+      expect(
+        within(status).getByRole('link', { name: 'Check sources in Settings' }),
+      ).toHaveAttribute('href', '/settings?group=providers')
+      expect(screen.getAllByRole('link', { name: 'Check sources in Settings' })).toHaveLength(1)
+      expect(screen.queryByText(/a fix in Settings/u)).toBeNull()
+      expect(screen.getByText(summary)).toBeVisible()
+    },
+  )
+
+  it.each([
+    ['nothing to recover', 0, null],
+    ['one item to recover', 1, '1 item needs recovery'],
+  ])(
+    'while paused, the controls line counts recovery only: %s (#1765)',
+    async (_name, count, summary) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () =>
+          activity({
+            paused: true,
+            enabled_libraries: [{ connection: 'primary', library: 'fiction', prepared: null }],
+            suspensions: (['title'] as const).slice(0, count).map((destination) => ({
+              connection: 'primary',
+              destination,
+              reason: 'unexpected_effect_behavior' as const,
+              scope: 'destination' as const,
+              updated_at: 1,
+            })),
+          }),
+        ),
+      }
+      renderRoute('/activity', http)
+      await screen.findByRole('heading', { name: 'Activity' })
+      const disclosure = await screen.findByText('Writes and recovery', { selector: 'strong' })
+      const line = disclosure.parentElement?.querySelector('small') ?? null
+      if (summary === null) {
+        // Paused is said by the status heading; the line adds nothing.
+        expect(await screen.findByRole('heading', { name: 'Writes are paused' })).toBeVisible()
+        expect(line).toBeNull()
+        expect(screen.getAllByText('Writes are paused')).toHaveLength(1)
+        expect(screen.queryByText(/needs? recovery$/u)).toBeNull()
+      } else {
+        expect(line).toHaveTextContent(new RegExp(`^${summary}$`, 'u'))
+        expect(screen.getByText(summary)).toBeVisible()
+        expect(screen.queryByText('Writes are paused')).toBeNull()
+      }
+    },
+  )
 })

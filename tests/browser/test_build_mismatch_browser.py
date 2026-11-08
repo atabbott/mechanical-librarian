@@ -419,6 +419,10 @@ def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
             "Backup checked.",
             exact=True,
         ).wait_for()
+        readiness = review.locator(":scope > p[role='status']")
+        expect(readiness).to_have_text("Backup checked.")
+        shown = readiness.bounding_box()
+        assert shown is not None and shown["height"] > 1, shown
         review.get_by_role("checkbox", name="fiction").check()
         page.route(
             re.compile(r".*/api/v1/activity/consent-state.*"), _answer_as_next_build
@@ -438,6 +442,13 @@ def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
             "masthead => masthead.getBoundingClientRect().bottom"
         )
         assert lead_top >= masthead_bottom, (lead_top, masthead_bottom)
+        # The emptied readiness line stays mounted, so its next line is
+        # announced, but takes no space while it is empty (#1765).
+        expect(readiness).to_have_count(1)
+        expect(readiness).to_have_text("")
+        hidden = readiness.bounding_box()
+        assert hidden is not None, hidden
+        assert hidden["width"] <= 1 and hidden["height"] <= 1, hidden
 
 
 @pytest.mark.parametrize(

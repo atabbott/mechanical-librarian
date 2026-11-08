@@ -1299,6 +1299,13 @@ describe('Policy route', () => {
     expect(
       screen.queryByText(/No policy change/, { selector: '.cm-policy-projected-context p' }),
     ).toBeNull()
+    // Only changed rows carry a title, so with the unchanged outcomes open the
+    // one changed row is the only one titled, and nothing says "No policy
+    // change" (#1765).
+    expect(
+      screen.getAllByText('Policy change', { selector: '.cm-policy-impact > b' }),
+    ).toHaveLength(1)
+    expect(screen.queryByText(/No policy change/u)).toBeNull()
     expect(
       screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
     ).toBeVisible()

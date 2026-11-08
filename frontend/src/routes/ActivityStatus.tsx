@@ -1,6 +1,5 @@
 import { Link } from '@tanstack/react-router'
 import type {
-  PreparationView,
   ProviderRecoveryActivityView,
   ProviderRecoveryDispatchReason,
   ProviderRecoveryFailureReason,
@@ -25,9 +24,10 @@ const recoveryDispatchLabel: Record<ProviderRecoveryDispatchReason, string> = {
 }
 
 // What most needs the owner, said once: the heading and paragraph name the
-// first condition that applies, in this order.
+// first condition that applies, in this order. A checking or failed library
+// connection is said by the shell's connection notice, so the page renders
+// none of this while one holds (#1765).
 export function ActivityStatusCopy({
-  connection,
   recoveryCount,
   dormantRecovery,
   ownerAction,
@@ -37,9 +37,7 @@ export function ActivityStatusCopy({
   paused,
   writesHeld,
   lapse,
-  cardLapse,
 }: {
-  connection: PreparationView['connections'][number] | undefined
   recoveryCount: number
   dormantRecovery: number
   /** Changes stopped until the owner acts on their ledger entry (#1430). */
@@ -51,60 +49,50 @@ export function ActivityStatusCopy({
   paused: boolean
   writesHeld: boolean
   lapse: string | null
-  cardLapse: boolean
 }) {
   return (
     <>
       <h2 id="activity-status-title">
-        {connection?.state === 'checking'
-          ? 'Checking library connection'
-          : connection?.state === 'paused'
-            ? 'Library connection failed'
-            : recoveryCount
-              ? 'Recovery needs attention'
-              : ownerAction
-                ? ownerAction === 1
-                  ? 'A stopped change needs you'
-                  : `${String(ownerAction)} stopped changes need you`
-                : throttleRemedy
-                  ? 'A source needs attention'
-                  : throttled
-                    ? 'A source is limiting lookups'
-                    : paused
-                      ? 'Writes are paused'
-                      : !writesHeld
-                        ? 'Writes are off'
-                        : lapse
-                          ? 'Some writes are off'
-                          : 'No action needed'}
+        {recoveryCount
+          ? 'Recovery needs attention'
+          : ownerAction
+            ? ownerAction === 1
+              ? 'A stopped change needs you'
+              : `${String(ownerAction)} stopped changes need you`
+            : throttleRemedy
+              ? 'A source needs attention'
+              : throttled
+                ? 'A source is limiting lookups'
+                : paused
+                  ? 'Writes are paused'
+                  : !writesHeld
+                    ? 'Writes are off'
+                    : lapse
+                      ? 'Some writes are off'
+                      : 'No action needed'}
       </h2>
       <p>
-        {connection?.state === 'checking'
-          ? 'Preparation is paused until the check finishes.'
-          : connection?.state === 'paused'
-            ? `${String(connection.affected)} ${connection.affected === 1 ? 'work is' : 'works are'} paused until the connection is checked again.`
-            : dormantRecovery
-              ? `${String(dormantRecovery)} ${dormantRecovery === 1 ? 'source needs' : 'sources need'} a fix in Settings before lookups retry.`
-              : recoveryCount
-                ? 'Affected works are held until they can be checked again.'
-                : ownerAction
-                  ? ownerAction === 1
-                    ? `Its ledger entry, marked Closed, says why. Nothing retries it on its own: follow its advice, or choose the field again. If it isn’t listed, ${filtered ? 'widen the range or clear filters' : 'widen the range'}.`
-                    : `Each one’s ledger entry, marked Closed, says why. Nothing retries them on their own: follow its advice, or choose the field again. If one isn’t listed, ${filtered ? 'widen the range or clear filters' : 'widen the range'}.`
-                  : throttled
-                    ? throttleRemedy
-                      ? 'A source needs its API key added or checked. Its lookups wait until then.'
-                      : 'Some lookups wait until the source allows them again.'
-                    : paused
-                      ? 'No new write starts until you resume writes. Writes already under way finish.'
-                      : (lapse ??
-                        (writesHeld
-                          ? ''
-                          : cardLapse
-                            ? 'Nothing is written until you give permission again.'
-                            : 'No library has write permission. Nothing is written until you give it.'))}
+        {dormantRecovery
+          ? `${String(dormantRecovery)} ${dormantRecovery === 1 ? 'source needs' : 'sources need'} a settings change before lookups retry.`
+          : recoveryCount
+            ? 'Affected works are held until they can be checked again.'
+            : ownerAction
+              ? ownerAction === 1
+                ? `Its ledger entry, marked Closed, says why. Nothing retries it on its own: follow its advice, or choose the field again. If it isn’t listed, ${filtered ? 'widen the range or clear filters' : 'widen the range'}.`
+                : `Each one’s ledger entry, marked Closed, says why. Nothing retries them on their own: follow its advice, or choose the field again. If one isn’t listed, ${filtered ? 'widen the range or clear filters' : 'widen the range'}.`
+              : throttled
+                ? throttleRemedy
+                  ? 'A source needs its API key added or checked. Its lookups wait until then.'
+                  : 'Some lookups wait until the source allows them again.'
+                : paused
+                  ? 'No new write starts until you resume writes. Writes already under way finish.'
+                  : (lapse ??
+                    (writesHeld
+                      ? ''
+                      : 'No library has write permission. Nothing is written until you give it.'))}
       </p>
-      {throttled && !connection && !recoveryCount && !ownerAction ? (
+      {/* Both paragraphs that send you to Settings link it (#1765). */}
+      {dormantRecovery || (throttled && !recoveryCount && !ownerAction) ? (
         <Link to="/settings" search={{ group: 'providers' }}>
           Check sources in Settings
         </Link>

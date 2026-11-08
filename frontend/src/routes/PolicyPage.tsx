@@ -397,9 +397,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   projected,
                   impact: {
                     changed: field.changed,
-                    title: field.changed
-                      ? ('Policy change' as const)
-                      : ('No policy change' as const),
                     detail: field.changed
                       ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail.replace(/[^.]$/u, '$&.')}`
                       : projected.detail,
@@ -912,7 +909,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           </small>
                         </span>
                         <span className="cm-policy-impact">
-                          <b>{row.impact.title}</b>
+                          {/* Only changed rows are listed here (#1765). */}
+                          <b>Policy change</b>
                           <small>· {row.impact.detail}</small>
                           <details>
                             <summary>Technical detail</summary>

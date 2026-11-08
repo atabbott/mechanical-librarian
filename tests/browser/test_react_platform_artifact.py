@@ -662,6 +662,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 notice = page.get_by_label("Library connection", exact=True)
                 check = notice.get_by_role("button", name="Check connection again")
                 expect(check).to_be_visible()
+                expect(notice).to_contain_text("Library connection failed")
+                if path == "/activity":
+                    # The notice says it; the status panel adds no heading or
+                    # paragraph of its own (#1765).
+                    # The source recovery list below keeps its own lines.
+                    expect(page.locator(".cm-activity-status h2")).to_have_count(0)
+                    expect(page.locator(".cm-activity-status-copy > p")).to_have_count(
+                        0
+                    )
                 assert "primary" not in notice.inner_text()
                 assert "http" not in notice.inner_text()
                 for width, expected_columns in (

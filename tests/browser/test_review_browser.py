@@ -13585,9 +13585,20 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
             page.get_by_text("Some writes are off", exact=True).wait_for()
             page.get_by_text("Action needed", exact=True).first.wait_for()
         else:
-            page.get_by_text(
+            # With nothing waiting, the write card states the lapse and the
+            # status copy is hidden rather than restating it (#1765).
+            card = page.locator(".cm-write-consent")
+            expect(card).to_contain_text(sentence)
+            expect(
+                card.get_by_text(
+                    re.compile(r"Nothing is written until you give permission\.$")
+                )
+            ).to_be_visible()
+            expect(main).not_to_contain_text(
                 "Nothing is written until you give permission again."
-            ).wait_for()
+            )
+            expect(page.locator(".cm-activity-status h2")).to_have_count(0)
+            expect(page.locator(".cm-activity-status p")).to_have_count(0)
 
 
 def test_works_no_provider_matched_have_their_own_lens_and_reasons(
