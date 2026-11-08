@@ -128,8 +128,10 @@ decision, plan, write or deletion.
   other evidence or delaying other work
   ([provider recovery](provider-recovery.md)).
 - **Failures.** An item that fails before a package exists appears in Library
-  only, with recovery guidance and no automatic retry. Fix the cause and use
-  Retry; never edit SQLite.
+  only, with recovery guidance and no automatic retry. A scan started for
+  description work, when it is requested or when preparation resumes, also
+  retries that library's failed items. Fix the cause and use Retry; never edit
+  SQLite.
 - **Pause** stops new admissions without cancelling committed work.
 
 A target connection failure (TLS, authentication, authorization or

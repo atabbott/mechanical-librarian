@@ -659,15 +659,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         *,
         clear_pause: bool,
     ) -> None:
-        if not clear_pause:
-            paused = self._connection.execute(
-                "SELECT paused FROM review_preparation_control WHERE singleton=1"
-            ).fetchone()
-            if paused is None:
-                raise MetadataReportError("review preparation control is unavailable")
-            if bool(paused[0]):
-                refresh_preparation_run_state(self._connection, updated_at)
-                return
+        paused = self._connection.execute(
+            "SELECT paused FROM review_preparation_control WHERE singleton=1"
+        ).fetchone()
+        if paused is None:
+            raise MetadataReportError("review preparation control is unavailable")
+        if not clear_pause and bool(paused[0]):
+            refresh_preparation_run_state(self._connection, updated_at)
+            return
         deferred = self._connection.execute(
             "SELECT row_id,connection_name,library_name,ordinal,accepted_at "
             "FROM review_preparation_presentation "
@@ -734,7 +733,33 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 promoting_deferred=True,
                 presentation_accepted_at=accepted_at,
             )
+        if clear_pause and bool(paused[0]):
+            self._request_pending_description_scans(configured, updated_at)
         refresh_preparation_run_state(self._connection, updated_at)
+
+    def _request_pending_description_scans(
+        self,
+        configured: dict[tuple[str, str], tuple[str, str]],
+        updated_at: int,
+    ) -> None:
+        """Start description work recorded during a pause in the resume commit."""
+        from mechanical_librarian.adapters.persistence.description_advice import (
+            pending_description_libraries,
+        )
+
+        for connection, library in pending_description_libraries(self._connection):
+            if (connection, library) not in configured:
+                continue
+            library_id, fingerprint = configured[(connection, library)]
+            self._request_review_scan_unpaused(
+                connection,
+                library,
+                library_id,
+                fingerprint,
+                updated_at,
+                first_boot=False,
+                trigger=None,
+            )
 
     @local_operation
     def recover_review_pipeline(

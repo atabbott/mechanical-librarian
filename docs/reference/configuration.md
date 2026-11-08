@@ -566,5 +566,5 @@ owner can still choose a result below it.
 - An owner's final choice wins, and in-flight effects are not raced.
 - Identical text records no change and sends no PATCH or Attention item.
 - Free replacement text is not accepted. Keep current reverses a choice.
-- A request made while preparation is paused waits until it resumes. Work
-  accepted before the pause completes normally.
+- A request made while preparation is paused starts when preparation
+  resumes. Work accepted before the pause completes normally.
