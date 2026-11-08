@@ -26,6 +26,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     TargetDestination,
     TargetFieldState,
+    field_evidence_providers,
 )
 
 OPEN_LIBRARY_PROVIDER: Final = "open_library"
@@ -106,7 +107,7 @@ def established_work_languages(report: MetadataReport) -> frozenset[Language]:
     if own:
         return frozenset(own)
     stated: dict[Language, set[str]] = {}
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for language in {
             language
             for candidate in provider.candidates

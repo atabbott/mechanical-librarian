@@ -1194,3 +1194,29 @@ def test_startup_refuses_the_predecessor_schema_without_browse_facts(
     ):
         open_repository(database, create=False)
     assert database.read_bytes() == before
+
+
+def test_startup_refuses_the_browse_fact_trigger_that_read_cover_only_lanes(
+    tmp_path: Path,
+) -> None:
+    """#1779: a store whose facts counted iTunes' audiobook lanes is rebuilt."""
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    _publish(repository, _edge_report(1, "Ab"), propose=False)
+    repository.close()
+    prior = schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
+        "NOT " + schema._cover_only_provider_sql("NEW.document") + " AND ", ""
+    )
+    assert prior != schema._REPORT_BROWSE_FACTS_INSERT_SQL
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        "DROP TRIGGER metadata_reports_project_browse_facts;" + prior + ";"
+    )
+    connection.commit()
+    connection.close()
+    before = database.read_bytes()
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(database, create=False)
+    assert database.read_bytes() == before

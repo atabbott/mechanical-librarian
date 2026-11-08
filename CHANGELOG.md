@@ -145,6 +145,11 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- **Clean rebuild required.** While its Cover evidence switch is on, iTunes is
+  asked for an audiobook's cover again, one search per audiobook. It supplies
+  nothing else about the audiobook. An iTunes failure never puts an audiobook
+  under "Some lookups gave no usable answer" in Library. An audiobook that only
+  iTunes found stays in the Not matched lens (#1779).
 - The review case page says what happened in your words: history reads "You
   chose a proposed value." and "Automatic kept the current value." instead of
   "Owner selected…" and "Automatic policy…", entries no longer repeat their
