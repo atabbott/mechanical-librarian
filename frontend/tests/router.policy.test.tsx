@@ -2633,7 +2633,11 @@ it.each([
         : /Suspension recovered/u,
     )
     await user.click(screen.getByRole('link', { name: 'Library' }))
-    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    await user.click(
+      await screen.findByRole('button', {
+        name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+      }),
+    )
     expect(await screen.findByText('Title recovery requested')).toBeVisible()
     expect(queryClient.getQueryData(['review-preparation'])).toMatchObject({
       presentation: { state: 'running', total: 1, passage: { ready: 1 } },

@@ -1561,7 +1561,7 @@ def test_completed_enrollment_restarts_exact_cycle_without_reaging_outcome(
 
     assert before is not None and after is not None
     assert after.state is PreparationRunState.RUNNING
-    assert after.active_books[0].stage == "Reading from library"
+    assert after.active_books[0].stage == "Reading your files"
     assert after.recent_completions == before.recent_completions
     assert after.throughput_per_minute == before.throughput_per_minute
     reopened = open_repository(application_path, create=False)
