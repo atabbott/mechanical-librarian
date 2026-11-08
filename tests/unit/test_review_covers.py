@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from argon2 import PasswordHasher
@@ -51,6 +52,13 @@ class _Library:
     service: CoverConsiderationService
     report: MetadataReport
     cases: dict[str, str]
+
+
+def _page(
+    store: Any, view: str, cursor: Any, cover: str | None = None
+) -> dict[str, Any]:
+    """``cover_page``'s document, typed for the assertions below."""
+    return cast(dict[str, Any], cover_page(store, view, cursor, cover))
 
 
 def _for_item(report: MetadataReport, item: str) -> MetadataReport:
@@ -189,7 +197,7 @@ def _release(library: _Library, plan_id: str) -> None:
 
 def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
     with _library(tmp_path) as library:
-        page = cover_page(library.repository, "all", None)
+        page = _page(library.repository, "all", None)
 
     assert page["counts"] == {"decide": 0, "kept": 1, "switched": 0, "all": 1}
     assert page["schema_version"] == "review-covers-v1"
@@ -206,8 +214,8 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
 
 def test_an_unreadable_current_cover_asks_for_a_choice(tmp_path: Path) -> None:
     with _library(tmp_path, readable_current=False) as library:
-        decide = cover_page(library.repository, "decide", None)
-        kept = cover_page(library.repository, "kept", None)
+        decide = _page(library.repository, "decide", None)
+        kept = _page(library.repository, "kept", None)
         # The same work Library's Needs attention lens counts.
         assert (
             library.repository.read_review_library(
@@ -239,7 +247,7 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
         )
         _switch(library, "item-3", plan="3", at=50, original=None)
 
-        page = cover_page(library.repository, "switched", None)
+        page = _page(library.repository, "switched", None)
         assert page["counts"]["switched"] == 3
         assert [item["review_case_id"] for item in page["items"]] == [
             library.cases["item-2"],
@@ -260,13 +268,13 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
         )
 
         _release(library, older)
-        page = cover_page(library.repository, "switched", None)
+        page = _page(library.repository, "switched", None)
         assert [item["review_case_id"] for item in page["items"]] == [
             library.cases["item-2"],
             library.cases["item-3"],
         ]
         # The released switch's work falls back to its own group.
-        assert cover_page(library.repository, "kept", None)["counts"]["kept"] == 1
+        assert _page(library.repository, "kept", None)["counts"]["kept"] == 1
         with pytest.raises(ReviewWebError) as missing:
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
         assert missing.value.code == "missing"
@@ -282,7 +290,7 @@ def test_a_works_newest_listed_switch_is_its_highest_listing_sequence(
         newer = _switch(
             library, "item-1", plan="2", at=100, original=original, sequence=2
         )
-        page = cover_page(library.repository, "switched", None)
+        page = _page(library.repository, "switched", None)
 
     (item,) = page["items"]
     assert item["switched"]["at"] == 100
@@ -295,9 +303,7 @@ def test_only_the_newest_cover_write_of_a_work_is_listed(tmp_path: Path) -> None
     with _library(tmp_path) as library:
         original = _abs_digest(library.report)
         _switch(library, "item-1", plan="1", at=100, original=original, sequence=1)
-        assert (
-            cover_page(library.repository, "switched", None)["counts"]["switched"] == 1
-        )
+        assert _page(library.repository, "switched", None)["counts"]["switched"] == 1
         # A later write that is not a listed switch replaces it as current.
         connection = library.repository._connection
         connection.execute(
@@ -311,9 +317,7 @@ def test_only_the_newest_cover_write_of_a_work_is_listed(tmp_path: Path) -> None
             ),
         )
         connection.commit()
-        assert (
-            cover_page(library.repository, "switched", None)["counts"]["switched"] == 0
-        )
+        assert _page(library.repository, "switched", None)["counts"]["switched"] == 0
 
 
 @pytest.mark.parametrize(
@@ -338,7 +342,7 @@ def test_a_replaced_preview_is_missing_unless_listed_and_bound(
 def test_pages_hold_fifty_books_and_a_cursor_reads_the_rest(tmp_path: Path) -> None:
     items = tuple(f"item-{index}" for index in range(1, COVER_PAGE_SIZE + 3))
     with _library(tmp_path, items) as library:
-        first = cover_page(library.repository, "kept", None)
+        first = _page(library.repository, "kept", None)
         assert len(first["items"]) == COVER_PAGE_SIZE
         assert first["counts"]["kept"] == COVER_PAGE_SIZE + 2
         cursor = first["next_cursor"]
@@ -346,7 +350,7 @@ def test_pages_hold_fifty_books_and_a_cursor_reads_the_rest(tmp_path: Path) -> N
         # A book on the first page leaves the tab, as a decision moves it: the
         # next page resumes after the last book shown, so none is skipped.
         _switch(library, "item-1", plan="1", at=100, original=None)
-        second = cover_page(library.repository, "kept", cursor)
+        second = _page(library.repository, "kept", cursor)
         assert len(second["items"]) == 2
         assert second["next_cursor"] is None
         assert second["counts"]["kept"] == COVER_PAGE_SIZE + 1
@@ -354,34 +358,32 @@ def test_pages_hold_fifty_books_and_a_cursor_reads_the_rest(tmp_path: Path) -> N
         assert shown == set(library.cases.values())
         # A cursor is bound to its tab.
         with pytest.raises(ReviewWebError):
-            cover_page(library.repository, "all", cursor)
+            _page(library.repository, "all", cursor)
     with pytest.raises(ReviewWebError):
-        cover_page(library.repository, "everything", None)
+        _page(library.repository, "everything", None)
 
 
 def test_a_linked_book_is_read_on_its_own_wherever_it_falls(tmp_path: Path) -> None:
     items = tuple(f"item-{index}" for index in range(1, COVER_PAGE_SIZE + 3))
     with _library(tmp_path, items) as library:
         # The last book by title, past the first page.
-        last = cover_page(
+        last = _page(
             library.repository,
             "all",
-            cover_page(library.repository, "all", None)["next_cursor"],
+            _page(library.repository, "all", None)["next_cursor"],
         )["items"][-1]
-        page = cover_page(library.repository, "all", None, last["review_case_id"])
+        page = _page(library.repository, "all", None, last["review_case_id"])
         assert page["items"] == [last]
         assert page["next_cursor"] is None
         assert page["counts"]["all"] == COVER_PAGE_SIZE + 2
         # Only under a tab that holds it, and never with a cursor.
         assert (
-            cover_page(library.repository, "switched", None, last["review_case_id"])[
-                "items"
-            ]
+            _page(library.repository, "switched", None, last["review_case_id"])["items"]
             == []
         )
         for cursor, cover in (("x", last["review_case_id"]), (None, "review_case_x")):
             with pytest.raises(ReviewWebError) as refused:
-                cover_page(library.repository, "all", cursor, cover)
+                _page(library.repository, "all", cursor, cover)
             assert refused.value.code == "request"
 
 
