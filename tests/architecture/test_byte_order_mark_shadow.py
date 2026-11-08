@@ -41,6 +41,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioInspection,
+    AudioInspectionField,
 )
 from mechanical_librarian.domain.audio_sidecar_association import (
     AudioAssociationContext,
@@ -50,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     canonical_json,
+    echoed_target_values,
 )
 from tests.support.audio_grammar_child import GrammarChild
 
@@ -65,7 +67,16 @@ _TITLES = (_TITLE, _TITLE, _TITLE, "A Different Synthetic Book")
 _CREATORS = (_AUTHOR, _AUTHOR, _AUTHOR, "Another Synthetic Author")
 _NARRATORS = (_NARRATOR, "Second Narrator", "Third Voice")
 _ASINS = ("B0SYNTH001", "B0SYNTH002")
+# The target's language first, so `.opf` and `.nfo` documents echo it and the
+# echoed-language reader (#1481) has something to read.
+_LANGUAGES = ("English", "English", "German")
 _TRACKS = ("book.m4b", "part2.m4b")
+_FIELDS = (
+    TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, (_AUTHOR,)),
+    TargetField(TargetDestination.NARRATORS, TargetFieldState.VALUE, (_NARRATOR,)),
+    TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, _ASINS[0]),
+    TargetField(TargetDestination.LANGUAGE, TargetFieldState.VALUE, "English"),
+)
 _NAMES = (
     "book.nfo",
     "book.cue",
@@ -102,7 +113,17 @@ class _Child(GrammarChild):
 
 def _line_one(rng: random.Random, kind: str) -> str:
     choice = rng.choice(
-        ("title", "creator", "asin", "asin", "narrator", "narrator", "file", "none")
+        (
+            "title",
+            "creator",
+            "asin",
+            "asin",
+            "narrator",
+            "narrator",
+            "language",
+            "file",
+            "none",
+        )
     )
     if choice == "title":
         value = rng.choice(_TITLES)
@@ -116,6 +137,8 @@ def _line_one(rng: random.Random, kind: str) -> str:
     if choice == "narrator":
         value = rng.choice(_NARRATORS)
         return f"REM NARRATOR {value}" if kind == "cue" else f"Narrator: {value}"
+    if choice == "language" and kind != "cue":
+        return f"Language: {rng.choice(_LANGUAGES)}"
     if choice == "file" and kind == "cue":
         return f'FILE "{rng.choice((*_TRACKS, "elsewhere.m4b", "../x.m4b"))}" MP4'
     return "REM COMMENT none" if kind == "cue" else "Comment: none"
@@ -146,7 +169,7 @@ def _line_document(rng: random.Random, kind: str) -> str:
         if rng.random() < 0.5:
             lines.append(f"ASIN: {rng.choice(_ASINS)}")
         if rng.random() < 0.3:
-            lines.append(f"Language: {rng.choice(('English', 'German'))}")
+            lines.append(f"Language: {rng.choice(_LANGUAGES)}")
     if many:
         lines.extend(f"Narrator: Crowd Voice {index:03d}" for index in range(300))
     return "\n".join(lines) + "\n"
@@ -161,6 +184,8 @@ def _opf(rng: random.Random) -> str:
     parts.append(
         f'<dc:contributor opf:role="nrt">{rng.choice(_NARRATORS)}</dc:contributor>'
     )
+    if rng.random() < 0.5:
+        parts.append(f"<dc:language>{rng.choice(_LANGUAGES)}</dc:language>")
     parts.append(f'<meta name="calibre:asin" content="{rng.choice(_ASINS)}"/>')
     parts.append("</metadata></package>")
     return "".join(parts)
@@ -215,13 +240,6 @@ def _run(
             (root / "Item" / track).write_bytes(f"audio {track}".encode())
         for name, text in documents.items():
             (root / "Item" / name).write_text(text, encoding="utf-8")
-        fields = (
-            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, (_AUTHOR,)),
-            TargetField(
-                TargetDestination.NARRATORS, TargetFieldState.VALUE, (_NARRATOR,)
-            ),
-            TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, _ASINS[0]),
-        )
         try:
             return IsolatedAudioInspector().inspect(
                 MediaMountConfiguration("audiobooks", str(root), "/library", True),
@@ -231,7 +249,7 @@ def _run(
                 ),
                 268_435_456,
                 association=AudioAssociationContext(
-                    _TITLE, fields, (*tracks, *documents)
+                    _TITLE, _FIELDS, (*tracks, *documents)
                 ),
             )
         except AudioItemInspectionError as error:
@@ -264,6 +282,12 @@ def _assert_shadow_only(
     assert _without_records(marked.audio.to_data()) == _without_records(
         oracle.audio.to_data()
     )
+    # The refusal-only readers of echoed values (#1481): the carried-edition
+    # narrator refusal and the rich-metadata language gate.
+    for field in (AudioInspectionField.CONTRIBUTOR, AudioInspectionField.LANGUAGE):
+        assert echoed_target_values(
+            marked.audio, _FIELDS, field
+        ) == echoed_target_values(oracle.audio, _FIELDS, field)
     return marked
 
 

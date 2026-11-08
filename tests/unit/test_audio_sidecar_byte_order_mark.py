@@ -78,6 +78,7 @@ from mechanical_librarian.domain.metadata_report import (
     audio_record_rungs,
     canonical_json,
     default_target_fields,
+    echoed_target_values,
 )
 from tests.support.audio_grammar_child import GrammarChild
 from tests.support.metadata_report_doubles import single_track_audio_facts
@@ -1185,3 +1186,49 @@ def test_a_record_holds_only_what_the_plain_reading_did_not_keep(
     assert entry.byte_order_mark == AudioSidecarByteOrderMark(
         facts=(AudioSidecarByteOrderMarkFact(_F.ASIN, _ASIN, _ASIN),)
     )
+
+
+@pytest.mark.parametrize(
+    ("hidden", "field"),
+    [
+        ("Language: English", _F.LANGUAGE),
+        (f"Narrator: {_NARRATOR}", _F.CONTRIBUTOR),
+    ],
+    ids=["language", "narrator"],
+)
+def test_a_hidden_echo_never_reaches_the_echo_readers(
+    tmp_path: Path, child: _BoundedChild, hidden: str, field: AudioInspectionField
+) -> None:
+    """#1481's refusal-only readers see only the plain reading's echoes.
+
+    The carried-edition narrator refusal and the rich-metadata language gate
+    read `echoed_target_values`. A target value echoed on a marked first line
+    reaches neither; the same line without the mark does, so the comparison
+    is not vacuous.
+    """
+    fields = (
+        *_context(()).fields,
+        TargetField(TargetDestination.LANGUAGE, TargetFieldState.VALUE, "English"),
+    )
+
+    def inspect(folder: Path, text: str) -> AudioInspectionResult:
+        own = _write(folder, {"book.nfo": text})
+        return IsolatedAudioInspector().inspect(
+            MediaMountConfiguration("audiobooks", str(folder), "/library", True),
+            (TargetFile("1" * 64, f"Item/{_TRACK}", "m4b"),),
+            _MAXIMUM,
+            association=AudioAssociationContext(_TITLE, fields, own),
+        )
+
+    text = _nfo(hidden, f"Title: {_TITLE}", f"Author: {_AUTHOR}")
+    (tmp_path / "marked").mkdir()
+    (tmp_path / "plain").mkdir()
+    marked = inspect(tmp_path / "marked", _BOM + text)
+    plain = inspect(tmp_path / "plain", text)
+
+    [entry] = marked.audio.sidecars
+    assert entry.echoed == ()
+    assert entry.echoed_narrators == ()
+    assert entry.byte_order_mark == AudioSidecarByteOrderMark()
+    assert echoed_target_values(marked.audio, fields, field) == ()
+    assert echoed_target_values(plain.audio, fields, field) != ()
