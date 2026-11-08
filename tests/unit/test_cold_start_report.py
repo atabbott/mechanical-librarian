@@ -1600,8 +1600,9 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
 
     base = _dispatch_configuration()
     # Only an enabled provider in the audiobook dispatch set can go unsent:
-    # the disabled second Audible and the enabled iTunes, Google Books and
-    # Inventaire connections are not counted, though each has a zero row.
+    # the disabled second Audible and the enabled Google Books and Inventaire
+    # connections are not counted, though each has a zero row. iTunes is in
+    # the set for its cover (#1779), so it is counted.
     configuration = ApplicationConfiguration(
         connections=base.connections,
         libraries=(
@@ -1769,7 +1770,8 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         ],
         # Audible sent items 4 and 5 an initial request and the other six none.
         # Open Library's deadline stopped the one request it would have sent
-        # the first item; Hardcover had nothing to answer and starved nowhere.
+        # the first item; Hardcover and iTunes had nothing to answer and
+        # starved nowhere.
         "never_dispatched": {
             "audiobook_items": 8,
             "items": 8,
@@ -1778,6 +1780,7 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
                 {"provider": "audible", "items": 6, "starved_items": 0},
                 {"provider": "hardcover", "items": 8, "starved_items": 0},
                 {"provider": "open_library", "items": 8, "starved_items": 1},
+                {"provider": "store", "items": 8, "starved_items": 0},
             ],
         },
     } == audiobooks["dispatches"]

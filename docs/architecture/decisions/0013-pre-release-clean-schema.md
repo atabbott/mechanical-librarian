@@ -420,11 +420,22 @@ removal obligation. The proposal policy is unchanged. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
 
-Issue #1481 also takes the clean-rebuild branch. `metadata-report-v74` gives
+Issue #1779 also takes the clean-rebuild branch. `metadata-report-v74` plans
+one iTunes Search lane for an audiobook, whose answer supplies only its cover
+(ADR-0061 clause 9). An earlier report replays no such lane, and a report carries
+forward while its file and configuration fingerprints are unchanged, so a
+stored report would never ask iTunes for the cover. The report browse facts
+ignore a cover-only authority's lanes on an audio report, so an iTunes failure
+never marks an audiobook provider-limited and an iTunes listing never takes it
+out of Not matched. The proposal policy is unchanged. Every earlier
+application database is rejected before mutation and needs a clean rebuild; no
+adoption is supplied.
+
+Issue #1481 also takes the clean-rebuild branch. `metadata-report-v75` gives
 every audiobook sidecar manifest entry its kind, its binding, its closed
 refusals, the claims it supplied, the fields it lost to disagreement or to
 echoing the target, and Libation shadow values; `audio-inspection-v5` is the
-matching child protocol. A v73 report states none of these and holds claims
+matching child protocol. A v74 report states none of these and holds claims
 from Audiobookshelf's own record, from shared folders and from other books'
 sidecars, and a report carries forward while its file and configuration
 fingerprints are unchanged, so a stored report would keep them. The proposal

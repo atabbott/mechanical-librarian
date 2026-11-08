@@ -179,6 +179,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderBinding,
     TargetNotFoundError,
     UnsupportedMediaError,
+    provider_binding,
     require_report_current,
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
@@ -973,9 +974,7 @@ def run_metadata_report_loaded(
                 )
             return instance
 
-        bindings.append(
-            ProviderBinding(provider.name, provider.enabled, factory, provider.adapter)
-        )
+        bindings.append(provider_binding(provider, factory))
 
     def repository_factory() -> ReportRepository:
         repository: NonClosingRepository | SQLiteMetadataReportRepository = (

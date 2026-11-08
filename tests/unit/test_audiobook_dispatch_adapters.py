@@ -26,11 +26,15 @@ from mechanical_librarian.adapters.providers.audnexus_metadata import (
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
+from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+    ITunesSearchMetadataProvider,
+)
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
 )
 from mechanical_librarian.application.configuration import (
     AUDIOBOOK_DISPATCH_ADAPTERS,
+    recovery_adapters,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
@@ -55,6 +59,7 @@ _ADAPTERS: dict[str, tuple[type, frozenset[ProviderQueryKind]]] = {
     "audiosilo": (AudioSiloMetadataProvider, frozenset({_ASIN})),
     "audnexus": (AudnexusMetadataProvider, frozenset({_ASIN})),
     "hardcover": (HardcoverMetadataProvider, frozenset({_ISBN, _WORK})),
+    "itunes_search": (ITunesSearchMetadataProvider, frozenset({_WORK})),
     "open_library": (OpenLibraryMetadataProvider, frozenset({_ISBN, _WORK})),
 }
 _PLANS: dict[str, Callable[[], MetadataDiscoveryPlan]] = {
@@ -89,6 +94,15 @@ def _adapter(
 
 def test_the_contract_covers_exactly_the_dispatch_set() -> None:
     assert AUDIOBOOK_DISPATCH_ADAPTERS == set(_ADAPTERS)
+
+
+def test_itunes_is_dispatched_for_an_audiobook_but_never_retried() -> None:
+    """It is asked for a cover alone, so its failure queues no work (#1779)."""
+    assert "itunes_search" in AUDIOBOOK_DISPATCH_ADAPTERS
+    assert AUDIOBOOK_DISPATCH_ADAPTERS - {"itunes_search"} == recovery_adapters(
+        audio=True
+    )
+    assert "itunes_search" in recovery_adapters(audio=False)
 
 
 @pytest.mark.parametrize("plan_name", sorted(_PLANS))

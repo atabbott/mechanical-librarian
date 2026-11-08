@@ -96,6 +96,8 @@ def _product(minutes: int | None, *narrators: str) -> ProviderCandidate:
 def _report(
     editions: tuple[ProviderCandidate, ...],
     product: ProviderCandidate | None = None,
+    *,
+    cover_listing: bool = False,
 ) -> MetadataReport:
     duration = f"{_LOCAL}.000"
     work = ProviderCandidate(
@@ -119,6 +121,23 @@ def _report(
                 candidates=(product,),
                 query_kind=ProviderQueryKind.DISCOVERY,
                 authority="audible_catalog",
+            )
+        )
+    if cover_listing:
+        identity = "itunes-collection-0000000001"
+        providers.append(
+            ProviderObservation(
+                "itunes",
+                ProviderStatus.CANDIDATES,
+                candidates=(
+                    ProviderCandidate(
+                        identity,
+                        "unresolved",
+                        _claims("itunes", identity, ((ClaimKind.TITLE, "Run", None),)),
+                    ),
+                ),
+                query_kind=ProviderQueryKind.DISCOVERY,
+                authority="itunes_search",
             )
         )
     return MetadataReport.create(
@@ -198,6 +217,19 @@ def test_editions_that_disagree_on_narrator_witness_nothing() -> None:
 def test_no_accepted_recording_leaves_the_edition_unmatched() -> None:
     report = _report((_edition(3, _LOCAL, "Imra Vossel"),))
     assert HardcoverEditionWitness.UNMATCHED is hardcover_edition_witness(report)
+
+
+def test_a_cover_only_listing_is_no_accepted_recording() -> None:
+    # iTunes is asked for a cover only (#1779): its listing states no runtime,
+    # which must not read as a recording that agrees with the edition.
+    report = _report((_edition(3, _LOCAL, "Imra Vossel"),), cover_listing=True)
+    assert HardcoverEditionWitness.UNMATCHED is hardcover_edition_witness(report)
+    challenged = _report(
+        (_edition(3, _LOCAL + 34, "R. C. Bray"),),
+        _product(_LOCAL // 60 + 6, "Wil Wheaton"),
+        cover_listing=True,
+    )
+    assert HardcoverEditionWitness.CHALLENGED is hardcover_edition_witness(challenged)
 
 
 @pytest.mark.parametrize("seconds", (_LOCAL + 91, _LOCAL - 91))

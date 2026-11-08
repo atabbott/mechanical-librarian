@@ -38,6 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_ISBN_WORK_BASIS,
     COMPANION_WORK_BASIS,
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     TARGET_ADMISSION_BASIS,
     AudioFacts,
     ClaimKind,
@@ -69,6 +70,7 @@ from mechanical_librarian.domain.metadata_report import (
     discovery_lane_identity,
     duration_milliseconds,
     echoed_target_values,
+    field_evidence_providers,
     local_identifier_asins,
     plan_alternative_discovery_title,
     provider_candidate_exact_work_identity_admission,
@@ -1177,7 +1179,7 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
     which is how it reached this path.
     """
     return stated_runtime_admission(
-        report.providers,
+        field_evidence_providers(report),
         report.local_claims,
         report.target.current_title or "",
         report.library_languages,
@@ -1247,7 +1249,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
         return None
     support: list[tuple[str, str, str]] = []
     vetoed: set[str] = set()
-    for observation in report.providers:
+    for observation in field_evidence_providers(report):
         if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
             continue
         for candidate in (
@@ -1850,7 +1852,7 @@ def _carried_lanes(
     asin = cast("str", claim.canonical)
     return tuple(
         (observation, lane)
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         for lane in observation.lanes
         if claim.reference in lane.input_references
@@ -1905,7 +1907,7 @@ def _admitted_candidates(
     """The tight, narrator-compatible recordings audiobook authorities admitted."""
     return tuple(
         (observation, candidate)
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
@@ -2006,11 +2008,16 @@ def _counted_editions(
 def _accepted_recordings(
     observations: tuple[ProviderObservation, ...],
 ) -> tuple[ProviderCandidate, ...]:
-    """Every product an audiobook authority put forward for this item."""
+    """Every product an audiobook authority put forward for this item.
+
+    A cover-only authority's listing is no recording (#1779): its missing
+    runtime would otherwise agree with any edition.
+    """
     return tuple(
         candidate
         for observation in observations
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and observation.authority not in COVER_ONLY_AUDIOBOOK_AUTHORITIES
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
         if candidate.identity != candidate.work_identity
@@ -2325,7 +2332,7 @@ def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]
     )
     products = tuple(
         (observation, candidate)
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         for candidate in observation.candidates
         if current not in _edition_asins(candidate)

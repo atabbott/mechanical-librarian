@@ -360,7 +360,14 @@ class _FakeAudiobookProvider:
         )
 
 
-def _configuration(covers: bool = False) -> ApplicationConfiguration:
+def _configuration(
+    covers: bool = False, store_covers: bool = True
+) -> ApplicationConfiguration:
+    """Audible's covers follow `covers`; the store's are on unless said.
+
+    The store is asked about an audiobook only while its covers are on
+    (#1779), so a fixture that expects it asked keeps them on.
+    """
     return ApplicationConfiguration(
         (
             TargetConnectionConfiguration(
@@ -394,7 +401,7 @@ def _configuration(covers: bool = False) -> ApplicationConfiguration:
             ),
             ProviderConnectionConfiguration("silo", True, False, None, "audiosilo"),
             ProviderConnectionConfiguration(
-                "store", True, covers, None, "itunes_search"
+                "store", True, store_covers, None, "itunes_search"
             ),
         ),
         provider_recovery_generation=1,
@@ -431,10 +438,11 @@ def _run(
     providers: Mapping[str, MetadataProvider | Callable[[], MetadataProvider]],
     *,
     covers: bool = False,
+    store_covers: bool = True,
 ) -> tuple[str, object]:
     """Publish one audiobook report through the real composition seam."""
     database = root / "reports.sqlite"
-    configuration = _configuration(covers)
+    configuration = _configuration(covers, store_covers)
     composition.CoverArtifactStore(root / "artifacts", create=True)
     repository = open_repository(database)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
@@ -543,22 +551,25 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
         # The plan was the ASIN one, and every connected provider in the
         # audiobook dispatch set was asked except AudioSilo: Audible had
         # already admitted the recording by stated runtime (#1309). The store
-        # is connected, enabled and outside that set, so it was never asked at
-        # all (#1254).
-        assert {"audible_catalog", "audnexus"} == {
+        # is asked for a cover (#1779), but an ASIN-only plan gives it nothing
+        # to search.
+        assert {"audible_catalog", "audnexus", "itunes_search"} == {
             authority for authority, _kind in calls
         }
         assert {ProviderQueryKind.ASIN} == {
             kind for _authority, kind in calls if kind is not ProviderQueryKind.NONE
         }
-        assert [] == [value for value in calls if value[0] == "itunes_search"]
+        assert {("itunes_search", ProviderQueryKind.NONE)} == {
+            value for value in calls if value[0] == "itunes_search"
+        }
         # The report carries one observation per dispatched provider, and none
-        # for the store, Google Books or Inventaire (#1247).
-        assert 3 == len(published.providers)
+        # for Google Books or Inventaire (#1247).
+        assert 4 == len(published.providers)
         assert {
             "audible": ProviderStatus.CANDIDATES,
             "enrichment": ProviderStatus.CANDIDATES,
             "silo": ProviderStatus.NOT_NEEDED,
+            "store": ProviderStatus.INSUFFICIENT_INPUT,
         } == {value.provider: value.status for value in published.providers}
         silo = next(value for value in published.providers if value.provider == "silo")
         assert [ProviderQueryKind.ASIN] == [lane.kind for lane in silo.lanes]
@@ -575,7 +586,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v74" == published.schema_version
+        assert "metadata-report-v75" == published.schema_version
         # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -630,7 +641,8 @@ def test_a_degraded_primary_still_binds_the_remaining_observations(
         assert ProviderStatus.UNAVAILABLE is statuses["audible"]
         assert ProviderStatus.CANDIDATES is statuses["enrichment"]
         assert ProviderStatus.NOT_NEEDED is statuses["silo"]
-        assert 3 == len(published.providers)
+        assert ProviderStatus.INSUFFICIENT_INPUT is statuses["store"]
+        assert 4 == len(published.providers)
         # A degraded primary is still a published report, and the two
         # authorities that did answer still admit the recording, so the work
         # goes on to the proposal stage.
@@ -670,7 +682,7 @@ def test_an_unmatched_audiobook_records_its_evidence_and_completes(
         remaining = repository.claim_review_pipeline_action(15)
         repository.close()
 
-        assert 3 == len(published.providers)
+        assert 4 == len(published.providers)
         assert not any(observation.candidates for observation in published.providers)
         # Nothing admitted, so AudioSilo was asked, and its lane was empty.
         silo = next(value for value in published.providers if value.provider == "silo")
@@ -774,12 +786,7 @@ def _cover_providers(
     *,
     audible_url: str | None = _AUDIBLE_ART,
 ) -> dict[str, _FakeAudiobookProvider]:
-    """The four audiobook authorities, with covers on the two that state one.
-
-    The store answers the ASIN lane and states its own art here, so its absence
-    from the report is the dispatch set's doing (#1254) rather than a fake
-    that had nothing to offer.
-    """
+    """The four audiobook authorities, with covers on the two that state one."""
     return {
         "audible_catalog": _FakeAudiobookProvider(
             "audible",
@@ -816,7 +823,9 @@ def _published_with_covers(
 
     providers = _cover_providers(calls, audible_url=audible_url)
     with patch.object(cover_evidence_observer, "fetch_remote_cover", side_effect=fetch):
-        serialized, repository = _run(root, providers, covers=covers)
+        serialized, repository = _run(
+            root, providers, covers=covers, store_covers=covers
+        )
     repository.close()
     return MetadataReport.from_json(serialized)
 
@@ -824,12 +833,11 @@ def _published_with_covers(
 def test_an_audiobook_acquires_its_provider_covers_with_perceptual_hashes(
     calls: list[tuple[str, ProviderQueryKind]],
 ) -> None:
-    """Audible's art reaches the report hashed; the store's is never fetched.
+    """Both authorities' art reaches the report hashed.
 
-    The store is connected with covers enabled, but it is outside the audiobook
-    dispatch set (#1254), so the Audible catalog is the one cover authority
-    acquired. The cross-authority hash rule stays proven in the cover-packet
-    unit suite.
+    The store is asked an audiobook's cover again (#1779), so the Audible
+    catalog and the store are two cover authorities. The cross-authority hash
+    rule stays proven in the cover-packet unit suite.
     """
     fetched: list[str] = []
     with tempfile.TemporaryDirectory() as temporary:
@@ -840,22 +848,21 @@ def test_an_audiobook_acquires_its_provider_covers_with_perceptual_hashes(
             fetched=fetched,
         )
 
-    assert [_AUDIBLE_ART] == fetched
-    kinds = {source.kind for source in published.cover_sources}
-    assert CoverSourceKind.AUDIBLE_CATALOG in kinds
-    assert CoverSourceKind.ITUNES_SEARCH not in kinds
+    assert {_AUDIBLE_ART, _ITUNES_ART} == set(fetched)
     retrieved = [
         source
         for source in published.cover_sources
         if source.state is CoverSourceState.RETRIEVED
     ]
-    assert [CoverSourceKind.AUDIBLE_CATALOG] == [source.kind for source in retrieved]
+    assert {CoverSourceKind.AUDIBLE_CATALOG, CoverSourceKind.ITUNES_SEARCH} == {
+        source.kind for source in retrieved
+    }
     hashes = [
         source.artifact.perceptual_hash
         for source in retrieved
         if source.artifact is not None
     ]
-    assert 1 == len(hashes)
+    assert 2 == len(hashes)
     assert all(value is not None and 16 == len(value) for value in hashes)
 
 
@@ -870,6 +877,10 @@ def test_a_disabled_cover_switch_acquires_no_audiobook_cover_bytes(
             covers=False,
         )
 
+    # With its covers off the store is never asked about the audiobook, so
+    # its title and author are not sent for a cover nothing reads (#1779).
+    assert [] == [value for value in calls if value[0] == "itunes_search"]
+    assert "store" not in {value.provider for value in published.providers}
     assert not [
         source
         for source in published.cover_sources
@@ -881,20 +892,20 @@ def test_a_disabled_cover_switch_acquires_no_audiobook_cover_bytes(
 def test_a_refused_cover_origin_is_published_as_a_typed_outcome(
     calls: list[tuple[str, ProviderQueryKind]],
 ) -> None:
-    # Audible is the dispatched cover authority, so its refused origin is the
-    # one that reaches the report as a typed outcome.
+    # Audible's refused origin reaches the report as a typed outcome, and the
+    # store's art is still fetched beside it.
     fetched: list[str] = []
     with tempfile.TemporaryDirectory() as temporary:
         published = _published_with_covers(
             Path(temporary),
             calls,
-            {},
+            {_ITUNES_ART: _one_design_two_authorities()[_ITUNES_ART]},
             covers=True,
             audible_url=None,
             fetched=fetched,
         )
 
-    assert [] == fetched
+    assert [_ITUNES_ART] == fetched
     audible = next(
         source
         for source in published.cover_sources
@@ -1862,9 +1873,9 @@ def test_an_asserted_title_that_answers_never_asks_the_alternative(
     )
 
     assert ["Asserted Title"] == audible_titles
-    # The store would have searched the asserted title before #1254; it is no
-    # longer dispatched for audiobooks, so it is asked nothing.
-    assert [] == store_terms
+    # The store searches the asserted title once, for a cover (#1779), and is
+    # never sent the alternative.
+    assert ["Asserted Title Corin Halloway"] == store_terms
     assert 1 == len(_audible(report).lanes)
     assert ProviderStatus.CANDIDATES is _audible(report).status
 
@@ -2638,6 +2649,9 @@ def _dispatch_flow(
     from mechanical_librarian.adapters.providers.hardcover_metadata import (
         HardcoverMetadataProvider,
     )
+    from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+        ITunesSearchMetadataProvider,
+    )
     from mechanical_librarian.adapters.providers.open_library_metadata import (
         OpenLibraryMetadataProvider,
     )
@@ -2652,7 +2666,7 @@ def _dispatch_flow(
 
     root.mkdir(mode=0o700, exist_ok=True)
     seen: dict[str, list[str]] = {
-        name: [] for name in ("audible", "enrichment", "hardcover", "silo")
+        name: [] for name in ("audible", "enrichment", "hardcover", "silo", "store")
     }
 
     def logged(
@@ -2736,7 +2750,21 @@ def _dispatch_flow(
             clock=lambda: 0.0,
             **fixed,
         ),
-        "itunes_search": _FakeAudiobookProvider("store", "itunes_search", []),
+        "itunes_search": lambda: ITunesSearchMetadataProvider(
+            "store",
+            client(
+                "store",
+                lambda _request: httpx.Response(
+                    200,
+                    headers={"content-type": "text/javascript; charset=utf-8"},
+                    json={"resultCount": 0, "results": []},
+                ),
+            ),
+            262144,
+            5.0,
+            clock=lambda: 0.0,
+            **fixed,
+        ),
     }
     hardcover = HardcoverMetadataProvider(
         "hardcover",
@@ -2906,6 +2934,8 @@ def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
         # Audnexus admitted by stated runtime, so AudioSilo was not needed
         # (#1309); an empty ASIN lane is proved by the unmatched audiobook.
         "silo": [("asin", record(outcome.NOT_DISPATCHED))] * 2,
+        # The store searched the asserted lane once, for a cover (#1779).
+        "store": [("work", record(outcome.EMPTY_OR_REFUSED))],
     } == lanes
     assert set(DispatchOutcome) - {outcome.EMPTY} == {
         dispatch.outcome
@@ -2920,7 +2950,9 @@ def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
         "hardcover": outcome.EMPTY_OR_REFUSED,
         "openlibrary": outcome.STARVED,
         "silo": outcome.NOT_DISPATCHED,
+        "store": outcome.EMPTY_OR_REFUSED,
     } == {value.provider: provider_dispatch_class(value) for value in report.providers}
+    assert 1 == len(seen["store"])
     # The two in-band refusals Audible handed on are the only products asked.
     assert {_DISPATCH_ADMITTED, _DISPATCH_FAILING} == {
         url.split("/")[4] for url in seen["enrichment"]

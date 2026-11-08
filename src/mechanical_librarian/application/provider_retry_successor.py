@@ -21,7 +21,7 @@ from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
     ReportLimits,
     audiobook_marketplaces,
-    dispatch_adapters,
+    recovery_adapters,
 )
 from mechanical_librarian.application.failure_diagnostics import (
     adapter_fault_class,
@@ -50,6 +50,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     companion_binding_plan,
     metadata_discovery_plan,
+    provider_binding,
     provider_observation,
     refit_companion_books,
     require_report_current,
@@ -259,10 +260,11 @@ class GenerateProviderRetrySuccessor:
         try:
             source = self._source(repository, source_report_id)
             # A job queued before ADR-0061 clause 9 or #1486 can name an adapter
-            # that is no longer dispatched for its media kind. It closes as
-            # stale -- that job alone, recording no failure evidence -- before
-            # any resolver, target read or factory call could spend egress on it.
-            if adapter not in dispatch_adapters(audio=_is_audio(source)):
+            # that is no longer dispatched for its media kind, or one never
+            # retried for it (#1779). It closes as stale -- that job alone,
+            # recording no failure evidence -- before any resolver, target read
+            # or factory call could spend egress on it.
+            if adapter not in recovery_adapters(audio=_is_audio(source)):
                 raise CurrentnessError("provider is not dispatched for this media")
             current = self._current_source(repository, source)
             # The provider and its retained observation are resolved before the
@@ -1074,7 +1076,7 @@ def resolve_configured_retry(
         )
 
     return ConfiguredProviderRetry(
-        ProviderBinding(name, True, factory, adapter),
+        provider_binding(provider, factory),
         adapter,
         generation,
         google_burst_remaining=(

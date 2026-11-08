@@ -83,6 +83,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     echoed_target_values,
+    field_evidence_providers,
     recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -2310,7 +2311,7 @@ def _report_detail(
     if type(chapters) is not list or (cover is not None and type(cover) is not dict):
         raise ReviewWebError("unavailable")
     recorded_claims = [value for value in claims if type(value) is dict]
-    provider_claims = _report_detail_provider_claims(report)
+    provider_claims = _report_detail_provider_claims(report, recorded)
     return {
         "chapters": [
             {
@@ -2379,7 +2380,7 @@ def _report_detail(
 
 
 def _report_detail_provider_claims(
-    report: dict[str, object],
+    report: dict[str, object], recorded: MetadataReport
 ) -> list[dict[str, object]]:
     """Project every admitted candidate's stated claims, authority-labelled.
 
@@ -2387,14 +2388,17 @@ def _report_detail_provider_claims(
     so the authority is what an owner-facing surface names. Candidate identity
     travels with each claim because one observation may admit more than one
     candidate and a merged list would attribute one product's claims to
-    another.
+    another. An audiobook's iTunes listing is its cover alone, so nothing it
+    states is evidence here (#1779).
     """
     values: list[dict[str, object]] = []
     providers = report.get("providers")
     if type(providers) is not list:
         return values
+    # One report states one observation per provider name.
+    evidence = {value.provider for value in field_evidence_providers(recorded)}
     for provider in cast("list[object]", providers):
-        if type(provider) is not dict:
+        if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
         label = _provider_label(authority if type(authority) is str else None)
@@ -2947,7 +2951,7 @@ def _review_unselectable_evidence(
                 + (" The language is not known." if unknown else "")
             ),
         }
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
             for claim in candidate.claims:
                 language = (
@@ -3448,6 +3452,19 @@ _COMPANION_ISBN_REASONS = {
 }
 
 
+# A cover-only lane (#1779) is iTunes asked for an audiobook's cover alone, so
+# its reasons say nothing it returned was compared. As for the companion ISBN
+# lane, an adapter fault, a refusal and a source never searched keep their own
+# reasons; the failure reason covers only a real failure.
+_COVER_ONLY_REASONS = {
+    "candidates": "Searched for a cover only. Nothing else it returns is compared.",
+    "no_match": "Searched for a cover only and found none.",
+}
+_COVER_ONLY_FAILURE_REASON = (
+    "Searched for a cover only. No cover came back, and it is not retried."
+)
+
+
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
@@ -3464,6 +3481,12 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused" or lane.identity_refused
+            else _COVER_ONLY_REASONS.get(lane.status, _COVER_ONLY_FAILURE_REASON)
+            if lane.cover_only
+            and (
+                lane.status in _COVER_ONLY_REASONS
+                or lane.status not in _NON_LIMITING_PROVIDER_STATUSES
+            )
             else _COMPANION_ISBN_REASONS[lane.status]
             if lane.companion_isbn and lane.status in _COMPANION_ISBN_REASONS
             else _PROVIDER_OUTCOME_REASONS.get(
@@ -3474,6 +3497,9 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             # The companion EPUB's ISBN lane, so Sources says where the ISBN
             # an audiobook never states came from (#1723).
             "companion_isbn": lane.companion_isbn,
+            # A cover-only lane, which Sources labels by its cover and Library
+            # leaves out of a work's match and limit (#1779).
+            "cover_only": lane.cover_only,
         }
         for lane in lanes
     ]
