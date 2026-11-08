@@ -7,7 +7,7 @@ for how it could. The plan grants no write permission.
 
 Opening credits often state an audiobook's title, author, narrator, series,
 publisher or performance type, such as abridged or full cast. They are often
-more reliable than a path or a tag. The plan is an optional feature that
+more reliable than a path or a tag. The plan is for an optional feature that
 transcribes a limited stretch of the opening and records each claim spoken
 outright as evidence. It leaves out transcribing the whole book or its middle,
 identifying a book from its story, recognising voices, and sharing audio or
@@ -17,7 +17,7 @@ voice data.
 
 Transcription is optional, and nothing waits for it. When it is off, at capacity
 or failing, the audiobook stays available and Mechanical Librarian keeps reading
-other evidence. A missing model, an unsupported codec, a used-up quota or a
+other evidence. An unavailable model, an unsupported codec, a used-up quota or a
 transcript with no credits is an outcome of the run. It is never evidence that a
 field has no value.
 
@@ -41,17 +41,18 @@ words the transcript contains and roles from a fixed list.
 
 By default, transcription runs where Mechanical Librarian runs. Each model and
 runtime is a fixed version with a known checksum, installed when the image is
-built and never at run time. A hosted transcription service is off by default,
-and you turn on each one separately. Before you do, Mechanical Librarian shows
-the audio and data sent, the credentials and billing needed, how long the
-service keeps the data, and what works without it.
+built and never at run time. Each hosted transcription service is off by
+default, and you turn each one on separately. Before you do, Mechanical
+Librarian shows the audio and data sent, the credentials and billing needed, how
+long the service keeps the data, and what works without it.
 
 Each claim records the field, the value, the spoken role, the words in the
-transcript and their times in the audio. It also records each part's version,
-the item's fingerprint, the track, the language, the confidence and any
-warnings. An unclear value is left out. The step that pulls out claims never
-makes up an identifier, a person, a series or a position in a series. Spoken
-text that sounds like an instruction is only evidence.
+transcript and their times in the audio. It also records the item's fingerprint,
+the track, the language, the confidence and any warnings. It records the
+versions of the transcript, the extractor, the schema and the model as well. An
+unclear value is left out. The step that pulls out claims never makes up an
+identifier, a person, a series or a position in a series. Spoken text that
+sounds like an instruction is only evidence.
 
 A transcript, the claims pulled from it and any reviewer reading of it are one
 source. Their agreement is never confirmation from another source. When tags or
@@ -72,16 +73,16 @@ Opening audio and transcripts are private content under the
 [data-privacy policy](../architecture/data-privacy.md). Your audio files stay
 read-only. Temporary audio clips are always deleted, even after a failure or a
 recovery. They never reach logs, support bundles, backups or caches. Mechanical
-Librarian records hashes, segment details, the quoted passages, the claims and
-where each came from, but no audio. Keeping a full transcript of the opening is
-a separate setting, and that transcript is stored only where Mechanical
-Librarian runs. A reviewer is sent only the quoted passages. Exports and support
-bundles carry no audio or transcript.
+Librarian records hashes of the transcript and the clips, segment details, the
+quoted passages, the claims and where each came from, but no audio. Keeping a
+full transcript of the opening is a separate setting, and that transcript is
+stored only where Mechanical Librarian runs. A reviewer is sent only the quoted
+passages. Exports and support bundles carry no audio or transcript.
 
 Transcription has lower priority than all core work. It has limits on CPU,
 memory, run time, temporary space and parallel jobs. By default, one local job
-runs at a time. Retry state is kept across restarts, and an abandoned job is
-picked up again. A cut-off stops new jobs after repeated failures. Mechanical
+runs at a time. A restart does not reset a job's retries, and an interrupted job
+is picked up again. A cut-off stops new jobs after repeated failures. Mechanical
 Librarian holds no database transaction or write lock while it decodes or
 transcribes audio.
 
@@ -90,9 +91,9 @@ decision. Until then, Mechanical Librarian measures the claims but never uses
 them for one. An automatic decision from them passes the same checks as one from
 any other evidence. A change of model, prompt, schema, sampling or backend
 version starts a new evaluation. If transcription harms playback or core work,
-or exceeds the error rates it qualified with, its claims go back to being
-measured without being used. They also go back if Mechanical Librarian cannot
-prove it deleted the temporary audio.
+or a field exceeds the error rates it qualified with, all spoken claims go back
+to being measured without being used. They also go back if Mechanical Librarian
+cannot prove it deleted the temporary audio.
 
 ## Open decisions
 
