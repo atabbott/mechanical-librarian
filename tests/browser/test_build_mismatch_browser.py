@@ -425,6 +425,14 @@ def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
         reload = review.get_by_role("button", name="Reload", exact=True)
         expect(reload).to_be_focused()
         _expect_in_view(page)
+        # The whole lead shows with it, below the sticky masthead.
+        lead_top = review.locator(".stale-build-read-lead").evaluate(
+            "lead => lead.getBoundingClientRect().top"
+        )
+        masthead_bottom = page.locator(".masthead").evaluate(
+            "masthead => masthead.getBoundingClientRect().bottom"
+        )
+        assert lead_top >= masthead_bottom, (lead_top, masthead_bottom)
 
 
 @pytest.mark.parametrize(

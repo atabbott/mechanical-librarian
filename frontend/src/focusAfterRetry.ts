@@ -24,8 +24,10 @@ export const focusAfterRetry = (
       element.focus({ preventScroll: true })
       // The target can sit above the masthead or below the fold (a Reload at
       // the top of a long panel, or the foot of the rail's drawer): scroll
-      // only as far as it takes to show it and its focus ring.
-      element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      // only as far as it takes to show it and its focus ring. A Reload is
+      // shown with its whole lead, which says what was not loaded.
+      const shown = element.closest<HTMLElement>('.stale-build-read') ?? element
+      shown.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     }),
   )
 }

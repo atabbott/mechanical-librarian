@@ -112,8 +112,9 @@ h2 { margin-bottom:.35rem; }
 /* Clears the 3px focus ring at 3px offset from the sentence: above it when the
    reload wraps under it, beside its full stop when it shares the line (the
    lead's end padding, which stays on the sentence's line when Reload wraps, so
-   a wrapped Reload is not indented). A retry that scrolls it into view leaves
-   its ring clear of the edge. */
+   a wrapped Reload is not indented). A retry that scrolls the read into view
+   shows its whole lead and leaves Reload's ring clear of the edge. */
+.stale-build-read { scroll-margin-block:.75rem; }
 .stale-build-read button { margin-block-start:.375rem; scroll-margin-block:.75rem; }
 .stale-build-read-lead { padding-inline-end:.375rem; }
 /* The masthead anchors the popover, so it opens inside the viewport however the status slot wraps. */

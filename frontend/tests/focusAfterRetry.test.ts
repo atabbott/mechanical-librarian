@@ -64,6 +64,21 @@ describe('focusAfterRetry (#1742)', () => {
     expect(scroll).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
   })
 
+  it('brings a Reload into view with its whole lead', async () => {
+    const element = mount(
+      '<p id="read" class="stale-build-read"><span>Lead.</span> <button id="reload">Reload</button></p>',
+    )
+    // The test setup stubs scrollIntoView on the prototype, so the spy is that
+    // shared stub: which element it was called on is its context.
+    const scroll = vi.spyOn(element('read'), 'scrollIntoView')
+    scroll.mockClear()
+    focusAfterRetry(() => element('reload'))
+    await settle()
+    expect(document.activeElement).toBe(element('reload'))
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+    expect(scroll.mock.contexts).toEqual([element('read')])
+  })
+
   it('does nothing when there is no target', async () => {
     mount('<p>Loaded</p>')
     focusAfterRetry(() => null)
