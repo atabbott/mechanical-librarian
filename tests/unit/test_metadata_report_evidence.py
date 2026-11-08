@@ -62,6 +62,7 @@ from mechanical_librarian.domain.cover_evidence import (
     EpubCoverRecoveryRefusal,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
@@ -3214,12 +3215,14 @@ def test_report_replay_reasserts_a_tampered_lane_outcome() -> None:
         replace(report)
 
 
-def _archive_cover_report() -> MetadataReport:
+def _archive_cover_report(measures: CoverMeasures | None = None) -> MetadataReport:
     source = CoverSource(
         cover_source_id(CoverSourceKind.OPEN_LIBRARY, "open_library:edition:OL1M"),
         CoverSourceKind.OPEN_LIBRARY,
         CoverSourceState.RETRIEVED,
-        CoverArtifact.create(b"original", b"preview", "image/jpeg", 2, 3),
+        CoverArtifact.create(
+            b"original", b"preview", "image/jpeg", 2, 3, measures=measures
+        ),
         provenance=CoverProvenance(
             "open_library",
             CoverDesignation.EXACT_EDITION,
@@ -3245,7 +3248,44 @@ def test_a_retrieved_open_library_final_host_round_trips_in_the_report() -> None
     serialized = report.to_json()
     assert '"final_host":"us.archive.org"' in serialized
     assert MetadataReport.from_json(serialized) == report
-    assert report.schema_version == "metadata-report-v73"
+    assert report.schema_version == "metadata-report-v74"
+
+
+_MEASURES = CoverMeasures("0f" * 8, "f0" * 8, (1,) * 64, (128,) * 48)
+
+
+def test_cover_artifact_measures_round_trip_in_the_report() -> None:
+    measured = _archive_cover_report(_MEASURES)
+    serialized = measured.to_json()
+
+    assert '"measures":{"colour":[1,' in serialized
+    restored = MetadataReport.from_json(serialized)
+    assert restored == measured
+    assert restored.cover_sources[0].artifact is not None
+    assert restored.cover_sources[0].artifact.measures == _MEASURES
+    assert '"measures":null' in _archive_cover_report().to_json()
+
+
+@pytest.mark.parametrize(
+    "change",
+    ("missing", "short_colour", "string_layout", "extra_key"),
+    ids=("missing", "short_colour", "string_layout", "extra_key"),
+)
+def test_the_report_reader_refuses_malformed_artifact_measures(change: str) -> None:
+    document = json.loads(_archive_cover_report().to_json())
+    artifact = document["covers"][0]["artifact"]
+    if change == "missing":
+        del artifact["measures"]
+    else:
+        artifact["measures"] = _MEASURES.to_data()
+        if change == "short_colour":
+            artifact["measures"]["colour"] = [1] * 63
+        elif change == "string_layout":
+            artifact["measures"]["layout"] = "128" * 48
+        else:
+            artifact["measures"]["area"] = 6
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(document, separators=(",", ":")))
 
 
 @pytest.mark.parametrize(

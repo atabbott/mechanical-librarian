@@ -378,5 +378,5 @@ with track-bound documents now going to their track.
    until measured, #1482). Currentness re-derives kind, binding and the
    parent-side refusals from the listing and the re-read file list.
 
-This is `metadata-report-v73` and `audio-inspection-v5`, a clean rebuild under
+This is `metadata-report-v74` and `audio-inspection-v5`, a clean rebuild under
 [ADR-0013](0013-pre-release-clean-schema.md).

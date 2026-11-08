@@ -314,7 +314,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v4",
+        "schema_version": "cover-consideration-v5",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }

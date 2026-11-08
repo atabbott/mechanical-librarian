@@ -55,6 +55,7 @@ FIELD_EFFECT_FAILURES = frozenset(
         "consent",
         "consent_revoked",
         "cover_recovery",
+        "cover_retention",
         "dependency",
         "not_applied",
         "not_sent",

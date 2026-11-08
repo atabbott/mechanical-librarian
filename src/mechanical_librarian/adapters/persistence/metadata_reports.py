@@ -67,6 +67,9 @@ from mechanical_librarian.adapters.persistence.recovery_outbox import (
 from mechanical_librarian.adapters.persistence.reports import (
     SQLiteReportRepository,
 )
+from mechanical_librarian.adapters.persistence.retained_covers import (
+    SQLiteRetainedCoverRepository,
+)
 from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewAttentionPage,
     ReviewLibraryPage,
@@ -329,6 +332,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
+        self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
         self._capture_cover_read: Callable[[], CoverReadObservation] | None = None
         self._cover_read_observation: CoverReadObservation | None = None
@@ -596,6 +600,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             self._reviewer_access,
             self._description_advice,
             self._review_scans,
+            self._retained_covers,
             self._field_effects,
             self._review_preparation,
             self._review_cases,
@@ -1276,6 +1281,31 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def fail_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
         self._field_effects.fail_field_effect_cleanup(plan_id, changed_at)
+
+    def record_retained_cover(
+        self, plan_id: str, original_digest: str, byte_count: int, retained_at: int
+    ) -> None:
+        self._retained_covers.record_retained_cover(
+            plan_id, original_digest, byte_count, retained_at
+        )
+
+    def pending_retained_cover_removals(
+        self, limit: int
+    ) -> tuple[tuple[str, str, bool], ...]:
+        return self._retained_covers.pending_retained_cover_removals(limit)
+
+    def complete_retained_cover_removal(self, plan_id: str, changed_at: int) -> None:
+        self._retained_covers.complete_retained_cover_removal(plan_id, changed_at)
+
+    def fail_retained_cover_removal(self, plan_id: str, changed_at: int) -> None:
+        self._retained_covers.fail_retained_cover_removal(plan_id, changed_at)
+
+    def retained_cover_original(
+        self, connection: str, library: str, work_id: str
+    ) -> tuple[str, str, str] | None:
+        return self._retained_covers.retained_cover_original(
+            connection, library, work_id
+        )
 
     def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
         self._field_effects.set_field_effect_paused(paused, changed_at)
