@@ -136,7 +136,10 @@ def _report(*observations: object, audio: object = None) -> MetadataReport:
 
 
 def _observation(provider: str, status: ProviderStatus, *lanes: object) -> object:
-    return SimpleNamespace(provider=provider, status=status, lanes=lanes)
+    # No authority, so `field_evidence_providers` reads it as evidence (#1779).
+    return SimpleNamespace(
+        provider=provider, status=status, lanes=lanes, authority=None
+    )
 
 
 def _lane(identity: str, status: ProviderStatus) -> object:
@@ -321,6 +324,33 @@ def test_zero_evidence_requires_every_report_provider_to_be_empty(
     recovering = SimpleNamespace(candidates=(), lanes=())
     assert ("blanket_scan", 3) == provider_budget_dispatch_reason(
         _report(recovering, evidenced), None, recovering
+    )
+
+
+@pytest.mark.parametrize(
+    ("audio", "expected"),
+    ((object(), ("zero_provider_evidence", 1)), (None, ("blanket_scan", 3))),
+    ids=("audiobook", "ebook"),
+)
+def test_an_itunes_candidate_is_no_provider_evidence_for_an_audiobook(
+    audio: object, expected: tuple[str, int]
+) -> None:
+    """#1779: on an audiobook iTunes is a cover source, so a rate-limited
+    Audible still has nothing to build on; an ebook counts iTunes' candidate."""
+    audible = SimpleNamespace(
+        authority="audible_catalog",
+        status=ProviderStatus.RATE_LIMITED,
+        candidates=(),
+        lanes=(),
+    )
+    store = SimpleNamespace(
+        authority="itunes_search",
+        status=ProviderStatus.CANDIDATES,
+        candidates=("candidate",),
+        lanes=(),
+    )
+    assert expected == provider_budget_dispatch_reason(
+        _report(audible, store, audio=audio), None, audible
     )
 
 

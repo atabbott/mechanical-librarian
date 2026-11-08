@@ -37,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     ReportValueError,
+    field_evidence_providers,
 )
 from mechanical_librarian.domain.proposal_set import (
     POPULATED_VALUE_MEETS_FLOOR_REASON,
@@ -107,12 +108,13 @@ def provider_budget_dispatch_reason(
         for result in unresolved
     ):
         return "missing_corroboration", 0
+    # An audiobook's iTunes listing is its cover alone, never evidence (#1779).
     if not any(
         getattr(provider, "candidates", ())
         or any(
             getattr(lane, "candidates", ()) for lane in getattr(provider, "lanes", ())
         )
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
     ):
         return "zero_provider_evidence", 1
     if any(
