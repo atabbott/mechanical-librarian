@@ -358,6 +358,10 @@ class MetadataLookup:
     # The target's language where an `.opf` or `.nfo` echoed it: withheld as
     # belief, it still refuses a product in another language (#1481).
     echoed_languages: tuple[str, ...] = ()
+    # The target's narrators an `.opf` or `.nfo` echoed: withheld as belief,
+    # they still refuse a carried product crediting nobody the recording does
+    # (#1481). Never support.
+    echoed_narrators: tuple[str, ...] = ()
     # An audiobook's companion EPUB (#1468): its ISBN may be asked and its
     # title may be an alternative, but its claims are never compared with a
     # provider's, so they are never `local_claims`.
@@ -403,6 +407,7 @@ class MetadataLookup:
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
             or not tuple_of(nonempty_text)(self.echoed_languages)
+            or not tuple_of(nonempty_text)(self.echoed_narrators)
             or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -557,6 +562,7 @@ class MetadataDiscoveryPlan:
     corroborated_rule: bool = True
     library_languages: tuple[str, ...] = ()
     echoed_languages: tuple[str, ...] = ()
+    echoed_narrators: tuple[str, ...] = ()
     # See `MetadataLookup`: the companion EPUB and the ASINs its book links.
     companion: CompanionEbook | None = None
     companion_linked_asins: tuple[str, ...] = ()
@@ -584,6 +590,7 @@ class MetadataDiscoveryPlan:
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
             or not tuple_of(nonempty_text)(self.echoed_languages)
+            or not tuple_of(nonempty_text)(self.echoed_narrators)
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
@@ -1215,6 +1222,11 @@ def audiobook_discovery_plan(
         echoed_languages=echoed_target_values(
             audio, target.fields, AudioInspectionField.LANGUAGE
         ),
+        # The target's narrators where a sidecar echoed them, for the
+        # carried-edition narrator refusal alone (#1481).
+        echoed_narrators=echoed_target_values(
+            audio, target.fields, AudioInspectionField.CONTRIBUTOR
+        ),
         companion=None if audio is None else companion,
     )
 
@@ -1519,6 +1531,7 @@ def audiobook_asin_feed_plan(
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
         echoed_languages=plan.echoed_languages,
+        echoed_narrators=plan.echoed_narrators,
         companion=plan.companion,
         companion_linked_asins=companion_linked_asins(
             plan.local_claims, plan.audio, observations, plan.companion
@@ -2618,7 +2631,8 @@ def _identifier_lane_candidates(
     narrator_refused = {
         c.identity
         for c in observation.candidates
-        if carried_lane and candidate_narrator_disjoint(c, lookup.local_claims)
+        if carried_lane
+        and candidate_narrator_disjoint(c, lookup.local_claims, lookup.echoed_narrators)
     }
     # A requested identifier and equal duration are not evidence of the work.
     work_admitted = {
@@ -2711,7 +2725,9 @@ def _identifier_lane_candidates(
         and lookup.requested_asin in lookup.companion_linked_asins
         and lookup.requested_asin in _candidate_valid_asins(c)
         # Narrators the file never credits name another recording of the work.
-        and not candidate_narrator_disjoint(c, lookup.local_claims)
+        and not candidate_narrator_disjoint(
+            c, lookup.local_claims, lookup.echoed_narrators
+        )
     }
     alternative_admitted = title_admitted | corroborated_admitted | linked_admitted
     runtime_candidates = tuple(

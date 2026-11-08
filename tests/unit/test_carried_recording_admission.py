@@ -19,6 +19,9 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AUDIBLE_CATALOG_URLS,
     AudibleCatalogMetadataProvider,
 )
+from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+    _lane_lookup as audible_lane_lookup,
+)
 from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
 from mechanical_librarian.application.metadata_report import (
     MAX_ASIN_DISCOVERY_LANES,
@@ -36,6 +39,12 @@ from mechanical_librarian.application.metadata_report import (
     provider_discovery_lane_order,
     provider_observation,
     qualify_provider_lane,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    AudioInspectionField,
+    AudioSidecarBinding,
+    AudioSidecarDigest,
+    AudioSidecarKind,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
@@ -136,12 +145,18 @@ def _claims(
     )
 
 
-def _fields(asin: str | None = None) -> tuple[TargetField, ...]:
+def _fields(
+    asin: str | None = None, narrators: tuple[str, ...] = ()
+) -> tuple[TargetField, ...]:
     overrides = {
         TargetDestination.AUTHORS: TargetField(
             TargetDestination.AUTHORS, TargetFieldState.VALUE, (_AUTHOR,)
         )
     }
+    if narrators:
+        overrides[TargetDestination.NARRATORS] = TargetField(
+            TargetDestination.NARRATORS, TargetFieldState.VALUE, narrators
+        )
     if asin is not None:
         overrides[TargetDestination.ASIN] = TargetField(
             TargetDestination.ASIN, TargetFieldState.VALUE, asin
@@ -152,12 +167,14 @@ def _fields(asin: str | None = None) -> tuple[TargetField, ...]:
     )
 
 
-def _snapshot(asin: str | None = None) -> TargetSnapshot:
+def _snapshot(
+    asin: str | None = None, narrators: tuple[str, ...] = ()
+) -> TargetSnapshot:
     return TargetSnapshot(
         "audiobook",
         _TITLE,
         (TargetFile("a" * 64, "book.m4b", "m4b"),),
-        fields=_fields(asin),
+        fields=_fields(asin, narrators),
     )
 
 
@@ -165,9 +182,12 @@ def _plan(
     claims: tuple[LocalClaim, ...],
     asin: str | None = None,
     audio: AudioFacts | None = None,
+    narrators: tuple[str, ...] = (),
 ) -> MetadataDiscoveryPlan:
     return audiobook_discovery_plan(
-        _snapshot(asin), claims, audio=audio or single_track_audio_facts(_DIGEST)
+        _snapshot(asin, narrators),
+        claims,
+        audio=audio or single_track_audio_facts(_DIGEST),
     )
 
 
@@ -265,6 +285,7 @@ def _lane_result(
             audio=plan.audio,
             work_title=plan.work_title,
             work_authors=plan.work_authors,
+            echoed_narrators=plan.echoed_narrators,
             requested_asin=lane.canonical_asin,
             title_basis=lane.title_basis,
         ),
@@ -286,9 +307,10 @@ def _report(
     observations: tuple[ProviderObservation, ...],
     asin: str | None = None,
     audio: AudioFacts | None = None,
+    narrators: tuple[str, ...] = (),
 ) -> MetadataReport:
     return MetadataReport.create(
-        target=TargetFacts("primary", "audio", "item-1", _fields(asin)),
+        target=TargetFacts("primary", "audio", "item-1", _fields(asin, narrators)),
         file=FileFacts(0, "a" * 64, _DIGEST, "m4b"),
         local_claims=claims,
         local_reasons=("embedded_tag_duration",),
@@ -309,9 +331,10 @@ def _catalogue(
     search: tuple[ProviderCandidate, ...] = (),
     asin: str | None = None,
     audio: AudioFacts | None = None,
+    narrators: tuple[str, ...] = (),
 ) -> ProviderObservation:
     """The catalogue's phase-one answer: its carried lookup and its search."""
-    plan = audiobook_carried_plan(_plan(claims, asin, audio))
+    plan = audiobook_carried_plan(_plan(claims, asin, audio, narrators))
     results = []
     for lane in plan.lanes:
         if lane.kind is ProviderQueryKind.ASIN:
@@ -635,6 +658,63 @@ def test_a_narrator_disjoint_product_is_refused_only_on_the_carried_lane() -> No
         value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
         for value in result.candidates[0].evidence
     )
+
+
+def test_an_echoed_sidecar_narrator_still_refuses_a_disjoint_carried_product() -> None:
+    """An `.opf` narrator withheld as the target's echo refuses as before (#1481).
+
+    The sidecar was the recording's only narrator credit, and it repeated the
+    target's, so association withheld it. The carried lookup's refusal only
+    refuses, so the echoed narrator stands in for it and a product crediting
+    somebody else stays another recording.
+    """
+    claims = _claims(narrator=None)
+    narrators = (_NARRATOR,)
+    audio = replace(
+        single_track_audio_facts(_DIGEST),
+        sidecars=(
+            AudioSidecarDigest(
+                "book.opf",
+                "c" * 64,
+                AudioSidecarKind.OPF,
+                AudioSidecarBinding.TRACK,
+                echoed=(AudioInspectionField.CONTRIBUTOR,),
+                echoed_narrators=(0,),
+            ),
+        ),
+    )
+    plan = audiobook_carried_plan(_plan(claims, audio=audio, narrators=narrators))
+    (carried_lane,) = (
+        lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ASIN
+    )
+    # The catalogue adapter hands the carried lookup the echoed narrators.
+    assert narrators == audible_lane_lookup(carried_lane, plan).echoed_narrators
+    other = _candidate("audible", (_CARRIED,), narrator="Someone Else")
+    refused = _catalogue(claims, carried=(other,), audio=audio, narrators=narrators)
+    (candidate,) = refused.candidates
+    report = _report(claims, (refused,), audio=audio, narrators=narrators)
+
+    assert {ClaimKind.ASIN} == {value.kind for value in candidate.claims}
+    assert () == candidate.evidence
+    assert not admitted_audiobook_identity(report)
+    assert admitted_recording_asin(report) is None
+    # The same product crediting the echoed narrator is admitted again, and
+    # the echo is never support: without a cast it is not refused either.
+    for kept in (
+        _candidate("audible", (_CARRIED,)),
+        replace(
+            other,
+            claims=tuple(
+                claim
+                for claim in other.claims
+                if claim.kind is not ClaimKind.CONTRIBUTOR
+            ),
+        ),
+    ):
+        admitted = _catalogue(claims, carried=(kept,), audio=audio, narrators=narrators)
+        assert ClaimKind.DURATION in {
+            value.kind for value in admitted.candidates[0].claims
+        }
 
 
 @pytest.mark.parametrize(

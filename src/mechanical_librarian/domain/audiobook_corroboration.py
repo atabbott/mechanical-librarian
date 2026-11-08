@@ -1372,15 +1372,28 @@ def admitted_audiobook_identity(report: MetadataReport) -> bool:
 
 
 def candidate_narrator_disjoint(
-    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...],
+    echoed_narrators: tuple[str, ...] = (),
 ) -> bool:
     """Whether a product credits only narrators the recording's own credits lack.
 
     An unknown cast on either side is never disjoint, so a recording without
     local narrator credits, or a product stating none, passes (#1252, #1316).
+    `echoed_narrators` are the target's narrators an `.opf` or `.nfo` stated
+    and echo withholding took out of the local claims (#1481): this only
+    refuses, so they stand in for the withheld credits exactly as those did,
+    and no reader that counts support reads them.
     """
     return narrator_cast_disjoint(
-        _recording_narrators(local_claims), _candidate_narrators(candidate)
+        (*_recording_narrators(local_claims), *echoed_narrators),
+        _candidate_narrators(candidate),
+    )
+
+
+def _echoed_narrators(report: MetadataReport) -> tuple[str, ...]:
+    return echoed_target_values(
+        report.audio, report.target.fields, AudioInspectionField.CONTRIBUTOR
     )
 
 
@@ -1864,7 +1877,9 @@ def _verified_carried_candidates(
                 candidate is not None
                 and asin in _edition_asins(candidate)
                 and _tight_recording(candidate, report.local_claims)
-                and not candidate_narrator_disjoint(candidate, report.local_claims)
+                and not candidate_narrator_disjoint(
+                    candidate, report.local_claims, _echoed_narrators(report)
+                )
             ):
                 verified.append(candidate)
     return tuple(verified)
@@ -1895,7 +1910,9 @@ def _admitted_candidates(
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
         if _tight_recording(candidate, report.local_claims)
-        and not candidate_narrator_disjoint(candidate, report.local_claims)
+        and not candidate_narrator_disjoint(
+            candidate, report.local_claims, _echoed_narrators(report)
+        )
     )
 
 
@@ -2102,7 +2119,9 @@ def unconfirmed_audio_editions(
         for observation in report.providers
         for edition in observation.audio_editions
         if id(edition) in counted
-        and not candidate_narrator_disjoint(edition, report.local_claims)
+        and not candidate_narrator_disjoint(
+            edition, report.local_claims, _echoed_narrators(report)
+        )
         and all(unconfirmed(asin) for asin in _edition_asins(edition))
     )
 
@@ -2425,7 +2444,11 @@ def asin_lane_admission_basis_replays(
         return False
     linked = queried in companion_linked_asins(
         local_claims, audio, providers, companion
-    ) and not candidate_narrator_disjoint(candidate, local_claims)
+    ) and not candidate_narrator_disjoint(
+        candidate,
+        local_claims,
+        echoed_target_values(audio, target.fields, AudioInspectionField.CONTRIBUTOR),
+    )
     if value == COMPANION_ISBN_WORK_BASIS or linked:
         return value == COMPANION_ISBN_WORK_BASIS and linked
     identity = alternative_lane_identity(
