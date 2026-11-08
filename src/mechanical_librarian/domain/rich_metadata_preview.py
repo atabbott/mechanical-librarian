@@ -54,6 +54,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     WorkIdentityContradiction,
+    field_evidence_providers,
     isbn_family,
     normalize_title,
     provider_candidate_work_identity_contradiction,
@@ -129,7 +130,7 @@ def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
     values: dict[str, _RetainedClaim] = {}
     for claim in report.local_claims:
         _remember_claim(values, claim.reference, _RetainedClaim(claim, None, None))
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in provider.candidates:
             for claim in candidate.claims:
                 _remember_claim(values, claim.reference, _RetainedClaim(claim, provider, candidate))
@@ -170,7 +171,7 @@ def _automatic_work_evidence(
         report.audio is not None,
         tuple(
             candidate
-            for provider in report.providers
+            for provider in field_evidence_providers(report)
             for candidate in provider.candidates
             if provider_candidate_represents_target_work(report, provider, candidate)
         ),
@@ -997,7 +998,7 @@ def _automatic_series_abstention(
         if result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE and any(
             claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
             and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
-            for provider in report.providers
+            for provider in field_evidence_providers(report)
             for source in provider.candidates
             for claim in source.claims
         ):
@@ -1022,7 +1023,7 @@ def _automatic_series_abstention(
     }
     selected_sources = tuple(
         source
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for source in provider.candidates
         if (provider.provider, source.identity) in relevant_candidates
     )
@@ -1042,7 +1043,7 @@ def _automatic_series_abstention(
         return "series_membership_incomplete"
     contributing_dispatches = {
         (provider.provider, lane.kind, lane.input_references, lane.matched_family)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for lane in provider.lanes
         if any(
             (provider.provider, lane_candidate.edition_identity) in relevant_candidates
@@ -1059,7 +1060,7 @@ def _automatic_series_abstention(
         }
         | {
             lane.kind
-            for provider in report.providers
+            for provider in field_evidence_providers(report)
             for lane in provider.lanes
             if lane.status in failed_statuses
             and (provider.provider, lane.kind, lane.input_references, lane.matched_family) in contributing_dispatches
@@ -1078,7 +1079,7 @@ def _automatic_series_abstention(
         return "series_membership_incomplete"
     if any(
         not provider_candidate_represents_target_series_work(report, provider, source)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for source in provider.candidates
         if (provider.provider, source.identity) in relevant_candidates
     ):
@@ -1577,7 +1578,7 @@ def _audiobook_isbn_refusal(report: MetadataReport) -> str:
     """Explain the reached identifier election without implying absent evidence."""
     claims = tuple(
         claim
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
         for claim in candidate.claims
         if claim.kind is ClaimKind.ISBN
@@ -1593,7 +1594,7 @@ def _audiobook_isbn_refusal(report: MetadataReport) -> str:
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
             ProviderStatus.QUERY_LIMIT_EXCEEDED,
         }
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
     ):
         return "source_value_malformed_or_incomplete"
     families = {
@@ -1614,7 +1615,7 @@ def _audiobook_isbn_refusal(report: MetadataReport) -> str:
             ProviderStatus.RATE_LIMITED,
             ProviderStatus.UNAVAILABLE,
         }
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
     ):
         return "source_unavailable"
     return "source_value_absent"

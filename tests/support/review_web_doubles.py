@@ -72,6 +72,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
+    field_evidence_providers,
 )
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
@@ -610,10 +611,14 @@ class FakeReviewRepository:
 
     @staticmethod
     def _match_reason(report: MetadataReport) -> str | None:
-        """A caseless report's #1407 reason, as the browse fact derives it."""
+        """A caseless report's #1407 reason, as the browse fact derives it.
+
+        A cover-only authority's lanes on an audio report count for nothing
+        (#1779).
+        """
         lanes = [
             lane
-            for provider in report.providers
+            for provider in field_evidence_providers(report)
             for lane in provider.lanes or (provider,)
         ]
         if any(lane.status is ProviderStatus.CANDIDATES for lane in lanes):

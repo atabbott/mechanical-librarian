@@ -8,6 +8,7 @@
     "fields": [
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "narrators",
@@ -112,6 +113,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "asin",
@@ -204,6 +206,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "title",
@@ -300,6 +303,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "subtitle",
@@ -350,6 +354,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "authors",
@@ -439,6 +444,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "series",
@@ -489,6 +495,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "genres",
@@ -539,6 +546,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "publishedDate",
@@ -589,6 +597,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "publisher",
@@ -639,6 +648,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "description",
@@ -689,6 +699,7 @@
       },
       {
         "classification": "manual_fallback",
+        "classification_cause": "automatic_abstained",
         "classification_reason": "This field needs your choice.",
         "current": {
           "destination": "isbn",
@@ -739,6 +750,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "language",
@@ -789,6 +801,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "explicit",
@@ -839,6 +852,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "tags",
@@ -889,6 +903,7 @@
       },
       {
         "classification": "unsupported",
+        "classification_cause": "nothing_to_decide",
         "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "cover",
@@ -1046,6 +1061,7 @@
     "source_ledger": [
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 1,
         "lane_kind": "work",
         "provider": "Audible",
@@ -1054,6 +1070,7 @@
       },
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",
@@ -1062,6 +1079,7 @@
       },
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",

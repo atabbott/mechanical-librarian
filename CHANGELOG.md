@@ -145,6 +145,11 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- **Clean rebuild required.** While its Cover evidence switch is on, iTunes is
+  asked for an audiobook's cover again, one search per audiobook. It supplies
+  nothing else about the audiobook. An iTunes failure never puts an audiobook
+  under "Some lookups gave no usable answer" in Library. An audiobook that only
+  iTunes found stays in the Not matched lens (#1779).
 - The review case page says what happened in your words: history reads "You
   chose a proposed value." and "Automatic kept the current value." instead of
   "Owner selected…" and "Automatic policy…", entries no longer repeat their
@@ -159,8 +164,9 @@ brackets are GitHub issues.
   first library scan after preparation resumes (#1784).
 - Library's field decisions read plainly. Evidence, automatic statements,
   cover checks and decision failures drop internal words, a lost answer says
-  what to check, and the writing box says whether a change was written
-  (#1765).
+  what to check, the writing box says whether a change was written, and a
+  cover comparison that could not be loaded names the button that tries again
+  (#1765, #1791).
 - Tooling: a read-only workbench script lists Library links to the ebook
   series fields where only Hardcover names a series and it differs from yours,
   so you can label them in the qualification run (#1811).
