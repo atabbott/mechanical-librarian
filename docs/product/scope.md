@@ -99,6 +99,6 @@ do local evidence, proposals within fixed limits and your own review. So do the
 rules that skip a value needing no change or reject a value.
 
 The planned Calibre-Web/Calibre-compatible adapter must use a supported service
-API and declare each capability. No Calibre adapter exists today. Mechanical
-Librarian does not open a Calibre database, drive Calibre's screens or write to
-Calibre today.
+API and declare each capability. Today Mechanical Librarian has no Calibre
+adapter, and it does not open a Calibre database, drive Calibre's screens or
+write to Calibre.
