@@ -23,10 +23,18 @@ ReviewFieldCause = Literal[
 ]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
     "unsupported": "Your library service cannot change this field.",
-    "automatic_safety_suspended": "Changes made for you are waiting for a safety recovery.",
-    "external_field_failure": "This field is waiting for an outside service to recover.",
-    "external_connection_failure": "This connection is waiting for an outside service to recover.",
-    "external_recovered": "The outside service recovered; you can review this field again.",
+    "automatic_safety_suspended": (
+        "Automatic is paused, so this field is waiting for you."
+    ),
+    "external_field_failure": (
+        "This field is waiting for the library to accept changes to it again."
+    ),
+    "external_connection_failure": (
+        "This field is waiting for the library connection to recover."
+    ),
+    "external_recovered": (
+        "The library connection recovered. You can review this field again."
+    ),
 }
 
 
@@ -133,9 +141,9 @@ def classify_review_field(
         return ReviewFieldClassification(
             "automatic_recorded",
             (
-                "This field was decided for you; you can inspect or change it."
+                "Automatic decided this field. You can change it here."
                 if override_available
-                else "The change made for you is being applied and cannot be changed yet."
+                else "Automatic\u2019s change is being applied and cannot be changed yet."
             ),
             False,
             override_available,
@@ -204,9 +212,9 @@ def classify_review_field(
         )
     return ReviewFieldClassification(
         "unsupported",
-        "There is no other value to choose from. You can enter your own."
+        "No source offered a different value. You can enter your own."
         if owner_entry
-        else "There is nothing to decide for this field.",
+        else "Nothing to decide for this field.",
         False,
         False,
         False,

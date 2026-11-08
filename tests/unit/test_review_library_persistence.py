@@ -1867,7 +1867,7 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
             value for value in suspended["fields"] if value["destination"] == "series"
         )
         assert (
-            "This field is waiting for an outside service to recover."
+            "This field is waiting for the library to accept changes to it again."
             == field["classification_reason"]
         )
         assert [

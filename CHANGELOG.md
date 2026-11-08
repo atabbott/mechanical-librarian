@@ -145,9 +145,22 @@ brackets are GitHub issues.
   nothing else about the audiobook. An iTunes failure never puts an audiobook
   under "Some lookups gave no usable answer" in Library. An audiobook that only
   iTunes found stays in the Not matched lens (#1779).
+- The review case page says what happened in your words: history reads "You
+  chose a proposed value." and "Automatic kept the current value." instead of
+  "Owner selected…" and "Automatic policy…", entries no longer repeat their
+  heading in a sentence, and Evidence and History drop "retained", "durable"
+  and "observations". The notice that the app was updated now says "Reload",
+  like every other reload button (#1765).
+- The sign-in page has one heading, "Sign in to review your library", without
+  the eyebrow, tagline and paragraph about write permission around it, and the
+  forgotten-password steps say what to do in short sentences (#1765).
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).
+- Library's field decisions read plainly. Evidence, automatic statements,
+  cover checks and decision failures drop internal words, a lost answer says
+  what to check, and the writing box says whether a change was written
+  (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

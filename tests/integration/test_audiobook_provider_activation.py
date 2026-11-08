@@ -1593,15 +1593,15 @@ def test_recording_collision_cannot_add_owner_choices(
                     claim = next(c for c in other.claims if c.role == "narrator")
                     assert retained[0]["role"] == "external_observation"
                     assert retained[0]["destinations"] == ["narrators"]
-                    assert "not an eligible choice" in retained[0]["observation"]
+                    assert "Not offered as a choice." in retained[0]["observation"]
                     explanation = (
-                        "Recording language conflicts with this item."
+                        "That recording is in another language."
                         if collision == "language"
-                        else "Recording timing is invalid or conflicts"
+                        else "That recording\u2019s running time is unreadable"
                     )
                     assert explanation in retained[0]["observation"]
                     if collision == "language":
-                        assert "Recording timing" not in retained[0]["observation"]
+                        assert "running time" not in retained[0]["observation"]
                     assert claim.reference not in retained[0]["observation"]
                     assert other.identity not in retained[0]["observation"]
                     # Internal scope, state and applicability codes are not

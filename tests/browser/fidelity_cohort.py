@@ -458,9 +458,9 @@ def _field(
     inferred_reason = (
         "This field needs your review."
         if needs_attention
-        else "This field was decided for you; you can inspect or change it."
+        else "Automatic decided this field. You can change it here."
         if automatic_decision is not None
-        else "There is nothing to decide for this field."
+        else "Nothing to decide for this field."
     )
     return {
         "classification": resolved_classification,
@@ -503,7 +503,7 @@ def _field(
                 "alternative_id": None,
                 "evidence": [
                     {
-                        "observation": "This value is currently present in the local library.",
+                        "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -745,7 +745,7 @@ def _case(case_id: str) -> dict[str, object]:
             ],
             classification="unsupported",
             classification_reason=(
-                "There is nothing to decide for this field."
+                "Nothing to decide for this field."
                 if current_only
                 else "Your library service cannot change this field."
             ),
@@ -965,15 +965,13 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Local library record",
                                     "role": "local_presence",
-                                    "observation": "Local library cover retained.",
+                                    "observation": "Your current cover.",
                                 }
                             ],
                             # The producer's own sentence for an unavailable
                             # incumbent preview (cover_consideration), never a
                             # code the owner would read raw (#1286).
-                            "limitations": [
-                                "Preview unavailable for this retained cover."
-                            ]
+                            "limitations": ["Its image could not be previewed."]
                             if case_id == "case-3"
                             else [],
                             "rationale": "",
@@ -987,7 +985,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Open Library",
                                     "role": "external_corroboration",
-                                    "observation": "Retained catalogue cover supports this choice.",
+                                    "observation": "Has this cover in its catalogue.",
                                 }
                             ],
                             "limitations": [],
