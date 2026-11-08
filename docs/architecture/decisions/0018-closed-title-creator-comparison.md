@@ -131,7 +131,8 @@ single letters each followed by a full stop to the letters separated by spaces,
 so "J.R.R." and "J. R. R." compare equal and "JRR" does not. It admits only
 through ADR-0067's `band_initials_fold` production, inside the tight runtime
 band, with titles closed-equal and authors ordered. The admission subset stays
-empty at row level.
+empty at row level. Since #1780 the same fold is also public: ADR-0096's
+creator predicates read it, for names that carry a dotted-initial token only.
 
 The #1307 amendment widens step 4 by one mapping, approved by the owner on
 2026-10-21: a lone U+2019 right single quotation mark with a letter on each
