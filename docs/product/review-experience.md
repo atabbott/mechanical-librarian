@@ -172,162 +172,158 @@ If its catalogue identity has changed it reads `Preparation unavailable`.
 
 ## Library
 
-Library is the complete work list and the only place decisions are made. It
+Library is the complete work list and the only place you make decisions. It
 opens with its write handoff in place, so the notice never moves the works.
 
 ### Counts and lenses
 
-Every global count comes from one summary and names its unit. The Attention
-badge counts works needing a decision. Under a search the status reads `Found m
+Every library-wide count comes from one summary and names its unit. The
+Attention button counts works that need a decision. Under a search the status
+reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
 The lenses are All (the default), Needs attention, No attention needed, Not
-matched and Could not finish, in one row that scrolls sideways when the panel is narrow. Lens,
-search, cursors, selected work and field live in the URL, so deep links and
-Back and Forward work. The pager offers only the moves that exist and is absent
-when the works fit on one page. An empty list says so in one line; with no
-library connected it links to Settings to add one.
+matched and Could not finish, in one row that scrolls sideways when the panel
+is narrow. Lens, search, page, selected work and field live in the URL, so
+links and Back and Forward work. The pager offers only the moves that exist.
+An empty list says so in one line, and with no library connected it links to
+Settings to add one.
 
-Works needing a decision come first: those whose lookups all finished, then
-those with a lookup that gave no usable answer, under **Every lookup
-finished** and **Some lookups gave no usable answer**, with no caption. The
-first does not promise a match, and the second does not promise a retry. Works
-that could not finish follow under **Could not finish**, then Not matched, then
-the rest. The other lenses are alphabetical.
+Works that need a decision come first, under "Every lookup finished" and then
+"Some lookups gave no usable answer". The first heading does not promise a
+match, and the second does not promise a retry. Works that could not finish
+follow under Could not finish, then Not matched, then the rest. The other
+lenses are alphabetical.
 
-A work with no case, nothing to decide and no admitted provider evidence is
-**Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
-gives one reason, in order: **Found, but not this work** (a provider found
-candidates, but work-identity admission refused them all, for audiobooks and
-ebooks alike), **Sources unavailable** (reading **Sources unavailable, retry
-scheduled** only while a recovery job is scheduled), **Failed in Mechanical
-Librarian** (a source failed inside Mechanical Librarian itself, which is never
-retried), or **No source matched**. If the
-recovery store cannot answer, Library drops only that promise and still loads
-the page and its counts.
+A work with no case, nothing to decide and no source evidence accepted for it
+is Not matched, counted beside Works as `7 works · 4 not matched`. Its status
+gives the first reason that applies. "Found, but not this work" means sources
+found books, but none of them matched this work. "Sources unavailable" reads
+"Sources unavailable, retry scheduled" only while a retry is scheduled.
+"Failed in Mechanical Librarian" is never retried. Otherwise the status reads
+"No source matched".
+
 An audiobook's iTunes listing is only its cover. It never matches the
-audiobook, so one that only iTunes found reads **No source matched**. An iTunes
-failure never makes its sources unavailable, and never puts it under **Some
-lookups gave no usable answer**.
+audiobook, so an audiobook that only iTunes found reads "No source matched".
+An iTunes failure never makes its sources unavailable or puts it under "Some
+lookups gave no usable answer".
 
-A work whose latest preparation could not finish reads **Could not finish**
-and sits under that heading, counted beside Works as `2 could not
-finish`, even if an earlier report was retained or unmatched. A decision still
-open on a retained case keeps it in Needs attention. An ebook whose
-provider matched it but offered no change worth a proposal stays in No
-attention needed; one whose providers found only other works is Not matched,
-Found, but not this work.
+A work whose latest preparation could not finish reads Could not finish and
+sits under that heading, counted beside Works as `2 could not
+finish`. This holds even when an earlier report exists, matched or not. A
+decision still open on its earlier case keeps it in Needs attention. An ebook
+that a source matched without offering a change worth proposing stays in No
+attention needed.
 
 ### Rows and selection
 
 Rows show title, authors, library and format, never internal keys. Long titles
-wrap within two lines. A work whose report retains its library's cover shows
-it; others show a spine of initials. Search covers title, authors, library,
-item and media, with wildcards treated literally. A work without a case offers
-no detail action. A prepared audiobook with no case counts as recorded and
-opens its evidence
+wrap within two lines. A work whose report recorded its library's cover shows
+it, and others show a spine of initials. Search covers title, authors,
+library, Audiobookshelf item ID and format, and takes wildcards literally. A
+work without a case opens a summary with no decision controls. Could not
+finish rows with no report do not open. A prepared audiobook with no case
+counts as recorded, and its summary shows its evidence
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
 
-Selecting a work never moves the workspace. Wide screens select the first
-reviewable work without recording anything; compact screens start with the
-list. The selected work loads from its own case read, so a search or outcome
-that moves it off the page leaves it on screen. It reads unavailable only when
-that read fails.
+Selecting a work never moves the workspace. Above 760 pixels, Library opens
+the first reviewable work and records nothing. At 760 or narrower the list
+comes first. Library reads the selected work on its own, so a search or
+outcome that moves it off the page leaves it open. It says it could not be
+loaded only when that read fails.
 
 ## Attention
 
-Attention is the queue of unresolved fields inside Library. Each work appears
+Attention is the queue of undecided fields inside Library. Each work appears
 once with its field count, and its fields follow. The current work, field and
-position (`Work g of G`) stay beside the canvas. The rail follows the search,
-reading `Matching: f of a works needing a decision`, and keeps its own cursor.
-Load more moves focus to the first new row. An empty queue does not mean an
-empty Library.
+position (`Work g of G`) stay beside the canvas. The queue follows the search,
+reading `Matching: f of a works needing a decision`, and keeps its own place.
+Load more attention moves focus to the first new row.
 
 ## Deciding a field
 
-### The canvas
+A row of tabs lists the work's fields in order and stays after a decision.
+Each tab names the field's status:
 
-A rail lists the work's fields in order and stays after a decision. Each tab
-names its status: Needs you, Decided, Automatic, Optional or No change. Empty
-fields sit behind one `Show N more fields` tab.
+- Needs you means the field is in Attention, including a field where Automatic
+  made no choice.
+- Decided means your decision is recorded, or an earlier decision of yours
+  still holds the field.
+- Automatic means Automatic decided the field. You can still change it, and it
+  is not in Attention.
+- Optional means you can choose, but the field is not counted and the canvas
+  skips it when it moves on. Its one reason says why no review is needed, and
+  it shows no condition asking you to choose.
+- No change means the field is there for reference. Keeping the current value
+  is a choice only when another eligible value exists. Each such field shows
+  its value and a reason, never a selectable `Not set`. In Preview, a field
+  that Automatic chose before you entered Preview mode reads No change. It
+  shows that choice beside the current value and says turning on Automatic
+  decides it again.
+
+Fields that are empty and have no proposal sit behind one `Show N more fields`
+tab. Fields with nothing to decide sit in one closed panel headed `No change:`
+and their names. The heading counts any field waiting or unavailable
+separately, and each row gives its value and why nothing changed.
 
 The canvas shows the question, one line under it with the field's own reason,
-and current against proposed. The current value's card shows only its value; a
-proposed card shows its value and, when known, the sources it came from, and
-cards carry no `Alternative N` label. Each card's Evidence control sits
-directly under its value. `Recommended` and its reason appear only for an
-authoritative deterministic selection; nothing says when there is none.
-Other source values appear only when the field has some or they could not be
-read, and the writing-to-the-library box only when a change for the field is
-recorded. A notice never restates the reason already shown, and a decision
-carries no reminder that writes are protected. A disclosure never chooses a
-value.
+and current against proposed. The current value's card shows only its value. A
+proposed card shows its value and, when known, the sources it came from, but
+no `Alternative N` label. Each card's Evidence control sits directly under its
+value. `Recommended` and its reason appear only on the value your settings
+choose, and the canvas says nothing when they choose none. Other source values
+appear only when the field has some or they could not be read. The Writing to
+the library box appears only when a change for the field is recorded. A notice
+never restates the reason already shown, and a decision carries no reminder
+that writes are protected. A disclosure never chooses a value.
 
-The server classifies every field, and the tab status follows from it:
-
-- **Needs you:** queued. This includes a field where automatic handling
-  abstained.
-- **Decided:** an owner decision is recorded.
-- **Automatic:** decided automatically. It can be inspected and deliberately
-  overridden, but it is not queued.
-- **Optional:** choosable but not counted; Next skips it. Its one reason says
-  why no review is needed, and no comparison condition asking for a choice is
-  shown beside it.
-- **No change:** context only. Keeping the current value is a choice only when
-  an eligible alternative exists. Unsupported fields show their value and a
-  reason, never a selectable `Not set`. In Preview, a field that Automatic
-  chose before you entered Preview mode reads No change, shows that choice
-  beside the current value, and says turning on Automatic decides it again.
-
-Fields with nothing to decide sit in one collapsed panel headed `No change:`
-and their names, with any field waiting or unavailable counted separately;
-each row gives its value and why nothing changed.
-
-An Automatic field explains a withheld decision only when failed provider
-evidence contributed to it, and the explanation goes when its cause does. An
-unknown recorded reason reads as unknown. A hold from an earlier case says an
-earlier decision keeps Automatic off for the field. Until requested fresh
-checks finish, the field says they were requested, also after a reload. An
-unconfirmed request reloads the case and says whether it shows the request.
+When a field set to Automatic gets no automatic choice, the canvas says why
+until the cause goes. An unknown reason reads as unknown. A hold from an
+earlier case says an earlier decision keeps Automatic off for the field. Until
+requested fresh checks finish, the field says they were requested, also after
+a reload. If no answer confirms the request, Library reloads the case and says
+whether it shows the request.
 
 ### Choosing
 
-The current value and each eligible value are the commands, with no submit
-step. A field's choices, and a cover comparison's cards, form one radio group:
-one Tab stop, arrow keys move without recording, and Space, Enter or a tap
-records once and moves to the next field. The recorded choice says "Your
-choice".
+A field's choices, and a cover comparison's cards, form one radio group with
+one Tab stop and no submit step. Arrow keys move without recording. Space,
+Enter or a tap records the choice once and moves to the next field. The choice
+you recorded says "Your choice".
 
-The canvas advances only after the server acknowledges the decision and a case
-read confirms it. Counts catch up afterwards. Recording is not applying. When every field is
-recorded, the work lists each field and its outcome and offers Review next
-work; this does not mean anything has been written.
+The canvas moves on only after the server accepts the decision and a fresh
+read of the case confirms it. Counts catch up afterwards. Recording a choice
+does not write it. When every field is recorded, the work lists each field
+and its outcome and offers Review next work.
 
-If the command fails, the choice and its idempotency key are kept and one
-explicit retry repeats it. Commands are never retried automatically. A lost
-response gets one reconciliation attempt; an ambiguous result stays locked and
-is never called unrecorded. If the work changed first, the page moves to the
-current case and says nothing was recorded.
+If a choice could not be confirmed, the page keeps it, and Try the same
+decision again sends it once more, never recording it twice. Mechanical
+Librarian never resends it on its own. If no answer comes back, the page
+reloads the case once and never says the choice was not recorded. If the work
+changed first, the page moves to the current case and says nothing was
+recorded.
 
-### Owner entry, withdrawal and choosing again
+### Entering a value and choosing again
 
-Where no alternative fits, **Enter a value** takes text for a title, subtitle
+Where no proposed value fits, Enter a value takes text for a title, subtitle
 or publisher and suggests up to four cleaned forms of the current value. A
-genre field offers **Choose genres** over current and proposed genres.
-Recording or withdrawing keeps focus on the field
+genre field offers Choose genres over the current and proposed genres.
+Recording, or choosing Withdraw on an unwritten decision, keeps focus on the
+field
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
-Revisiting a recorded field restores its choices with the recorded one marked;
-a new choice appends a decision. A write in progress and a verified cover write
-cannot be replaced; a verified reversible field write can.
+When you return to a recorded field, its choices come back with the recorded
+one marked, and a new choice adds a decision. You cannot replace a decision
+while its write is in progress, or once a cover write is verified. You can
+replace a verified field write that can be reversed.
 
-There is no Undo and there are no bulk decisions. Going back means choosing
-the earlier value: after a write, Enter a value suggests the value it replaced ("Use
-previous value") and Choose genres tags those genres **Previous**. Authors return to an earlier value only when a
-provider proposes it. A work that returns to an earlier content reads as new:
-the decisions recorded on it before are history, and the field shows only
-what you decide now.
+Library has no Undo and no bulk decisions. To go back, choose the earlier
+value. After a write, Enter a value suggests the value it replaced, as "Use
+previous value", and Choose genres marks those genres Previous. Authors return
+to an earlier value only when a source proposes it. A work whose content
+returns to an earlier state reads as new. Its earlier decisions are history,
+and the field shows only what you decide now.
 
 ### Audiobooks
 
