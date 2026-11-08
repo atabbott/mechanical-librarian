@@ -8,29 +8,30 @@ from that evidence and asks you only where your judgement is likely to help.
 
 It is evidence-first rather than AI-first. Every proposed value carries the
 evidence behind it. Routine decisions follow rules that give the same answer
-for the same evidence, and measurement has qualified each one. Mechanical
-Librarian writes nothing to a library until you give write permission for that
-library. Each write goes through Audiobookshelf's own API, and Mechanical
-Librarian then reads the new value back to confirm it.
+for the same evidence. Mechanical Librarian writes nothing to a library until
+you give write permission for that library. Each write goes through
+Audiobookshelf's own API, and Mechanical Librarian then reads the new value
+back to confirm it.
 
 ## Status
 
-Mechanical Librarian is pre-release. It has no published image or supported
-release yet. You can build and run it from source. An upgrade that changes
-stored state needs a clean rebuild, and the [changelog](CHANGELOG.md) marks each
-change that needs one.
+Mechanical Librarian is pre-release. It has no published image yet. You can
+build and run it from source. An upgrade that changes stored state needs a
+clean rebuild, and the [changelog](CHANGELOG.md) marks each change that needs
+one. A clean rebuild empties Mechanical Librarian's database and leaves
+Audiobookshelf as it is.
 
 What works today:
 
 - Guided first-run setup in the browser. You claim the install, connect
-  Audiobookshelf, choose metadata sources and libraries, and check the
-  read-only mounts.
+  Audiobookshelf, choose metadata sources and libraries, and check that your
+  media folders are mounted read-only.
 - Background preparation of every ebook and audiobook. Local evidence comes
   from EPUB packages and audio files. Ebook catalogue evidence comes from
   Hardcover, Open Library, Inventaire, Google Books and iTunes Search.
   Audiobook catalogue evidence comes from Audible, Audnexus, AudioSilo,
-  Hardcover and Open Library. With its Cover evidence switch on, iTunes Search
-  also supplies an audiobook's cover.
+  Hardcover and Open Library. iTunes Search also supplies an audiobook's cover
+  while its Cover evidence switch in Settings is on.
 - The workspace you sign in to: Library (with Attention and work detail),
   Policy, Activity and Settings. Attention holds only the fields that need a
   decision.
@@ -42,8 +43,8 @@ What works today:
 - An optional AI cover reviewer (Codex or an OpenRouter model) and optional
   description advice. Reviewers are advisory only and never receive library
   credentials.
-- Plain words throughout the workspace, which is built to WCAG 2.2 AA. It works
-  by keyboard and stays usable on phones and at 200% text.
+- Plain words in the workspace, which is built to WCAG 2.2 AA. It works by
+  keyboard and stays usable on phones and at 200% text.
 
 [GitHub milestones](https://github.com/atabbott/mechanical-librarian/milestones)
 hold what comes next, and the [roadmap](docs/product/roadmap.md) summarises
