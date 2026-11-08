@@ -1254,7 +1254,7 @@ const Shell = () => {
         <section className="build-mismatch" role="alert">
           <strong>Mechanical Librarian was updated.</strong>
           <span>Reload to keep working. This tab cannot save changes until it reloads.</span>
-          <button onClick={() => window.location.reload()}>Reload now</button>
+          <button onClick={() => window.location.reload()}>Reload</button>
         </section>
       ) : null}
       <main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}>

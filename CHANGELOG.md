@@ -139,7 +139,8 @@ brackets are GitHub issues.
   chose a proposed value." and "Automatic kept the current value." instead of
   "Owner selected…" and "Automatic policy…", entries no longer repeat their
   heading in a sentence, and Evidence and History drop "retained", "durable"
-  and "observations" (#1765).
+  and "observations". The notice that the app was updated now says "Reload",
+  like every other reload button (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
