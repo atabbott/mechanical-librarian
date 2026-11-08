@@ -127,12 +127,12 @@ brackets are GitHub issues.
   "Safely paused", waiting source lookups are "waiting" rather than
   "deferred", and a page that failed to load no longer shows the raw request
   error (#1765).
-- **Clean rebuild required.** An audiobook's sidecar files count only when they
-  belong to it. Audiobookshelf's own `metadata.json` or `metadata.abs` gives
-  nothing. A sidecar is set aside when its folder holds another item's files, it
-  names another book, a collection or another audio file, or another sidecar
-  disagrees. One with another ASIN keeps only its series and description. An
-  `.opf` or `.nfo` repeating Audiobookshelf's record counts once (#1481).
+- **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
+  `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
+  another audio or ebook file, or it lacks the audiobook's title and an author
+  or narrator. Collection sidecars and CUE sheets naming other audio are too.
+  One whose ASIN differs from the file's keeps only series and description.
+  Sidecars that disagree drop that field (#1481).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
