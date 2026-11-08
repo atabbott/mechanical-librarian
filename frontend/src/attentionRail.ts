@@ -39,6 +39,9 @@ export const useAttentionRail = (
         // At 760px and below closing over a selected work reveals that work,
         // so focus stays on its header there rather than the toggle above it.
         if (opened) {
+          // An owner who already moved into the rail, as a Load more whose
+          // page lands before a slow page's frames does, keeps their place.
+          if (active && active !== rail.current && rail.current?.contains(active)) return
           heading.current?.focus({ preventScroll: true })
           heading.current?.scrollIntoView({ block: 'nearest' })
         } else if (

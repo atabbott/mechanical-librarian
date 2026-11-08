@@ -2,11 +2,13 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 
-import { refusalCopy, uncertainWriteOutcome } from '../api/http'
+import { BuildMismatchError, refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { ReviewHttp, SettingsView } from '../api/http'
 import { offOn } from '../fieldControls'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { FieldRow } from './FieldRow'
 import { SegmentedControl } from './SegmentedControl'
+import { StaleBuildRead } from './StaleBuildRead'
 
 type Preferences = NonNullable<SettingsView['document']['description_advice']>
 const labels: Readonly<Record<keyof Preferences, string>> = {
@@ -22,6 +24,8 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
     queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
     retry: false,
   })
+  // Retry preferences, or Reload once the tab is on an earlier build.
+  const preferencesRetry = useRef<HTMLButtonElement>(null)
   return (
     <section
       id="description-advice"
@@ -37,10 +41,26 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
       <a href="/settings?group=reviewer">Choose the description adviser</a>
       {query.isPending ? (
         <p role="status">Loading description preferences…</p>
+      ) : query.error instanceof BuildMismatchError ? (
+        <StaleBuildRead lead="Description preferences were not loaded." ref={preferencesRetry} />
       ) : query.isError ? (
         <div role="alert">
           <p>Description preferences could not be loaded.</p>
-          <button onClick={() => void query.refetch()}>Retry preferences</button>
+          <button
+            ref={preferencesRetry}
+            onClick={() => {
+              // The loading line replaces this button while it reads: the
+              // heading, which stays, holds focus until the outcome takes it.
+              const heading = () => document.getElementById('description-advice-heading')
+              retryInPlace(
+                heading,
+                () => query.refetch(),
+                (result) => (result.isSuccess ? heading() : preferencesRetry.current),
+              )
+            }}
+          >
+            Retry preferences
+          </button>
         </div>
       ) : (
         <Editor http={http} view={query.data} />
@@ -57,6 +77,9 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   // draft and its "Unsaved" note describe what was actually saved.
   const [unconfirmed, setUnconfirmed] = useState(false)
   const reloadButton = useRef<HTMLButtonElement>(null)
+  // Set once a save or reload meets a newer build: neither can succeed again in
+  // this tab, so the editor offers the reload in place of its message.
+  const [staleLead, setStaleLead] = useState<string | null>(null)
   const mutation = useMutation({
     mutationFn: () =>
       http.writeSettings({
@@ -71,6 +94,10 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
       cache.setQueryData(['settings'], saved)
     },
     onError: (error) => {
+      if (error instanceof BuildMismatchError) {
+        setStaleLead('Description preferences were not saved.')
+        return
+      }
       if (!uncertainWriteOutcome(error)) return
       setUnconfirmed(true)
       reload.mutate('unconfirmed')
@@ -96,9 +123,20 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         document.getElementById('description-advice-heading')?.focus()
       }
     },
+    onError: (error, source) => {
+      if (error instanceof BuildMismatchError)
+        setStaleLead(
+          source === 'unconfirmed' || unconfirmed
+            ? 'No answer came back for the description preferences save.'
+            : 'Saved preferences were not loaded.',
+        )
+      // A failure that replaces the message's Reload, or leaves focus on the
+      // page, hands focus to the control now there.
+      focusAfterRetry(() => reloadButton.current)
+    },
   })
   // A pending or settled save keeps Save focusable; it ignores the press.
-  const saveHeld = mutation.isPending || reload.isPending || !changed
+  const saveHeld = mutation.isPending || reload.isPending || !changed || staleLead !== null
   return (
     <div>
       <p>
@@ -145,7 +183,9 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
             ? 'Unsaved. Activating the policy does not save them.'
             : ''}
       </p>
-      {mutation.isError || stale || unconfirmed ? (
+      {staleLead !== null ? (
+        <StaleBuildRead key="stale" lead={staleLead} ref={reloadButton} />
+      ) : mutation.isError || stale || unconfirmed ? (
         <div role="alert">
           <p>
             {!stale && unconfirmed
