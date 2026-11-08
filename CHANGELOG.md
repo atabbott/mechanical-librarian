@@ -132,6 +132,14 @@ brackets are GitHub issues.
   "Safely paused", waiting source lookups are "waiting" rather than
   "deferred", and a page that failed to load no longer shows the raw request
   error (#1765).
+- The Library write notice says what writes wait on in one sentence ("Nothing
+  is written until you give permission.") instead of repeating its button, and
+  the write sentences shared with Activity use full stops rather than
+  semicolons (#1765).
+- The preparation detail in Library says each state once, in the masthead's
+  words: a paused run reads "Preparation paused" whatever paused it, books
+  show the same stage names as the masthead, and the paragraphs explaining how
+  the stage counts work are left to the product page (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -2228,7 +2228,7 @@ def test_preparation_http_preserves_maximum_display_names(
     presentation = _preparation_presentation(PreparationRunState.RUNNING)
     web.repository.preparation_presentation_value = replace(
         presentation,
-        active_books=(PreparationActiveBook(name, "Reading from library"),),
+        active_books=(PreparationActiveBook(name, "Reading your files"),),
         recent_completions=(PreparationCompletion(name, "ready", 101),),
     )
     web.login()
