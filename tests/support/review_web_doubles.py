@@ -946,7 +946,7 @@ class FakePreparation:
     def __init__(self) -> None:
         self.is_paused = False
         self.status_calls = 0
-        self.requests: list[tuple[str, str, PreparationTrigger]] = []
+        self.requests: list[tuple[str, str, PreparationTrigger | None]] = []
 
     def attach_updates(self, announce: object) -> None:
         return None
@@ -992,7 +992,7 @@ class FakePreparation:
         connection: str,
         library: str,
         *,
-        trigger: PreparationTrigger,
+        trigger: PreparationTrigger | None = None,
     ):
         self.requests.append((connection, library, trigger))
         return self.progress(connection, library)

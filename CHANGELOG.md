@@ -145,6 +145,9 @@ brackets are GitHub issues.
   nothing else about the audiobook. An iTunes failure never puts an audiobook
   under "Some lookups gave no usable answer" in Library. An audiobook that only
   iTunes found stays in the Not matched lens (#1779).
+- Retrying description advice while preparation is paused is now confirmed
+  instead of reported as failed. The retry was already saved and runs at the
+  first library scan after preparation resumes (#1784).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
