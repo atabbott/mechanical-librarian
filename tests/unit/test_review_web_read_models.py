@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
@@ -284,6 +285,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "alternative_id": None,
                 "evidence": [
                     {
+                        "language": None,
                         "observation": "Your current cover.",
                         "role": "local_presence",
                         "source": "Local library record",
@@ -1469,6 +1471,7 @@ def test_choice_contexts_classifies_local_identifier_evidence_as_local_presence(
     evidence = contexts[1]["evidence"]
     assert [
         {
+            "language": None,
             "observation": "ISBN: 9780000000000",
             "role": "local_presence",
             "source": "Local library record",
@@ -1673,7 +1676,8 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
     assert second["next_cursor"] is None
     items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
     assert all(
-        set(item) == {"destinations", "observation", "role", "source"} for item in items
+        set(item) == {"destinations", "language", "observation", "role", "source"}
+        for item in items
     )
     shared = next(item for item in items if "Example Press" in item["observation"])
     assert shared["destinations"] == ["authors", "title"]
@@ -1764,7 +1768,7 @@ def test_automatic_history_values_require_an_exact_decision_identity(
 
 
 def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -> None:
-    observation = _choice_observation(
+    observation, language = _choice_observation(
         {
             "fact": json.dumps(
                 {
@@ -1776,6 +1780,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
             "source": "provider_claim",
         }
     )
+    assert language is None
     assert len(observation) <= 188
     assert "\x00" not in observation
     assert "private" not in observation
@@ -2374,30 +2379,33 @@ def test_case_detail_reports_write_consent_it_never_asked_the_read_model_for(
 
 
 @pytest.mark.parametrize(
-    ("kind", "value", "expected"),
+    ("kind", "value", "expected", "language"),
     (
-        ("contributor", "Recorded Narrator", "Narration credit: Recorded Narrator"),
-        ("duration", "43200.000", "Running time: 12 h"),
-        ("performance_type", "unabridged", "Performance: unabridged"),
+        (
+            "contributor",
+            "Recorded Narrator",
+            "Narration credit: Recorded Narrator",
+            None,
+        ),
+        ("duration", "43200.000", "Running time: 12 h", None),
+        ("performance_type", "unabridged", "Performance: unabridged", None),
         # Named as the Library names them, never as "Metadata" (#1286 X7).
-        ("creator", "Ada Example", "Author: Ada Example"),
-        ("language", "en", "Language: en"),
-        ("authors", "Ada Example", "Author: Ada Example"),
+        ("creator", "Ada Example", "Author: Ada Example", None),
+        # Only a language row states a language the browser names (#1802).
+        ("language", "en", "Language: en", "en"),
+        ("authors", "Ada Example", "Author: Ada Example", None),
     ),
 )
 def test_audio_observations_are_labelled_for_the_owner(
-    kind: str, value: str, expected: str
+    kind: str, value: str, expected: str, language: str | None
 ) -> None:
-    assert (
-        _choice_observation(
-            {
-                "fact": json.dumps({"kind": kind, "value": value}),
-                "provider": None,
-                "source": "local_claim",
-            }
-        )
-        == expected
-    )
+    assert _choice_observation(
+        {
+            "fact": json.dumps({"kind": kind, "value": value}),
+            "provider": None,
+            "source": "local_claim",
+        }
+    ) == (expected, language)
 
 
 def test_every_claim_kind_is_named_as_the_library_names_it() -> None:
@@ -2411,7 +2419,7 @@ def test_every_claim_kind_is_named_as_the_library_names_it() -> None:
                 "provider": None,
                 "source": "local_claim",
             }
-        )
+        )[0]
         for kind in ClaimKind
     }
     assert not [kind for kind, text in named.items() if text.startswith("Metadata")]
@@ -3542,6 +3550,8 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         )
         == expected_facts
     )
+    # An identifier row states no language (#1802).
+    assert all(item["language"] is None for item in observations)
     if shape == "conflict":
         assert {
             claim.value
@@ -3722,10 +3732,106 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
         "That recording is a different version of this audiobook."
         + (" It belongs to one edition." if claim.scope is ClaimScope.EDITION else "")
     )
+    assert evidence["language"] is None
     assert "Scope:" not in evidence["observation"]
     assert claim.reference not in _review_unselectable_evidence(
         reopened, {claim.reference}
     )
+
+
+def _local_language(value: str) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.LANGUAGE,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        basis="package_metadata",
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+    )
+
+
+def _language_rows() -> list[tuple[str, dict[str, object]]]:
+    """One row from each producer of a language sentence (#1802)."""
+    from mechanical_librarian.application.review_web import (
+        _choice_evidence,
+        _review_unselectable_evidence,
+    )
+
+    rows: list[tuple[str, dict[str, object]]] = []
+    for value in ("pt-BR", "und", "Language: en", "English", "French (fr)", "as"):
+        report = _proposal_report(local_claims=(_local_language(value),))
+        (row,) = _review_unselectable_evidence(report, set()).values()
+        rows.append((f"unlinked local {value}", row))
+    for value, scope in (
+        ("fr", ClaimScope.WORK),
+        ("pt-BR", ClaimScope.EDITION),
+        ("UND", ClaimScope.EDITION),
+        ("English", ClaimScope.WORK),
+    ):
+        claim = _proposal_claim(
+            "provider", "c1", ClaimKind.LANGUAGE, value, scope=scope
+        )
+        report = _proposal_report(
+            providers=(_proposal_provider("provider", "c1", (claim,)),)
+        )
+        (row,) = _review_unselectable_evidence(report, set()).values()
+        rows.append((f"unlinked provider {value} {scope.value}", row))
+    for source, key, value in (
+        ("local", "observed", "pt-BR"),
+        ("local", "observed", "Language: en"),
+        ("provider_claim", "value", "en"),
+        ("provider_claim", "value", "French (fr)"),
+    ):
+        fact = json.dumps({"kind": "language", key: value})
+        provider = None if source == "local" else "openlibrary"
+        row = _choice_evidence({"source": source, "provider": provider, "fact": fact})
+        rows.append((f"linked {source} {value}", row))
+    return rows
+
+
+def test_every_language_row_states_its_value() -> None:
+    """The browser names the language from this member, not the words (#1802)."""
+    assert [(name, row["language"]) for name, row in _language_rows()] == [
+        ("unlinked local pt-BR", "pt-BR"),
+        ("unlinked local und", "und"),
+        ("unlinked local Language: en", "Language: en"),
+        ("unlinked local English", "English"),
+        ("unlinked local French (fr)", "French (fr)"),
+        ("unlinked local as", "as"),
+        ("unlinked provider fr work", "fr"),
+        ("unlinked provider pt-BR edition", "pt-BR"),
+        ("unlinked provider UND edition", "UND"),
+        ("unlinked provider English work", "English"),
+        # A local record's own label is named once, so it is not stated.
+        ("linked local pt-BR", "pt-BR"),
+        ("linked local Language: en", "en"),
+        ("linked provider_claim en", "en"),
+        ("linked provider_claim French (fr)", "French (fr)"),
+    ]
+
+
+def test_the_stated_language_is_the_first_whole_word_in_its_sentence() -> None:
+    """Library names the first whole-word match, so it must be the stated one.
+
+    In "Language: as. Not offered as a choice." the later "as" is a word of
+    the sentence, not the language (#1802).
+    """
+    for name, row in _language_rows():
+        language = cast(str, row["language"])
+        observation = cast(str, row["observation"])
+        match = re.search(
+            rf"(?<![A-Za-z0-9-]){re.escape(language)}(?![A-Za-z0-9-])", observation
+        )
+        assert match is not None, name
+        # The value stands right after the sentence's lead, and nothing before
+        # it reads as the same word.
+        assert match.start() == len("Language: "), name
+    # Negative control: a value inside a longer word is not a whole word.
+    assert re.search(r"(?<![A-Za-z0-9-])as(?![A-Za-z0-9-])", "asas, Basque") is None
 
 
 @pytest.mark.parametrize("mode", ("automatic", "ask", "ignore"))
@@ -3765,6 +3871,143 @@ def test_unrecorded_synopsis_does_not_reconstruct_a_refusal(mode):
     )
 
 
+_REGION = (
+    "The current value names the same language with a region. Dropping the "
+    "region is never done for you on audiobooks; choose the plain language "
+    "yourself if you want it."
+)
+_EMPTY = {"state": "missing", "value": None}
+_ONE = [{"kind": "text", "value": "Proposed"}]
+_TWO = [{"kind": "text", "value": "One"}, {"kind": "text", "value": "Two"}]
+
+
+@pytest.mark.parametrize(
+    ("destination", "reason", "option", "fields", "paused", "expected"),
+    (
+        (
+            "title",
+            "isbn_title_material_conflict",
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            False,
+            (
+                "The sources disagree about the work or title. Choose the title "
+                "yourself.",
+                "isbn_title_material_conflict",
+            ),
+        ),
+        (
+            "description",
+            "ambiguous_evidence",
+            None,
+            {"current": _EMPTY, "proposed_values": _ONE},
+            False,
+            (
+                "Another source gave a value that isn\u2019t offered here. "
+                "Choose whether to use this one.",
+                "competing_evidence",
+            ),
+        ),
+        # Negative controls: the same code with two candidates, a code that is
+        # a notice in other words, and a branch earlier in the chain.
+        (
+            "description",
+            "ambiguous_evidence",
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            False,
+            ("The sources do not agree on one value.", None),
+        ),
+        (
+            "subtitle",
+            "subtitle_segment_provider_dissent",
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            False,
+            ("The sources disagree with splitting the title this way.", None),
+        ),
+        (
+            "language",
+            "isbn_title_material_conflict",
+            "audiobook_language_replace",
+            {
+                "current": _EMPTY,
+                "proposed_values": _ONE,
+                "notices": ["language_display_name"],
+            },
+            False,
+            (_REGION, None),
+        ),
+        (
+            "narrators",
+            "candidate_credit_prefixed",
+            None,
+            {"current": _EMPTY, "proposed_values": []},
+            False,
+            (
+                'The current value starts with a credit label such as "Narrated '
+                'by", so it is never confirmed for you.',
+                None,
+            ),
+        ),
+        (
+            "title",
+            "invented_reason",
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            False,
+            (
+                "No value was chosen for you, and no more specific reason is known.",
+                None,
+            ),
+        ),
+        (
+            "title",
+            None,
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            False,
+            ("No recorded automatic evaluation is available for this field.", None),
+        ),
+        # A paused field still states the condition after its prefix (#1802).
+        (
+            "title",
+            "isbn_title_material_conflict",
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            True,
+            (
+                "Changes made for you are paused for this field. The sources "
+                "disagree about the work or title. Choose the title yourself.",
+                "isbn_title_material_conflict",
+            ),
+        ),
+    ),
+)
+def test_a_withheld_reason_names_the_condition_it_states(
+    destination: str,
+    reason: str | None,
+    option: str | None,
+    fields: dict[str, object],
+    paused: bool,
+    expected: tuple[str, str | None],
+) -> None:
+    """Library leaves out a restated notice by its code, never its words (#1802)."""
+    from mechanical_librarian.application.review_web import _automatic_withheld
+    from mechanical_librarian.domain.shadow_outcome import ShadowFieldOutcome
+
+    outcome = (
+        None
+        if reason is None
+        else cast(
+            ShadowFieldOutcome,
+            SimpleNamespace(reason_code=reason, policy_option=option),
+        )
+    )
+    field = {"destination": destination, "notices": [], **fields}
+    assert _automatic_withheld(field, outcome, destination, paused) == expected
+
+
 def test_identifier_relationship_preserves_actual_claim_value() -> None:
     from mechanical_librarian.application.review_web import (
         _choice_evidence,
@@ -3796,7 +4039,7 @@ def test_choice_observation_never_repeats_its_label() -> None:
                 "source": "local",
                 "fact": json.dumps({"kind": "isbn", "observed": value}),
             }
-        )
+        )[0]
 
     assert observed("ISBN: 9780593135204") == "ISBN: 9780593135204"
     assert observed("isbn:9780593135204") == "ISBN: 9780593135204"
@@ -3817,7 +4060,7 @@ def test_choice_observation_reads_a_running_time_in_hours_and_minutes() -> None:
                 "source": "local",
                 "fact": json.dumps({"kind": "duration", "value": value}),
             }
-        )
+        )[0]
 
     assert observed("43200.000") == "Running time: 12 h"
     assert observed("30846.400") == "Running time: 8 h 34 min"
@@ -3841,7 +4084,8 @@ def test_choice_observation_reads_a_running_time_in_hours_and_minutes() -> None:
 def test_choice_observation_does_not_invent_nested_values(fact: str | None) -> None:
     from mechanical_librarian.application.review_web import _choice_observation
 
-    text = _choice_observation({"source": "provider_claim", "fact": fact})
+    text, language = _choice_observation({"source": "provider_claim", "fact": fact})
+    assert language is None
     assert "never displayed" not in text
     assert "supports" not in text
 
@@ -3860,6 +4104,7 @@ def test_unknown_choice_authority_is_observation_not_corroboration(
         }
     )
     assert projected == {
+        "language": None,
         "observation": "ISBN: 9780593135204",
         "role": "external_observation",
         "source": "Unnamed source",
@@ -4540,11 +4785,13 @@ def test_an_edition_narrator_choice_names_the_audio_edition_it_came_from() -> No
         key=lambda row: row["observation"],
     ) == [
         {
+            "language": None,
             "observation": f"Narration credit: {NARRATOR} (Edition 3, 16 h 11 min)",
             "role": "external_corroboration",
             "source": "Hardcover audio edition",
         },
         {
+            "language": None,
             "observation": f"Narration credit: {NARRATOR} (Edition 4, 16 h 10 min)",
             "role": "external_corroboration",
             "source": "Hardcover audio edition",
@@ -4577,6 +4824,7 @@ def test_a_work_route_date_reads_as_the_books_first_publication() -> None:
     )
     assert contexts[1]["evidence"] == [
         {
+            "language": None,
             "observation": "First published (book): 1999-05-01",
             "role": "external_corroboration",
             "source": "Hardcover",

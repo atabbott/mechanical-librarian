@@ -7,6 +7,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -22,11 +23,13 @@
           "alternative_id": "alternative_1eefb174ae59e4445606ec7d8ab8cc8b3d1d66f84b61a78c9d8722d90605a9f7",
           "evidence": [
             {
+              "language": null,
               "observation": "Series position: 3",
               "role": "external_corroboration",
               "source": "Hardcover"
             },
             {
+              "language": null,
               "observation": "Series membership: Slough House",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -91,6 +94,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -106,6 +110,7 @@
           "alternative_id": "alternative_e60dad4dce063390296b837737177625a2fd7143ffc557307666e08cd3b774af",
           "evidence": [
             {
+              "language": null,
               "observation": "Genre: Mystery",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -176,6 +181,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -191,16 +197,19 @@
           "alternative_id": "alternative_2eb8a4c331fe3a2c14d7d9b7833f40f59a0abeb32210f325f2f9d2d54d5383ae",
           "evidence": [
             {
+              "language": null,
               "observation": "ISBN: 9780306406157",
               "role": "local_presence",
               "source": "Local library record"
             },
             {
+              "language": null,
               "observation": "ISBN: 0306406152",
               "role": "local_presence",
               "source": "Local library record"
             },
             {
+              "language": null,
               "observation": "ISBN: 9780306406157",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -261,17 +270,20 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
           "alternative_id": null,
           "evidence": [
             {
+              "language": null,
               "observation": "Your current value.",
               "role": "local_presence",
               "source": "Local library record"
             },
             {
+              "language": null,
               "observation": "Title: Real Tigers",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -287,6 +299,7 @@
           "alternative_id": "alternative_34ae580e00a343c1c8d75942faa76e827587bfbd550b76cb501d636324aca54b",
           "evidence": [
             {
+              "language": null,
               "observation": "Title: Real Tigers",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -345,6 +358,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -396,17 +410,20 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
           "alternative_id": null,
           "evidence": [
             {
+              "language": null,
               "observation": "Your current value.",
               "role": "local_presence",
               "source": "Local library record"
             },
             {
+              "language": null,
               "observation": "Author: Mick Herron",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -422,6 +439,7 @@
           "alternative_id": "alternative_e4f80543aa92d81848e85b7df46baf25e3aa25f4c26463161be08e11540e75f9",
           "evidence": [
             {
+              "language": null,
               "observation": "Author: Mick Herron",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -473,6 +491,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -524,6 +543,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -585,12 +605,14 @@
       },
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
           "alternative_id": null,
           "evidence": [
             {
+              "language": null,
               "observation": "Your current value.",
               "role": "local_presence",
               "source": "Local library record"
@@ -606,6 +628,7 @@
           "alternative_id": "alternative_fb3c646d64076432433b3798fc56e0705e58fbdb1760152f7943021cdd428b86",
           "evidence": [
             {
+              "language": null,
               "observation": "Description: A qualified description.",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -702,6 +725,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -753,6 +777,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -804,6 +829,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
@@ -819,6 +845,7 @@
           "alternative_id": "alternative_ac56de9cfdac126ab8f6347f1e34942d28fcb775cf5d2fd93938cc414246dbe8",
           "evidence": [
             {
+              "language": null,
               "observation": "Tag: Espionage",
               "role": "external_corroboration",
               "source": "Hardcover"
@@ -875,6 +902,7 @@
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_reason": null,
+      "automatic_withheld_condition": null,
       "earlier_automatic_value": null,
       "choice_contexts": [
         {
