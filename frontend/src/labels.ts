@@ -466,17 +466,23 @@ export const languageName = (value: string) => {
 }
 
 // A retained language observation names its language as the field value
-// beside it does: the server states `Language: pt-BR` and every page reads
-// `Language: Brazilian Portuguese (pt-BR)`, region and script included
-// (#1286). The server's `Language:` prefix is what marks one. An undetermined
-// language keeps its tag, since the observation already says it is
-// undetermined, and text that is not a tag is shown as it is.
-export const observationText = (text: string) =>
-  text.replace(
-    /^Language: ([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)(?=\.|$)/u,
-    (match, code: string) =>
-      code.toLowerCase() === 'und' ? match : `Language: ${languageName(code)}`,
-  )
+// beside it does: `Language: pt-BR` reads `Language: Brazilian Portuguese
+// (pt-BR)`, region and script included (#1286). The server sends the value the
+// row states, and the first whole word equal to it is named, so the sentence
+// around it can be reworded (#1802). An undetermined language keeps its tag,
+// since the observation already says it is undetermined, and a value that is
+// not a tag is shown as it is.
+export const observationText = (row: { observation: string; language: string | null }) => {
+  const { observation, language } = row
+  if (language === null || language.toLowerCase() === 'und') return observation
+  const name = languageName(language)
+  if (name === language) return observation
+  // A value languageName names is tag-shaped, so it needs no escaping.
+  const match = new RegExp(`(?<![A-Za-z0-9-])${language}(?![A-Za-z0-9-])`, 'u').exec(observation)
+  return match === null
+    ? observation
+    : observation.slice(0, match.index) + name + observation.slice(match.index + language.length)
+}
 
 // One vocabulary for every preparation count, in the masthead and the run line
 // alike (#1366); a count not yet known reads as an ellipsis, never 0. Only the

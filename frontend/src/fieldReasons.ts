@@ -118,14 +118,10 @@ export const UNOFFERED_DISSENT_TEXT =
 export const loneCandidateForEmpty = (field: ReviewField) =>
   field.proposedValues.length === 1 && field.currentValue === EMPTY_TARGET_TEXT
 // A notice that says again what the reason under the question already says is
-// left out: the condition that is that line (#1519).
+// left out: the condition that is that line (#1519). The server names the
+// condition its reason states, so either sentence can be reworded (#1802).
 export const restatesReason = (field: ReviewField, notice: string) =>
-  notice === questionNotice(field) ||
-  (field.automaticWithheldReason !== null &&
-    (`${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason ||
-      (notice === 'competing_evidence' &&
-        loneCandidateForEmpty(field) &&
-        field.automaticWithheldReason === `${UNOFFERED_DISSENT_TEXT}.`)))
+  notice === questionNotice(field) || notice === field.automaticWithheldCondition
 // Under an actionable field's question, one line gives its own reason: why it
 // was withheld, else its first comparison condition, else its disposition. The
 // classification sentence, the same on every field, is only the last fallback

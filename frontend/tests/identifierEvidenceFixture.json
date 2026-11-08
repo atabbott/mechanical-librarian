@@ -24,6 +24,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -58,11 +59,13 @@
             "alternative_id": "alternative_b082d8fa2afb229244b76a923ae5057fea057f33497c9a872c13585e9338df72",
             "evidence": [
               {
+                "language": null,
                 "observation": "Narration credit: Narrator 0",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
+                "language": null,
                 "observation": "Narration credit: Narrator 0",
                 "role": "external_corroboration",
                 "source": "Audible"
@@ -78,11 +81,13 @@
             "alternative_id": "alternative_eda0dd24896993e6b173a83433ebe5f275c1d7c75bb027b52b3a28f32f617668",
             "evidence": [
               {
+                "language": null,
                 "observation": "Narration credit: Narrator 1",
                 "role": "external_corroboration",
                 "source": "Audible"
               },
               {
+                "language": null,
                 "observation": "Narration credit: Narrator 1",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -129,6 +134,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -163,6 +169,7 @@
             "alternative_id": "alternative_2a328440c29fe4c45d479d1f61660daa4528d1332df50c620e901749624816c8",
             "evidence": [
               {
+                "language": null,
                 "observation": "ASIN: B000000002",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -178,6 +185,7 @@
             "alternative_id": "alternative_4df9e8c953dd90707960d062780413630e84960acb9fd29d39f204ad27cdfb82",
             "evidence": [
               {
+                "language": null,
                 "observation": "ASIN: B000000001",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -222,6 +230,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -245,16 +254,19 @@
             "alternative_id": null,
             "evidence": [
               {
+                "language": null,
                 "observation": "Your current value.",
                 "role": "local_presence",
                 "source": "Local library record"
               },
               {
+                "language": null,
                 "observation": "Title: Synthetic Journey",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
+                "language": null,
                 "observation": "Title: Synthetic Journey",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -270,11 +282,13 @@
             "alternative_id": "alternative_f86042dc26d7453a61fc96db2b72fc459b7f209af35e2ca5d13b46c94dc59785",
             "evidence": [
               {
+                "language": null,
                 "observation": "Title: Synthetic Journey",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
+                "language": null,
                 "observation": "Title: Synthetic Journey",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -319,6 +333,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -370,6 +385,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -386,16 +402,19 @@
             "alternative_id": null,
             "evidence": [
               {
+                "language": null,
                 "observation": "Your current value.",
                 "role": "local_presence",
                 "source": "Local library record"
               },
               {
+                "language": null,
                 "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
+                "language": null,
                 "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -411,11 +430,13 @@
             "alternative_id": "alternative_6edf6cc99c073bb07d4bf641be960738da82833e49f56883f3ac69291c8e9349",
             "evidence": [
               {
+                "language": null,
                 "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
+                "language": null,
                 "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
@@ -460,6 +481,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -511,6 +533,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -562,6 +585,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -613,6 +637,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -664,6 +689,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -715,6 +741,7 @@
         "inventory_role": "primary",
         "automatic_decision": null,
         "automatic_withheld_reason": "The sources give different ISBNs.",
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -766,6 +793,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -817,6 +845,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -868,6 +897,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -919,6 +949,7 @@
         "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
+        "automatic_withheld_condition": null,
         "earlier_automatic_value": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
@@ -973,16 +1004,19 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
+        "language": null,
         "observation": "ASIN: B000000002. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
+        "language": null,
         "observation": "ISBN: 9780593135204. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["title"],
+        "language": null,
         "observation": "Title: Synthetic Journey",
         "role": "external_corroboration",
         "source": "Audnexus"
@@ -991,22 +1025,26 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
+        "language": null,
         "observation": "ASIN: B000000001. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["narrators"],
+        "language": null,
         "observation": "Narration credit: Narrator 0",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["asin"],
+        "language": null,
         "observation": "ASIN: B000000001",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["narrators"],
+        "language": null,
         "observation": "Narration credit: Narrator 1",
         "role": "external_corroboration",
         "source": "Audible"
@@ -1015,40 +1053,47 @@
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
+        "language": null,
         "observation": "ISBN: 9781250077004. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["narrators"],
+        "language": null,
         "observation": "Narration credit: Narrator 1",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["authors"],
+        "language": null,
         "observation": "Author: Example Author",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["authors"],
+        "language": null,
         "observation": "Author: Example Author",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["title"],
+        "language": null,
         "observation": "Title: Synthetic Journey",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["asin"],
+        "language": null,
         "observation": "ASIN: B000000002",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["narrators"],
+        "language": null,
         "observation": "Narration credit: Narrator 0",
         "role": "external_corroboration",
         "source": "Audible"

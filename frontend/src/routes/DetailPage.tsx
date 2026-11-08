@@ -364,7 +364,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         <ul className="evidence-values">
                           {fieldObservations.map((item, index) => (
                             <li key={`${item.source}-${String(index)}-${item.observation}`}>
-                              <p>{observationText(item.observation)}</p>
+                              <p>{observationText(item)}</p>
                               <small>
                                 {item.source} · {evidenceRoleLabel(item.role)}
                               </small>
