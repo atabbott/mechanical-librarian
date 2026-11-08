@@ -739,12 +739,15 @@ def build_provider(
         if credential is None:
             raise RuntimeError("hardcover credential is unavailable")
         client = hardcover_client_token(credential, timeout, transport=transport)
+        hardcover_pacer = pacers[provider.adapter]
+        if not isinstance(hardcover_pacer, HardcoverPacer):
+            raise RuntimeError("hardcover pacer is unavailable")
         return HardcoverMetadataProvider(
             provider.name,
             client,
             maximum,
             timeout,
-            pacer=pacers[provider.adapter],
+            pacer=hardcover_pacer,
             clock=clock,
             wall_clock=lambda: capture_epoch,
             sleep=sleep,

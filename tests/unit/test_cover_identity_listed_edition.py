@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock
 
 import pytest
@@ -155,20 +156,24 @@ def _report(
     target: TargetFacts | None = None,
     identifier_evidence: tuple[object, ...] = (),
     lanes: tuple[object, ...] = (),
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        audio=None,
-        target=_target() if target is None else target,
-        providers=(
-            SimpleNamespace(
-                provider="hardcover",
-                candidates=candidates,
-                query_kind=ProviderQueryKind.DISCOVERY,
-                lanes=lanes,
+) -> MetadataReport:
+    # A duck-typed stand-in: the classifier reads only these members.
+    return cast(
+        "MetadataReport",
+        SimpleNamespace(
+            audio=None,
+            target=_target() if target is None else target,
+            providers=(
+                SimpleNamespace(
+                    provider="hardcover",
+                    candidates=candidates,
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                    lanes=lanes,
+                ),
             ),
+            identifier_evidence=identifier_evidence,
+            local_claims=(),
         ),
-        identifier_evidence=identifier_evidence,
-        local_claims=(),
     )
 
 
@@ -363,14 +368,11 @@ def test_a_mixed_candidate_keeps_its_other_sources_outcome() -> None:
 def test_a_mixed_candidate_takes_a_listed_editions_conflict() -> None:
     report = _report(
         _candidate(),
+        _candidate(identity=_ISBN_EDITION),
         identifier_evidence=(
             _identifier(IdentifierRelation.ACCEPTED),
             _identifier(IdentifierRelation.UNRELATED, _ISBN_EDITION),
         ),
-    )
-    report.providers[0].candidates = (
-        *report.providers[0].candidates,
-        _candidate(identity=_ISBN_EDITION),
     )
     assert _classify_sources(report, (_default_source(), _listed_source()))[:2] == (
         "conflict",

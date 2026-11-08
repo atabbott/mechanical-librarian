@@ -1786,7 +1786,7 @@ def test_a_listed_edition_cover_is_an_unconfirmed_owner_choice() -> None:
         case_id, report.to_json(), {"proposal_id": "review_proposal_" + "d" * 64}
     )
 
-    (candidate,) = projection["candidates"]
+    (candidate,) = cast("list[dict[str, Any]]", projection["candidates"])
     assert "unknown" == candidate["identity"]["outcome"]
     assert "match_not_confirmed" == candidate["match_state"]
     assert candidate["manual_eligible"] is True
