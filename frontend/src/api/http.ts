@@ -197,6 +197,9 @@ export interface PolicySearch {
 export interface ProviderOutcomeView {
   // The companion EPUB's ISBN lane (#1723).
   companionIsbn: boolean
+  // iTunes asked for an audiobook's cover alone, so it neither matches nor
+  // limits the work (#1779).
+  coverOnly: boolean
   providerRequests: number
   laneKind: ProviderQueryKind
   provider: string
@@ -644,8 +647,11 @@ export interface ChoiceContextView {
   selection: 'current' | 'proposed'
 }
 export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
+// The branch that chose a field's sentence; Library decides rows from it (#1791).
+export type FieldCause = ReviewFieldDto['classification_cause']
 export interface ReviewFieldView {
   classification: string
+  classificationCause: FieldCause
   classificationReason: string
   destination: TargetDestination
   decisionActions: readonly DecisionAction[]
@@ -2356,6 +2362,7 @@ const mapMediaHealth = (value: readonly MediaHealthDto[]): MediaHealthObservatio
 
 const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => ({
   companionIsbn: value.companion_isbn,
+  coverOnly: value.cover_only,
   providerRequests: value.provider_requests,
   laneKind: value.lane_kind,
   provider: value.provider,
@@ -2704,6 +2711,7 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
 
 const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   classification: field.classification,
+  classificationCause: field.classification_cause,
   classificationReason: field.classification_reason,
   destination: field.destination,
   // The decoder admits exactly [] or ['keep_current', 'accept'].

@@ -221,6 +221,16 @@ export const sourceStatusLabels = {
   adapter_fault: 'Failed in Mechanical Librarian',
 } satisfies Record<ProviderStatus, string>
 
+// A cover-only lane asked for an audiobook's cover alone, so what it found is
+// a cover, never a match (#1779). Its failures keep their own labels.
+export const sourceStatusLabel = (source: {
+  status: ProviderStatus
+  coverOnly: boolean
+}): string =>
+  source.coverOnly && source.status === 'candidates'
+    ? 'Cover found'
+    : sourceStatusLabels[source.status]
+
 export const claimKindLabels = {
   title: 'Title',
   subtitle: 'Subtitle',
