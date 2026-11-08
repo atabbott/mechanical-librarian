@@ -49,8 +49,8 @@ long the service keeps the data, and what works without it.
 Each claim records the field, the value, the spoken role, the words in the
 transcript and their times in the audio. It also records the item's fingerprint,
 the track, the language, the confidence and any warnings. It records the
-versions of the transcript, the extractor, the schema and the model as well. An
-unclear value is left out. The step that pulls out claims never makes up an
+versions of the transcript, the step that pulls out claims, the schema and the
+model as well. An unclear value is left out. That step never makes up an
 identifier, a person, a series or a position in a series. Spoken text that
 sounds like an instruction is only evidence.
 
