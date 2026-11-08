@@ -19,6 +19,7 @@ from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
     normalize_cover_preview,
     normalize_provenance,
+    packet_designation,
 )
 from mechanical_librarian.application.cover_packets import cover_source_reference
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -38,17 +39,27 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     Comparison,
+    FieldState,
+    IdentifierEvidence,
     IdentifierRelation,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
     ProviderEvidenceKind,
     ProviderQueryKind,
+    TargetDestination,
+    TargetFacts,
+    TargetFieldState,
     creator_comparison_key,
     manifestation_publication_compatible,
 )
 from mechanical_librarian.domain.proposal_set import (
     provider_candidate_represents_target_recording,
+)
+from mechanical_librarian.domain.work_identity_levels import (
+    WorkIdentityLevel,
+    level_admission,
+    omnibus_against_volume,
 )
 
 SCHEMA_VERSION = "cover-identity-report-v1"
@@ -76,6 +87,7 @@ _CLASSIFIER_RULES = (
     "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
     "audiobook-cross-authority-cover-perceptual-hash:work-scope-corroboration",
     "source-bound-retained-recording-admission:verified-work",
+    "listed-edition-work-identity-binding:unknown-with-level-shadow",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -355,7 +367,7 @@ def _report_bound_candidate_sources(
                 "designation": (
                     None
                     if source.provenance is None
-                    else source.provenance.designation.value
+                    else packet_designation(source.provenance.designation)
                 ),
                 "provider": (
                     None if source.provenance is None else source.provenance.provider
@@ -396,6 +408,9 @@ def _classify_sources(
     for source in provider_sources:
         provenance = source.provenance
         assert provenance is not None
+        # A listed edition names an edition that is never a candidate, so it
+        # binds by its book's work identity alone (#1380).
+        listed = provenance.designation is CoverDesignation.LISTED_EDITION
         for observation in report.providers:
             if observation.provider != provenance.provider:
                 continue
@@ -403,7 +418,8 @@ def _classify_sources(
                 if candidate.work_identity != provenance.work_identity:
                     continue
                 if (
-                    provenance.edition_identity is not None
+                    not listed
+                    and provenance.edition_identity is not None
                     and candidate.identity != provenance.edition_identity
                 ):
                     continue
@@ -420,6 +436,8 @@ def _classify_sources(
                 )
     if not matches:
         return "unknown", ["unbound_provider_identity"], []
+    if all(_listed(match[0]) for match in matches):
+        return _classify_listed_edition(report, matches)
     evidence: list[str] = []
     title_agreement = False
     creator_or_contributor_agreement = False
@@ -434,26 +452,14 @@ def _classify_sources(
         isbn_discovery_supported,
         recording_supported,
     ) in matches:
-        if any(
-            item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
-            for item in candidate.evidence
-        ):
-            return "conflict", ["edition_work_contradiction"], []
-
-        bound = [
-            item
-            for item in report.identifier_evidence
-            if item.provider == provider
-            and item.candidate_identity == candidate.identity
-            and item.work_identity == candidate.work_identity
-        ]
-        unrelated = [
-            item.reference
-            for item in bound
-            if item.relation is IdentifierRelation.UNRELATED
-        ]
-        if unrelated:
-            return "conflict", ["unrelated_identifier"], unrelated
+        bound = _bound_identifiers(report, provider, candidate)
+        conflict = _retained_conflict(candidate, bound)
+        if conflict is not None:
+            return conflict
+        if _listed(source):
+            # Beside another bound source, a listed edition adds only its
+            # conflicts: it never raises the candidate's outcome.
+            continue
 
         if recording_supported and source.kind in AUDIOBOOK_COVER_SOURCE_KINDS:
             recording = True
@@ -543,6 +549,140 @@ def _classify_sources(
         ],
         [],
     )
+
+
+def _listed(source: CoverSource) -> bool:
+    return (
+        source.provenance is not None
+        and source.provenance.designation is CoverDesignation.LISTED_EDITION
+    )
+
+
+def _bound_identifiers(
+    report: MetadataReport, provider: str, candidate: ProviderCandidate
+) -> list[IdentifierEvidence]:
+    return [
+        item
+        for item in report.identifier_evidence
+        if item.provider == provider
+        and item.candidate_identity == candidate.identity
+        and item.work_identity == candidate.work_identity
+    ]
+
+
+def _retained_conflict(
+    candidate: ProviderCandidate, bound: list[IdentifierEvidence]
+) -> tuple[str, list[str], list[str]] | None:
+    """The retained contradiction that makes a bound candidate a conflict."""
+    if any(
+        item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        for item in candidate.evidence
+    ):
+        return "conflict", ["edition_work_contradiction"], []
+    unrelated = [
+        item.reference
+        for item in bound
+        if item.relation is IdentifierRelation.UNRELATED
+    ]
+    if unrelated:
+        return "conflict", ["unrelated_identifier"], unrelated
+    return None
+
+
+def _classify_listed_edition(
+    report: MetadataReport,
+    matches: list[tuple[CoverSource, str, ProviderCandidate, bool, bool]],
+) -> tuple[str, list[str], list[str]]:
+    """Classify a candidate whose only bound sources are listed editions.
+
+    The outcome is always `unknown` until #1355's activation reads it: the
+    reasons record the strictest ADR-0096 level that `title_and_creator`, the
+    widest, admits, so any configured level can be compared with it later. The
+    target's stored authors are compared, never a query spelling, so a creator
+    form only the query used never reaches the predicate. Any conflict, then
+    any creator contradiction, wins over a level.
+    """
+    target_title = report.target.current_title
+    target_creators = _target_authors(report.target)
+    local_claims = getattr(report, "local_claims", ())
+    contradicted = False
+    levels: set[WorkIdentityLevel] = set()
+    for _source, provider, candidate, _isbn, _recording in matches:
+        conflict = _retained_conflict(
+            candidate, _bound_identifiers(report, provider, candidate)
+        )
+        if conflict is not None:
+            return conflict
+        _title, agreement, disagreement = _plausible_match_evidence(
+            candidate, local_claims
+        )
+        candidate_contradicted = disagreement and not agreement
+        contradicted = contradicted or candidate_contradicted
+        record_title = _record_title(candidate)
+        admission = level_admission(
+            WorkIdentityLevel.TITLE_AND_CREATOR,
+            target_title,
+            target_creators,
+            record_title,
+            _record_creators(candidate),
+            omnibus_against_volume=(
+                _omnibus(record_title, target_title)
+                or _omnibus(target_title, record_title)
+            ),
+            contradicted=candidate_contradicted,
+        )
+        if admission is not None:
+            levels.add(admission.level)
+    if contradicted:
+        return "unknown", ["retained_creator_or_contributor_disagreement"], []
+    if not levels:
+        return "unknown", ["listed_edition_level_refused"], []
+    level = (
+        WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
+        if WorkIdentityLevel.TITLE_AND_CREATOR_EXACT in levels
+        else WorkIdentityLevel.TITLE_AND_CREATOR
+    )
+    return (
+        "unknown",
+        ["listed_edition_level_shadow", f"work_identity:{level.value}"],
+        [],
+    )
+
+
+def _target_authors(target: TargetFacts) -> tuple[str, ...]:
+    """The target's AUTHORS value as stored, in order; empty when not a value."""
+    for field in target.fields:
+        if field.destination is TargetDestination.AUTHORS:
+            if field.state is TargetFieldState.VALUE and type(field.value) is tuple:
+                return tuple(value for value in field.value if type(value) is str)
+            return ()
+    return ()
+
+
+def _work_claim_values(candidate: ProviderCandidate, kind: ClaimKind) -> list[str]:
+    return [
+        claim.value
+        for claim in sorted(candidate.claims, key=lambda claim: claim.raw_order)
+        if claim.kind is kind
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+    ]
+
+
+def _record_title(candidate: ProviderCandidate) -> str | None:
+    titles = _work_claim_values(candidate, ClaimKind.TITLE)
+    return titles[0] if len(titles) == 1 else None
+
+
+def _record_creators(candidate: ProviderCandidate) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(_work_claim_values(candidate, ClaimKind.CREATOR)))
+
+
+def _omnibus(collection_title: str | None, volume_title: str | None) -> bool:
+    if collection_title is None or volume_title is None:
+        return False
+    return omnibus_against_volume(collection_title, volume_title)
 
 
 def _is_isbn_discovery_candidate(

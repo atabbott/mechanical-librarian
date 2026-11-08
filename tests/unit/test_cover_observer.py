@@ -28,6 +28,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
     CoverDesignation,
     CoverEvidenceError,
     CoverFinalHost,
@@ -37,7 +38,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     CoverTruncationReason,
     cover_source_id,
+    publication_ready,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderObservation,
@@ -140,13 +143,14 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
         for value in provider_values
         if value.state is not CoverSourceState.TRUNCATED
     ]
-    assert 8 == len(admitted)
+    # Each connection's first four fill the twelve; no fifth finds room.
+    assert 12 == len(admitted)
     assert all(
         sum(
             value.provenance is not None and value.provenance.provider == provider
             for value in admitted
         )
-        <= 4
+        == 4
         for provider in ("alpha", "beta", "gamma")
     )
     reasons = {
@@ -154,10 +158,7 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
         for value in provider_values
         if value.state is CoverSourceState.TRUNCATED and value.provenance is not None
     }
-    assert {
-        CoverTruncationReason.PROVIDER_LIMIT,
-        CoverTruncationReason.GALLERY_LIMIT,
-    } == reasons
+    assert {CoverTruncationReason.GALLERY_LIMIT} == reasons
 
 
 @pytest.mark.parametrize(
@@ -714,20 +715,22 @@ def test_open_library_retrieved_cover_records_only_the_closed_host_family(
 def test_other_retrieved_provider_covers_record_no_final_host(tmp_path: Path) -> None:
     with patch(
         "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
-        return_value=RemoteCover("https://example.com/c.jpg", "image/jpeg", _jpeg()),
+        return_value=RemoteCover(
+            "https://assets.hardcover.app/c.jpg", "image/jpeg", _jpeg()
+        ),
     ) as fetch:
         source = CoverEvidenceObserver(
             _Target(None), CoverArtifactStore(tmp_path)
         )._remote(
             _open_library_descriptor(
-                "https://example.com/c.jpg",
+                "https://assets.hardcover.app/c.jpg",
                 CoverSourceKind.HARDCOVER,
-                CoverRedirects.PUBLIC_HTTPS,
+                CoverRedirects.NONE,
             ),
             _deadline(),
         )
     assert (source.state, source.final_host) == (CoverSourceState.RETRIEVED, None)
-    assert fetch.call_args.kwargs["redirects"] is CoverRedirects.PUBLIC_HTTPS
+    assert fetch.call_args.kwargs["redirects"] is CoverRedirects.NONE
 
 
 def test_an_unmapped_open_library_final_host_is_an_invariant_failure(
@@ -819,3 +822,323 @@ def _assert_value_free(output: str) -> None:
         "evil.example",
     ):
         assert value not in output
+
+
+# --- Edition-cover order, caps and collapse (#1380, #1778) ------------------
+
+
+def _connection(name: str, enabled: bool = True) -> ProviderConnectionConfiguration:
+    return ProviderConnectionConfiguration(name, True, enabled, f"/secrets/{name}")
+
+
+def _book_observation(provider: str) -> ProviderObservation:
+    return ProviderObservation(
+        provider,
+        ProviderStatus.CANDIDATES,
+        (),
+        (ProviderCandidate(f"{provider}-book", f"{provider}-book", ()),),
+    )
+
+
+def _descriptor(
+    provider: str,
+    identity: str,
+    designation: CoverDesignation = CoverDesignation.LISTED_EDITION,
+    *,
+    kind: CoverSourceKind = CoverSourceKind.HARDCOVER,
+    order: int = 0,
+    url: str | None = None,
+) -> ProviderCoverDescriptor:
+    return ProviderCoverDescriptor(
+        provider,
+        kind,
+        cover_source_id(kind, f"{provider}:{identity}"),
+        url,
+        CoverProvenance(
+            provider,
+            designation,
+            f"{provider}-book",
+            None
+            if designation in {CoverDesignation.DEFAULT, CoverDesignation.WORK}
+            else f"{provider}-{identity}",
+        ),
+        order=order,
+    )
+
+
+def _adapter_truncation(
+    provider: str, reason: CoverTruncationReason
+) -> ProviderCoverDescriptor:
+    return ProviderCoverDescriptor(
+        provider,
+        CoverSourceKind.HARDCOVER,
+        cover_source_id(
+            CoverSourceKind.HARDCOVER, f"truncation:{provider}:{reason.value}"
+        ),
+        None,
+        CoverProvenance(
+            provider, CoverDesignation.TRUNCATION, truncation_reason=reason
+        ),
+        terminal_state=CoverSourceState.TRUNCATED,
+    )
+
+
+def _admit(
+    connections: tuple[ProviderConnectionConfiguration, ...],
+    observations: tuple[ProviderObservation, ...],
+    descriptors: tuple[ProviderCoverDescriptor, ...],
+) -> tuple[dict[str, tuple[ProviderCoverDescriptor, ...]], tuple[CoverSource, ...]]:
+    with tempfile.TemporaryDirectory() as directory:
+        return CoverEvidenceObserver(
+            _Target(None), CoverArtifactStore(Path(directory)), connections
+        )._admit_provider_descriptors(observations, descriptors)
+
+
+def _reasons(sources: tuple[CoverSource, ...], provider: str) -> set[object]:
+    return {
+        value.provenance.truncation_reason
+        for value in sources
+        if value.state is CoverSourceState.TRUNCATED
+        and value.provenance is not None
+        and value.provenance.provider == provider
+    }
+
+
+def test_admission_orders_by_designation_then_adapter_order_then_source_id() -> None:
+    listed = tuple(
+        _descriptor("hardcover", f"listed-{index}", order=9 - index)
+        for index in range(9)
+    )
+    descriptors = (
+        *listed,
+        _descriptor("hardcover", "default", CoverDesignation.DEFAULT),
+        _descriptor("hardcover", "exact", CoverDesignation.EXACT_EDITION),
+    )
+    admitted, truncations = _admit(
+        (_connection("hardcover"),), (_book_observation("hardcover"),), descriptors
+    )
+
+    assert [
+        "exact_edition",
+        "default",
+        *(["listed_edition"] * 6),
+    ] == [
+        value.provenance.designation.value  # type: ignore[union-attr]
+        for value in admitted["hardcover"]
+    ]
+    assert [1, 2, 3, 4, 5, 6] == [value.order for value in admitted["hardcover"][2:]]
+    assert {CoverTruncationReason.PROVIDER_LIMIT} == _reasons(truncations, "hardcover")
+
+
+def test_a_hardcover_connection_takes_its_fifth_to_eighth_in_a_second_pass() -> None:
+    descriptors = (
+        *(
+            _descriptor(
+                "alpha",
+                f"w-{index}",
+                CoverDesignation.WORK,
+                kind=CoverSourceKind.INVENTAIRE,
+            )
+            for index in range(5)
+        ),
+        *(_descriptor("hardcover", f"listed-{index}") for index in range(9)),
+    )
+    admitted, truncations = _admit(
+        (_connection("alpha"), _connection("hardcover")),
+        (_book_observation("alpha"), _book_observation("hardcover")),
+        descriptors,
+    )
+
+    assert (4, 8) == (len(admitted["alpha"]), len(admitted["hardcover"]))
+    assert {CoverTruncationReason.PROVIDER_LIMIT} == _reasons(truncations, "alpha")
+    assert {CoverTruncationReason.PROVIDER_LIMIT} == _reasons(truncations, "hardcover")
+
+
+def test_every_connections_first_four_come_before_hardcovers_extra_covers() -> None:
+    descriptors = (
+        *(
+            _descriptor(
+                "alpha",
+                f"w-{index}",
+                CoverDesignation.WORK,
+                kind=CoverSourceKind.INVENTAIRE,
+            )
+            for index in range(4)
+        ),
+        *(_descriptor("hardcover", f"listed-{index}") for index in range(8)),
+        *(
+            _descriptor(
+                "zeta",
+                f"w-{index}",
+                CoverDesignation.WORK,
+                kind=CoverSourceKind.OPEN_LIBRARY,
+            )
+            for index in range(4)
+        ),
+    )
+    admitted, truncations = _admit(
+        (_connection("alpha"), _connection("hardcover"), _connection("zeta")),
+        tuple(_book_observation(name) for name in ("alpha", "hardcover", "zeta")),
+        descriptors,
+    )
+
+    assert (4, 4, 4) == tuple(
+        len(admitted[name]) for name in ("alpha", "hardcover", "zeta")
+    )
+    assert {CoverTruncationReason.GALLERY_LIMIT} == _reasons(truncations, "hardcover")
+    assert set() == _reasons(truncations, "zeta")
+
+
+def test_an_adapter_truncation_passes_through_without_a_slot_or_work_match() -> None:
+    descriptors = (
+        *(_descriptor("hardcover", f"listed-{index}") for index in range(8)),
+        _adapter_truncation("hardcover", CoverTruncationReason.EDITION_LIMIT),
+        _adapter_truncation(
+            "hardcover", CoverTruncationReason.EDITION_FETCH_INCOMPLETE
+        ),
+    )
+    admitted, truncations = _admit(
+        (_connection("hardcover"),), (_book_observation("hardcover"),), descriptors
+    )
+
+    assert 8 == len(admitted["hardcover"])
+    assert {
+        CoverTruncationReason.EDITION_LIMIT,
+        CoverTruncationReason.EDITION_FETCH_INCOMPLETE,
+    } == _reasons(truncations, "hardcover")
+    assert {CoverSourceState.TRUNCATED} == {value.state for value in truncations}
+    disabled, refused = _admit(
+        (_connection("hardcover", enabled=False),),
+        (_book_observation("hardcover"),),
+        descriptors,
+    )
+    assert ({}, ()) == (disabled, refused)
+
+
+def _measured(
+    provider: str,
+    identity: str,
+    width: int,
+    height: int,
+    phash: str = "0" * 16,
+    *,
+    designation: CoverDesignation = CoverDesignation.LISTED_EDITION,
+    measured: bool = True,
+) -> CoverSource:
+    measures = (
+        CoverMeasures(phash, "0" * 16, (1,) + (0,) * 63, (128,) * 48)
+        if measured
+        else None
+    )
+    return CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, f"{provider}:{identity}"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(
+            f"{provider}-{identity}".encode(),
+            b"preview",
+            "image/png",
+            width,
+            height,
+            measures=measures,
+        ),
+        provenance=CoverProvenance(
+            provider,
+            designation,
+            f"{provider}-book",
+            None
+            if designation is CoverDesignation.DEFAULT
+            else f"{provider}-{identity}",
+        ),
+    )
+
+
+def test_the_same_art_collapse_keeps_the_larger_listed_cover() -> None:
+    small = _measured("hardcover", "a", 400, 600)
+    large = _measured("hardcover", "b", 600, 900)
+    other = _measured("hardcover", "c", 500, 750, "f" * 16)
+    kept, truncations = CoverEvidenceObserver._collapse_same_art([small, large, other])
+
+    assert [large, other] == kept
+    assert {CoverTruncationReason.SAME_ART} == _reasons(truncations, "hardcover")
+
+
+def test_the_same_art_collapse_needs_measures_and_one_listed_connection() -> None:
+    cases = (
+        (
+            _measured("hardcover", "a", 400, 600, measured=False),
+            _measured("hardcover", "b", 600, 900),
+        ),
+        (_measured("hardcover", "a", 400, 600), _measured("other", "b", 600, 900)),
+        (
+            _measured("hardcover", "a", 400, 600, designation=CoverDesignation.DEFAULT),
+            _measured("hardcover", "b", 600, 900),
+        ),
+    )
+    for sources in cases:
+        kept, truncations = CoverEvidenceObserver._collapse_same_art(list(sources))
+        assert list(sources) == kept
+        assert () == truncations
+
+
+def test_a_full_hardcover_gallery_records_every_truncation_reason() -> None:
+    connections = (_connection("alpha"), _connection("beta"), _connection("hardcover"))
+    descriptors = (
+        *(
+            _descriptor(
+                "alpha",
+                f"w-{index}",
+                CoverDesignation.WORK,
+                kind=CoverSourceKind.OPEN_LIBRARY,
+            )
+            for index in range(4)
+        ),
+        *(
+            _descriptor(
+                "beta",
+                f"w-{index}",
+                CoverDesignation.WORK,
+                kind=CoverSourceKind.INVENTAIRE,
+            )
+            for index in range(4)
+        ),
+        *(
+            _descriptor(
+                "hardcover",
+                f"listed-{index}",
+                url=f"https://assets.hardcover.app/editions/{index}.jpg",
+                order=index,
+            )
+            for index in range(10)
+        ),
+        _adapter_truncation("hardcover", CoverTruncationReason.EDITION_LIMIT),
+        _adapter_truncation(
+            "hardcover", CoverTruncationReason.EDITION_FETCH_INCOMPLETE
+        ),
+    )
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        patch(
+            "mechanical_librarian.adapters.cover_evidence_observer.fetch_remote_cover",
+            return_value=RemoteCover(
+                "https://assets.hardcover.app/editions/0.jpg", "image/jpeg", _jpeg()
+            ),
+        ),
+    ):
+        values = CoverEvidenceObserver(
+            _Target(None), CoverArtifactStore(Path(directory)), connections
+        ).observe(
+            TargetSnapshot("ebook", "Title", (), None),
+            tuple(_book_observation(name) for name in ("alpha", "beta", "hardcover")),
+            (),
+            descriptors,
+        )
+
+    assert set(CoverTruncationReason) == _reasons(values, "hardcover")
+    assert 1 == sum(
+        value.state is CoverSourceState.RETRIEVED
+        and value.provenance is not None
+        and value.provenance.provider == "hardcover"
+        for value in values
+    )
+    assert publication_ready(values)

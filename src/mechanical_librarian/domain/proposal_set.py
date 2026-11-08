@@ -1329,7 +1329,12 @@ def _work_cover_sources(
 
 
 def _cover_bound_to_work_source(report: MetadataReport, source: CoverSource) -> bool:
-    """Whether a provider cover belongs to a candidate that is an exact work source."""
+    """Whether a provider cover belongs to a candidate that is an exact work source.
+
+    A listed edition names an edition no candidate is, so it binds by its book
+    alone, as cover identity binds it (#1778); every other edition cover must
+    name its candidate.
+    """
     provenance = source.provenance
     return provenance is not None and any(
         _supported_work_source(report, provider, candidate)
@@ -1339,6 +1344,7 @@ def _cover_bound_to_work_source(report: MetadataReport, source: CoverSource) -> 
         if candidate.work_identity == provenance.work_identity
         and (
             provenance.edition_identity is None
+            or provenance.designation is CoverDesignation.LISTED_EDITION
             or candidate.identity == provenance.edition_identity
         )
     )

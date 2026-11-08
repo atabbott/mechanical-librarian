@@ -424,7 +424,6 @@ const coverNoteLabels: Readonly<Record<string, string>> = {
   source_unavailable: 'The source was unavailable',
   source_source_changed: 'The image changed while it was read',
   source_timeout: 'The source did not answer in time',
-  source_truncated: 'The image arrived incomplete',
 }
 export const coverNoteLabel = (code: string) =>
   coverNoteLabels[code] ?? 'Another cover rule applies'

@@ -530,12 +530,14 @@ function LibraryCoverChoicesContent({
     ? reviewerFailureCopy[consideration.reviewerFailureCode]
     : reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
   // A merged duplicate is the same image as a card shown, not an unavailable
-  // candidate, so it is counted apart (#1290).
+  // candidate, so it is counted apart (#1290). An admission truncation stands
+  // for covers that were never fetched, not for one image, so it is not a
+  // cover not shown either (#1778).
   const merged = consideration.omissions.filter(
     (omission) => omission.reason === 'duplicate_preview',
   ).length
   const unavailable = consideration.omissions.filter(
-    (omission) => omission.reason !== 'duplicate_preview',
+    (omission) => omission.reason !== 'duplicate_preview' && omission.reason !== 'source_truncated',
   )
   return (
     <section

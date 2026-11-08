@@ -257,7 +257,18 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   audio-edition document per page, keyed by an integer book id: 100 rows a
   page, at most 2 pages per book, inside the same ceilings. A row naming
   another book refuses the whole fan-out
-  ([ADR-0090](decisions/0090-hardcover-audio-edition-witness.md)).
+  ([ADR-0090](decisions/0090-hardcover-audio-edition-witness.md)). Its rows
+  also state each edition's image and language, which feed only the square
+  audiobook covers of the pre-filter below. An ebook ISBN or WORK lane that
+  accepts a book, when the library lists languages and the connection's
+  covers are on, sends one constant edition-covers document per page, keyed
+  by the integer book id and page offset: 100 rows a page, at most 2 pages
+  per book and 2 books per observation. Only a book the work search marks as
+  a compilation is skipped. Its rows feed cover descriptors only.
+  A row naming another book, a malformed answer, a failure or the deadline
+  stops the fan-out and records `edition_fetch_incomplete`, and a book or
+  page past the bounds records `edition_limit`
+  ([ADR-0056](decisions/0056-edition-overflow-work-witness.md)).
 - **Open Library**: fixed-origin `GET`. The contact email goes only in the
   User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
   never 429.
@@ -285,7 +296,10 @@ after `Retry-After` on 429 and 503, which Audible caps at one minute.
 ### Provider cover admission
 
 Cover acquisition is report-only and needs the connection's `cover_enabled`.
-At most four sources per provider and eight overall are admitted. A
+At most four sources per named connection, eight for Hardcover, and twelve
+overall are admitted. Admission fills each connection's exact, default, work,
+related and listed covers in that order, in two passes, and records every
+extra source as truncated (`provider_limit` or `gallery_limit`). A
 descriptor is admitted only against a candidate the same provider observed in
 the same observation: by a provider-local work identity or, when the provider
 resolved no work, by one of that provider's own candidate editions. Two
@@ -295,8 +309,7 @@ nothing. A refused descriptor is dropped before any request is built.
 Allowed cover origins:
 
 - Audiobookshelf's raw cover route, with no credential, cookie or referrer.
-- Hardcover, with bounded manual redirects; every hop must be public HTTPS on
-  port 443.
+- Hardcover, only on `assets.hardcover.app`, with no redirect.
 - Inventaire, on constructed fixed-origin URLs.
 - Open Library, on constructed fixed-origin URLs, with one closed redirect
   route: `archive.org`, then an `ia<N>.us.archive.org` datanode, each hop
@@ -304,11 +317,32 @@ Allowed cover origins:
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
-Hardcover follows bounded redirects; Open Library follows only that route; no
-other provider follows any. Any other host is a typed `unsafe_remote` outcome
-and no socket opens. Remote covers use their own address-pinned transport with
+Open Library follows only that route. No other provider follows any
+redirect. Any other host is a typed `unsafe_remote` outcome and no socket
+opens. Remote covers use their own address-pinned transport with
 bounded bytes, attempts and deadline. Embedded audiobook art is never
 acquired. Reports never keep the remote URL.
+
+A Hardcover edition row becomes a listed-edition descriptor only after a
+pre-filter on what the row states, before any request is built. Its stated
+width and height must each be 1 to 8,192 pixels, with at most 16,777,216
+pixels in all and a short side of at least 300. An ebook's cover must be
+portrait, between 1.2 and 2.0 times as tall as it is wide, and an audiobook's
+must be square within 5 percent. These acquisition bands are narrower than the
+election bands of
+[ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md).
+The row's stated language (`code2`, else `code3`) must be compatible with one
+of the library's languages, and its URL must be on `assets.hardcover.app`.
+Only a row whose cover is off that host, or whose cover or language is
+malformed, is counted. No refused row is fetched. The stated size only filters
+and orders rows. It never reaches the report.
+
+After retrieval, two listed-edition covers from the same provider whose
+decoded measures are the same art by the measured cover rule
+(`cover_rules.same_art`) collapse to the larger one, and the other is
+recorded as truncated (`same_art`). A cover without measures never
+collapses, and covers from different providers never collapse into each
+other.
 
 Open Library's route is a code constant on its two cover descriptors, never
 configuration, and holds only for the constructed

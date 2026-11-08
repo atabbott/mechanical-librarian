@@ -105,6 +105,8 @@ from mechanical_librarian.application.cover_observation import (  # noqa: E402
 from mechanical_librarian.application.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     PreparedCoverPacket,
+    _Candidate,
+    cover_source_reference,
     prepare_cover_packet,
 )
 from mechanical_librarian.application.cover_policy import (  # noqa: E402
@@ -1373,6 +1375,201 @@ def test_packet_retains_incumbent_deduplicates_and_shortlists_deterministically(
     ]
     assert "duplicate_preview" in {value["reason"] for value in packet["omissions"]}
     assert "Synthetic title" not in first.document
+
+
+def test_a_full_gallery_shortlists_twelve_and_keeps_the_incumbent() -> None:
+    """Two local and twelve provider covers, eight of them Hardcover's (#1380)."""
+    payloads = [_preview(index, width=index + 1) for index in range(14)]
+    sources = [
+        _source(0, payloads[0], incumbent=True),
+        _source(1, payloads[1], embedded=True),
+    ]
+    for index in range(2, 10):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.HARDCOVER, f"hardcover:listed:{index}"),
+                CoverSourceKind.HARDCOVER,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"listed-{index}".encode(), payloads[index], "image/png", 400, 600
+                ),
+                provenance=CoverProvenance(
+                    "hardcover",
+                    CoverDesignation.LISTED_EDITION,
+                    "hardcover-work-0000000007",
+                    f"hardcover-edition-{index:010d}",
+                ),
+            )
+        )
+    for index in range(10, 14):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.OPEN_LIBRARY, f"open-library:{index}"),
+                CoverSourceKind.OPEN_LIBRARY,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"open-{index}".encode(), payloads[index], "image/png", 300, 450
+                ),
+                provenance=CoverProvenance(
+                    "open-library", CoverDesignation.WORK, f"OL{index}W"
+                ),
+                final_host=CoverFinalHost.US_ARCHIVE,
+            )
+        )
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    packet = prepare_cover_packet(
+        _report(tuple(sources)).to_json(),
+        lambda artifact, _variant: by_artifact[artifact],
+    )
+    document = json.loads(packet.document)
+
+    assert len(packet.images) == MAX_COVER_PREVIEWS == 12
+    assert document["candidates"][0]["incumbent"]
+    assert [value["reason"] for value in document["omissions"]].count(
+        "shortlist_limit"
+    ) == 2
+    designations = {
+        item["designation"]
+        for candidate in document["candidates"]
+        for item in candidate["provenance"]
+    }
+    assert "listed_edition" not in designations
+    assert "related_edition" in designations
+
+
+def test_a_full_gallery_cuts_listed_editions_before_a_book_cover() -> None:
+    """Hardcover's book cover outlasts its unconfirmed edition covers (#1778).
+
+    A listed edition projects as `related_edition`, which ranks above a
+    `default` cover, but it can never be confirmed while the book cover can.
+    So the shortlist keeps every other cover before a listed-only one, and
+    the kept covers stay in the order the packet validator recomputes.
+    """
+    payloads = [_preview(index, width=index + 1) for index in range(14)]
+    sources = [
+        _source(0, payloads[0], incumbent=True),
+        _source(1, payloads[1], embedded=True),
+        CoverSource(
+            cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:default:2"),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(b"default-2", payloads[2], "image/png", 400, 600),
+            provenance=CoverProvenance(
+                "hardcover", CoverDesignation.DEFAULT, "hardcover-work-0000000007"
+            ),
+        ),
+    ]
+    for index in range(3, 10):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.HARDCOVER, f"hardcover:listed:{index}"),
+                CoverSourceKind.HARDCOVER,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"listed-{index}".encode(), payloads[index], "image/png", 400, 600
+                ),
+                provenance=CoverProvenance(
+                    "hardcover",
+                    CoverDesignation.LISTED_EDITION,
+                    "hardcover-work-0000000007",
+                    f"hardcover-edition-{index:010d}",
+                ),
+            )
+        )
+    for index in range(10, 14):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.OPEN_LIBRARY, f"open-library:{index}"),
+                CoverSourceKind.OPEN_LIBRARY,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"open-{index}".encode(), payloads[index], "image/png", 300, 450
+                ),
+                provenance=CoverProvenance(
+                    "open-library", CoverDesignation.WORK, f"OL{index}W"
+                ),
+                final_host=CoverFinalHost.US_ARCHIVE,
+            )
+        )
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    report = _report(tuple(sources))
+    # `prepare_cover_packet` binds its own document, so a kept order the
+    # validator would not recompute fails here.
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    document = json.loads(packet.document)
+    cut = {
+        value["reference"]
+        for value in document["omissions"]
+        if value["reason"] == "shortlist_limit"
+    }
+
+    assert len(packet.images) == 12
+    assert document["candidates"][0]["incumbent"]
+    assert ["default"] == [
+        item["designation"]
+        for candidate in document["candidates"]
+        for item in candidate["provenance"]
+        if item["designation"] == "default"
+    ]
+    assert 2 == len(cut)
+    assert cut <= {
+        cover_source_reference(report.report_id, source.source_id)
+        for source in sources
+        if source.provenance is not None
+        and source.provenance.designation is CoverDesignation.LISTED_EDITION
+    }
+
+
+def test_an_embedded_cover_sharing_a_listed_editions_image_is_not_listed_only() -> None:
+    """A preview the EPUB also carries is never cut as listed-only (#1778).
+
+    The embedded cover deduplicates with a Hardcover listed edition of the
+    same image. The combined preview keeps its local evidence, so a full
+    gallery does not cut it before the listed-only covers.
+    """
+    payload = _preview(1)
+    embedded = _source(1, payload, embedded=True)
+    listed = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:listed:2"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"listed-2", payload, "image/png", 400, 600),
+        provenance=CoverProvenance(
+            "hardcover",
+            CoverDesignation.LISTED_EDITION,
+            "hardcover-work-0000000007",
+            "hardcover-edition-0000000002",
+        ),
+    )
+
+    def candidate(*sources: CoverSource) -> _Candidate:
+        return _Candidate(
+            "cover_ref_" + "a" * 64,
+            "b" * 64,
+            "c" * 64,
+            payload,
+            400,
+            600,
+            400,
+            600,
+            False,
+            list(sources),
+            [],
+        )
+
+    assert candidate(listed).listed_only
+    assert not candidate(embedded, listed).listed_only
+    assert not candidate(embedded).listed_only
 
 
 def test_changed_preview_and_overbound_incumbent_fail_closed() -> None:
@@ -3868,3 +4065,72 @@ def test_a_retained_original_is_a_cover_alternative_only_over_a_cover(
     back = offered[retained.artifact.artifact_id]
     assert back.assessment is ProposalAssessment.REPLACES_TARGET
     assert back.evidence_references == (retained.source_id,)
+
+
+@pytest.mark.parametrize("current", (True, False), ids=("over_a_cover", "empty"))
+def test_a_retained_original_a_listed_edition_also_shows_is_one_alternative(
+    current: bool,
+) -> None:
+    """A found book's listed edition cover and the retained original of the
+    same image are one alternative, cited by both, and only over a populated
+    cover; over an empty one the edition alone fills it (#1363, #1778)."""
+    from mechanical_librarian.adapters.cover_artifacts import decode_cover
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetFieldState,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.cover_images import synthetic_image
+    from tests.support.hardcover_work_route import (
+        WORK,
+        hardcover_work_report,
+        work_cover_source,
+    )
+
+    # A small current cover the edition's would replace.
+    incumbent = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "incumbent"),
+        CoverSourceKind.ABS,
+        CoverSourceState.RETRIEVED,
+        decode_cover(synthetic_image("PNG", (80, 120))).artifact,
+    )
+    listed = replace(
+        work_cover_source(600, 900, index=2),
+        provenance=CoverProvenance(
+            "hardcover",
+            CoverDesignation.LISTED_EDITION,
+            WORK,
+            "hardcover-edition-0000000031",
+        ),
+    )
+    assert listed.artifact is not None
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, "effect_plan_" + "b" * 64),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.RETRIEVED,
+        listed.artifact,
+    )
+    report = hardcover_work_report(
+        cover_sources=(incumbent, listed, retained) if current else (listed, retained),
+        states=None if current else {TargetDestination.COVER: TargetFieldState.MISSING},
+    )
+
+    (cover,) = (
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.COVER
+    )
+
+    offered = [
+        alternative
+        for alternative in cover.alternatives
+        if alternative.value.value == listed.artifact.artifact_id
+    ]
+    assert len(offered) == 1
+    (alternative,) = offered
+    assert listed.source_id in alternative.evidence_references
+    assert (retained.source_id in alternative.evidence_references) is current

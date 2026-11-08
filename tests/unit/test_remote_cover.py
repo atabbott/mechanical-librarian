@@ -204,17 +204,14 @@ def test_fetch_can_use_one_validated_identified_user_agent(
         )
 
 
-def test_rejects_content_encoding_and_redirect_limit() -> None:
+def test_rejects_content_encoding_and_any_redirect_by_default() -> None:
     encoded = _FakeSocket(
         b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 1\r\n\r\n",
         b"x",
     )
-    redirects = [
-        _FakeSocket(
-            b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n"
-        )
-        for _ in range(4)
-    ]
+    redirect = _FakeSocket(
+        b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n"
+    )
     with (
         patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
         patch("ssl.create_default_context", return_value=_FakeContext()),
@@ -225,10 +222,11 @@ def test_rejects_content_encoding_and_redirect_limit() -> None:
         ):
             fetch_remote_cover("https://example.com/cover.png")
         with (
-            patch("socket.create_connection", side_effect=redirects),
-            pytest.raises(RemoteCoverError),
+            patch("socket.create_connection", side_effect=[redirect]) as connect,
+            pytest.raises(RemoteCoverError, match="^remote cover unavailable$"),
         ):
             fetch_remote_cover("https://example.com/cover.png")
+        connect.assert_called_once()
 
 
 def test_redirects_can_be_rejected_after_one_pinned_request() -> None:
@@ -333,7 +331,9 @@ def test_production_path_redirect_does_not_read_body_and_valid_response_does() -
         patch("socket.create_connection", side_effect=[redirect, valid]),
         patch("ssl.create_default_context", return_value=_FakeContext()),
     ):
-        result = fetch_remote_cover("https://example.com/cover.png")
+        with pytest.raises(RemoteCoverError):
+            fetch_remote_cover("https://example.com/cover.png")
+        result = fetch_remote_cover("https://example.com/final.png")
     assert b"cover" == result.content
     assert 0 == redirect.body_bytes_read
     assert 5 == valid.body_bytes_read
@@ -963,8 +963,14 @@ def test_the_largest_cover_id_is_admitted_and_bound() -> None:
 
 
 def test_redirect_modes_are_a_closed_vocabulary() -> None:
+    # Hardcover's bounded generic redirects are gone (#1380): no provider
+    # follows any redirect but Open Library's fixed archive route.
+    assert {value.value for value in CoverRedirects} == {
+        "none",
+        "open_library_archive",
+    }
     with patch("socket.getaddrinfo") as lookup:
-        for value in ("open_library_archive", True):
+        for value in ("open_library_archive", "public_https", True):
             with pytest.raises(
                 RemoteCoverError, match="^remote cover request is invalid$"
             ):
@@ -972,18 +978,22 @@ def test_redirect_modes_are_a_closed_vocabulary() -> None:
     lookup.assert_not_called()
 
 
-def test_public_https_mode_still_follows_a_generic_redirect() -> None:
+def test_no_mode_but_the_archive_route_follows_a_same_host_redirect() -> None:
     redirect = _FakeSocket(
         b"HTTP/1.1 302 Found\r\nLocation: /final.png\r\nContent-Length: 0\r\n\r\n"
     )
     with (
         patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
-        patch("socket.create_connection", side_effect=[redirect, _image()]),
-        patch("ssl.create_default_context", return_value=_FakeContext()),
+        patch("socket.create_connection", side_effect=[redirect, _image()]) as connect,
+        patch(
+            "ssl.create_default_context",
+            return_value=_FakeContext("assets.hardcover.app"),
+        ),
+        pytest.raises(RemoteCoverError, match="^remote cover unavailable$"),
     ):
-        result = fetch_remote_cover(
-            "https://example.com/cover.png",
-            redirects=CoverRedirects.PUBLIC_HTTPS,
+        fetch_remote_cover(
+            "https://assets.hardcover.app/cover.png",
+            redirects=CoverRedirects.NONE,
             user_agent=_AGENT,
         )
-    assert result.url == "https://example.com/final.png"
+    connect.assert_called_once()

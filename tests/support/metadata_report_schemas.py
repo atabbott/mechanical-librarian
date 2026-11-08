@@ -285,9 +285,11 @@ def retained_report_as_current(document: str) -> MetadataReport:
     v75 gave an audiobook's sidecar manifest entries their classification,
     and v76 their byte-order-mark record (#1796), and v77 the
     `initials_spelling` refusal (#1780); a v49 report holds no audio
-    section. v78 reports each cover artifact's width and height as oriented
-    and adds the `retained` cover source, neither of which a v49 report,
-    holding no automatic switch, could carry (#1363).
+    section. v78 added no key: it widens the closed cover designation and
+    truncation sets and their bounds for Hardcover's edition covers (#1778).
+    v79 reports each cover artifact's width and height as oriented and adds
+    the `retained` cover source, neither of which a v49 report, holding no
+    automatic switch, could carry (#1363).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)

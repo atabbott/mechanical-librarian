@@ -2021,15 +2021,14 @@ class CoverRedirects(StrEnum):
     """How a provider cover request treats a redirect: a closed code constant.
 
     `docs/architecture/security.md` › Provider cover admission is the
-    authority. ``NONE`` refuses every redirect. ``PUBLIC_HTTPS`` follows
-    bounded, revalidated HTTPS redirects (Hardcover). ``OPEN_LIBRARY_ARCHIVE``
+    authority. ``NONE`` refuses every redirect; it is the default, so a
+    descriptor that states nothing fails closed. ``OPEN_LIBRARY_ARCHIVE``
     follows only Open Library's fixed two-redirect route through
     ``archive.org`` to an ``ia<N>.us.archive.org`` datanode, each hop bound to
     the requested cover id. It is never configuration.
     """
 
     NONE = "none"
-    PUBLIC_HTTPS = "public_https"
     OPEN_LIBRARY_ARCHIVE = "open_library_archive"
 
 
@@ -2041,9 +2040,13 @@ class ProviderCoverDescriptor:
     url: str | None
     provenance: CoverProvenance | None = None
     wait: Callable[[float | None], bool] | None = None
-    redirects: CoverRedirects = CoverRedirects.PUBLIC_HTTPS
+    redirects: CoverRedirects = CoverRedirects.NONE
     user_agent: str | None = None
     terminal_state: CoverSourceState | None = None
+    # The adapter's order among its own listed-edition covers (#1380), which
+    # the cover observer reads after the designation. Process-local: it is
+    # never persisted.
+    order: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -2416,6 +2419,29 @@ def provider_binding(
         provider.adapter,
         provider.cover_enabled,
     )
+
+
+def binding_dispatch_plan(
+    binding: ProviderBinding,
+    plan: MetadataDiscoveryPlan,
+    catalogue_plan: MetadataDiscoveryPlan | None,
+) -> MetadataDiscoveryPlan:
+    """The plan one binding is sent.
+
+    Audible's catalogue gets its own plan when there is one, and the companion
+    ISBN lane goes only where it can be answered (`companion_binding_plan`).
+    Library languages only filter Hardcover's edition covers, so while its
+    covers are off it is handed none and asks for no edition cover (#1778).
+    """
+    handed = companion_binding_plan(
+        catalogue_plan
+        if catalogue_plan is not None and binding.authority == "audible_catalog"
+        else plan,
+        binding.authority,
+    )
+    if binding.authority == "hardcover" and not binding.cover_enabled:
+        return replace(handed, library_languages=())
+    return handed
 
 
 def observe_provider(
@@ -4070,12 +4096,7 @@ class GenerateMetadataReport:
                 sorted(selected, key=lambda value: value.authority == "audiosilo")
             )
         for binding in selected:
-            binding_plan = companion_binding_plan(
-                catalogue_plan
-                if catalogue_plan is not None and binding.authority == "audible_catalog"
-                else plan,
-                binding.authority,
-            )
+            binding_plan = binding_dispatch_plan(binding, plan, catalogue_plan)
             if binding.authority not in dispatch_adapters(
                 audio=binding_plan.audio is not None
             ):

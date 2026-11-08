@@ -113,9 +113,13 @@ def test_the_books_document_is_pinned_and_every_document_is_closed() -> None:
         for name, value in vars(hardcover_metadata).items()
         if name.endswith("_QUERY") and type(value) is str
     }
-    assert {"_AUDIO_EDITIONS_QUERY", "_BOOKS_QUERY", "_ISBN_QUERY", "_QUERY"} == set(
-        documents
-    )
+    assert {
+        "_AUDIO_EDITIONS_QUERY",
+        "_BOOKS_QUERY",
+        "_EDITION_COVERS_QUERY",
+        "_ISBN_QUERY",
+        "_QUERY",
+    } == set(documents)
     assert not hasattr(hardcover_metadata, "_WORK_QUERY")
     assert not hasattr(hardcover_metadata, "_WORK_NARROW_QUERY")
     for document in documents.values():

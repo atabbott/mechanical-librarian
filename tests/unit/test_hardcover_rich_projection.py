@@ -1379,7 +1379,7 @@ def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> N
             "isbn_13": "9780306406157",
             "title": "Edition",
             "release_date": "2024-01-02",
-            "image": {"url": "https://example.invalid/edition.jpg"},
+            "image": {"url": "https://assets.hardcover.app/edition.jpg"},
             "publisher": {
                 "id": 1,
                 "name": "Example Press",
@@ -1407,7 +1407,7 @@ def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> N
             "title": "Work",
             "description": "Description",
             "release_date": "2020",
-            "image": {"url": "https://example.invalid/work.jpg"},
+            "image": {"url": "https://assets.hardcover.app/work.jpg"},
             "contributions": [valid_contribution],
             "book_series": [valid_series],
             "taggings": [valid_tagging],
@@ -1689,7 +1689,7 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
             "isbn_13": "9780306406157",
             "title": "Edition title",
             "publisher": {"name": "Example Press", "parent_id": None},
-            "image": {"url": "https://example.invalid/edition.jpg"},
+            "image": {"url": "https://assets.hardcover.app/edition.jpg"},
             "contributions": [
                 {
                     "id": 1,
@@ -1710,7 +1710,7 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
             "id": 1,
             "title": "Work title",
             "description": "Description",
-            "image": {"url": "https://example.invalid/work.jpg"},
+            "image": {"url": "https://assets.hardcover.app/work.jpg"},
             "contributions": [
                 {
                     "id": 2,

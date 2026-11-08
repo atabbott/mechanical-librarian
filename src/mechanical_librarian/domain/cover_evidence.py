@@ -93,6 +93,9 @@ class CoverDesignation(StrEnum):
     RELATED_EDITION = "related_edition"
     WORK = "work"
     DEFAULT = "default"
+    # A cover read from an accepted book's edition list (#1380): it names the
+    # edition, yet it binds by the book's work identity alone.
+    LISTED_EDITION = "listed_edition"
     TRUNCATION = "truncation"
 
 
@@ -109,6 +112,12 @@ class CoverContextField(StrEnum):
 class CoverTruncationReason(StrEnum):
     PROVIDER_LIMIT = "provider_limit"
     GALLERY_LIMIT = "gallery_limit"
+    # Hardcover's edition-cover fan-out (#1380): more books or editions than
+    # its bounds read, a fan-out a failed or malformed page ended, and a
+    # decoded edition cover that showed the same art as a larger one.
+    EDITION_LIMIT = "edition_limit"
+    EDITION_FETCH_INCOMPLETE = "edition_fetch_incomplete"
+    SAME_ART = "same_art"
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +177,11 @@ class CoverProvenance:
             self.work_identity is None
             or (
                 self.designation
-                in {CoverDesignation.EXACT_EDITION, CoverDesignation.RELATED_EDITION}
+                in {
+                    CoverDesignation.EXACT_EDITION,
+                    CoverDesignation.RELATED_EDITION,
+                    CoverDesignation.LISTED_EDITION,
+                }
                 and self.edition_identity is None
             )
             or self.truncation_reason is not None
@@ -442,12 +455,12 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         type(source) is not CoverSource for source in sources
     ):
         raise CoverEvidenceError("cover sources are invalid")
-    # Two local rows, one retained original, eight admitted provider rows, and
-    # at most two explicit truncation rows for each of the configuration
+    # Two local rows, one retained original, twelve admitted provider rows, and
+    # at most five explicit truncation rows for each of the configuration
     # schema's 32 providers.
-    if len(sources) > 75 or len({source.source_id for source in sources}) != len(
-        sources
-    ):
+    if len(sources) > 2 + 1 + 12 + 5 * 32 or len(
+        {source.source_id for source in sources}
+    ) != len(sources):
         raise CoverEvidenceError("cover sources are invalid")
     local = [source for source in sources if source.kind in LOCAL_COVER_SOURCE_KINDS]
     retained = [source for source in sources if source.kind is CoverSourceKind.RETAINED]
@@ -467,7 +480,7 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         len(local) > 2
         or len(retained) > 1
         or any(source.provenance is None for source in provider)
-        or len(admitted_provider) > 8
+        or len(admitted_provider) > 12
         or len(
             {
                 source.artifact.original_digest
@@ -475,7 +488,7 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
                 if source.artifact is not None
             }
         )
-        > 8
+        > 12
     ):
         raise CoverEvidenceError("cover sources are invalid")
     providers = {
@@ -484,21 +497,20 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         if source.provenance is not None
     }
     for name in providers:
+        rows = [
+            source
+            for source in provider
+            if source.provenance is not None and source.provenance.provider == name
+        ]
         admitted = [
-            source
-            for source in provider
-            if source.provenance is not None
-            and source.provenance.provider == name
-            and source.state is not CoverSourceState.TRUNCATED
+            source for source in rows if source.state is not CoverSourceState.TRUNCATED
         ]
-        truncations = [
-            source
-            for source in provider
-            if source.provenance is not None
-            and source.provenance.provider == name
-            and source.state is CoverSourceState.TRUNCATED
-        ]
-        if len(admitted) > 4 or len(truncations) > 2:
+        # A Hardcover connection may hold eight covers: its book's edition
+        # list is the only source that offers that many (#1380).
+        limit = (
+            8 if all(source.kind is CoverSourceKind.HARDCOVER for source in rows) else 4
+        )
+        if len(admitted) > limit or len(rows) - len(admitted) > 5:
             raise CoverEvidenceError("cover sources are invalid")
     return True
 
