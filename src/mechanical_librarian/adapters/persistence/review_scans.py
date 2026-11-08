@@ -269,6 +269,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         trigger: PreparationTrigger | None,
         promoting_deferred: bool = False,
         presentation_accepted_at: int | None = None,
+        description_work: bool = False,
     ) -> PipelineProgress:
         row = self._connection.execute(
             "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
@@ -298,7 +299,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 state not in {"completed", "completed_with_failures"}
                 for _scan_id, _connection, _library, state in latest
             )
-            if first_preparation_incomplete:
+            # The poll waits for the first preparation to finish before it
+            # rescans a library, and never polls one that ended with failures.
+            # Description work waiting at resume has no poll to wait for.
+            if first_preparation_incomplete and not description_work:
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
                     raise MetadataReportError("review preparation state is invalid")
@@ -659,15 +663,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         *,
         clear_pause: bool,
     ) -> None:
-        if not clear_pause:
-            paused = self._connection.execute(
-                "SELECT paused FROM review_preparation_control WHERE singleton=1"
-            ).fetchone()
-            if paused is None:
-                raise MetadataReportError("review preparation control is unavailable")
-            if bool(paused[0]):
-                refresh_preparation_run_state(self._connection, updated_at)
-                return
+        paused = self._connection.execute(
+            "SELECT paused FROM review_preparation_control WHERE singleton=1"
+        ).fetchone()
+        if paused is None:
+            raise MetadataReportError("review preparation control is unavailable")
+        if not clear_pause and bool(paused[0]):
+            refresh_preparation_run_state(self._connection, updated_at)
+            return
         deferred = self._connection.execute(
             "SELECT row_id,connection_name,library_name,ordinal,accepted_at "
             "FROM review_preparation_presentation "
@@ -734,7 +737,34 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 promoting_deferred=True,
                 presentation_accepted_at=accepted_at,
             )
+        if clear_pause and bool(paused[0]):
+            self._request_pending_description_scans(configured, updated_at)
         refresh_preparation_run_state(self._connection, updated_at)
+
+    def _request_pending_description_scans(
+        self,
+        configured: dict[tuple[str, str], tuple[str, str]],
+        updated_at: int,
+    ) -> None:
+        """Start description work recorded during a pause in the resume commit."""
+        from mechanical_librarian.adapters.persistence.description_advice import (
+            pending_description_libraries,
+        )
+
+        for connection, library in pending_description_libraries(self._connection):
+            if (connection, library) not in configured:
+                continue
+            library_id, fingerprint = configured[(connection, library)]
+            self._request_review_scan_unpaused(
+                connection,
+                library,
+                library_id,
+                fingerprint,
+                updated_at,
+                first_boot=False,
+                trigger=None,
+                description_work=True,
+            )
 
     @local_operation
     def recover_review_pipeline(
