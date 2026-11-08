@@ -6634,6 +6634,135 @@ def test_a_root_outside_the_track_grammar_is_dropped_without_restating_the_code(
     assert row == ("failed", code, None)
 
 
+def _report_entry(report: MetadataReport) -> CatalogueEntry:
+    """The catalogue item ``report`` was read from, in its own library."""
+    return replace(
+        _entry(report.target.item, report.file.identity),
+        library=report.target.library,
+    )
+
+
+def _claim_failing_stage(
+    repository: SQLiteMetadataReportRepository, stage: str
+) -> tuple[PipelineAction, str | None]:
+    """Drive one real ebook to ``stage`` and return its claimed action.
+
+    Proposal and projection carry the report, proposal set and case the real
+    stages publish, so a rescan meets the same saved data a retry would read.
+    Returns the claimed action and the report it is preparing, if any.
+    """
+    report = _report()
+    entry = _report_entry(report)
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+    extraction = repository.claim_review_pipeline_action(13)
+    assert extraction is not None and extraction.stage == "extraction"
+    if stage == "extraction":
+        return extraction, None
+    if stage == "provider":
+        repository.advance_review_pipeline_action(extraction, None, 14)
+        provider = repository.claim_review_pipeline_action(15)
+        assert provider is not None and provider.stage == "provider"
+        return provider, None
+    repository.publish(
+        report,
+        lambda: True,
+        None,
+        lambda value, published: value.complete_review_extraction_publication(
+            extraction, published.report_id, 14
+        ),
+    )
+    proposal = repository.claim_review_pipeline_action(15)
+    assert proposal is not None and proposal.stage == "proposal"
+    if stage == "proposal":
+        return proposal, report.report_id
+    proposal_set = evaluate_report(report)
+    repository.publish_proposal(proposal_set)
+    repository.advance_review_pipeline_action(
+        proposal, proposal_set.proposal_set_id, 16
+    )
+    admission = repository.claim_review_pipeline_action(17)
+    assert admission is not None and admission.stage == "admission"
+    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    repository.advance_review_pipeline_action(admission, case_id, 18)
+    projection = repository.claim_review_pipeline_action(19)
+    assert projection is not None and projection.stage == "projection"
+    return projection, report.report_id
+
+
+@pytest.mark.parametrize(
+    ("code", "stage", "retried_at"),
+    (
+        # A provider-stage failure starts again from reading the file, so
+        # every source is asked again.
+        ("provider", "provider", "extraction"),
+        ("projection", "projection", "projection"),
+        ("failed", "extraction", "extraction"),
+        ("persistence", "extraction", "extraction"),
+        # The cover step before projection answers an unattributable fault
+        # with ``persistence``.
+        ("persistence", "projection", "projection"),
+        # The retry rereads the same saved report: for malformed saved data
+        # that repeats the failure, so Library says it has no step for it.
+        ("malformed_retained_data", "proposal", "proposal"),
+        ("internal_failure", "extraction", "extraction"),
+        ("internal_failure", "proposal", "proposal"),
+        ("unknown", "extraction", "extraction"),
+        ("unknown", "proposal", "proposal"),
+    ),
+)
+def test_scanning_the_library_again_queues_a_failed_book_from_the_step_that_failed(
+    application_path: Path, code: str, stage: str, retried_at: str
+) -> None:
+    """What "Scan this library again to retry it." does, at the real stage.
+
+    A book that could not finish is queued again by the next scan of the same,
+    unchanged item, with its failure cleared, from the step that failed (#1765).
+    It does not start again from the file: a later step keeps the report it was
+    preparing, which is why a failure in that saved data is not one a scan can
+    fix.
+    """
+    repository = open_repository(application_path)
+    action, report_id = _claim_failing_stage(repository, stage)
+    repository.fail_review_pipeline_action(action, code, False, 20)
+    failed = repository._connection.execute(  # noqa: SLF001 - authoritative row
+        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+    ).fetchone()
+    assert repository.claim_review_pipeline_action(21) is None
+    finished = repository.review_pipeline_progress("primary", "ebooks")
+
+    repository.request_review_scan(
+        "primary",
+        "ebooks",
+        "lib-1",
+        _PRODUCER,
+        22,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    rescan = repository.claim_review_pipeline_action(23)
+    assert rescan is not None and rescan.stage == "discovery"
+    entry = _report_entry(_report())
+    repository.complete_review_discovery(rescan, 2, "a" * 64, (entry,), 24)
+    queued = repository._connection.execute(  # noqa: SLF001 - authoritative row
+        "SELECT stage,state,failure_code,report_id FROM review_preparation_work"
+    ).fetchone()
+    retried = repository.claim_review_pipeline_action(25)
+    repository.close()
+
+    assert failed == (stage, "failed", code, report_id)
+    assert finished is not None and finished.state == "completed_with_failures"
+    expected_report = None if retried_at == "extraction" else report_id
+    assert queued == (retried_at, "queued", None, expected_report)
+    assert retried is not None
+    assert (retried.item_id, retried.stage, retried.report_id) == (
+        "item-1",
+        retried_at,
+        expected_report,
+    )
+
+
 @pytest.mark.parametrize(
     ("code", "failure_root", "admitted"),
     (
