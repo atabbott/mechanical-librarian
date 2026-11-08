@@ -396,7 +396,7 @@ def test_a_diverged_chapter_vector_is_a_mismatch() -> None:
             # and the statement says which end was skipped.
             (100, 200, 300, 400),
             "4 embedded chapters; chapter 2 runs 3 min 20 s, aligned past this "
-            "recording's first chapter",
+            "recording’s first chapter",
             "2 chapters stated by the matched edition; chapter 1 runs 8 h 5 min",
             id="counts-and-a-cut",
         ),
@@ -454,7 +454,7 @@ def test_a_chapter_discrepancy_stays_within_the_projection_bound() -> None:
     stated = health[0]
     assert stated.observed == (
         f"{MAX_CHAPTERS} embedded chapters; chapter 1023 runs 9 min 50 s, aligned past "
-        "this recording's first chapter"
+        "this recording’s first chapter"
     )
     assert stated.expected == (
         f"{MAX_PROVIDER_CHAPTER_DURATIONS} chapters stated by the matched edition; "
@@ -487,7 +487,7 @@ def test_a_diverging_cut_is_named_under_the_alignment_the_gate_would_choose() ->
     stated = health[0]
     assert stated.observed == (
         "6 embedded chapters; chapter 4 runs 5 min 50 s, aligned past this "
-        "recording's first chapter"
+        "recording’s first chapter"
     )
     assert stated.expected == (
         "5 chapters stated by the matched edition; chapter 3 runs 5 min"
@@ -836,7 +836,7 @@ def test_runtime_reads_in_hours_and_minutes_and_states_the_difference() -> None:
     assert hours_minutes(0) == "0 s"
     assert hours_minutes(7_200) == "2 h"
     assert AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER] == (
-        "A complete recording runs within 1 min 30 s of the edition's stated "
+        "A complete recording runs within 1 min 30 s of the edition’s stated "
         "running time."
     )
 
@@ -853,3 +853,52 @@ def test_runtime_reads_in_hours_and_minutes_and_states_the_difference() -> None:
     assert stated(_LOCAL_SECONDS + 90) == []
     for value in stated(_LOCAL_SECONDS + 834):
         assert value is not None and "seconds" not in value
+
+
+@pytest.mark.parametrize(
+    ("kind", "bound"),
+    (
+        (
+            AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH,
+            "The embedded chapter lengths match the edition’s, allowing one "
+            "skipped chapter at each end.",
+        ),
+        (AudioHealthKind.TRACK_SEQUENCE_GAP, "The track numbers run without a gap."),
+        (
+            AudioHealthKind.TRACK_SEQUENCE_DISORDER,
+            "The track numbers rise in file order.",
+        ),
+        (
+            AudioHealthKind.TAG_DISAGREES_ACROSS_TRACKS,
+            "All files of a book give the same value for each tag.",
+        ),
+        (
+            AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS,
+            "All files of a book give the same ASIN.",
+        ),
+        (
+            AudioHealthKind.CONTAINER_UNEXPECTED,
+            "Each file’s container matches its file extension.",
+        ),
+        (
+            AudioHealthKind.DURATION_UNSTATED,
+            "Each file’s container states the running time of what it holds.",
+        ),
+        (AudioHealthKind.STREAM_ENCRYPTED, "No file is protected by DRM."),
+        (
+            AudioHealthKind.MEDIA_UNREADABLE,
+            "Every file opens and reads within Mechanical Librarian’s limits.",
+        ),
+    ),
+)
+def test_each_rule_reads_in_the_owners_words(kind: AudioHealthKind, bound: str) -> None:
+    """The rule line is what the owner reads under each observation (#1765)."""
+    assert AUDIO_HEALTH_BOUNDS[kind] == bound
+
+
+def test_the_rules_use_one_apostrophe() -> None:
+    """One apostrophe style across the table, the typographic one (#1765)."""
+    assert not [bound for bound in AUDIO_HEALTH_BOUNDS.values() if "'" in bound]
+    assert AUDIO_HEALTH_BOUNDS[AudioHealthKind.CODEC_UNEXPECTED].startswith(
+        "Each file’s audio stream is "
+    )
