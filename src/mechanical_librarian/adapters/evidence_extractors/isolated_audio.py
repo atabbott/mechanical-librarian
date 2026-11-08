@@ -694,19 +694,26 @@ def _capped_records(
 ) -> tuple[AudioSidecarDigest, ...]:
     """Hold an item's records to `MAX_FACTS` facts and their byte bound (#1796).
 
-    Filled in manifest order; an entry that loses facts says so.
+    Filled in manifest order; an entry that loses facts says so. Every
+    record's envelope, including one with no facts, is reserved before any
+    fact is placed, so a later record can never take the total past the bound.
     """
     facts_left = MAX_AUDIO_FACTS
-    bytes_left = MAX_BYTE_ORDER_MARK_BYTES
+    bytes_left = MAX_BYTE_ORDER_MARK_BYTES - sum(
+        _serialized_bytes(
+            dataclasses.replace(
+                entry.byte_order_mark, facts=(), facts_omitted=True
+            ).to_data()
+        )
+        for entry in entries
+        if entry.byte_order_mark is not None
+    )
     capped: list[AudioSidecarDigest] = []
     for entry in entries:
         mark = entry.byte_order_mark
         if mark is None or not mark.facts:
             capped.append(entry)
             continue
-        bytes_left -= _serialized_bytes(
-            dataclasses.replace(mark, facts=(), facts_omitted=True).to_data()
-        )
         kept: list[AudioSidecarByteOrderMarkFact] = []
         for fact in mark.facts:
             size = _serialized_bytes(fact.to_data()) + 1

@@ -782,6 +782,51 @@ def test_the_item_wide_cap_fills_in_name_order() -> None:
     assert 0 < len(bounded.byte_order_mark.facts) < 60
 
 
+def test_the_item_wide_byte_cap_counts_every_record_envelope() -> None:
+    """Control 8: later records, and records with no facts, count too."""
+
+    def wide(name: str, count: int) -> AudioSidecarDigest:
+        return dataclasses.replace(
+            _digests(1)[0],
+            name=name,
+            byte_order_mark=AudioSidecarByteOrderMark(
+                facts=tuple(
+                    AudioSidecarByteOrderMarkFact(
+                        _F.DESCRIPTION, f"{index:03d}" + "x" * 497, None
+                    )
+                    for index in range(count)
+                )
+            ),
+        )
+
+    # The first record fills the cap to within one fact; the envelopes of the
+    # fourteen after it, and of one with no facts left, must still fit.
+    entries = (
+        (wide("0.nfo", 140),)
+        + tuple(wide(f"{index}.nfo", 1) for index in range(1, 15))
+        + (
+            dataclasses.replace(
+                _digests(1)[0],
+                name="15.nfo",
+                byte_order_mark=AudioSidecarByteOrderMark(facts_omitted=True),
+            ),
+        )
+    )
+
+    capped = isolated_audio._capped_records(entries)
+
+    assert (
+        sum(
+            len(canonical_json(entry.byte_order_mark.to_data()).encode("utf-8"))
+            for entry in capped
+            if entry.byte_order_mark is not None
+        )
+        <= MAX_BYTE_ORDER_MARK_BYTES
+    )
+    assert capped[0].byte_order_mark is not None
+    assert capped[0].byte_order_mark.facts
+
+
 # --- Through the parent inspector (S4, S6, S7, controls 4, 7, 8, 9) ----------
 
 
