@@ -38,7 +38,7 @@ export function ChoiceEvidencePanel({
       {corroboratingSources ? (
         <p>
           {corroboratingSources}{' '}
-          {corroboratingSources === 1 ? 'source corroborates' : 'sources corroborate'} this choice.
+          {corroboratingSources === 1 ? 'source confirms' : 'sources confirm'} this choice.
         </p>
       ) : null}
       {context?.evidence.length ? (
@@ -52,7 +52,7 @@ export function ChoiceEvidencePanel({
           ))}
         </ul>
       ) : (
-        <p>No owner-readable source observation is retained for this choice.</p>
+        <p>No source is recorded for this value.</p>
       )}
       {context?.limitations.length ? (
         <aside>
@@ -108,7 +108,7 @@ export function RecordedFieldObservations({
       ),
   )
   const missing = evidence.data?.pages[0]?.missingLineageCount ?? 0
-  // Retry observations, or Reload once the tab is on an earlier build.
+  // Try again, or Reload once the tab is on an earlier build.
   const observationsRetry = useRef<HTMLButtonElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const list = useRef<HTMLUListElement>(null)
@@ -127,9 +127,9 @@ export function RecordedFieldObservations({
   )
     return null
   return (
-    <section className="recorded-field-observations" aria-label="Recorded observations">
+    <section className="recorded-field-observations" aria-label="Other source values">
       <h3 ref={heading} tabIndex={-1}>
-        Recorded observations
+        Other source values
       </h3>
       {observations.length ? (
         <ul className="evidence-values" ref={list}>
@@ -143,13 +143,13 @@ export function RecordedFieldObservations({
           ))}
         </ul>
       ) : null}
-      {missing ? <p>Some referenced observations are unavailable.</p> : null}
-      {retryReading ? <p role="status">Loading observations…</p> : null}
+      {missing ? <p>Some source values could not be shown.</p> : null}
+      {retryReading ? <p role="status">Loading source values…</p> : null}
       {evidence.error instanceof BuildMismatchError ? (
-        <StaleBuildRead lead="The observations were not loaded." ref={observationsRetry} />
+        <StaleBuildRead lead="Source values were not loaded." ref={observationsRetry} />
       ) : evidence.isError ? (
         <p role="alert">
-          The observations could not be loaded.{' '}
+          Source values could not be loaded.{' '}
           <button
             ref={observationsRetry}
             type="button"
@@ -170,13 +170,13 @@ export function RecordedFieldObservations({
               )
             }}
           >
-            Retry observations
+            Try again
           </button>
         </p>
       ) : null}
       {evidence.hasNextPage ? (
         <p>
-          More observations remain. {/* Busy, not disabled, so focus stays on it while it reads. */}
+          {/* Busy, not disabled, so focus stays on it while it reads. */}
           <button
             type="button"
             aria-disabled={evidence.isFetchingNextPage || undefined}
@@ -194,7 +194,7 @@ export function RecordedFieldObservations({
                 )
             }}
           >
-            {evidence.isFetchingNextPage ? 'Loading observations…' : 'Load more observations'}
+            {evidence.isFetchingNextPage ? 'Loading more…' : 'Show more source values'}
           </button>
         </p>
       ) : null}
@@ -203,6 +203,7 @@ export function RecordedFieldObservations({
 }
 export function MetadataChoice({
   advice,
+  automatic = false,
   retainedAdvice = false,
   context,
   current,
@@ -219,6 +220,8 @@ export function MetadataChoice({
   value,
 }: {
   advice?: ReviewField['descriptionAdvice']
+  // The selected badge names Automatic when the pick is Automatic's (#1765).
+  automatic?: boolean
   retainedAdvice?: boolean
   context: ChoiceContextView | undefined
   current: boolean
@@ -273,7 +276,9 @@ export function MetadataChoice({
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
-          {selected ? <b className="choice-chosen">Your choice</b> : null}
+          {selected ? (
+            <b className="choice-chosen">{automatic ? 'Automatic’s choice' : 'Your choice'}</b>
+          ) : null}
         </small>
         <strong>
           {longDescription

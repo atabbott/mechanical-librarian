@@ -66,6 +66,7 @@ import {
   effectSummary,
   commandSelected,
   choiceSelected,
+  automaticallySelected,
   isLongDescription,
   decisionQuestion,
 } from '../fieldDecision'
@@ -161,8 +162,8 @@ const fieldStatus = (field: ReviewField) =>
 // so the two reasons for an unchanged field are named here (#1514).
 const unchangedReasons = new Set([
   '',
-  'There is nothing to decide for this field.',
-  'There is no other value to choose from. You can enter your own.',
+  'Nothing to decide for this field.',
+  'No source offered a different value. You can enter your own.',
 ])
 const contextKind = (field: ReviewField) =>
   field.manualHold || !unchangedReasons.has(field.classificationReason)
@@ -1576,6 +1577,7 @@ export default function LibraryPage({
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
   const currentChoice: DirectChoice | null = selected?.decisionActions.includes('keep_current')
     ? {
+        automatic: automaticallySelected(selected, selectedProgress),
         context: choiceContext(selected, null),
         current: true,
         disabled: false,
@@ -1605,6 +1607,7 @@ export default function LibraryPage({
           const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
           return {
             id: key,
+            automatic: automaticallySelected(selected, selectedProgress),
             context,
             current: false,
             disabled: false,
@@ -1636,6 +1639,7 @@ export default function LibraryPage({
           {
             id: 'advice:retained',
             advice: selectedAdvice,
+            automatic: selectedAdvice.selection?.origin === 'automatic_policy',
             retainedAdvice: true,
             context: undefined,
             current: false,
@@ -1663,6 +1667,9 @@ export default function LibraryPage({
           {
             id: 'advice:candidate',
             advice: selectedAdvice,
+            automatic:
+              (selectedProgress === null || selectedProgress.phase === 'failed') &&
+              selectedAdvice.selection?.origin === 'automatic_policy',
             retainedAdvice: selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
             context: undefined,
             current: false,
@@ -2286,12 +2293,12 @@ export default function LibraryPage({
                     </button>
                   ) : null}
                   {selectedChoiceMode && effect ? (
-                    <aside className="field-apply-context" aria-label="External update status">
+                    <aside className="field-apply-context" aria-label="Writing to the library">
                       <span className="activity-state-mark" aria-hidden="true"></span>
                       <span>
-                        <small>External library</small>
+                        <small>Writing to the library</small>
                         <strong>{effect.state}</strong>
-                        <em>{effect.detail}</em>
+                        {effect.detail ? <em>{effect.detail}</em> : null}
                       </span>
                     </aside>
                   ) : null}

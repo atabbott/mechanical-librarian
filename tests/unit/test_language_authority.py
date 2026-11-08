@@ -250,8 +250,8 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                     "Local metadata",
                     "local_presence",
                     ("language",),
-                    f"Language: {claim.observed}. Undetermined language; "
-                    "not an eligible choice.",
+                    f"Language: {claim.observed}. Not offered as a choice. "
+                    "The language is not known.",
                 )
                 for claim in report.local_claims
                 if claim.kind.value == "language"
@@ -263,10 +263,10 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                         "Provider (name unavailable)",
                         "external_observation",
                         ("language",),
-                        f"Language: {claim.value}. Retained for review only; "
-                        "not an eligible choice. Undetermined language."
+                        f"Language: {claim.value}. Not offered as a choice. "
+                        "The language is not known."
                         + (
-                            " Edition-level detail."
+                            " It belongs to one edition."
                             if claim.scope is ClaimScope.EDITION
                             else ""
                         ),
@@ -293,8 +293,8 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                 for item in language
             )
             assert all(
-                "Undetermined" in item["observation"]
-                and "not an eligible choice" in item["observation"]
+                "The language is not known." in item["observation"]
+                and "Not offered as a choice." in item["observation"]
                 for item in language
             )
             detail = client.get(f"/api/v1/review-cases/{case_id}").json()

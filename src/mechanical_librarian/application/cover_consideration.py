@@ -397,45 +397,45 @@ _COVER_EVIDENCE_STATEMENTS: Final[Mapping[CoverSourceKind, tuple[str, str, str]]
             CoverSourceKind.ABS: (
                 "Local library record",
                 "local_presence",
-                "Local library cover retained.",
+                "Your current cover.",
             ),
             CoverSourceKind.EPUB: (
-                "Local EPUB package",
+                "EPUB file",
                 "local_presence",
-                "Local EPUB cover retained.",
+                "The cover inside this file.",
             ),
             CoverSourceKind.HARDCOVER: (
                 PROVIDER_LABELS["hardcover"],
                 "external_corroboration",
-                "Retained catalogue cover supports this choice.",
+                "Has this cover in its catalogue.",
             ),
             CoverSourceKind.OPEN_LIBRARY: (
                 PROVIDER_LABELS["open_library"],
                 "external_corroboration",
-                "Retained catalogue cover supports this choice.",
+                "Has this cover in its catalogue.",
             ),
             CoverSourceKind.INVENTAIRE: (
                 PROVIDER_LABELS["inventaire"],
                 "external_corroboration",
-                "Retained catalogue cover supports this choice.",
+                "Has this cover in its catalogue.",
             ),
             CoverSourceKind.AUDIBLE_CATALOG: (
                 PROVIDER_LABELS["audible_catalog"],
                 "external_corroboration",
-                "Retained catalogue cover supports this choice.",
+                "Has this cover in its catalogue.",
             ),
             CoverSourceKind.ITUNES_SEARCH: (
                 PROVIDER_LABELS["itunes_search"],
                 "external_corroboration",
-                "Retained catalogue cover supports this choice.",
+                "Has this cover in its catalogue.",
             ),
         }
     )
 )
 _UNNAMED_COVER_EVIDENCE_STATEMENT: Final = (
-    "Provider evidence",
+    "Unnamed source",
     "external_corroboration",
-    "Retained cover evidence supports this choice.",
+    "Has this cover.",
 )
 
 
@@ -1834,7 +1834,7 @@ def _cover_choice_contexts(
                 {
                     "source": "Local library record",
                     "role": "local_presence",
-                    "observation": "Current cover preview is unavailable; local presence is retained.",
+                    "observation": "Your current cover.",
                 }
             ]
             if incumbent
@@ -1859,7 +1859,7 @@ def _cover_choice_contexts(
             if type(current_reference) is str
             else evidence("", True),
             "limitations": (
-                ["Preview unavailable for this retained cover."]
+                ["Its image could not be previewed."]
                 if cast("dict[str, object]", value["incumbent"]).get("state")
                 == "unavailable"
                 else []

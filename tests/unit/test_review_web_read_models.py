@@ -284,7 +284,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "alternative_id": None,
                 "evidence": [
                     {
-                        "observation": "Local library cover retained.",
+                        "observation": "Your current cover.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -1788,7 +1788,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
                 "source": "provider_claim",
             }
         )
-        == "Retained observation (provider name unavailable)"
+        == "Unnamed source"
     )
     # A choice names its known sources once each, never a local record or an
     # unnamed provider, and says nothing when no source is known (#1519).
@@ -1801,7 +1801,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
                 {"role": "local_presence", "source": "Local library record"},
                 {
                     "role": "external_observation",
-                    "source": "Retained observation (provider name unavailable)",
+                    "source": "Unnamed source",
                 },
             ]
         )
@@ -2183,7 +2183,7 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(
         item["destination"]: item["classification_reason"]
         for item in response.json()["items"]
     }
-    assert reasons["title"] == "Changes made for you are waiting for a safety recovery."
+    assert reasons["title"] == "Automatic is paused, so this field is waiting for you."
     assert reasons["series"] == "This field needs your choice."
     # The third row carries neither column, so the two above prove the
     # reader read them rather than a constant the double always emits.
@@ -3511,19 +3511,16 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
     expected_facts: Counter[tuple[str, str, tuple[str, ...], str]] = Counter()
     for reference, (authority, candidate, claim) in claims.items():
         fact = (
-            claim.value
-            if claim.state is FieldState.VALID
-            else "No valid identifier retained"
+            claim.value if claim.state is FieldState.VALID else "no readable identifier"
         )
         expected_facts[
             (
                 {"audible_catalog": "Audible", "audnexus": "Audnexus"}[authority],
                 "external_observation",
                 (claim.kind.value,),
-                f"{claim.kind.value.upper()}: {fact}. Retained for review only; "
-                "not an eligible choice."
+                f"{claim.kind.value.upper()}: {fact}. Not offered as a choice."
                 + (
-                    " Edition-level detail."
+                    " It belongs to one edition."
                     if claim.scope is ClaimScope.EDITION
                     else ""
                 ),
@@ -3554,8 +3551,7 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         assert {fact.reference for fact in report.identifier_evidence} <= set(claims)
     if shape == "malformed":
         assert any(
-            "No valid identifier retained" in item["observation"]
-            for item in observations
+            "no readable identifier" in item["observation"] for item in observations
         )
     with TestClient(app, base_url="https://review.test") as client:
         assert (
@@ -3722,9 +3718,9 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
     assert evidence["role"] == "external_observation"
     assert evidence["destinations"] == ["narrators"]
     assert evidence["observation"] == (
-        "Narrator: Ilsa Brandt. Retained for review only; not an eligible choice. "
-        "Recording variant conflicts with this item."
-        + (" Edition-level detail." if claim.scope is ClaimScope.EDITION else "")
+        "Narrator: Ilsa Brandt. Not offered as a choice. "
+        "That recording is a different version of this audiobook."
+        + (" It belongs to one edition." if claim.scope is ClaimScope.EDITION else "")
     )
     assert "Scope:" not in evidence["observation"]
     assert claim.reference not in _review_unselectable_evidence(
@@ -3866,7 +3862,7 @@ def test_unknown_choice_authority_is_observation_not_corroboration(
     assert projected == {
         "observation": "ISBN: 9780593135204",
         "role": "external_observation",
-        "source": "Retained observation (provider name unavailable)",
+        "source": "Unnamed source",
     }
 
 
