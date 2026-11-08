@@ -25,7 +25,7 @@ Checkpoints 0.1.0 to 0.29.2 built the product up to its current state:
   Policy, Activity and Settings, and a guided first run.
 - Audiobook matching and decisions.
 - An optional AI cover reviewer and description advice.
-- Plain words throughout the workspace, which is built to WCAG 2.2 AA and holds
+- Plain words in the workspace, which is built to WCAG 2.2 AA and holds
   still on phones and at 200% text.
 
 The [changelog](../../CHANGELOG.md) lists each change you can see.
