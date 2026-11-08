@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -36,6 +36,9 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.review_pipeline import PipelineAction
 from mechanical_librarian.application.review_web import (
+    _ADAPTER_FAULT_REASON,
+    _PROVIDER_OUTCOME_REASONS,
+    _REFUSED_PROVIDER_REASON,
     BrowseReviewLibrary,
     ReviewWebError,
     _provider_outcomes,
@@ -59,6 +62,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_browse import (
+    ProviderLaneFacts,
     library_report_facts,
     provider_lane_facts,
 )
@@ -1100,3 +1104,56 @@ def test_a_disabled_or_ebook_itunes_lane_keeps_its_own_reason() -> None:
     (corroborating,) = _provider_outcomes(provider_lane_facts(ebook))
     assert corroborating["cover_only"] is False
     assert corroborating["reason"] == "Returned no matching metadata."
+
+
+@pytest.mark.parametrize(
+    ("facts", "reason"),
+    (
+        ({"status": "no_match", "dispatch": "refused"}, _REFUSED_PROVIDER_REASON),
+        (
+            {"status": "no_match", "dispatch": None, "identity_refused": True},
+            _REFUSED_PROVIDER_REASON,
+        ),
+        (
+            {"status": "insufficient_input", "dispatch": None},
+            _PROVIDER_OUTCOME_REASONS["insufficient_input"],
+        ),
+        (
+            {"status": "not_needed", "dispatch": None},
+            _PROVIDER_OUTCOME_REASONS["not_needed"],
+        ),
+        (
+            {"status": "unavailable", "dispatch": None, "adapter_fault": True},
+            _ADAPTER_FAULT_REASON,
+        ),
+        (
+            {"status": "incomplete", "dispatch": None},
+            "Searched for cover art only. No cover came back, and it is not retried.",
+        ),
+    ),
+    ids=(
+        "refused-dispatch",
+        "identity-refused",
+        "insufficient-input",
+        "not-needed",
+        "adapter-fault",
+        "real-failure",
+    ),
+)
+def test_a_cover_only_lane_keeps_the_companion_lane_precedence(
+    facts: dict[str, object], reason: str
+) -> None:
+    """A refusal, a fault or a source never searched keeps its own reason (#1779)."""
+    (outcome,) = _provider_outcomes(
+        (
+            ProviderLaneFacts(
+                "itunes_search",
+                1,
+                "work",
+                cover_only=True,
+                **cast("dict[str, Any]", facts),
+            ),
+        )
+    )
+    assert outcome["cover_only"] is True
+    assert outcome["reason"] == reason
