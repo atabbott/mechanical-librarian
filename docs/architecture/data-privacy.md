@@ -28,7 +28,11 @@ Where each store lives is in [SQLite topology](sqlite-topology.md).
   digests, dimensions and media type;
 - for an EPUB with a malformed cover declaration, the closed fallback and
   refusal codes of its shadow cover recovery, never a reference or member
-  name.
+  name;
+- for an audiobook, each recognised sidecar's bare file name, digest and
+  closed codes, and the values recorded but not believed: Libation shadow
+  values and, for a sidecar that starts with a byte-order mark, what a reading
+  without the mark adds. Never a path, excerpt or association text.
 
 Cover originals and previews are stored once per digest in the artifact store.
 
