@@ -2913,6 +2913,12 @@ describe('Library route', () => {
         getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, recorded] })),
       })
       const failure = await screen.findByText(/Recorded evidence could not be loaded\./u)
+      // The route's ready focus is deferred a frame and applies while focus is
+      // still where the route left it, the page. On a slow runner that frame
+      // can land after this retry settles, when focus is briefly on the page
+      // again, and take it to the work's header first. Let it land before the
+      // reader acts, as it does for a reader.
+      await waitFor(() => expect(document.querySelector('.selected-work-header')).toHaveFocus())
       await user.click(within(failure).getByRole('button', { name: 'Try again' }))
       if (outcome === 'held read') {
         // A first-read retry renders the loading line in place of Try again.
