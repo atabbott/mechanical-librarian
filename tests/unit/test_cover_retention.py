@@ -577,6 +577,12 @@ def test_a_switch_leaving_the_list_queues_its_removal(
 
     # Queued in the transaction that verified the newer switch.
     assert _removals(effects) == [(older, "released", "pending", 0)]
+    # The open-time validator accepts a released row behind a verified switch.
+    effects.repository.close()
+    effects.repository = open_repository(
+        effects.database_path, create=False, cross_thread=True
+    )
+    service = _service(effects, store)
     assert (
         effects.repository.retained_cover_original("primary", "books", "book-1") is None
     )
