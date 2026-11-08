@@ -425,7 +425,7 @@ export const ConnectionNotice = ({
         ? 'Library connection recovered'
         : 'Library connection failed'
   const copy = data?.recovery_required
-    ? 'Restart the Mechanical Librarian service to resume preparation. Prepared books can still be reviewed.'
+    ? 'Restart the Mechanical Librarian service to resume preparation. Prepared works can still be reviewed.'
     : condition.state === 'checking'
       ? 'Preparation is paused until the check finishes.'
       : condition.state === 'recovered'
@@ -871,7 +871,9 @@ export const PreparationActivity = () => {
       >
         {data?.recovery_required
           ? 'Preparation stopped'
-          : data?.paused
+          : // A run held by a connection check is paused too, and the Library's
+            // preparation row says so in the same words (#1765).
+            data?.paused || data?.presentation?.state === 'blocked'
             ? 'Preparation paused'
             : data?.actionable
               ? 'Preparation needs attention'
@@ -884,7 +886,7 @@ export const PreparationActivity = () => {
           <h2>{data.recovery_required ? 'Preparation stopped' : 'Background activity'}</h2>
           {data.recovery_required ? (
             <p role="status">
-              Restart the Mechanical Librarian service to resume preparation. Prepared books can
+              Restart the Mechanical Librarian service to resume preparation. Prepared works can
               still be reviewed.
             </p>
           ) : null}

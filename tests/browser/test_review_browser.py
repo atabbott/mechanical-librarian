@@ -4050,7 +4050,7 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         expect(row).not_to_contain_text("Preparation unavailable")
         assert row.evaluate("node => node.tagName") == "ARTICLE"
         assert row.locator("button, a").count() == 0
-        expect(row).to_contain_text("The local media file could not be read.")
+        expect(row).to_contain_text("A file of this book could not be read.")
         page.get_by_role("searchbox").fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
@@ -4352,6 +4352,37 @@ def test_choosing_an_attention_item_keeps_the_focused_work_header_in_view() -> N
             browser.close()
 
 
+# Each line of the Sources summary (its label, its count, or the comparison
+# footer's one line) must sit inside the summary box with no word broken
+# across lines. Returns the lines measured and any that escaped.
+_SOURCES_SUMMARY_GEOMETRY = """() => {
+  const lines = [...document.querySelectorAll(
+    '.work-sources > summary > span, .work-sources > summary > small'
+  )].filter(node => node.getClientRects().length);
+  const escaped = [];
+  for (const line of lines) {
+    const box = line.parentElement.getBoundingClientRect();
+    const rect = line.getBoundingClientRect();
+    if (rect.right > box.right + 0.5 || rect.left < box.left - 0.5)
+      escaped.push({text: line.textContent, right: rect.right, box: box.right});
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = walker.currentNode;
+      for (const match of text.textContent.matchAll(/\\S+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const tops = new Set([...range.getClientRects()].map(r => r.top));
+        const right = Math.max(...[...range.getClientRects()].map(r => r.right));
+        if (tops.size !== 1 || right > box.right + 0.5)
+          escaped.push({word: match[0], lines: tops.size, right, box: box.right});
+      }
+    }
+  }
+  return {lines: lines.map(line => line.textContent), escaped};
+}"""
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(
@@ -4407,6 +4438,7 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                     (390, "100%"),
                     (320, "100%"),
                     (1440, "200%"),
+                    (390, "200%"),
                     (320, "200%"),
                 ):
                     page.set_viewport_size({"width": width, "height": 900})
@@ -4445,6 +4477,14 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                     )
                     assert (
                         page.evaluate("document.documentElement.scrollWidth") <= width
+                    )
+                    # The Sources line wraps inside its own summary instead of
+                    # running past it at a phone width with large text (#1765).
+                    sources = page.evaluate(_SOURCES_SUMMARY_GEOMETRY)
+                    assert sources["lines"] and not sources["escaped"], (
+                        width,
+                        size,
+                        sources,
                     )
                 if not identity:
                     disclosure = page.get_by_role(
@@ -5573,7 +5613,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     "radio", name="Choose proposed value", exact=False
                 ).count()
                 assert (
-                    "You can select another eligible value"
+                    "You can choose another value"
                     in page.locator(".decision-canvas").first.inner_text()
                 )
 
@@ -6101,10 +6141,10 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 )
                 if chapter_runtime:
                     expect(basis).to_contain_text(
-                        "Complete chapter timing and structure corroborate this recording where overall runtime is unavailable."
+                        "Its chapter timings and structure confirm this recording, since no total running time is available."
                     )
                     expect(basis).to_contain_text(
-                        "where overall runtime is unavailable."
+                        "since no total running time is available."
                     )
                     basis.get_by_text("Recording source").click()
                     expect(basis).to_contain_text("Audible product B0SYNE7P1K")
@@ -6151,7 +6191,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 # The case page agrees with its row: both fills are optional
                 # choices, so nothing is counted as needing review (#1249).
                 expect(
-                    page.locator("dt", has_text=re.compile("^Needs review$")).locator(
+                    page.locator("dt", has_text=re.compile("^Needs you$")).locator(
                         "xpath=following-sibling::dd[1]"
                     )
                 ).to_have_text("0")
@@ -6235,7 +6275,7 @@ def test_a_companion_isbn_admission_is_explained_on_every_surface() -> None:
     """How a recording titled otherwise was found, wherever it is shown (#1723).
 
     The recording Hardcover lists for the EPUB's ISBN is explained on the
-    Library's Whole-work context, on its case and on a report-only work's
+    Library's Recording match, on its case and on a report-only work's
     recorded evidence, and its Sources name the EPUB's ISBN lookup.
     """
     with tempfile.TemporaryDirectory() as directory:
@@ -6280,7 +6320,7 @@ def test_a_companion_isbn_admission_is_explained_on_every_surface() -> None:
                 page.get_by_role(
                     "button", name=re.compile("^Asserted Title")
                 ).first.click()
-                context_region = page.get_by_role("region", name="Whole-work context")
+                context_region = page.get_by_role("region", name="Recording match")
                 expect(context_region).to_be_visible()
                 note = context_region.get_by_role(
                     "region", name="How this recording was matched"
@@ -6769,7 +6809,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     else [
                                         {
                                             "name": active["value"],
-                                            "stage": "Checking metadata",
+                                            "stage": "Checking automatic choices",
                                         }
                                     ]
                                 ),
@@ -6847,10 +6887,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
 
                 handoff.click()
                 page.wait_for_url(re.compile(r"/library\?.*preparation="))
-                heading = page.get_by_role("heading", name="Preparing your library")
+                heading = page.get_by_role("heading", name="Preparing libraries")
                 expect(heading).to_be_focused()
                 expect(page.locator(".preparation-run-state")).to_have_text(
-                    "Preparation continues"
+                    "Prepared works can be reviewed while the rest of the run finishes."
                 )
                 # Its one status line speaks for it; the detail is no live
                 # region re-read on every poll (#1288).
@@ -6873,7 +6913,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 )
                 assert passage_facts == [
                     {
-                        "label": "Read from library: 4 of 4",
+                        "label": "Files read: 4 of 4",
                         "value": 4,
                         "max": 4,
                         "position": 1,
@@ -6882,7 +6922,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "width": passage_facts[0]["width"],
                     },
                     {
-                        "label": "Searches finished: 3 of 4",
+                        "label": "Sources asked: 3 of 4",
                         "value": 3,
                         "max": 4,
                         "position": 0.75,
@@ -6891,7 +6931,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "width": passage_facts[1]["width"],
                     },
                     {
-                        "label": "Candidates compared: 2 of 4",
+                        "label": "Sources compared: 2 of 4",
                         "value": 2,
                         "max": 4,
                         "position": 0.5,
@@ -6900,7 +6940,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "width": passage_facts[2]["width"],
                     },
                     {
-                        "label": "Metadata checked: 1 of 4",
+                        "label": "Automatic choices checked: 1 of 4",
                         "value": 1,
                         "max": 4,
                         "position": 0.25,
@@ -6975,7 +7015,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 summary_cases = (
                     (
                         "blocked",
-                        "Preparation needs attention",
+                        "Preparation paused",
                         "0 ready to browse · 1 active",
                     ),
                     (
@@ -8374,7 +8414,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                             "active_books": [
                                 {
                                     "name": f"Private setup book {index}",
-                                    "stage": "Comparing candidates",
+                                    "stage": "Comparing sources",
                                 }
                                 for index in range(5)
                             ],
@@ -8815,9 +8855,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="Before you start")
                 ).not_to_be_visible()
                 expect(page.get_by_text("Private setup book 0")).to_be_visible()
-                expect(
-                    page.get_by_text("2 more active books follow in this run.")
-                ).to_be_visible()
+                expect(page.get_by_text("2 more are being prepared.")).to_be_visible()
                 expect(
                     page.get_by_role("heading", name="How many books made it this far?")
                 ).to_be_visible()
@@ -10056,7 +10094,9 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 page.goto(f"{origin}/library?lens=all")
                 page.get_by_role("searchbox").fill("Current title")
                 expect(
-                    page.get_by_role("heading", name="Provider evidence limited")
+                    page.get_by_role(
+                        "heading", name="Some lookups gave no usable answer"
+                    )
                 ).to_be_visible()
                 row = page.get_by_role("button", name=re.compile(r"^Current title\."))
                 expect(row).to_have_attribute(
@@ -10204,12 +10244,12 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                 )
                 if state == "failed":
                     expect(chooser.get_by_role("status")).to_contain_text(
-                        "The adviser returned an invalid response. No new description was produced."
+                        "The adviser’s answer could not be read. Retry later."
                     )
                     expect(select).to_have_count(0)
                 else:
                     expect(select).to_be_visible()
-                    expect(select).to_contain_text("Advised · Authored content")
+                    expect(select).to_contain_text("Description adviser")
                     expect(select).to_contain_text("codex · synthetic-contained-model")
                     if state in {"automatic", "no_change"}:
                         expect(select).to_have_attribute("aria-checked", "true")
@@ -10228,7 +10268,9 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                         )
                         expect(select.locator("strong strong")).to_have_count(0)
                         if state == "needs_review":
-                            expect(select).to_contain_text("cannot apply automatically")
+                            expect(select).to_contain_text(
+                                "never applied automatically"
+                            )
                         selection_requests = []
                         page.on(
                             "request",
@@ -10283,7 +10325,7 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                 chooser.get_by_role("button", name="Retry description advice").click()
                 expect(
                     chooser.get_by_role("status").filter(
-                        has_text="Description preparation requested"
+                        has_text="New advice requested"
                     )
                 ).to_be_visible()
                 page.get_by_role("link", name="History", exact=True).click()
@@ -10499,8 +10541,7 @@ def test_description_retry_retains_real_selected_choice(state):
                     expect(
                         page.get_by_text(
                             re.compile(
-                                "^Advised · Authored content · Recorded choice"
-                                " ?Your choice$"
+                                "^Description adviser · Earlier choice ?Your choice$"
                             )
                         )
                     ).to_be_visible()
@@ -10514,7 +10555,7 @@ def test_description_retry_retains_real_selected_choice(state):
                     elif state == "retry_failed":
                         expect(
                             page.get_by_text(
-                                re.compile("Description adviser unavailable")
+                                re.compile("The description adviser is unavailable")
                             )
                         ).to_be_visible()
                     for view in ("Evidence", "History"):
@@ -10642,8 +10683,9 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 expect(page.locator(".preparation-detail")).to_contain_text(
                     "Restart the Mechanical Librarian service"
                 )
-                expect(page.locator(".preparation-detail")).to_contain_text(
-                    "last saved progress"
+                expect(page.locator(".preparation-run-state")).to_have_text(
+                    "Restart the Mechanical Librarian service to resume preparation."
+                    " Prepared works can still be reviewed."
                 )
                 expect(page.locator(".preparation-detail")).not_to_contain_text(
                     "in progress"
@@ -11640,7 +11682,7 @@ def test_a_prepared_work_route_cover_keeps_the_case_readable():
                 ).to_have_count(0)
                 expect(
                     page.get_by_role("region", name="Book-level evidence")
-                ).to_contain_text("The exact recording remains unresolved.")
+                ).to_contain_text("The exact recording is not known.")
                 page.reload()
             page.goto(f"{origin}/review/{case_id}")
             expect(
@@ -11679,22 +11721,22 @@ def test_audiobook_work_owner_journey():
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
             expect(
                 page.get_by_role("region", name="Book-level evidence")
-            ).to_contain_text("The exact recording remains unresolved.")
+            ).to_contain_text("The exact recording is not known.")
             # The note names only what the rail offers here, Description and
             # Genres, never every field the case carries (#1286 X3).
             expect(
                 page.get_by_role("region", name="Book-level evidence")
             ).to_contain_text(
                 "Book-level evidence supports description and genre choices. "
-                "The exact recording remains unresolved."
+                "The exact recording is not known."
             )
             # Covers may be chosen on this route now, so the note names only
             # what stays unavailable (#1642).
             expect(
                 page.get_by_role("region", name="Book-level evidence")
             ).to_contain_text(
-                "Recording identifiers and automatic changes are unavailable "
-                "from this evidence."
+                "This evidence cannot set recording identifiers or make "
+                "automatic changes."
             )
             # A title the evidence only restates is no choice: the case shows
             # the same rows as before #1253.
@@ -11773,7 +11815,7 @@ def test_audiobook_work_series_title_owner_journey():
                 page.get_by_role("region", name="Book-level evidence")
             ).to_contain_text(
                 "Book-level evidence supports series, title, description, and genre "
-                "choices. The exact recording remains unresolved."
+                "choices. The exact recording is not known."
             )
             series = page.get_by_role(
                 "radio", name=re.compile(r"^Choose proposed value: Example Saga")
@@ -13245,8 +13287,9 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     ), count
-                for selector in (".preparation-run-state", ".preparation-outcomes"):
-                    assert page.locator(f"{selector} .count-pair").count(), selector
+                # A finished run's status line says when it finished; its
+                # counts are in the outcomes row (#1765).
+                assert page.locator(".preparation-outcomes .count-pair").count()
             finally:
                 browser.close()
 
@@ -13522,9 +13565,9 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
         if lapsed == ("papers",):
             # Writes are enabled only for the library that kept permission.
             expect(notice).to_contain_text("Writes are enabled for Reading Room.")
-            expect(notice).to_contain_text(
-                "Review current write permissions in Activity."
-            )
+            expect(
+                notice.get_by_role("link", name="Review write permissions", exact=True)
+            ).to_be_visible()
         page.get_by_role("link", name="Activity", exact=True).click()
         page.get_by_text(sentence).first.wait_for()
         main = page.locator("main")
@@ -13563,10 +13606,10 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
     )
     rows = (
         "Ember Tide Protocol. Corin Halloway. Found, but not this work",
-        "Work no-match. Author details unavailable. No provider matched",
+        "Work no-match. Author details unavailable. No source matched",
         "Work rechecked. Author details unavailable. "
-        "Providers unavailable; will be checked again",
-        "Work unavailable. Author details unavailable. Providers unavailable",
+        "Sources unavailable, retry scheduled",
+        "Work unavailable. Author details unavailable. Sources unavailable",
     )
     with running_owner_fixture(tmp_path, 1) as (fixture, origin):
         rechecked = _ebook("rechecked", ProviderStatus.UNAVAILABLE)

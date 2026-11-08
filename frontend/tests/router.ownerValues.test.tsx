@@ -402,7 +402,7 @@ describe('owner-entered values', () => {
       await waitFor(() => expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull())
       expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
       expect(screen.getByRole('region', { name: 'Your value for Title' })).toBeVisible()
-      expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+      expect(screen.queryByText(/not in the current list of works/u)).toBeNull()
       if (outcome === 'withdrawn')
         await waitFor(() =>
           expect(screen.getByText('Withdrawn. This field needs a decision again.')).toHaveFocus(),
@@ -558,7 +558,7 @@ describe('owner review fixes', () => {
     )
     expect(
       await screen.findByText(
-        'An earlier owner decision is pausing automatic handling until you choose Resume automatic handling.',
+        'Automatic stays off for this field until you choose Resume automatic handling.',
       ),
     ).toBeVisible()
     expect(document.querySelector('[aria-pressed="true"]')).toBeNull()
@@ -566,7 +566,7 @@ describe('owner review fixes', () => {
     // Nothing is marked, so the header does not say something is.
     expect(screen.getByText(/Your earlier decision still holds this field\./u)).toBeVisible()
     expect(screen.queryByText(/The recorded outcome is marked below/u)).toBeNull()
-    const resolved = screen.getByText('Resolved automatically', { selector: 'dt' })
+    const resolved = screen.getByText('Automatic', { selector: 'dt' })
     expect(resolved.nextElementSibling).toHaveTextContent('0')
   })
 
@@ -635,7 +635,7 @@ describe('owner review fixes', () => {
     expect(await within(moved).findByText('The work changed. Review it again.')).toBeVisible()
     await waitFor(() => expect(heading()).toHaveFocus())
     expect(screen.queryByText(/Selected work could not be loaded/u)).toBeNull()
-    expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+    expect(screen.queryByText(/not in the current list of works/u)).toBeNull()
     await user.click(within(moved).getByRole('button', { name: 'Enter a value' }))
     expect(within(moved).queryByText('The work changed. Review it again.')).toBeNull()
   })
@@ -722,7 +722,9 @@ describe('owner review fixes', () => {
         expect(await screen.findByRole('region', { name: 'Your value for Title' })).toBeVisible()
         expect(router.state.location.search.preview).toBe('case-1')
         observer.disconnect()
-        expect(frames.filter((frame) => frame.includes('not available in the current'))).toEqual([])
+        expect(
+          frames.filter((frame) => frame.includes('not in the current list of works')),
+        ).toEqual([])
         return
       }
       if (outcome !== 'moved') {
@@ -736,7 +738,7 @@ describe('owner review fixes', () => {
           expect.any(AbortSignal),
           'foreground',
         )
-        const unavailable = (frame: string) => frame.includes('not available in the current')
+        const unavailable = (frame: string) => frame.includes('not in the current list of works')
         expect(moveEnded).toBeDefined()
         expect(frames.slice(0, moveEnded).filter(unavailable)).toEqual([])
         expect(frames.slice(moveEnded).some(unavailable)).toBe(true)
@@ -746,7 +748,9 @@ describe('owner review fixes', () => {
       await screen.findByRole('region', { name: 'Your value for Title' })
       observer.disconnect()
       expect(frames.some((frame) => frame.includes('Loading selected work…'))).toBe(true)
-      expect(frames.filter((frame) => frame.includes('not available in the current'))).toEqual([])
+      expect(frames.filter((frame) => frame.includes('not in the current list of works'))).toEqual(
+        [],
+      )
     },
   )
 
@@ -785,7 +789,7 @@ describe('owner review fixes', () => {
     )
     expect(input).toBeInTheDocument()
     expect(input).toHaveValue('Half typed')
-    expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+    expect(screen.queryByText(/not in the current list of works/u)).toBeNull()
   })
 
   it('M4 leaves focus on the work, not the page, when no successor is found', async () => {

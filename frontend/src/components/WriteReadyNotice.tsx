@@ -95,13 +95,13 @@ export const WriteReadyNotice = () => {
           : `${inLibrary}Writes are enabled${enabledFor}.`
   const copy =
     consent.state === 'off'
-      ? `${lapse}Open permission review in Activity to check current readiness${preparing ? ' while preparation continues' : ''}.`
+      ? `${lapse}Nothing${held.length ? ' else' : ''} is written until you give permission.${preparing ? ' Preparation continues meanwhile.' : ''}`
       : consent.state === 'enabling'
-        ? 'Confirming permission with the authoritative server. No change is sent twice.'
+        ? 'Confirming permission…'
         : consent.state === 'applying'
-          ? `${lapse}${String(consent.reasons.applying)} in progress; the remaining ${String(consent.reasons.scheduled)} stay ready.`
+          ? `${lapse}Writing ${String(consent.reasons.applying)} ${consent.reasons.applying === 1 ? 'change' : 'changes'}. ${String(consent.reasons.scheduled)} more ${consent.reasons.scheduled === 1 ? 'is' : 'are'} ready.`
           : consent.state === 'complete'
-            ? `${lapse}Review current write permissions in Activity.`
+            ? lapse.trim()
             : `${lapse}${String(consent.reasons.scheduled)} prepared ${consent.reasons.scheduled === 1 ? 'change is' : 'changes are'} ready to apply.`
   return (
     <section

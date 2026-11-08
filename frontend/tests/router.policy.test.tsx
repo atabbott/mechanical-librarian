@@ -1035,7 +1035,8 @@ describe('Policy route', () => {
       await screen.findByText('The draft is not valid. Review its field choices and try again.'),
     ).toBeVisible()
     const failure = screen.getByRole('alert')
-    expect(failure).toHaveFocus()
+    // The alert renders before its focus effect runs; wait for focus rather than racing it.
+    await waitFor(() => expect(failure).toHaveFocus())
     expect(failure.closest('.cm-finish-tray')).not.toBeNull()
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
@@ -2632,7 +2633,11 @@ it.each([
         : /Suspension recovered/u,
     )
     await user.click(screen.getByRole('link', { name: 'Library' }))
-    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    await user.click(
+      await screen.findByRole('button', {
+        name: /^Preparing libraries\s*(This run|Reconnecting)/u,
+      }),
+    )
     expect(await screen.findByText('Title recovery requested')).toBeVisible()
     expect(queryClient.getQueryData(['review-preparation'])).toMatchObject({
       presentation: { state: 'running', total: 1, passage: { ready: 1 } },

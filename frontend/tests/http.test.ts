@@ -2997,7 +2997,7 @@ describe('ReviewApiClient', () => {
   it('accepts only ordered and bounded preparation presentation content', async () => {
     const presentation = preparationPresentation({
       passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
-      active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
+      active_books: [{ name: 'Private title', stage: 'Comparing sources' }],
       recent_completions: [{ name: 'Finished title', outcome: 'ready', completed_at: 101 }],
       throughput_per_minute: 1.2,
     })
@@ -3478,7 +3478,7 @@ describe('mapReportDetail', () => {
 
 describe('mapCaseDetail media health', () => {
   const observation = {
-    bound: "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+    bound: 'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
     cited: ['local_abc123', 'audible-product-B0SYNE7P1K'],
     expected: '20 h stated by the matched edition',
     kind: 'runtime_short_of_provider',
