@@ -1019,3 +1019,23 @@ def test_the_association_context_refuses_what_it_cannot_read(
 def test_the_association_context_accepts_nullable_title_and_file_list() -> None:
     assert AudioAssociationContext(None, (), None).own_file_names is None
     assert AudioAssociationContext("Title", (), ()).own_file_names == ()
+
+
+@pytest.mark.parametrize(
+    ("target", "stated", "echo"),
+    (
+        ("EN", "en", False),
+        ("en", "EN", False),
+        ("en", "en", True),
+        ("en", "en-GB", True),
+        ("XQ", "xq", True),
+    ),
+    ids=("unread_target", "unread_sidecar", "equal", "one_class", "both_unread"),
+)
+def test_a_case_only_language_echo_needs_equal_recognition(
+    target: str, stated: str, echo: bool
+) -> None:
+    """Codex R1: an echo restores the target's value for refusals, so a case-only
+    match counts only where both spellings refuse alike."""
+    context = _context(language=target)
+    assert target_echo(context, _F.LANGUAGE, stated, ()) is echo
