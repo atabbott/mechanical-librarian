@@ -125,8 +125,8 @@ brackets are GitHub issues.
 - **Clean rebuild required.** While its Cover evidence switch is on, iTunes is
   asked for an audiobook's cover again, one search per audiobook, and supplies
   nothing else about it. An iTunes failure never marks an audiobook's provider
-  evidence limited, and an audiobook only iTunes found stays in Library's Not
-  matched lens (#1779).
+  evidence limited, and an audiobook that only iTunes found stays in Library's
+  Not matched lens (#1779).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

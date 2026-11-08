@@ -7,6 +7,7 @@ reason, and only a scheduled recovery job lets that reason promise a retry.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +38,7 @@ from mechanical_librarian.application.review_pipeline import PipelineAction
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     ReviewWebError,
+    _provider_outcomes,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -51,10 +53,15 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
     field_evidence_providers,
+    provider_supplies_field_evidence,
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_browse import (
+    library_report_facts,
+    provider_lane_facts,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     work_query_ladder,
@@ -1022,3 +1029,68 @@ def test_an_audiobook_only_itunes_matched_stays_not_matched(tmp_path: Path) -> N
         assert "hardcover-only" not in _items(page)
     finally:
         repository.close()
+
+
+_COVER_ONLY_REASONS = {
+    ProviderStatus.CANDIDATES: (
+        "Searched for cover art only; nothing else it returns is compared."
+    ),
+    ProviderStatus.NO_MATCH: "Searched for cover art only and found none.",
+    ProviderStatus.UNAVAILABLE: (
+        "Searched for cover art only. No cover came back, and it is not retried."
+    ),
+    ProviderStatus.RATE_LIMITED: (
+        "Searched for cover art only. No cover came back, and it is not retried."
+    ),
+}
+
+
+@pytest.mark.parametrize("status", tuple(_COVER_ONLY_REASONS))
+def test_sources_say_an_itunes_audiobook_lane_searched_for_cover_art_only(
+    status: ProviderStatus,
+) -> None:
+    """#1779: the work's Sources and Library's row say what iTunes was asked."""
+    miss = _audio_lane("audible", "audible_catalog", ProviderStatus.NO_MATCH)
+    store = (
+        _store_matched("store-found", "itunes_search").providers[1]
+        if status is ProviderStatus.CANDIDATES
+        else _audio_lane("store", "itunes_search", status)
+    )
+    report = _audiobook("store-lane", miss, store)
+    for lanes in (
+        provider_lane_facts(report),
+        library_report_facts(json.loads(report.to_json())).providers,
+    ):
+        outcomes = {
+            cast(str, value["provider"]): value for value in _provider_outcomes(lanes)
+        }
+        assert outcomes["iTunes"]["cover_only"] is True
+        assert outcomes["iTunes"]["reason"] == _COVER_ONLY_REASONS[status]
+        assert outcomes["iTunes"]["status"] == status.value
+        assert outcomes["Audible"]["cover_only"] is False
+        # The flag is `provider_supplies_field_evidence`, read on both paths.
+        assert [lane.cover_only for lane in lanes] == [
+            not provider_supplies_field_evidence(report, provider)
+            for provider in report.providers
+            for _lane in provider.lanes or (provider,)
+        ]
+
+
+def test_a_disabled_or_ebook_itunes_lane_keeps_its_own_reason() -> None:
+    disabled = _audiobook(
+        "store-off", _audio_lane("store", "itunes_search", ProviderStatus.DISABLED)
+    )
+    ebook = replace_providers(
+        _ebook("ebook-store", ProviderStatus.NO_MATCH),
+        (
+            ProviderObservation(
+                "store", ProviderStatus.NO_MATCH, authority="itunes_search"
+            ),
+        ),
+    )
+    (off,) = _provider_outcomes(provider_lane_facts(disabled))
+    assert off["cover_only"] is True
+    assert off["reason"] == "Not enabled, so this source was never asked."
+    (corroborating,) = _provider_outcomes(provider_lane_facts(ebook))
+    assert corroborating["cover_only"] is False
+    assert corroborating["reason"] == "Returned no matching metadata."

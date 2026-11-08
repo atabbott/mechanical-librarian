@@ -158,6 +158,7 @@ const companionRow = (
   reason: string,
 ): ProviderOutcomeView => ({
   companionIsbn: true,
+  coverOnly: false,
   providerRequests: 1,
   laneKind: 'isbn',
   provider: 'Hardcover',
@@ -280,5 +281,92 @@ describe('the companion ISBN row in Sources', () => {
     const sources = footer.closest('.work-sources')
     if (!(sources instanceof HTMLElement)) throw new Error('the comparison footer did not render')
     expectCompanionRows(within(sources).getAllByRole('listitem'))
+  })
+})
+
+// iTunes is asked for an audiobook's cover alone (#1779): what it found is a
+// cover, never a match, and its failures keep their own labels.
+const coverOnlyRow = (
+  status: ProviderOutcomeView['status'],
+  reason: string,
+): ProviderOutcomeView => ({
+  companionIsbn: false,
+  coverOnly: true,
+  providerRequests: 1,
+  laneKind: 'work',
+  provider: 'iTunes',
+  reason,
+  status,
+})
+
+const coverOnlyRows = [
+  coverOnlyRow('candidates', 'Searched for cover art only; nothing else it returns is compared.'),
+  coverOnlyRow('no_match', 'Searched for cover art only and found none.'),
+  coverOnlyRow(
+    'unavailable',
+    'Searched for cover art only. No cover came back, and it is not retried.',
+  ),
+]
+
+describe('the cover-only iTunes row in Sources', () => {
+  const expectCoverOnlyRows = (rows: HTMLElement[]) => {
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toHaveTextContent('Cover found')
+    expect(rows[0]).not.toHaveTextContent('Matches found')
+    expect(rows[1]).toHaveTextContent('No match')
+    expect(rows[2]).toHaveTextContent('Unavailable')
+    expect(rows[2]).toHaveTextContent('No cover came back, and it is not retried.')
+  }
+
+  it('says Cover found on case Evidence Sources', async () => {
+    const user = userEvent.setup()
+    renderRoute('/review/case-1?field=title&subview=evidence', {
+      ...createHttp(),
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
+        items: [],
+        missingLineageCount: 0,
+        sourceLedger: coverOnlyRows,
+      })),
+    })
+    await user.click(await screen.findByText('Sources'))
+    const ledger = document.querySelector('.source-ledger')
+    if (!(ledger instanceof HTMLElement)) throw new Error('the Sources ledger did not render')
+    expectCoverOnlyRows(within(ledger).getAllByRole('listitem'))
+  })
+
+  it('says Cover found on WorkSummary Sources', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const recorded = {
+      ...baseWork,
+      id: 'library_work_audio',
+      workId: 'library_work_audio',
+      title: 'Recorded work',
+      mediaKind: 'm4b' as const,
+      attentionCount: 0,
+      attention: 'no_attention_needed' as const,
+      detailUrl: '/api/v1/library/report?connection=primary&library=audio&item=item-9',
+      detailKind: 'report' as const,
+      summary: {
+        state: 'no_decision_recorded' as const,
+        reason: 'No review decision is recorded.',
+        fields: [],
+      },
+      preparation: null,
+      preparationOutcomes: coverOnlyRows,
+    }
+    renderRoute('/library?lens=all&work=library_work_audio', {
+      ...createHttp(),
+      getReportDetail: vi.fn<ReviewHttp['getReportDetail']>(async () => reportDetail()),
+      getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, recorded] })),
+    })
+    await screen.findByRole('region', { name: 'Recorded evidence' })
+    const sources = document.querySelector('.work-sources')
+    if (!(sources instanceof HTMLElement)) throw new Error('WorkSummary Sources did not render')
+    await user.click(within(sources).getByText('Sources'))
+    expectCoverOnlyRows(within(sources).getAllByRole('listitem'))
   })
 })

@@ -3435,6 +3435,18 @@ _COMPANION_ISBN_REASONS = {
 }
 
 
+# A cover-only lane (#1779) is iTunes asked for an audiobook's cover alone, so
+# its reasons say nothing it returned was compared. Disabled and adapter-faulted
+# lanes keep their own reasons.
+_COVER_ONLY_REASONS = {
+    "candidates": "Searched for cover art only; nothing else it returns is compared.",
+    "no_match": "Searched for cover art only and found none.",
+}
+_COVER_ONLY_FAILURE_REASON = (
+    "Searched for cover art only. No cover came back, and it is not retried."
+)
+
+
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
@@ -3449,6 +3461,8 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             "provider": _provider_label(lane.authority),
             "reason": _ADAPTER_FAULT_REASON
             if lane.adapter_fault
+            else _COVER_ONLY_REASONS.get(lane.status, _COVER_ONLY_FAILURE_REASON)
+            if lane.cover_only and lane.status != "disabled"
             else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused" or lane.identity_refused
             else _COMPANION_ISBN_REASONS[lane.status]
@@ -3461,6 +3475,9 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             # The companion EPUB's ISBN lane, so Sources says where the ISBN
             # an audiobook never states came from (#1723).
             "companion_isbn": lane.companion_isbn,
+            # A cover-only lane, which Sources labels by its cover and Library
+            # leaves out of a work's match and limit (#1779).
+            "cover_only": lane.cover_only,
         }
         for lane in lanes
     ]

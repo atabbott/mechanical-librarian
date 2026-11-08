@@ -203,12 +203,16 @@ const providerGroup = (work: LibraryWorkView) =>
       ? 'Not matched'
       : work.attentionCount === 0
         ? 'No attention needed'
-        : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
+        : work.preparationOutcomes.some(
+              // A cover-only lane never limits a work (#1779).
+              (outcome) => !outcome.coverOnly && limitingProviderStatuses.has(outcome.status),
+            )
           ? 'Provider evidence limited'
           : 'Provider evidence complete'
 const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
   const counts = new Map<string, number>()
-  for (const outcome of outcomes) {
+  // A cover-only lane says nothing of whether the work matched (#1779).
+  for (const outcome of outcomes.filter((value) => !value.coverOnly)) {
     const label = sourceStatusLabels[outcome.status]
     counts.set(label, (counts.get(label) ?? 0) + 1)
   }

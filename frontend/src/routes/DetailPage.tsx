@@ -25,7 +25,7 @@ import {
   sourceLookupLabel,
   mediaKindLabels,
   previewDispositionLabels,
-  sourceStatusLabels,
+  sourceStatusLabel,
   transitionLabels,
   writeStateLabels,
 } from '../labels'
@@ -375,7 +375,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                       <li key={`${source.provider}-${source.laneKind}-${String(index)}`}>
                         <strong>{source.provider}</strong>
                         <span>{sourceLookupLabel(source)}</span>
-                        <b>{sourceStatusLabels[source.status]}</b>
+                        <b>{sourceStatusLabel(source)}</b>
                         <p>{source.reason}</p>
                         <small>
                           {String(source.providerRequests)} bounded{' '}
