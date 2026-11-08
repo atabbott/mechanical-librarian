@@ -1043,14 +1043,14 @@ def test_an_audiobook_only_itunes_matched_stays_not_matched(tmp_path: Path) -> N
 
 _COVER_ONLY_REASONS = {
     ProviderStatus.CANDIDATES: (
-        "Searched for cover art only; nothing else it returns is compared."
+        "Searched for a cover only. Nothing else it returns is compared."
     ),
-    ProviderStatus.NO_MATCH: "Searched for cover art only and found none.",
+    ProviderStatus.NO_MATCH: "Searched for a cover only and found none.",
     ProviderStatus.UNAVAILABLE: (
-        "Searched for cover art only. No cover came back, and it is not retried."
+        "Searched for a cover only. No cover came back, and it is not retried."
     ),
     ProviderStatus.RATE_LIMITED: (
-        "Searched for cover art only. No cover came back, and it is not retried."
+        "Searched for a cover only. No cover came back, and it is not retried."
     ),
 }
 
@@ -1128,7 +1128,7 @@ def test_a_disabled_or_ebook_itunes_lane_keeps_its_own_reason() -> None:
         ),
         (
             {"status": "incomplete", "dispatch": None},
-            "Searched for cover art only. No cover came back, and it is not retried.",
+            "Searched for a cover only. No cover came back, and it is not retried.",
         ),
     ),
     ids=(

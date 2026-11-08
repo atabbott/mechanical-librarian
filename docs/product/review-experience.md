@@ -406,7 +406,9 @@ has decision controls or shows internal identifiers.
   outcomes in a Sources disclosure. Missing lineage never claims a field is
   empty. An audiobook's companion EPUB lookup reads "ISBN lookup (EPUB in this
   folder)" here, in the work summary and in the comparison footer, so an
-  audiobook with no ISBN of its own never shows a bare ISBN row (#1723).
+  audiobook with no ISBN of its own never shows a bare ISBN row (#1723). An
+  audiobook's iTunes lookup is for a cover only, so a match reads "Cover found"
+  and its reason says nothing else it returns is compared (#1779).
 - **History** lists owner and automatic outcomes for the case, each with its
   own time, and shows a value only where the record links it exactly.
 

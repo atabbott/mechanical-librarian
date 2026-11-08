@@ -12246,8 +12246,8 @@ describe('Provider evidence rail', () => {
     status,
     reason:
       status === 'candidates'
-        ? 'Searched for cover art only; nothing else it returns is compared.'
-        : 'Searched for cover art only. No cover came back, and it is not retried.',
+        ? 'Searched for a cover only. Nothing else it returns is compared.'
+        : 'Searched for a cover only. No cover came back, and it is not retried.',
     companionIsbn: false,
     coverOnly: true,
     providerRequests: 1,

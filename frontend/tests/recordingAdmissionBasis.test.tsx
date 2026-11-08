@@ -300,11 +300,11 @@ const coverOnlyRow = (
 })
 
 const coverOnlyRows = [
-  coverOnlyRow('candidates', 'Searched for cover art only; nothing else it returns is compared.'),
-  coverOnlyRow('no_match', 'Searched for cover art only and found none.'),
+  coverOnlyRow('candidates', 'Searched for a cover only. Nothing else it returns is compared.'),
+  coverOnlyRow('no_match', 'Searched for a cover only and found none.'),
   coverOnlyRow(
     'unavailable',
-    'Searched for cover art only. No cover came back, and it is not retried.',
+    'Searched for a cover only. No cover came back, and it is not retried.',
   ),
 ]
 

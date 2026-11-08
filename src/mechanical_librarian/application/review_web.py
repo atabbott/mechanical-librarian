@@ -3447,11 +3447,11 @@ _COMPANION_ISBN_REASONS = {
 # lane, an adapter fault, a refusal and a source never searched keep their own
 # reasons; the failure reason covers only a real failure.
 _COVER_ONLY_REASONS = {
-    "candidates": "Searched for cover art only; nothing else it returns is compared.",
-    "no_match": "Searched for cover art only and found none.",
+    "candidates": "Searched for a cover only. Nothing else it returns is compared.",
+    "no_match": "Searched for a cover only and found none.",
 }
 _COVER_ONLY_FAILURE_REASON = (
-    "Searched for cover art only. No cover came back, and it is not retried."
+    "Searched for a cover only. No cover came back, and it is not retried."
 )
 
 
