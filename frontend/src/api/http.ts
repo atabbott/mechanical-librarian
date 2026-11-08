@@ -633,6 +633,8 @@ export interface AttentionView {
 export type EvidenceRole = 'external_corroboration' | 'external_observation' | 'local_presence'
 
 export interface ChoiceEvidenceView {
+  // The language value the observation states, else null (#1802).
+  language: string | null
   observation: string
   role: EvidenceRole
   source: string
@@ -649,6 +651,8 @@ export interface ChoiceContextView {
 export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
 // The branch that chose a field's sentence; Library decides rows from it (#1791).
 export type FieldCause = ReviewFieldDto['classification_cause']
+// The comparison condition a withheld reason already states (#1802).
+export type AutomaticWithheldCondition = ReviewFieldDto['automatic_withheld_condition']
 export interface ReviewFieldView {
   classification: string
   classificationCause: FieldCause
@@ -680,6 +684,7 @@ export interface ReviewFieldView {
     | ResponseSchema<'_CoverAutomaticDecisionProjection'>
     | null
   automaticWithheldReason: string | null
+  automaticWithheldCondition: AutomaticWithheldCondition
   // In Preview, the value Automatic chose before the owner entered Preview
   // mode on a field that now reads No change (#1575).
   earlierAutomaticValue?: ResponseSchema<'_ProposedValue'> | null
@@ -796,6 +801,7 @@ export interface CaseDetailView {
 }
 export interface EvidenceObservationView {
   destinations: readonly TargetDestination[]
+  language: string | null
   observation: string
   role: EvidenceRole
   source: string
@@ -2736,6 +2742,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   inventoryRole: field.inventory_role,
   automaticDecision: field.automatic_decision,
   automaticWithheldReason: field.automatic_withheld_reason,
+  automaticWithheldCondition: field.automatic_withheld_condition,
   earlierAutomaticValue: field.earlier_automatic_value,
   automaticSelectionSources: field.automatic_selection_sources,
   notices: field.notices,
@@ -2775,8 +2782,9 @@ const mapOwnerControl = ({ entry, subset, withdraw }: OwnerControlDto): OwnerCon
 })
 
 export const mapEvidence = (value: EvidenceDto): EvidenceView => ({
-  items: value.items.map(({ destinations, observation, role, source }) => ({
+  items: value.items.map(({ destinations, language, observation, role, source }) => ({
     destinations,
+    language,
     observation,
     role,
     source,
@@ -2896,7 +2904,12 @@ const mapChoiceContexts = (
 ): readonly ChoiceContextView[] => {
   const contexts = value.map((item) => ({
     alternativeId: item.alternative_id,
-    evidence: item.evidence.map(({ source, observation, role }) => ({ source, observation, role })),
+    evidence: item.evidence.map(({ source, language, observation, role }) => ({
+      source,
+      language,
+      observation,
+      role,
+    })),
     limitations: item.limitations,
     rationale: item.rationale,
     recommendation: item.recommendation,

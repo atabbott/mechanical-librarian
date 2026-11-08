@@ -167,6 +167,8 @@ brackets are GitHub issues.
   what to check, the writing box says whether a change was written, and a
   cover comparison that could not be loaded names the button that tries again
   (#1765, #1791).
+- A paused field's reason is no longer repeated beside it as a comparison
+  condition (#1802).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
