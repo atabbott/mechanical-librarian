@@ -176,6 +176,11 @@ brackets are GitHub issues.
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also
   retries that library's failed items (#1785).
+- Library has a Covers view beside Works for going through every book's
+  cover: To decide, Kept, Switched (automatic switches, with the cover before
+  and now) and All, 50 books at a time. One tap records a choice and opens the
+  next book, and a book whose covers changed is refused on its own. Keeping an
+  automatic switch releases the replaced cover's copy (#1633).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author
