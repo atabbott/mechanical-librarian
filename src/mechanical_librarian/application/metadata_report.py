@@ -15,6 +15,7 @@ from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
+    ProviderConnectionConfiguration,
     ReportLimits,
     TargetConnectionConfiguration,
     dispatch_adapters,
@@ -96,6 +97,7 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_ISBN_AUTHORITIES,
     COMPANION_ISBN_WORK_BASIS,
     CORROBORATED_RULE_AUTHORITY,
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     EPUB_CREATORS_AUTHOR_BASIS,
     LANE_TITLE_BASES,
     MAX_ASIN_DISCOVERY_LANES,
@@ -170,6 +172,11 @@ from mechanical_librarian.domain.metadata_report import (
     validate_provider_access_time,
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
+)
+from mechanical_librarian.domain.validation import (
+    nonempty_text,
+    optional,
+    tuple_of,
 )
 from mechanical_librarian.domain.work_identity import (
     CORROBORATED_TITLE_PRODUCTION,
@@ -287,10 +294,7 @@ class TargetSnapshot:
     own_file_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        if self.own_file_names is not None and (
-            type(self.own_file_names) is not tuple
-            or any(type(value) is not str or not value for value in self.own_file_names)
-        ):
+        if not optional(tuple_of(nonempty_text))(self.own_file_names):
             raise MetadataReportError("target file names are invalid")
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
@@ -356,6 +360,10 @@ class MetadataLookup:
     # The target's language where an `.opf` or `.nfo` echoed it: withheld as
     # belief, it still refuses a product in another language (#1481).
     echoed_languages: tuple[str, ...] = ()
+    # The target's narrators an `.opf` or `.nfo` echoed: withheld as belief,
+    # they still refuse a carried product crediting nobody the recording does
+    # (#1481). Never support.
+    echoed_narrators: tuple[str, ...] = ()
     # An audiobook's companion EPUB (#1468): its ISBN may be asked and its
     # title may be an alternative, but its claims are never compared with a
     # provider's, so they are never `local_claims`.
@@ -400,10 +408,8 @@ class MetadataLookup:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
-            or type(self.echoed_languages) is not tuple
-            or any(
-                type(value) is not str or not value for value in self.echoed_languages
-            )
+            or not tuple_of(nonempty_text)(self.echoed_languages)
+            or not tuple_of(nonempty_text)(self.echoed_narrators)
             or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -558,6 +564,7 @@ class MetadataDiscoveryPlan:
     corroborated_rule: bool = True
     library_languages: tuple[str, ...] = ()
     echoed_languages: tuple[str, ...] = ()
+    echoed_narrators: tuple[str, ...] = ()
     # See `MetadataLookup`: the companion EPUB and the ASINs its book links.
     companion: CompanionEbook | None = None
     companion_linked_asins: tuple[str, ...] = ()
@@ -584,10 +591,8 @@ class MetadataDiscoveryPlan:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
-            or type(self.echoed_languages) is not tuple
-            or any(
-                type(value) is not str or not value for value in self.echoed_languages
-            )
+            or not tuple_of(nonempty_text)(self.echoed_languages)
+            or not tuple_of(nonempty_text)(self.echoed_narrators)
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
@@ -1219,6 +1224,11 @@ def audiobook_discovery_plan(
         echoed_languages=echoed_target_values(
             audio, target.fields, AudioInspectionField.LANGUAGE
         ),
+        # The target's narrators where a sidecar echoed them, for the
+        # carried-edition narrator refusal alone (#1481).
+        echoed_narrators=echoed_target_values(
+            audio, target.fields, AudioInspectionField.CONTRIBUTOR
+        ),
         companion=None if audio is None else companion,
     )
 
@@ -1523,6 +1533,7 @@ def audiobook_asin_feed_plan(
         corroborated_rule=plan.corroborated_rule,
         library_languages=plan.library_languages,
         echoed_languages=plan.echoed_languages,
+        echoed_narrators=plan.echoed_narrators,
         companion=plan.companion,
         companion_linked_asins=companion_linked_asins(
             plan.local_claims, plan.audio, observations, plan.companion
@@ -2382,6 +2393,25 @@ class ProviderBinding:
     enabled: bool
     factory: Callable[[], MetadataProvider]
     authority: str | None = None
+    cover_enabled: bool = False
+
+
+def provider_binding(
+    provider: ProviderConnectionConfiguration,
+    factory: Callable[[], MetadataProvider],
+) -> ProviderBinding:
+    """Bind one configured provider connection, its cover switch included.
+
+    Dispatch reads `cover_enabled` to leave a cover-only audiobook authority
+    unasked while its covers are off (#1779).
+    """
+    return ProviderBinding(
+        provider.name,
+        provider.enabled,
+        factory,
+        provider.adapter,
+        provider.cover_enabled,
+    )
 
 
 def observe_provider(
@@ -2622,7 +2652,8 @@ def _identifier_lane_candidates(
     narrator_refused = {
         c.identity
         for c in observation.candidates
-        if carried_lane and candidate_narrator_disjoint(c, lookup.local_claims)
+        if carried_lane
+        and candidate_narrator_disjoint(c, lookup.local_claims, lookup.echoed_narrators)
     }
     # A requested identifier and equal duration are not evidence of the work.
     work_admitted = {
@@ -2715,7 +2746,9 @@ def _identifier_lane_candidates(
         and lookup.requested_asin in lookup.companion_linked_asins
         and lookup.requested_asin in _candidate_valid_asins(c)
         # Narrators the file never credits name another recording of the work.
-        and not candidate_narrator_disjoint(c, lookup.local_claims)
+        and not candidate_narrator_disjoint(
+            c, lookup.local_claims, lookup.echoed_narrators
+        )
     }
     alternative_admitted = title_admitted | corroborated_admitted | linked_admitted
     runtime_candidates = tuple(
@@ -3997,6 +4030,11 @@ class GenerateMetadataReport:
         or recorded, and neither the configured connections nor `bindings` can
         widen the set.
 
+        A cover-only audiobook authority (iTunes Search) whose `cover_enabled`
+        is false is skipped for an audiobook the same way, after its enabled
+        check: its answer would supply only a cover the observer discards, so
+        it is never sent the title and author (#1779).
+
         An audiobook's AudioSilo binding runs last, and only when no Audible
         or Audnexus observation of this pass, or of `prior_observations` (the
         phase-one answers an ASIN feed follows), admitted a recording by stated
@@ -4046,6 +4084,14 @@ class GenerateMetadataReport:
                         ),
                     )
                 )
+                continue
+            if (
+                binding_plan.audio is not None
+                and binding.authority in COVER_ONLY_AUDIOBOOK_AUTHORITIES
+                and not binding.cover_enabled
+            ):
+                # Asked for nothing but a cover the observer would discard, it
+                # is sent no title or author at all (#1779).
                 continue
             if _audiosilo_not_needed(
                 binding,
@@ -4221,10 +4267,10 @@ class GenerateMetadataReport:
         An audiobook's identifier is an ASIN, so the plan is built by
         ``audiobook_discovery_plan`` rather than the ISBN one, and it runs
         through the same provider loop an ebook does. Its cover descriptors run
-        through the same bounded cover observer as well: the Audible catalog is
-        the one dispatched authority that states an audiobook cover asset of
-        its own (#1254), and its `cover_enabled` flag is consulted inside that
-        observer.
+        through the same bounded cover observer as well: the Audible catalog
+        and iTunes Search (#1779) are the dispatched authorities that state an
+        audiobook cover asset of their own, and each one's `cover_enabled` flag
+        is consulted inside that observer.
 
         Both media branches open one 60-second monotonic aggregate per
         preparation. The incumbent cover read, every provider observation (each

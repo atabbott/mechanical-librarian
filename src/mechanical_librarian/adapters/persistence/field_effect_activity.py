@@ -310,8 +310,8 @@ def _policy_changes(
         return []
     changes: list[dict[str, str]] = []
     for setting, previous_pairs, next_pairs in (
-        ("Review mode", before.destinations, after.destinations),
-        ("Representation", before.options, after.options),
+        ("Setting", before.destinations, after.destinations),
+        ("Option", before.options, after.options),
     ):
         previous_values, next_values = dict(previous_pairs), dict(next_pairs)
         for field in sorted(set(previous_values) | set(next_values)):
@@ -1858,10 +1858,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ).fetchall()
             }
             owner_action = self._connection.execute(_OWNER_ACTION_COUNT_SQL).fetchone()
+            # A retained original's removal is a cleanup too, and one that ran
+            # out of attempts holds a place in the bounded store (#1363).
             cleanup = self._connection.execute(
                 "SELECT count(*),"
-                "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
-                "FROM field_effect_cleanups WHERE state='pending'"
+                "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) FROM ("
+                "SELECT attempt FROM field_effect_cleanups WHERE state='pending' "
+                "UNION ALL SELECT attempt FROM retained_cover_removals "
+                "WHERE state='pending')"
             ).fetchone()
             event_rows = (
                 []

@@ -201,6 +201,7 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
         set(outcome)
         == {
             "companion_isbn",
+            "cover_only",
             "lane_kind",
             "provider",
             "provider_requests",
@@ -209,6 +210,7 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
         }
         and outcome["provider_requests"] == 0
         and outcome["companion_isbn"] is False
+        and outcome["cover_only"] is False
         for outcome in outcomes
     )
     assert "diagnostic" not in json.dumps(outcomes)
@@ -802,7 +804,7 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
                 "report_id": report.report_id,
                 "report_document": report.to_json(),
                 "review_case_id": case_id,
-                "schema_version": "cover-consideration-v4",
+                "schema_version": "cover-consideration-v5",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -1865,7 +1867,7 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
             value for value in suspended["fields"] if value["destination"] == "series"
         )
         assert (
-            "This field is waiting for an outside service to recover."
+            "This field is waiting for the library to accept changes to it again."
             == field["classification_reason"]
         )
         assert [

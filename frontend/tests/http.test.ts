@@ -1119,20 +1119,28 @@ describe('ReviewApiClient', () => {
       readCase(response([field({ owner_control: { ...ownerControl, revert: null } })])),
     ).rejects.toThrow(ApiError)
     // A recording's optional choice maps; a state the server never states does not.
-    expect(
-      (
-        await readCase(
-          response([
-            field({
-              classification: 'owner_choosable',
-              needs_attention: false,
-              navigation_role: 'inspect',
-            }),
-          ]),
-        )
-      ).fields[0]?.classification,
-    ).toBe('owner_choosable')
+    const optional = (
+      await readCase(
+        response([
+          field({
+            classification: 'owner_choosable',
+            classification_cause: 'owner_choosable',
+            needs_attention: false,
+            navigation_role: 'inspect',
+          }),
+        ]),
+      )
+    ).fields[0]
+    expect(optional?.classification).toBe('owner_choosable')
+    // The cause code maps beside the state; a code the server never sends does not (#1791).
+    expect(optional?.classificationCause).toBe('owner_choosable')
+    expect((await readCase(response([field()]))).fields[0]?.classificationCause).toBe(
+      'review_needed',
+    )
     await expect(readCase(response([field({ classification: 'queued' })]))).rejects.toThrow(
+      ApiError,
+    )
+    await expect(readCase(response([field({ classification_cause: 'queued' })]))).rejects.toThrow(
       ApiError,
     )
     expect(
@@ -1246,6 +1254,7 @@ describe('ReviewApiClient', () => {
       source_ledger: [
         {
           companion_isbn: false,
+          cover_only: false,
           provider_requests: 1,
           lane_kind: 'work',
           provider: 'Hardcover',
@@ -1274,6 +1283,7 @@ describe('ReviewApiClient', () => {
       sourceLedger: [
         {
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 1,
           laneKind: 'work',
           provider: 'Hardcover',
@@ -1732,6 +1742,7 @@ describe('ReviewApiClient', () => {
               preparation_outcomes: [
                 {
                   companion_isbn: false,
+                  cover_only: false,
                   provider_requests: 2,
                   lane_kind: 'isbn',
                   provider: 'google-books',
@@ -1792,6 +1803,7 @@ describe('ReviewApiClient', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 2,
           laneKind: 'isbn',
           provider: 'google-books',
@@ -1914,7 +1926,7 @@ describe('ReviewApiClient', () => {
       change_detail: 'Set Series from Not set to Earthsea Cycle',
       field_label: 'Series',
       policy_changes: [
-        { field: 'Title', setting: 'Review mode', previous: 'Ask me', next: 'Automatic' },
+        { field: 'Title', setting: 'Setting', previous: 'Ask me', next: 'Automatic' },
       ],
       evidence: [{ label: 'Previous value', value: 'Not set' }],
       library: 'Fiction',
@@ -2047,7 +2059,7 @@ describe('ReviewApiClient', () => {
     })
     expect(activity.events[0]?.policy_changes[0]).toEqual({
       field: 'Title',
-      setting: 'Review mode',
+      setting: 'Setting',
       previous: 'Ask me',
       next: 'Automatic',
     })

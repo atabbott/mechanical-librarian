@@ -6,6 +6,7 @@ import type {
   AutomaticOutcome,
   ChoiceContextView,
   DecisionOutcome,
+  FieldCause,
   ProposalOutcome,
 } from './api/http'
 import { audioFileFormat, sameSelectedValue } from './fieldDecision'
@@ -24,18 +25,18 @@ export const humanReasons = {
   withdraw: 'You withdrew your decision for this field.',
 } satisfies Record<DecisionOutcome, string>
 export const automaticReasons = {
-  candidate: 'Automatic policy chose a proposed value.',
-  keep_current: 'Automatic policy kept the current value.',
-  ignore: 'Automatic policy leaves this field unchanged.',
+  candidate: 'Automatic chose a proposed value.',
+  keep_current: 'Automatic kept the current value.',
+  ignore: 'Automatic leaves this field as it is.',
 } satisfies Record<AutomaticOutcome, string>
 export const dispositionReasons = {
-  reject: 'The proposed change was set aside; compare the values yourself.',
-  propose_change: 'A change is proposed; compare it with the current value.',
-  acceptable_choice: 'More than one value is acceptable; choose the one this work should use.',
-  unresolved_choice: 'The sources do not settle one value; compare the values yourself.',
-  keep: 'The current value is proposed to stay; compare the alternatives.',
-  defer: 'This field waits for your comparison of the values.',
-  ineligible: 'None of these values can be applied for you; compare them yourself.',
+  reject: 'The proposed change was set aside. Compare the values yourself.',
+  propose_change: 'A change is proposed. Compare it with the current value.',
+  acceptable_choice: 'More than one value would do. Choose the one this work should use.',
+  unresolved_choice: 'The sources do not settle on one value. Compare them yourself.',
+  keep: 'The current value is proposed to stay. Compare the other values.',
+  defer: 'This field waits for your choice.',
+  ineligible: 'None of these values can be applied for you. Compare them yourself.',
 } satisfies Record<ProposalOutcome, string>
 export const fieldReason = (field: ReviewField) =>
   bounded(
@@ -45,12 +46,34 @@ export const fieldReason = (field: ReviewField) =>
         ? field.classificationReason || automaticReasons[field.automaticDecision.outcome]
         : actionable(field)
           ? field.classificationReason || dispositionReasons[field.disposition]
-          : field.classificationReason &&
-              !/needs (?:your )?review/iu.test(field.classificationReason)
+          : field.classificationReason && field.classificationCause !== 'review_needed'
             ? field.classificationReason
-            : 'No eligible owner decision is available.',
-    'Retained reviewer notice',
+            : 'Nothing to decide for this field.',
+    'No reason can be shown.',
   )
+// A field with nothing to decide is either unchanged, because no source
+// offered a different value, or held: unavailable to this service, or waiting
+// on a recovery. The server's cause code tells them apart, never the wording of
+// its reason, so a reworded reason moves no row (#1514, #1791). A new code
+// fails the typecheck here until its row is decided.
+const contextKinds = {
+  unsupported: 'unavailable',
+  automatic_safety_suspended: 'waiting',
+  external_field_failure: 'waiting',
+  external_connection_failure: 'waiting',
+  external_recovered: 'unavailable',
+  human_decided: 'unavailable',
+  automatic_abstained: 'unavailable',
+  automatic_decided: 'unavailable',
+  review_needed: 'unavailable',
+  owner_choosable: 'unavailable',
+  nothing_to_decide: 'unchanged',
+} as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
+// A held field never reads unchanged.
+export const contextKind = (field: ReviewField) => {
+  const kind = contextKinds[field.classificationCause]
+  return field.manualHold && kind === 'unchanged' ? 'unavailable' : kind
+}
 // An optional choice already says no review is needed, so a limitation worded
 // as asking the owner to choose is left off its evidence too (#1557).
 export const ownerContext = (field: ReviewField, context: ChoiceContextView) =>
@@ -89,7 +112,7 @@ export const noticeText = (field: ReviewField, notice: string, mediaKind: string
         ? UNOFFERED_DISSENT_TEXT
         : materialReasonLabel(notice)
 export const UNOFFERED_DISSENT_TEXT =
-  'Another source gave a value that isn’t offered here; choose whether to use this one'
+  'Another source gave a value that isn’t offered here. Choose whether to use this one'
 // One candidate for an empty field shows no disagreement: the value it
 // disagrees with is not offered, such as one in another language (#1497).
 export const loneCandidateForEmpty = (field: ReviewField) =>

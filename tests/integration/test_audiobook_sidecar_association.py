@@ -578,6 +578,45 @@ def test_an_echoed_opf_language_still_refuses_a_product_in_another_language(
     )
 
 
+def test_a_noncanonical_target_language_keeps_the_recognized_opf_veto(
+    tmp_path: Path, child: GrammarChild, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex R1: a case-only match must not trade `en` for an unread `EN`.
+
+    The target's `EN` names no language the refusal reads, so the `.opf`'s
+    recognized `en` must still refuse a German product, as it did before
+    echo withholding existed.
+    """
+    from mechanical_librarian.domain import proposal_set
+    from mechanical_librarian.domain.metadata_report import recording_variant_conflict
+
+    monkeypatch.setattr(
+        activation, "_enrichment_candidate", _restated_candidate(language="German")
+    )
+    own = _library(tmp_path, {"book.opf": _opf("<dc:language>en</dc:language>")})
+    report, _, _ = _publish(
+        tmp_path,
+        own,
+        asin=_SIDECAR_ASIN,
+        language="EN",
+        enrichment=ProviderStatus.CANDIDATES,
+    )
+    [candidate] = [
+        candidate for provider in report.providers for candidate in provider.candidates
+    ]
+
+    assert (
+        recording_variant_conflict(
+            candidate,
+            report.local_claims,
+            _TITLE,
+            report.library_languages,
+            proposal_set._echoed_languages(report),
+        )
+        == "recording_language_conflict"
+    )
+
+
 def _narrated(root: Path, name: str, narrator: str | None) -> MetadataReport:
     """Publish the item, its target crediting `_NARRATOR`, with one `.opf`."""
     folder = _in(root, name)

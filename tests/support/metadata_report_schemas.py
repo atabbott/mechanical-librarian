@@ -276,9 +276,14 @@ def retained_report_as_current(document: str) -> MetadataReport:
     so a retrieved Open Library cover there was served by
     `covers.openlibrary.org` itself, and every other source states none. v72
     made a Hardcover WORK lane's candidates books and planned an ebook lane
-    over its EPUB creators, neither of which a v49 report holds. v73 gave an
-    audiobook's sidecar manifest entries their classification, and v76 the
-    `initials_spelling` refusal; a v49 report holds no audio section.
+    over its EPUB creators, neither of which a v49 report holds. v73
+    added each cover artifact's same-art `measures`: null here, since an
+    earlier producer measured no preview. v74 added no key: it plans iTunes' one
+    cover search for an audiobook (#1779), which a v49 report, being an ebook's,
+    never needed.
+    v75 gave an audiobook's sidecar manifest entries their classification,
+    and v76 the `initials_spelling` refusal; a v49 report holds no audio
+    section.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -296,6 +301,8 @@ def retained_report_as_current(document: str) -> MetadataReport:
             and cover["state"] == CoverSourceState.RETRIEVED.value
             else None
         )
+        if cover["artifact"] is not None:
+            cover["artifact"]["measures"] = None
     for provider in data["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []
@@ -478,12 +485,22 @@ def _without_match_state(sql: str, document: str) -> str:
 # Nor did they exclude #1498's adapter-faulted lanes from the limited flag.
 _FAULT_EXCLUSION_SQL = " AND NOT " + persistence_schema._LANE_ADAPTER_FAULT_SQL
 
-PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = _without_match_state(
-    persistence_schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
-        ",provider_limited,provider_match_state)", ",provider_limited)"
-    ),
-    "NEW.document",
-).replace(_FAULT_EXCLUSION_SQL, "")
+
+# Nor did they ignore #1779's cover-only lanes on an audio report.
+def _cover_only_exclusion_sql(document: str) -> str:
+    return "NOT " + persistence_schema._cover_only_provider_sql(document) + " AND "
+
+
+PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = (
+    _without_match_state(
+        persistence_schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
+            ",provider_limited,provider_match_state)", ",provider_limited)"
+        ),
+        "NEW.document",
+    )
+    .replace(_FAULT_EXCLUSION_SQL, "")
+    .replace(_cover_only_exclusion_sql("NEW.document"), "")
+)
 
 
 _CURRENT_REPORT_BROWSE_FACT_PAIRS = persistence_schema._report_browse_fact_pairs
@@ -494,9 +511,9 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
     (derived, stored), authors = _CURRENT_REPORT_BROWSE_FACT_PAIRS(key)
     return (
         (
-            _without_match_state(derived, "mr.document").replace(
-                _FAULT_EXCLUSION_SQL, ""
-            ),
+            _without_match_state(derived, "mr.document")
+            .replace(_FAULT_EXCLUSION_SQL, "")
+            .replace(_cover_only_exclusion_sql("mr.document"), ""),
             stored.replace(",provider_match_state FROM", " FROM"),
         ),
         authors,

@@ -56,7 +56,7 @@ owner runs it offline, and the changelog says when one ships.
 | Python | 3.13, 3.14 or 3.15. The image ships Python 3.15. |
 | Audiobookshelf | 2.26.0 or later, with no upper-version promise. Writes are qualified against pinned 2.26.0, 2.36.0, 2.37.1 and 2.37.2 images. Each write destination is checked for capability on the running server; a version number alone is not proof. |
 | Libraries | Explicitly configured Audiobookshelf book libraries holding ebooks (EPUB) or audiobooks. Media is read through read-only mounts and never written. |
-| Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for corroboration. |
+| Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for ebook corroboration and audiobook covers. |
 | Browser | The bundled React workspace served by the container. |
 
 Cover reviewers and description advice are optional. Their requirements are
@@ -101,7 +101,7 @@ refused.
 | --- | --- |
 | `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
-| `cover-consideration-v4` | A cover consideration, bound to its report by identity and digest |
+| `cover-consideration-v5` | A cover consideration, bound to its report by identity and digest |
 | `cover-policy-report-v2` | Cover policy evaluation; owner readiness and automatic recommendation are independent |
 | `cover-automatic-decision-v3` | An automatic cover decision |
 | `cover-selection-authority-v1`, `cover-selection-authority-v2` | Cover selections: v1 wraps an automatic choice, v2 an owner choice |

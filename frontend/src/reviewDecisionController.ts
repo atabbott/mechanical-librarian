@@ -38,10 +38,10 @@ const outcomeWords = (outcome: DecisionOutcome) =>
   (
     ({
       accept: 'your choice',
-      keep_current: 'keep current',
-      reject: 'rejection',
+      keep_current: 'your choice',
+      reject: 'your choice',
       owner_entered: 'your value',
-      withdraw: 'withdrawal',
+      withdraw: 'the withdrawal',
     }) satisfies Record<DecisionOutcome, string>
   )[outcome]
 // One sentence for a written decision, shared by the refusal and the note.
@@ -59,7 +59,7 @@ export const ownerRefusalCopy = (
         ? 'These genres can’t be recorded. Choose up to 32 from the list.'
         : 'This value can’t be recorded. Use plain text of up to 512 characters, with no links or file paths.',
     owner_value_unchanged: 'That is already the current value.',
-    nothing_to_withdraw: 'There is no recorded decision to withdraw.',
+    nothing_to_withdraw: 'No decision is recorded for this field.',
     automatic_hold:
       'This decision is holding automatic handling. Use Resume automatic handling to release it.',
     decision_written: writtenRefusal,
@@ -273,7 +273,7 @@ export const useReviewDecisionController = ({
         forget(command)
         lock(
           command.destination,
-          'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+          'Your choice was recorded, but this work could not be reloaded. Choose Reload current case before choosing again.',
         )
         announce(reviewCaseId, command.destination, '')
         // The optimistic advance is withdrawn: the owner is returned to the
@@ -291,18 +291,14 @@ export const useReviewDecisionController = ({
       if (!isMounted()) {
         queryClient.setQueryData(decisionStatusKey(reviewCaseId), {
           destination: command.destination,
-          text: 'Decision recorded from the authoritative case.',
+          text: 'Your choice is recorded.',
         })
         refreshAggregatesInBackground()
         return
       }
       mark(command, 'confirmed')
       const settledInPlace = ownerOutcomes[command.outcome]
-      announce(
-        reviewCaseId,
-        command.destination,
-        settledInPlace ?? 'Decision recorded from the authoritative case.',
-      )
+      announce(reviewCaseId, command.destination, settledInPlace ?? 'Your choice is recorded.')
       if (settledInPlace) {
         refreshAggregatesInBackground()
         return
@@ -348,8 +344,8 @@ export const useReviewDecisionController = ({
         lock(
           command.destination,
           classifyDecisionFailure(error) === 'uncertain'
-            ? 'The decision outcome is uncertain and the current case could not be refreshed. Reload to reconcile it before reviewing another value.'
-            : 'The current decision state could not be reconciled because the case could not be refreshed. Reload before reviewing another value.',
+            ? 'No answer came back. Choose Reload current case, then check whether your choice was recorded before choosing again.'
+            : 'This work could not be reloaded after your choice. Choose Reload current case before choosing again.',
         )
         announce(reviewCaseId, command.destination, '')
         return
@@ -362,7 +358,7 @@ export const useReviewDecisionController = ({
             ? {
                 ...current,
                 destination: command.destination,
-                text: 'The authoritative decision was reloaded.',
+                text: 'This field was already decided. The page shows that decision.',
               }
             : current,
         )
@@ -374,13 +370,13 @@ export const useReviewDecisionController = ({
         reviewCaseId,
         command.destination,
         classifyDecisionFailure(error) === 'uncertain'
-          ? 'The response was lost. The current case was reloaded before any retry.'
+          ? 'No answer came back. Check whether your choice was recorded before choosing again.'
           : retryableDecisionFailure(error) && !(error instanceof CsrfRenewedError)
-            ? 'The decision could not be confirmed. Try the same decision again sends the same choice and cannot record it twice.'
+            ? 'Your choice could not be confirmed. Choose Try the same decision again to send it once more.'
             : refusalCopy(
                 error,
                 ownerRefusalCopy(error, refreshedField) ??
-                  'The decision was not recorded. Your choice is unchanged.',
+                  'Your choice was not recorded. Choose again.',
               ),
       )
       // The current field is already authoritative after reconciliation. Do

@@ -1,6 +1,7 @@
 // A Library work without an open review case: its summary, its recorded
 // evidence and the sources consulted for it. Moved out of the Library route
 // under the route-size rule (#1571).
+import { useRef } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { LibraryWorkView, ProviderOutcomeView } from '../api/http'
 import { BookMark } from '../components/BookMark'
@@ -8,6 +9,7 @@ import { MediaHealth } from '../components/MediaHealth'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatRunningTime } from '../dates'
+import { retryInPlace } from '../focusAfterRetry'
 import { valueText } from '../fieldDecision'
 import {
   audioSurfaceLabels,
@@ -19,7 +21,7 @@ import {
   mediaKindLabels,
   preparationStageLabels,
   preparationStatusLabels,
-  sourceStatusLabels,
+  sourceStatusLabel,
 } from '../labels'
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
@@ -65,7 +67,7 @@ export function WorkSources({
         {outcomes.map((outcome, index) => (
           <li key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}>
             <strong>{outcome.provider}</strong>
-            <b>{sourceStatusLabels[outcome.status]}</b>
+            <b>{sourceStatusLabel(outcome)}</b>
             <span>{outcome.reason}</span>
             <small>
               {sourceLookupLabel(outcome)} · {String(outcome.providerRequests)}{' '}
@@ -91,27 +93,47 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
     staleTime: 15_000,
     retry: false,
   })
-  if (report.isPending)
+  // Try again, or Reload once the tab is on an earlier build.
+  const evidenceRetry = useRef<HTMLButtonElement>(null)
+  const evidenceHeading = useRef<HTMLHeadingElement>(null)
+  // Until the evidence is read, its loading line, failure and Reload share one
+  // region, which holds focus while a Try again reads.
+  const evidenceStatus = useRef<HTMLDivElement>(null)
+  if (!report.isSuccess)
     return (
-      <p role="status" className="library-work-summary-reason">
-        Loading recorded evidence…
-      </p>
-    )
-  if (report.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Recorded evidence was not loaded." />
-  if (report.isError)
-    return (
-      <p role="alert" className="library-work-summary-reason">
-        Recorded evidence could not be loaded.{' '}
-        <button type="button" onClick={() => void report.refetch()}>
-          Try again
-        </button>
-      </p>
+      <div ref={evidenceStatus} tabIndex={-1}>
+        {report.isPending ? (
+          <p role="status" className="library-work-summary-reason">
+            Loading recorded evidence…
+          </p>
+        ) : report.error instanceof BuildMismatchError ? (
+          <StaleBuildRead lead="Recorded evidence was not loaded." ref={evidenceRetry} />
+        ) : (
+          <p role="alert" className="library-work-summary-reason">
+            Recorded evidence could not be loaded.{' '}
+            <button
+              ref={evidenceRetry}
+              type="button"
+              onClick={() =>
+                retryInPlace(
+                  () => evidenceStatus.current,
+                  () => report.refetch(),
+                  (result) => (result.isSuccess ? evidenceHeading.current : evidenceRetry.current),
+                )
+              }
+            >
+              Try again
+            </button>
+          </p>
+        )}
+      </div>
     )
   const data = report.data
   return (
     <section className="library-work-evidence" aria-label="Recorded evidence">
-      <h3>Recorded evidence</h3>
+      <h3 ref={evidenceHeading} tabIndex={-1}>
+        Recorded evidence
+      </h3>
       <RecordingIdentityBasis
         value={data.recordingIdentityBasis}
         admission={data.recordingAdmissionBasis}

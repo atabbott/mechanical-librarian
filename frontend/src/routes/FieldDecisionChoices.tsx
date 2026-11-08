@@ -1,12 +1,13 @@
 import { queryWorkClass } from '../queryWork'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { BuildMismatchError } from '../api/http'
 import type { ChoiceContextView, EvidenceView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labels'
 import { useReviewContext } from '../router'
 
@@ -37,7 +38,7 @@ export function ChoiceEvidencePanel({
       {corroboratingSources ? (
         <p>
           {corroboratingSources}{' '}
-          {corroboratingSources === 1 ? 'source corroborates' : 'sources corroborate'} this choice.
+          {corroboratingSources === 1 ? 'source confirms' : 'sources confirm'} this choice.
         </p>
       ) : null}
       {context?.evidence.length ? (
@@ -51,7 +52,7 @@ export function ChoiceEvidencePanel({
           ))}
         </ul>
       ) : (
-        <p>No owner-readable source observation is retained for this choice.</p>
+        <p>No source is recorded for this value.</p>
       )}
       {context?.limitations.length ? (
         <aside>
@@ -107,16 +108,33 @@ export function RecordedFieldObservations({
       ),
   )
   const missing = evidence.data?.pages[0]?.missingLineageCount ?? 0
+  // Try again, or Reload once the tab is on an earlier build.
+  const observationsRetry = useRef<HTMLButtonElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const list = useRef<HTMLUListElement>(null)
+  // A first-page retry has no data, so the read goes back to pending: the
+  // section stays while it reads, and its heading holds focus.
+  const [retried, setRetried] = useState(false)
+  const retryReading = retried && evidence.isPending
   // The section is there only when this field has observations to show, more
-  // may be loaded, or they could not be read (#1519).
-  if (!observations.length && !evidence.isError && !evidence.hasNextPage && !missing) return null
+  // may be loaded, they could not be read (#1519), or a retry is reading them.
+  if (
+    !observations.length &&
+    !evidence.isError &&
+    !evidence.hasNextPage &&
+    !missing &&
+    !retryReading
+  )
+    return null
   return (
-    <section className="recorded-field-observations" aria-label="Recorded observations">
-      <h3>Recorded observations</h3>
+    <section className="recorded-field-observations" aria-label="Other source values">
+      <h3 ref={heading} tabIndex={-1}>
+        Other source values
+      </h3>
       {observations.length ? (
-        <ul className="evidence-values">
+        <ul className="evidence-values" ref={list}>
           {observations.map((item, index) => (
-            <li key={`${item.source}:${item.observation}:${String(index)}`}>
+            <li key={`${item.source}:${item.observation}:${String(index)}`} tabIndex={-1}>
               <p>{observationText(item.observation)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
@@ -125,31 +143,58 @@ export function RecordedFieldObservations({
           ))}
         </ul>
       ) : null}
-      {missing ? <p>Some referenced observations are unavailable.</p> : null}
+      {missing ? <p>Some source values could not be shown.</p> : null}
+      {retryReading ? <p role="status">Loading source values…</p> : null}
       {evidence.error instanceof BuildMismatchError ? (
-        <StaleBuildRead lead="The observations were not loaded." />
+        <StaleBuildRead lead="Source values were not loaded." ref={observationsRetry} />
       ) : evidence.isError ? (
         <p role="alert">
-          The observations could not be loaded.{' '}
+          Source values could not be loaded.{' '}
           <button
+            ref={observationsRetry}
             type="button"
-            onClick={() =>
-              void (evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch())
-            }
+            onClick={() => {
+              const nextPage = evidence.isFetchNextPageError
+              setRetried(true)
+              // Either read removes this button while it reads.
+              retryInPlace(
+                () => heading.current,
+                () => (nextPage ? evidence.fetchNextPage() : evidence.refetch()),
+                (result) =>
+                  result.isSuccess
+                    ? // A read that leaves this field nothing to show removes the
+                      // section (#1519): the field's question takes focus instead.
+                      (heading.current ??
+                      document.querySelector<HTMLElement>('.decision-canvas .decision-question'))
+                    : observationsRetry.current,
+              )
+            }}
           >
-            Retry observations
+            Try again
           </button>
         </p>
       ) : null}
       {evidence.hasNextPage ? (
         <p>
-          More observations remain.{' '}
+          {/* Busy, not disabled, so focus stays on it while it reads. */}
           <button
             type="button"
-            disabled={evidence.isFetchingNextPage}
-            onClick={() => void evidence.fetchNextPage()}
+            aria-disabled={evidence.isFetchingNextPage || undefined}
+            onClick={() => {
+              if (evidence.isFetchingNextPage) return
+              const from = observations.length
+              // A last page removes this button: focus moves to the first
+              // observation it added.
+              void evidence
+                .fetchNextPage()
+                .then(() =>
+                  focusAfterRetry(
+                    () => list.current?.querySelectorAll('li')[from] ?? heading.current,
+                  ),
+                )
+            }}
           >
-            {evidence.isFetchingNextPage ? 'Loading observations…' : 'Load more observations'}
+            {evidence.isFetchingNextPage ? 'Loading more…' : 'Show more source values'}
           </button>
         </p>
       ) : null}
@@ -158,6 +203,7 @@ export function RecordedFieldObservations({
 }
 export function MetadataChoice({
   advice,
+  automatic = false,
   retainedAdvice = false,
   context,
   current,
@@ -174,6 +220,8 @@ export function MetadataChoice({
   value,
 }: {
   advice?: ReviewField['descriptionAdvice']
+  // The selected badge names Automatic when the pick is Automatic's (#1765).
+  automatic?: boolean
   retainedAdvice?: boolean
   context: ChoiceContextView | undefined
   current: boolean
@@ -228,7 +276,9 @@ export function MetadataChoice({
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
-          {selected ? <b className="choice-chosen">Your choice</b> : null}
+          {selected ? (
+            <b className="choice-chosen">{automatic ? 'Automatic’s choice' : 'Your choice'}</b>
+          ) : null}
         </small>
         <strong>
           {longDescription

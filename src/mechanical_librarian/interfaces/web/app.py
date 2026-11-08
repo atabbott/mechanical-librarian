@@ -104,7 +104,10 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     SettingsView,
 )
-from mechanical_librarian.domain.review_field_classification import ReviewFieldState
+from mechanical_librarian.domain.review_field_classification import (
+    ReviewFieldClassificationCause,
+    ReviewFieldState,
+)
 from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
@@ -559,7 +562,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v4"]
+    schema_version: Literal["cover-consideration-v5"]
     supersedes_id: str | None
     target_fingerprint: str
 
@@ -649,6 +652,7 @@ class _OwnerControl(_ClosedModel):
 
 class _ReviewField(_ClosedModel):
     classification: ReviewFieldState
+    classification_cause: ReviewFieldClassificationCause
     classification_reason: str
     current: _TargetField
     deterministic_disposition: Literal[
@@ -1109,6 +1113,8 @@ class _PreparationFailure(_ClosedModel):
 class _ProviderOutcome(_ClosedModel):
     # The companion EPUB's ISBN lane (#1723).
     companion_isbn: bool
+    # iTunes asked for an audiobook's cover alone (#1779).
+    cover_only: bool
     provider_requests: int = Field(ge=0)
     lane_kind: Literal["isbn", "work", "asin", "discovery", "none"]
     provider: str = Field(max_length=128)

@@ -39,14 +39,13 @@ A digest of stable Audiobookshelf file facts, scoped to the named target. It
 lets currentness be checked after the file list is reordered without storing
 a private host path.
 
-**Policy representation**
-One closed field-value choice. The Policy page names its admitted source and
-value, any bounded transformation, the affected field and when it abstains. A
-manual-review-only representation never gains Automatic authority; choosing
-one while the field is Automatic changes it to Ask me. For example, Visible
-Google text fills an empty Description only from eligible Google Books visible
-text, after bounded inert HTML-to-text extraction, and never falls back to
-Hardcover.
+**Policy option**
+How a policy field's value is chosen or written, such as Year only for a date.
+The Policy page says what each option does and when it makes no change.
+Automatic is offered only for some options, and choosing one it is not offered
+for while the field is Automatic changes the field to Ask me. For example,
+Visible Google text fills an empty Description only from Google Books text, and
+never uses Hardcover instead.
 
 **Report-only**
 Authority to observe and store evidence, never to review, approve, apply or

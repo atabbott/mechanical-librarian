@@ -38,7 +38,7 @@ export function SettledFieldContext({
             ? `${fieldReason(field)}${field.humanDecision || field.automaticDecision ? ` The recorded value remains ${decisionValue(field)}.` : ''}`
             : field.earlierAutomaticValue
               ? 'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
-              : 'There’s no other value to choose from.'}
+              : 'No source offered a different value.'}
         </p>
       ) : null}
       {!actionable ? <ContextValue field={field} expanded={expanded} toggle={toggle} /> : null}
@@ -115,7 +115,7 @@ export function ProviderConsensusAutomaticStatement({ field }: { field: ReviewFi
   }
   return (
     <p>
-      Providers chose {decisionValue(field)}; normalized from {field.currentValue}.
+      Sources write the names as {decisionValue(field)}. The library has {field.currentValue}.
     </p>
   )
 }
@@ -132,9 +132,7 @@ export function DescriptionAutomaticStatement({ field }: { field: ReviewField })
   }
   const providers = field.automaticSelectionSources ?? []
   if (!providers.length) return null
-  return (
-    <p>Selected automatically from {providers.join(' and ')} after matching the target work.</p>
-  )
+  return <p>Chosen automatically from {providers.join(' and ')}, which matched this book.</p>
 }
 
 export function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewField }) {
@@ -146,7 +144,7 @@ export function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: 
   ) {
     return null
   }
-  return <p>Deterministic identity evidence bound this ISBN to this file&apos;s work.</p>
+  return <p>This file’s own identifiers confirm this ISBN.</p>
 }
 
 export function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
@@ -172,11 +170,8 @@ export function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
     )
   return (
     <p>
-      Selected from {providers.join(' and ')} to fill an empty Series field under a qualified
-      automatic policy.{' '}
-      {hasNumber
-        ? 'Numbering is supplied by the provider and is not independently verified for this book.'
-        : 'No series number was supplied.'}
+      Chosen from {providers.join(' and ')} to fill the empty Series field.{' '}
+      {hasNumber ? 'Nothing else confirms the series number.' : 'No source gave a series number.'}
     </p>
   )
 }
@@ -194,8 +189,8 @@ export function NarratorsAutomaticStatement({ field }: { field: ReviewField }) {
   }
   return (
     <p>
-      Selected from {providers.join(' and ')} — the same cast in each — to fill an empty Narrators
-      field under a qualified automatic policy.
+      Chosen from {providers.join(' and ')}, which give the same cast, to fill the empty Narrators
+      field.
     </p>
   )
 }
@@ -213,8 +208,8 @@ export function AsinAutomaticStatement({ field }: { field: ReviewField }) {
   }
   return (
     <p>
-      Selected from {providers.join(' and ')} to fill an empty ASIN field under a qualified
-      automatic policy; the runtime gate corroborated that this recording is that product.
+      Chosen from {providers.join(' and ')} to fill the empty ASIN field. The running time confirms
+      this recording is that product.
     </p>
   )
 }
@@ -257,7 +252,7 @@ export function RecordedOutcome({
       <p>
         <strong>
           {field.humanDecision === null && field.automaticDecision !== null && !field.manualHold
-            ? 'Resolved automatically'
+            ? 'Automatic'
             : completionOutcome(field)}
         </strong>
       </p>
@@ -277,7 +272,7 @@ export function RecordedOutcome({
           <div>
             <dt>
               {decision.outcome === 'keep_current'
-                ? 'Retained value'
+                ? 'Kept value'
                 : decision.outcome === 'owner_entered'
                   ? 'Your value'
                   : 'Current value'}
@@ -293,10 +288,10 @@ export function RecordedOutcome({
         )}
       </dl>
       {selectedAutomaticLanguageForm(field) ? (
-        <p>The policy chose this observed form of the equivalent language evidence.</p>
+        <p>Automatic chose this way of writing the same language.</p>
       ) : null}
       {combinedTags ? (
-        <p>Compatible source tags were combined, retaining any existing tags.</p>
+        <p>Automatic combined the sources’ tags and kept the existing ones.</p>
       ) : null}
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
@@ -325,7 +320,7 @@ export function RecordedOutcome({
                   evidenceId={`${evidenceId}-${String(index)}`}
                   label={
                     item.selection === 'current'
-                      ? 'Retained tags'
+                      ? 'Existing tags'
                       : `Source tags ${String(index + 1)}`
                   }
                 />

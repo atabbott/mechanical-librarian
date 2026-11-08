@@ -124,6 +124,11 @@ brackets are GitHub issues.
   own sentence; source statuses, preview outcomes, evidence roles and reviewer
   errors drop internal words; and the policy preview gives each automatic
   refusal the same sentence the review case gives it (#1765).
+- A tab left on the previous build now offers to reload, instead of a retry
+  that cannot succeed, when description preferences, the current cover
+  comparison, write permission readiness or saved settings fail to load or
+  save, and focus moves to Reload, Try again or what loaded after every retry
+  instead of falling to the page (#1742).
 - Library's work list, work summary, preview and Attention queue read plainly.
   A failed book says what to do next, source rows drop internal words, empty
   sections no longer show, and a failed load says to try again or restart the
@@ -143,9 +148,33 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- **Clean rebuild required.** While its Cover evidence switch is on, iTunes is
+  asked for an audiobook's cover again, one search per audiobook. It supplies
+  nothing else about the audiobook. An iTunes failure never puts an audiobook
+  under "Some lookups gave no usable answer" in Library. An audiobook that only
+  iTunes found stays in the Not matched lens (#1779).
+- The review case page says what happened in your words: history reads "You
+  chose a proposed value." and "Automatic kept the current value." instead of
+  "Owner selected…" and "Automatic policy…", entries no longer repeat their
+  heading in a sentence, and Evidence and History drop "retained", "durable"
+  and "observations". The notice that the app was updated now says "Reload",
+  like every other reload button (#1765).
+- The sign-in page has one heading, "Sign in to review your library", without
+  the eyebrow, tagline and paragraph about write permission around it, and the
+  forgotten-password steps say what to do in short sentences (#1765).
+- Policy reads in your words. Each field has an option and a setting
+  (Automatic, Ask me, Ignore or Not supported) instead of a "representation"
+  and a "review mode"; the chapters lose their captions; the impact preview
+  counts undecided works; lost answers say "No answer came back"; and
+  "authoritative", "retained", "reconciled" and "safely" are gone (#1765).
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).
+- Library's field decisions read plainly. Evidence, automatic statements,
+  cover checks and decision failures drop internal words, a lost answer says
+  what to check, the writing box says whether a change was written, and a
+  cover comparison that could not be loaded names the button that tries again
+  (#1765, #1791).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author

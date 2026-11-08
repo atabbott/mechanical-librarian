@@ -210,8 +210,8 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's
-    # history indexes, #1204's indexes, #1211's case indexes and #1232's
-    # attention facts.
+    # history indexes, #1204's indexes, #1211's case indexes, #1232's
+    # attention facts and #1363's retained covers.
     connection.executescript(
         "".join(
             f"DROP {kind.upper()} {name};"
@@ -234,6 +234,9 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP INDEX current_review_case_lineages_case;"
         "DROP INDEX current_review_packages_case;"
         "DROP TABLE review_case_episodes;"
+        "DROP TABLE retained_cover_listings;"
+        "DROP TABLE retained_cover_removals;"
+        "DROP TABLE retained_cover_bindings;"
     )
     rows = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"

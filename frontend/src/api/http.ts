@@ -197,6 +197,9 @@ export interface PolicySearch {
 export interface ProviderOutcomeView {
   // The companion EPUB's ISBN lane (#1723).
   companionIsbn: boolean
+  // iTunes asked for an audiobook's cover alone, so it neither matches nor
+  // limits the work (#1779).
+  coverOnly: boolean
   providerRequests: number
   laneKind: ProviderQueryKind
   provider: string
@@ -643,8 +646,11 @@ export interface ChoiceContextView {
   selection: 'current' | 'proposed'
 }
 export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
+// The branch that chose a field's sentence; Library decides rows from it (#1791).
+export type FieldCause = ReviewFieldDto['classification_cause']
 export interface ReviewFieldView {
   classification: string
+  classificationCause: FieldCause
   classificationReason: string
   destination: TargetDestination
   decisionActions: readonly DecisionAction[]
@@ -812,6 +818,9 @@ export type HistoryItemView = (
       engine: string
       candidate: DescriptionCandidateDto | null
       selected: boolean
+      // Who chose the advice. Read only on a choice; null when the event
+      // carries no decision.
+      chosenBy: 'owner' | 'automatic' | null
     }
   | {
       category: 'owner'
@@ -2352,6 +2361,7 @@ const mapMediaHealth = (value: readonly MediaHealthDto[]): MediaHealthObservatio
 
 const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => ({
   companionIsbn: value.companion_isbn,
+  coverOnly: value.cover_only,
   providerRequests: value.provider_requests,
   laneKind: value.lane_kind,
   provider: value.provider,
@@ -2700,6 +2710,7 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
 
 const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   classification: field.classification,
+  classificationCause: field.classification_cause,
   classificationReason: field.classification_reason,
   destination: field.destination,
   // The decoder admits exactly [] or ['keep_current', 'accept'].
@@ -2789,6 +2800,8 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       engine: item.engine,
       candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
       selected: item.kind === 'description_selected',
+      chosenBy:
+        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
     }
   // Only an owner decision states what it may go on to do; a retained F45
   // decision is the only one that carries a reason (#968).

@@ -1096,3 +1096,39 @@ def test_the_association_context_refuses_what_it_cannot_read(
 def test_the_association_context_accepts_nullable_title_and_file_list() -> None:
     assert AudioAssociationContext(None, (), None).own_file_names is None
     assert AudioAssociationContext("Title", (), ()).own_file_names == ()
+
+
+@pytest.mark.parametrize(
+    ("target", "stated", "echo"),
+    (
+        ("EN", "en", False),
+        ("en", "EN", False),
+        ("en", "en", True),
+        ("en", "en-GB", True),
+        ("XQ", "xq", True),
+    ),
+    ids=("unread_target", "unread_sidecar", "equal", "one_class", "both_unread"),
+)
+def test_a_case_only_language_echo_needs_equal_recognition(
+    target: str, stated: str, echo: bool
+) -> None:
+    """Codex R1: an echo restores the target's value for refusals, so a case-only
+    match counts only where both spellings refuse alike."""
+    context = _context(language=target)
+    assert target_echo(context, _F.LANGUAGE, stated, ()) is echo
+
+
+def test_a_cue_file_value_keeps_the_whitespace_its_track_name_keeps() -> None:
+    """Codex R1: `Book  One.m4b` names the track `Book  One.m4b`, not another."""
+    track = "Synthetic  Track One.m4b"
+    sidecar = AudioSidecar(
+        _CUE,
+        "book.cue",
+        f'TITLE "{_TITLE}"\nPERFORMER "{_AUTHOR}"\nFILE "{track}" MP4\n',
+    )
+    [reading] = _interpret(sidecar).sidecars
+    assert (reading.file_reference, reading.file_refused) == (track, False)
+    evidence = FileAssociationEvidence((), (), frozenset(), (track,))
+    assert _one(reading, evidence=evidence).refusals == ()
+    collapsed = FileAssociationEvidence((), (), frozenset(), (" ".join(track.split()),))
+    assert _one(reading, evidence=collapsed).refusals == (_R.OTHER_FILE,)

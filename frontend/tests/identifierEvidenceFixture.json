@@ -8,6 +8,7 @@
     "fields": [
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "narrators",
@@ -112,6 +113,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "asin",
@@ -204,6 +206,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "title",
@@ -242,7 +245,7 @@
             "alternative_id": null,
             "evidence": [
               {
-                "observation": "This value is currently present in the local library.",
+                "observation": "Your current value.",
                 "role": "local_presence",
                 "source": "Local library record"
               },
@@ -300,6 +303,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "subtitle",
@@ -350,6 +354,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "authors",
@@ -381,7 +386,7 @@
             "alternative_id": null,
             "evidence": [
               {
-                "observation": "This value is currently present in the local library.",
+                "observation": "Your current value.",
                 "role": "local_presence",
                 "source": "Local library record"
               },
@@ -439,6 +444,7 @@
       },
       {
         "classification": "needs_attention",
+        "classification_cause": "review_needed",
         "classification_reason": "This field needs your review.",
         "current": {
           "destination": "series",
@@ -489,7 +495,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "genres",
           "state": "missing",
@@ -539,7 +546,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "publishedDate",
           "state": "missing",
@@ -589,7 +597,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "publisher",
           "state": "missing",
@@ -639,7 +648,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "description",
           "state": "missing",
@@ -689,6 +699,7 @@
       },
       {
         "classification": "manual_fallback",
+        "classification_cause": "automatic_abstained",
         "classification_reason": "This field needs your choice.",
         "current": {
           "destination": "isbn",
@@ -739,7 +750,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "language",
           "state": "missing",
@@ -789,7 +801,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "explicit",
           "state": "missing",
@@ -839,7 +852,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "tags",
           "state": "missing",
@@ -889,7 +903,8 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is nothing to decide for this field.",
+        "classification_cause": "nothing_to_decide",
+        "classification_reason": "Nothing to decide for this field.",
         "current": {
           "destination": "cover",
           "state": "missing",
@@ -958,13 +973,13 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ASIN: B000000002. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ISBN: 9780593135204. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["title"],
@@ -976,7 +991,7 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ASIN: B000000001. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["narrators"],
@@ -1000,7 +1015,7 @@
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ISBN: 9781250077004. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["narrators"],
@@ -1046,6 +1061,7 @@
     "source_ledger": [
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 1,
         "lane_kind": "work",
         "provider": "Audible",
@@ -1054,6 +1070,7 @@
       },
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",
@@ -1062,6 +1079,7 @@
       },
       {
         "companion_isbn": false,
+        "cover_only": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",

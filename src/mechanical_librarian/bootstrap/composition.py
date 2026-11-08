@@ -110,6 +110,7 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
 )
+from mechanical_librarian.adapters.retained_covers import RetainedCoverStore
 from mechanical_librarian.adapters.reviewers.codex_auth_lease import (
     CodexAuthLeaseCoordinator,
     LazyCodexAuth,
@@ -156,6 +157,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -177,6 +179,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderBinding,
     TargetNotFoundError,
     UnsupportedMediaError,
+    provider_binding,
     require_report_current,
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
@@ -644,6 +647,12 @@ def compose_continuous_guarded_application(
         recovery_root,
         lambda plan: targets[(plan.connection, plan.library)].read_cover_bytes(plan),
     )
+    retention = CoverRetention(
+        RetainedCoverStore(private_root / "retained-covers"),
+        repository,
+        recovery.read,
+        lambda: int(time.time()),
+    )
     authority = PersistedFieldEffectAuthority(repository)
     consent = PersistedEffectConsent(repository)
     dependencies = PersistedEffectDependencies(repository)
@@ -663,6 +672,7 @@ def compose_continuous_guarded_application(
             recovery,
             reevaluation,
             lambda: int(time.time()),
+            cover_retention=retention,
         )
         for key in configured
     }
@@ -964,9 +974,7 @@ def run_metadata_report_loaded(
                 )
             return instance
 
-        bindings.append(
-            ProviderBinding(provider.name, provider.enabled, factory, provider.adapter)
-        )
+        bindings.append(provider_binding(provider, factory))
 
     def repository_factory() -> ReportRepository:
         repository: NonClosingRepository | SQLiteMetadataReportRepository = (
@@ -3185,6 +3193,7 @@ def _compose_cover_considerations(
         reviewer_revision_current=reviewer_access.revision_is_current,
         bind_policy=bind_policy,
         provider_fetching=provider_fetching,
+        retained_original=repository.retained_cover_original,
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
     repository.bind_cover_consideration_currentness(

@@ -47,7 +47,10 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarRefusal,
     association_text,
 )
-from mechanical_librarian.domain.field_outcomes import language_outcomes_compatible
+from mechanical_librarian.domain.field_outcomes import (
+    language_identity,
+    language_outcomes_compatible,
+)
 from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetDestination,
@@ -505,6 +508,12 @@ def _text_key(value: str) -> str | None:
         return None
 
 
+def _recognized_language(value: str) -> bool:
+    """Whether the recording-conflict refusal reads this language at all."""
+    identity = language_identity(value)
+    return identity is not None and identity.base != "und"
+
+
 def document_series_names(facts: tuple[AudioInspectionFact, ...]) -> tuple[str, ...]:
     """The series names one document states, which its sequences go with."""
     return tuple(
@@ -552,9 +561,16 @@ def target_echo(
         )
     if field is AudioInspectionField.LANGUAGE:
         language = context.language
+        # The target's value stands in for a withheld echo wherever a reader
+        # can only refuse, so a case-only match counts only when both spellings
+        # are equally recognized: a target `EN` must not replace an `.opf`'s
+        # recognized `en`, which refuses where `EN` does not (#1481).
         return language is not None and (
-            language.casefold() == canonical.casefold()
-            or language_outcomes_compatible(language, canonical)
+            language_outcomes_compatible(language, canonical)
+            or (
+                language.casefold() == canonical.casefold()
+                and _recognized_language(language) == _recognized_language(canonical)
+            )
         )
     if field is AudioInspectionField.DESCRIPTION:
         description = context.description

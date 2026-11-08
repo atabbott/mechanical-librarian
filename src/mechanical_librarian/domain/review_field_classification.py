@@ -21,12 +21,38 @@ ReviewFieldCause = Literal[
     "external_connection_failure",
     "external_recovered",
 ]
+# Why a field reads as it does, one value per branch below: the branch that
+# chose the field's sentence. Library decides its rows from this code and only
+# prints the sentence, so rewording a sentence changes no row (#1791). It is
+# the input causes plus one value for each other branch, in one flat list so
+# the wire enumeration is exactly what this function can return.
+ReviewFieldClassificationCause = Literal[
+    "unsupported",
+    "automatic_safety_suspended",
+    "external_field_failure",
+    "external_connection_failure",
+    "external_recovered",
+    "human_decided",
+    "automatic_abstained",
+    "automatic_decided",
+    "review_needed",
+    "owner_choosable",
+    "nothing_to_decide",
+]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
     "unsupported": "Your library service cannot change this field.",
-    "automatic_safety_suspended": "Changes made for you are waiting for a safety recovery.",
-    "external_field_failure": "This field is waiting for an outside service to recover.",
-    "external_connection_failure": "This connection is waiting for an outside service to recover.",
-    "external_recovered": "The outside service recovered; you can review this field again.",
+    "automatic_safety_suspended": (
+        "Automatic is paused, so this field is waiting for you."
+    ),
+    "external_field_failure": (
+        "This field is waiting for the library to accept changes to it again."
+    ),
+    "external_connection_failure": (
+        "This field is waiting for the library connection to recover."
+    ),
+    "external_recovered": (
+        "The library connection recovered. You can review this field again."
+    ),
 }
 
 
@@ -41,6 +67,7 @@ class ReviewFieldClassification:
 
     state: ReviewFieldState
     reason: str
+    cause: ReviewFieldClassificationCause
     needs_attention: bool
     editable: bool
     recorded: bool
@@ -103,6 +130,7 @@ def classify_review_field(
                 if override_available
                 else "Your decision is being applied and cannot be changed yet."
             ),
+            "human_decided",
             False,
             override_available,
             True,
@@ -113,6 +141,7 @@ def classify_review_field(
         return ReviewFieldClassification(
             "unsupported",
             _CAUSE_GUIDANCE[cause],
+            "unsupported",
             False,
             False,
             False,
@@ -123,6 +152,7 @@ def classify_review_field(
         return ReviewFieldClassification(
             "manual_fallback",
             "This field needs your choice.",
+            "automatic_abstained",
             True,
             True,
             False,
@@ -133,10 +163,11 @@ def classify_review_field(
         return ReviewFieldClassification(
             "automatic_recorded",
             (
-                "This field was decided for you; you can inspect or change it."
+                "Automatic decided this field. You can change it here."
                 if override_available
-                else "The change made for you is being applied and cannot be changed yet."
+                else "Automatic\u2019s change is being applied and cannot be changed yet."
             ),
+            "automatic_decided",
             False,
             override_available,
             True,
@@ -147,6 +178,7 @@ def classify_review_field(
         return ReviewFieldClassification(
             "needs_attention",
             _CAUSE_GUIDANCE[cause],
+            "automatic_safety_suspended",
             True,
             True,
             False,
@@ -154,9 +186,11 @@ def classify_review_field(
             preservation_only,
         )
     if suspended:
+        effective = cause or "automatic_safety_suspended"
         return ReviewFieldClassification(
             "unsupported",
-            _CAUSE_GUIDANCE[cause or "automatic_safety_suspended"],
+            _CAUSE_GUIDANCE[effective],
+            effective,
             False,
             False,
             False,
@@ -167,6 +201,7 @@ def classify_review_field(
         return ReviewFieldClassification(
             "needs_attention",
             "This field needs your review.",
+            "review_needed",
             True,
             True,
             False,
@@ -196,6 +231,7 @@ def classify_review_field(
                 else "No review is needed. You can still keep the current value or "
                 "choose a proposed one."
             ),
+            "owner_choosable",
             False,
             True,
             False,
@@ -204,9 +240,10 @@ def classify_review_field(
         )
     return ReviewFieldClassification(
         "unsupported",
-        "There is no other value to choose from. You can enter your own."
+        "No source offered a different value. You can enter your own."
         if owner_entry
-        else "There is nothing to decide for this field.",
+        else "Nothing to decide for this field.",
+        "nothing_to_decide",
         False,
         False,
         False,
@@ -224,6 +261,7 @@ def _canonical_value(value: object) -> object:
 
 __all__ = [
     "ReviewFieldClassification",
+    "ReviewFieldClassificationCause",
     "ReviewFieldState",
     "ReviewNavigationRole",
     "ReviewFieldCause",

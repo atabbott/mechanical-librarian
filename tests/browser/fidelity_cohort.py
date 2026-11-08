@@ -116,6 +116,7 @@ TERMINAL_LIBRARY_WORK = _work(
     preparation_outcomes=[
         {
             "companion_isbn": False,
+            "cover_only": False,
             "provider_requests": 1,
             "lane_kind": "work",
             "provider": "hardcover-main",
@@ -232,6 +233,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         preparation_outcomes=[
             {
                 "companion_isbn": False,
+                "cover_only": False,
                 "provider_requests": 2,
                 "lane_kind": "work",
                 "provider": "hardcover-main",
@@ -240,6 +242,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
             },
             {
                 "companion_isbn": False,
+                "cover_only": False,
                 "provider_requests": 0,
                 "lane_kind": "work",
                 "provider": "google-books",
@@ -395,6 +398,7 @@ def _field(
     provenance: list[str] | None = None,
     corroboration_sources: list[str] | None = None,
     classification: str | None = None,
+    classification_cause: str | None = None,
     classification_reason: str | None = None,
     editable: bool | None = None,
     navigation_role: str | None = None,
@@ -452,15 +456,26 @@ def _field(
         else "unsupported"
     )
     resolved_classification = classification or inferred_classification
+    # Library keys a field's row on this code; the reason is only printed (#1791).
+    inferred_cause = (
+        "human_decided"
+        if human_decision is not None
+        else "automatic_decided"
+        if automatic_decision is not None
+        else "review_needed"
+        if needs_attention
+        else "nothing_to_decide"
+    )
     inferred_reason = (
         "This field needs your review."
         if needs_attention
-        else "This field was decided for you; you can inspect or change it."
+        else "Automatic decided this field. You can change it here."
         if automatic_decision is not None
-        else "There is nothing to decide for this field."
+        else "Nothing to decide for this field."
     )
     return {
         "classification": resolved_classification,
+        "classification_cause": classification_cause or inferred_cause,
         "classification_reason": classification_reason or inferred_reason,
         "destination": destination,
         "decision_actions": decision_actions,
@@ -500,7 +515,7 @@ def _field(
                 "alternative_id": None,
                 "evidence": [
                     {
-                        "observation": "This value is currently present in the local library.",
+                        "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -741,8 +756,11 @@ def _case(case_id: str) -> dict[str, object]:
                 "No eligible proposed value is supported by the retained evidence."
             ],
             classification="unsupported",
+            classification_cause=(
+                "nothing_to_decide" if current_only else "unsupported"
+            ),
             classification_reason=(
-                "There is nothing to decide for this field."
+                "Nothing to decide for this field."
                 if current_only
                 else "Your library service cannot change this field."
             ),
@@ -759,6 +777,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "No eligible proposed value is supported by the retained evidence."
             ],
             classification="unsupported",
+            classification_cause="unsupported",
             classification_reason="Your library service cannot change this field.",
             editable=False,
             navigation_role="inspect",
@@ -962,15 +981,13 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Local library record",
                                     "role": "local_presence",
-                                    "observation": "Local library cover retained.",
+                                    "observation": "Your current cover.",
                                 }
                             ],
                             # The producer's own sentence for an unavailable
                             # incumbent preview (cover_consideration), never a
                             # code the owner would read raw (#1286).
-                            "limitations": [
-                                "Preview unavailable for this retained cover."
-                            ]
+                            "limitations": ["Its image could not be previewed."]
                             if case_id == "case-3"
                             else [],
                             "rationale": "",
@@ -984,7 +1001,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Open Library",
                                     "role": "external_corroboration",
-                                    "observation": "Retained catalogue cover supports this choice.",
+                                    "observation": "Has this cover in its catalogue.",
                                 }
                             ],
                             "limitations": [],
@@ -1052,7 +1069,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v4",
+                    "schema_version": "cover-consideration-v5",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"
@@ -1250,19 +1267,19 @@ def _cohort_change(work: str, destination: str) -> tuple[str, str, str]:
 _COHORT_POLICY_CHANGES = [
     {
         "field": "Title layout",
-        "setting": "Review mode",
+        "setting": "Setting",
         "previous": "Ask me",
         "next": "Automatic",
     },
     {
         "field": "Description fill",
-        "setting": "Representation",
+        "setting": "Option",
         "previous": "Safe plain text",
         "next": "Visible Google text",
     },
     {
         "field": "Cover",
-        "setting": "Review mode",
+        "setting": "Setting",
         "previous": "Ask me",
         "next": "Automatic",
     },
@@ -1877,6 +1894,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "source_ledger": [
                     {
                         "companion_isbn": False,
+                        "cover_only": False,
                         "provider_requests": 1,
                         "lane_kind": "work",
                         "provider": "Open Library",
@@ -1885,6 +1903,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     },
                     {
                         "companion_isbn": False,
+                        "cover_only": False,
                         "provider_requests": 2,
                         "lane_kind": "isbn",
                         "provider": "Hardcover",

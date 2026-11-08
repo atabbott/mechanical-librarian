@@ -4395,7 +4395,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v4",
+            "const": "cover-consideration-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -9267,6 +9267,10 @@
             "title": "Companion Isbn",
             "type": "boolean"
           },
+          "cover_only": {
+            "title": "Cover Only",
+            "type": "boolean"
+          },
           "lane_kind": {
             "enum": [
               "isbn",
@@ -9317,6 +9321,7 @@
         },
         "required": [
           "companion_isbn",
+          "cover_only",
           "provider_requests",
           "lane_kind",
           "provider",
@@ -10032,6 +10037,23 @@
             "title": "Classification",
             "type": "string"
           },
+          "classification_cause": {
+            "enum": [
+              "unsupported",
+              "automatic_safety_suspended",
+              "external_field_failure",
+              "external_connection_failure",
+              "external_recovered",
+              "human_decided",
+              "automatic_abstained",
+              "automatic_decided",
+              "review_needed",
+              "owner_choosable",
+              "nothing_to_decide"
+            ],
+            "title": "Classification Cause",
+            "type": "string"
+          },
           "classification_reason": {
             "title": "Classification Reason",
             "type": "string"
@@ -10273,6 +10295,7 @@
         },
         "required": [
           "classification",
+          "classification_cause",
           "classification_reason",
           "current",
           "deterministic_disposition",

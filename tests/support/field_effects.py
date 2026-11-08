@@ -30,6 +30,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import (
+    CoverAutomaticDecision,
+)
 from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     decision_value_kind,
@@ -270,7 +273,7 @@ def _replan(
 
 def _authorize(
     effects: _EffectEnvironment,
-    source: HumanDecision | AutomaticDecision,
+    source: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
     *,
     work_id: str = "book-1",
     target_version: str = "version-1",

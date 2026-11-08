@@ -206,6 +206,10 @@ Librarian** (a source failed inside Mechanical Librarian itself, which is never
 retried), or **No source matched**. If the
 recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
+An audiobook's iTunes listing is only its cover. It never matches the
+audiobook, so one that only iTunes found reads **No source matched**. An iTunes
+failure never makes its sources unavailable, and never puts it under **Some
+lookups gave no usable answer**.
 
 A work whose latest preparation could not finish reads **Could not finish**
 and sits under that heading, counted beside Works as `2 could not
@@ -254,8 +258,8 @@ proposed card shows its value and, when known, the sources it came from, and
 cards carry no `Alternative N` label. Each card's Evidence control sits
 directly under its value. `Recommended` and its reason appear only for an
 authoritative deterministic selection; nothing says when there is none.
-Recorded observations appear only when the field has some or they could not be
-read, and the external-library card only when a change for the field is
+Other source values appear only when the field has some or they could not be
+read, and the writing-to-the-library box only when a change for the field is
 recorded. A notice never restates the reason already shown, and a decision
 carries no reminder that writes are protected. A disclosure never chooses a
 value.
@@ -384,8 +388,9 @@ a small set, or the current cover pinned beside a larger gallery. At 1024 pixels
 and below they form one scrolling row. Each image sits whole in a 5:8 frame.
 Excluded candidates stay subordinate with their reason.
 
-Each candidate summarises its defect checks (clean, named defects, uncertain
-or no reviewer evidence); other notes and sources sit in disclosures. None of
+Each candidate summarises its defect checks (clean, named defects, uncertain,
+or no result when the visual review ran); other notes and sources sit in
+disclosures. None of
 this confirms a match, changes order or earns automatic authority.
 
 The owner may choose any intact retained alternative, even of lower quality or
@@ -402,7 +407,10 @@ has decision controls or shows internal identifiers.
   outcomes in a Sources disclosure. Missing lineage never claims a field is
   empty. An audiobook's companion EPUB lookup reads "ISBN lookup (EPUB in this
   folder)" here, in the work summary and in the comparison footer, so an
-  audiobook with no ISBN of its own never shows a bare ISBN row (#1723).
+  audiobook with no ISBN of its own never shows a bare ISBN row (#1723). An
+  audiobook's iTunes lookup is for a cover only, so a listing it finds reads
+  "Cover found" and its reason says nothing else it returns is compared
+  (#1779).
 - **History** lists owner and automatic outcomes for the case, each with its
   own time, and shows a value only where the record links it exactly.
 
@@ -420,8 +428,8 @@ preparation row.
 
 ## Policy
 
-Policy rules are in the [automation policy](automation-policy.md). Each option
-leads with its behaviour: Automatic, Ask me, Ignore or unavailable. Limits
+Policy rules are in the [automation policy](automation-policy.md). Each field
+leads with its setting: Automatic, Ask me, Ignore or Not supported. Limits
 appear beside each option and in activation review.
 
 A preview compares retained inputs; it never activates or writes. It separates
@@ -530,8 +538,10 @@ otherwise; future times are never relative.
 - Focus never falls to the page. A running command keeps focus, marked
   `aria-disabled`, then moves to its outcome. A failure message sits directly
   under the control it describes. A failed retry or an unreadable
-  detail focuses Try again. Opening Attention focuses its heading; closing
-  returns focus to the toggle. Tab closes a dropdown onto its trigger.
+  detail focuses Try again, or Reload when the tab is on an earlier build; a
+  retry that succeeds focuses what it loaded. Opening Attention focuses its
+  heading; closing returns focus to the toggle. Tab closes a dropdown onto its
+  trigger.
 - Native controls, one heading outline per page, visible focus and polite
   status announcements throughout. Colour is never the only sign of status.
 - Text meets 4.5:1, and boundaries and focus rings 3:1, in both themes. No

@@ -91,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     creator_sequence_methods,
     discovery_lane_identity,
     echoed_target_values,
+    field_evidence_providers,
     isbn_family,
     manifestation_publication_compatible,
     normalize_date_value,
@@ -100,6 +101,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
     provider_candidate_work_identity_contradiction,
+    provider_supplies_field_evidence,
     publication_date_is_voting,
     recording_association_references,
     recording_corroboration,
@@ -2156,11 +2158,11 @@ def _observations(
                 ProposalScope.EDITION,
                 _provider_representation(provider, candidate),
             )
-            for provider in report.providers
+            for provider in field_evidence_providers(report)
             for candidate in provider.candidates
             if recording_association_references(
                 report.local_claims,
-                report.providers,
+                field_evidence_providers(report),
                 report.target,
                 report.audio,
                 provider.provider,
@@ -2237,7 +2239,7 @@ def _observations(
     withheld = carried_asin_precedence(report) if edition_asins else frozenset()
     current_asin = target_current_asin(report) if edition_asins else None
     carried_asin = verified_carried_asin(report) if edition_asins else None
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
                 continue
@@ -2377,7 +2379,7 @@ def subtitle_segment_evidence(
     ]
     sources.extend(
         (claim.reference, _provider_correlation(provider), claim.value)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.kind is ClaimKind.TITLE
@@ -2439,7 +2441,7 @@ def segment_corroboration(
     sought = _comparison(TargetDestination.SUBTITLE, value)
     if any(
         _comparison(TargetDestination.SUBTITLE, claim.value) != sought
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.kind is ClaimKind.SUBTITLE
@@ -2661,7 +2663,7 @@ def _evidence_led_title_election(
             )
         ).items()
     }
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         works: set[str] = set()
         for candidate in provider.candidates:
             claims = tuple(c for c in candidate.claims if c.state is FieldState.VALID)
@@ -2844,7 +2846,7 @@ def _provider_consensus_title_election(
     match = matches[0]
     provider_title_claims = tuple(
         (provider, claim.value)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.kind is ClaimKind.TITLE
@@ -2853,7 +2855,7 @@ def _provider_consensus_title_election(
     )
     provider_titles = tuple(
         (provider, claim.value)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         if provider.authority is not None
         for candidate in provider.candidates
         for claim in candidate.claims
@@ -3045,7 +3047,7 @@ def _provider_work_title_authorities(
     that form regardless of whether WORK admission kept its candidate.
     """
     values: dict[str, set[str]] = {}
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in provider.candidates:
             for claim in candidate.claims:
                 if (
@@ -3203,7 +3205,7 @@ def narrator_candidate_set_agrees(
     """Recompute complete cast agreement over every plausible retained product."""
     plausible = tuple(
         candidate
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in _plausible_narrator_candidates(report, provider)
     )
     if len(plausible) < 2 or not all(
@@ -3263,7 +3265,7 @@ def _narrator_corroboration_guard(
         and provider_candidate_supports_complete_narrators(
             candidate, result.alternatives[0].evidence_references
         )
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
     ):
         return result
@@ -3357,7 +3359,7 @@ def _provider_contributor_displays(
     displays: list[
         tuple[ProviderObservation, tuple[ProviderClaim, ...], tuple[str, ...]]
     ] = []
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in provider.candidates:
             claims = tuple(
                 claim
@@ -3456,7 +3458,7 @@ def _has_generic_provider_subtitle(report: MetadataReport) -> bool:
         and claim.value is not None
         and claim.applicability == "ebook"
         and _generic_subtitle(report, TargetDestination.SUBTITLE, claim.value)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         for claim in candidate.claims
     )
@@ -3602,7 +3604,7 @@ def _list_observations(
             )
     if work_only and destination is TargetDestination.NARRATORS:
         return _unconfirmed_edition_narrators(report)
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         candidates = provider.candidates
         if destination is TargetDestination.NARRATORS and report.audio is not None:
             ordinary_ids = {candidate.identity for candidate in candidates}
@@ -3747,7 +3749,7 @@ def _corroborated_untyped_author_observations(
     """Pair only one complete neutral creator set with a distinct author set."""
     authors = tuple(
         (provider, candidate, claims, bindings)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         if _target_backed_lookup_contains(report, provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, "author"))
@@ -3756,7 +3758,7 @@ def _corroborated_untyped_author_observations(
     )
     untyped = tuple(
         (provider, candidate, claims, bindings)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         if _target_backed_lookup_contains(report, provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, None)) is not None
@@ -4122,6 +4124,8 @@ def provider_candidate_represents_target_work(
     candidate: ProviderCandidate,
 ) -> bool:
     """Prove one retained candidate describes the target work through its lane."""
+    if not provider_supplies_field_evidence(report, provider):
+        return False
     if provider_candidate_represents_target_recording(report, provider, candidate):
         return True
     if (
@@ -4276,6 +4280,7 @@ def provider_candidate_represents_target_recording(
     """
     return (
         report.audio is not None
+        and provider_supplies_field_evidence(report, provider)
         and recording_variant_conflict(
             candidate,
             report.local_claims,
@@ -4298,7 +4303,7 @@ def provider_candidate_represents_target_recording(
                 )
                 for claim in other.claims
             )
-            for source in report.providers
+            for source in field_evidence_providers(report)
             if source.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
             for other in (*source.candidates, *source.recording_lookup_candidates)
         )
@@ -4547,7 +4552,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                     _local_representation(basis),
                 )
             )
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
                 continue
@@ -4676,7 +4681,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                         precision,
                     )
                 )
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in provider.candidates:
             if (
                 report.audio is None
@@ -4799,7 +4804,7 @@ def _publication_results(
     )
     recording_date_references = {
         claim.reference
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         if provider_candidate_represents_target_recording(report, provider, candidate)
         for claim in candidate.claims
@@ -4819,7 +4824,7 @@ def _publication_results(
             years,
             frozenset(
                 _provider_correlation(provider)
-                for provider in report.providers
+                for provider in field_evidence_providers(report)
                 if provider.authority is not None
             ),
             _local_correlation(report),
@@ -6133,7 +6138,7 @@ def _verified_manifestation_isbn_election(
     """
     claims = {
         claim.reference: (provider, candidate, claim)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         for claim in candidate.claims
     }
@@ -6256,7 +6261,7 @@ def _ordinary_description_values(
     }
     return tuple(
         _value(TargetDestination.DESCRIPTION, claim.value)
-        for provider in report.providers
+        for provider in field_evidence_providers(report)
         for candidate in provider.candidates
         for claim in candidate.claims
         if claim.reference in references

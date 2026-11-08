@@ -83,6 +83,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     echoed_target_values,
+    field_evidence_providers,
     recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -148,8 +149,8 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "subtitle_segment_decorated_consensus": "The sources do not support splitting this text into a subtitle.",
     "atomic_bundle_unavailable": "A linked field this choice depends on is unavailable.",
     "corroborated_split_unavailable": "The confirmed title and subtitle do not match the current combined title.",
-    "option_evidence_unavailable": "The source details your chosen setting needs are unavailable.",
-    "policy_option_unavailable": "The setting you chose does not apply to this field.",
+    "option_evidence_unavailable": "The source details your chosen option needs are unavailable.",
+    "policy_option_unavailable": "The option you chose does not apply to this field.",
     "target_projection_oversized": "The result would be longer than the library accepts.",
     "policy_off": "Tag handling is off.",
     "explicit_unsupported": "Explicit content is never marked for you with this setting.",
@@ -1266,6 +1267,7 @@ class InspectCurrentReviewCase:
             "manual_return_failed": manual_hold
             and destination in snapshot.return_failed_destinations,
             "classification": classification.state,
+            "classification_cause": classification.cause,
             "classification_reason": classification.reason,
             "editable": classification.editable and has_owner_action,
             "navigation_role": classification.navigation_role,
@@ -2310,7 +2312,7 @@ def _report_detail(
     if type(chapters) is not list or (cover is not None and type(cover) is not dict):
         raise ReviewWebError("unavailable")
     recorded_claims = [value for value in claims if type(value) is dict]
-    provider_claims = _report_detail_provider_claims(report)
+    provider_claims = _report_detail_provider_claims(report, recorded)
     return {
         "chapters": [
             {
@@ -2379,7 +2381,7 @@ def _report_detail(
 
 
 def _report_detail_provider_claims(
-    report: dict[str, object],
+    report: dict[str, object], recorded: MetadataReport
 ) -> list[dict[str, object]]:
     """Project every admitted candidate's stated claims, authority-labelled.
 
@@ -2387,14 +2389,17 @@ def _report_detail_provider_claims(
     so the authority is what an owner-facing surface names. Candidate identity
     travels with each claim because one observation may admit more than one
     candidate and a merged list would attribute one product's claims to
-    another.
+    another. An audiobook's iTunes listing is its cover alone, so nothing it
+    states is evidence here (#1779).
     """
     values: list[dict[str, object]] = []
     providers = report.get("providers")
     if type(providers) is not list:
         return values
+    # One report states one observation per provider name.
+    evidence = {value.provider for value in field_evidence_providers(recorded)}
     for provider in cast("list[object]", providers):
-        if type(provider) is not dict:
+        if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
         label = _provider_label(authority if type(authority) is str else None)
@@ -2442,8 +2447,8 @@ def _report_title(report: dict[str, object]) -> str:
 # value it disagrees with is not offered, such as one in another language
 # (#1497).
 _UNOFFERED_DISSENT_TEXT = (
-    "Another source gave a value that isn\u2019t offered here; "
-    "choose whether to use this one."
+    "Another source gave a value that isn\u2019t offered here. "
+    "Choose whether to use this one."
 )
 
 
@@ -2647,7 +2652,7 @@ def _choice_contexts(
             "evidence": (
                 [
                     {
-                        "observation": "This value is currently present in the local library.",
+                        "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
                     }
@@ -2815,7 +2820,7 @@ def _choice_source_label(evidence: dict[str, str | None]) -> str:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
         return "Local library record"
-    return "Retained observation (provider name unavailable)"
+    return "Unnamed source"
 
 
 def _choice_is_local(evidence: dict[str, str | None]) -> bool:
@@ -2860,11 +2865,11 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
     try:
         fact = json.loads(evidence["fact"] or "{}")
     except (TypeError, ValueError):
-        return "The retained observation has no readable value."
+        return "This source\u2019s value could not be read."
     if type(fact) is not dict:
-        return "The retained observation has no readable value."
+        return "This source\u2019s value could not be read."
     if evidence["source"] == "identifier" and "relation" in fact:
-        return "Identifier relationship retained; no value observation is available."
+        return "Checks an ISBN against this book. It gives no value of its own."
     # Every claim kind is named as the Library's recorded evidence names it
     # (#1286); a narrator's credit keeps its own name.
     claim_kind = fact.get("kind")
@@ -2894,7 +2899,7 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         if text.casefold().startswith(kind.casefold() + ":"):
             text = text[len(kind) + 1 :].strip() or text
         return f"{kind}: {text}"
-    return f"{kind} observation retained."
+    return f"{kind}: the value cannot be shown."
 
 
 def _duration_seconds(value: object) -> int | None:
@@ -2917,7 +2922,7 @@ def _choice_text(value: str | int | float) -> str:
     )
     normalized = " ".join(cleaned.split())
     if not normalized:
-        return "Value retained"
+        return "no readable value"
     return normalized[:160] + ("…" if len(normalized) > 160 else "")
 
 
@@ -2943,15 +2948,11 @@ def _review_unselectable_evidence(
             "source": "Local metadata",
             "observation": (
                 f"Language: {_choice_text(local_claim.observed)}. "
-                + (
-                    "Undetermined language; "
-                    if unknown
-                    else "Retained for review only; "
-                )
-                + "not an eligible choice."
+                + "Not offered as a choice."
+                + (" The language is not known." if unknown else "")
             ),
         }
-    for provider in report.providers:
+    for provider in field_evidence_providers(report):
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
             for claim in candidate.claims:
                 language = (
@@ -3014,26 +3015,27 @@ def _review_unselectable_evidence(
                     else None
                 )
                 reason = (
-                    "Undetermined language. "
+                    "The language is not known. "
                     if language
                     and type(claim.value) is str
                     and language_is_unknown(claim.value)
-                    else "Recording language conflicts with this item. "
+                    else "That recording is in another language. "
                     if conflict == "recording_language_conflict"
-                    else "Recording language is not one of this library's. "
+                    else "That recording is not in one of this library\u2019s languages. "
                     if conflict == "recording_language_outside_library"
-                    else "Recording variant conflicts with this item. "
+                    else "That recording is a different version of this audiobook. "
                     if conflict is not None
-                    else "Recording timing is invalid or conflicts with this item. "
+                    else "That recording\u2019s running time is unreadable or does not "
+                    "match this audiobook. "
                     if narrator
                     else ""
                 )
                 value = (
                     _choice_text(claim.value)
                     if claim.state is FieldState.VALID and type(claim.value) is str
-                    else "No valid narrator retained"
+                    else "no readable name"
                     if narrator
-                    else "No valid identifier retained"
+                    else "no readable identifier"
                 )
                 observations.setdefault(
                     claim.reference,
@@ -3042,10 +3044,9 @@ def _review_unselectable_evidence(
                         "role": "external_observation",
                         "source": _provider_label(provider.authority),
                         "observation": (
-                            f"{label}: {value}. Retained for review only; "
-                            f"not an eligible choice. {reason}"
+                            f"{label}: {value}. Not offered as a choice. {reason}"
                             + (
-                                "Edition-level detail."
+                                "It belongs to one edition."
                                 if claim.scope is ClaimScope.EDITION
                                 else ""
                             )
@@ -3452,6 +3453,19 @@ _COMPANION_ISBN_REASONS = {
 }
 
 
+# A cover-only lane (#1779) is iTunes asked for an audiobook's cover alone, so
+# its reasons say nothing it returned was compared. As for the companion ISBN
+# lane, an adapter fault, a refusal and a source never searched keep their own
+# reasons; the failure reason covers only a real failure.
+_COVER_ONLY_REASONS = {
+    "candidates": "Searched for a cover only. Nothing else it returns is compared.",
+    "no_match": "Searched for a cover only and found none.",
+}
+_COVER_ONLY_FAILURE_REASON = (
+    "Searched for a cover only. No cover came back, and it is not retried."
+)
+
+
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
@@ -3468,6 +3482,12 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused" or lane.identity_refused
+            else _COVER_ONLY_REASONS.get(lane.status, _COVER_ONLY_FAILURE_REASON)
+            if lane.cover_only
+            and (
+                lane.status in _COVER_ONLY_REASONS
+                or lane.status not in _NON_LIMITING_PROVIDER_STATUSES
+            )
             else _COMPANION_ISBN_REASONS[lane.status]
             if lane.companion_isbn and lane.status in _COMPANION_ISBN_REASONS
             else _PROVIDER_OUTCOME_REASONS.get(
@@ -3478,6 +3498,9 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             # The companion EPUB's ISBN lane, so Sources says where the ISBN
             # an audiobook never states came from (#1723).
             "companion_isbn": lane.companion_isbn,
+            # A cover-only lane, which Sources labels by its cover and Library
+            # leaves out of a work's match and limit (#1779).
+            "cover_only": lane.cover_only,
         }
         for lane in lanes
     ]

@@ -109,6 +109,14 @@ h2 { margin-bottom:.35rem; }
 .shell-error.is-uncertain { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }
 .build-mismatch { display:flex; gap:1rem; align-items:center; justify-content:center; padding:.75rem; color:#211500; background:#ffd27a; }
 .build-mismatch button { color:#211500; background:#fff; }
+/* Clears the 3px focus ring at 3px offset from the sentence: above it when the
+   reload wraps under it, beside its full stop when it shares the line (the
+   lead's end padding, which stays on the sentence's line when Reload wraps, so
+   a wrapped Reload is not indented). A retry that scrolls the read into view
+   shows its whole lead and leaves Reload's ring clear of the edge. */
+.stale-build-read { scroll-margin-block:.75rem; }
+.stale-build-read button { margin-block-start:.375rem; scroll-margin-block:.75rem; }
+.stale-build-read-lead { padding-inline-end:.375rem; }
 /* The masthead anchors the popover, so it opens inside the viewport however the status slot wraps. */
 .preparation-popover { position:absolute; z-index:35; right:clamp(.8rem,3vw,2.6rem); top:100%; width:min(26rem,calc(100% - 1rem)); max-height:max(8rem,min(70vh,calc(100dvh - var(--masthead-clearance,70px) - .5rem))); overflow:auto; padding:1rem; color:var(--ink); background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow); }
 .preparation-popover article { display:grid; gap:.25rem; padding:.6rem 0; border-bottom:1px solid var(--line); }
@@ -346,7 +354,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
    the room. The segmented options wrap onto further rows rather than split a
    word, so at 200% text each option still reads whole. */
 .cm-policy-route :is(h1, h2, .cm-policy-sidebar nav strong, .cm-policy-field > header strong, .cm-policy-representation > span, .cm-policy-control-heading strong, .cm-finish-summary strong, .cm-policy-impact > b) { overflow-wrap:normal; }
-.cm-policy-sidebar nav button small { color:var(--soft); font-size:.75rem; line-height:1.35; }
 .cm-change-count { flex:none; display:grid; width:26px; height:26px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; color:var(--soft); font-size:.75rem; }
 [aria-current='page'] > .cm-change-count { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); }
 .cm-policy-mode { margin:auto .65rem .65rem; padding:.7rem .55rem; border-top:1px solid var(--line); }
@@ -364,7 +371,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-content > header { display:grid; align-content:center; min-height:4.9rem; padding:.95rem 1.35rem .8rem; }
 .cm-policy-content > header > div { max-width:62ch; }
 .cm-policy-content > header h2 { margin:0 0 .18rem; font:700 1.6rem/1.15 Georgia,serif; }
-.cm-policy-content > header p { margin:0; color:var(--soft); font-size:.76rem; line-height:1.4; }
 .cm-policy-field-list { display:grid; border-top:1px solid var(--line); }
 .cm-policy-field { display:grid; grid-template-columns:minmax(190px,.84fr) minmax(260px,1.15fr) minmax(190px,.86fr); align-items:center; gap:.75rem; margin:0; padding:.75rem 1.35rem; border:0; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
 .cm-policy-field.is-changed { background:var(--notice-soft); }
@@ -393,7 +399,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-disclosure[open] > summary::after { content:'\25BE'; }
 .cm-disclosure > ul, .cm-disclosure > p { display:grid; max-width:46ch; gap:.32rem; margin:.4rem 0 0; padding:.48rem .55rem; border-left:1px solid var(--line-strong); color:var(--soft); background:color-mix(in srgb,var(--surface-strong) 65%,transparent); list-style:none; }
 .cm-disclosure li, .cm-disclosure > p { min-width:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.4; }
-.cm-disclosure li strong { color:var(--ink); font-family:inherit; font-size:inherit; }
 .cm-policy-representation-consequence { color:var(--notice); }
 .cm-dropdown { min-width:0; color:var(--ink); font-size:.78rem; }
 .cm-dropdown-trigger { display:grid; width:100%; min-width:0; min-height:50px; grid-template-columns:minmax(0,1fr) 18px; align-items:center; gap:.55rem; padding:.5rem .7rem .5rem .8rem; border:1px solid var(--field-line); border-radius:.65rem; color:var(--ink); background:var(--page); font-family:inherit; font-size:inherit; font-weight:650; line-height:1.2; text-align:left; cursor:pointer; }
@@ -565,7 +570,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-sidebar > header small { grid-column:2; grid-row:1; max-width:22ch; text-align:right; }
   .cm-policy-sidebar nav { grid-template-columns:repeat(4,minmax(0,1fr)); gap:.35rem; }
   .cm-policy-sidebar nav button { min-height:52px; }
-  .cm-policy-sidebar nav button small { display:none; }
   .cm-policy-mode { margin:.15rem .65rem .65rem; }
   .cm-finish-tray:not(.settings-tray) { position:static; }
   .settings-change-review { max-height:min(30vh,14rem); }
@@ -1244,7 +1248,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .evidence-values small { margin-top:.4rem; }
 .source-ledger { min-width:0; margin-top:2.25rem; padding-top:1.1rem; border-top:2px solid var(--ink); }
 .source-ledger summary { min-height:44px; cursor:pointer; color:var(--accent-strong); font-size:.82rem; font-weight:700; }
-.source-ledger > p { margin:.2rem 0; color:var(--soft); font-size:.78rem; line-height:1.5; }
 .source-ledger ul { margin:1rem 0 0; padding:0; border-top:1px solid var(--line); list-style:none; }
 .source-ledger li { display:grid; min-width:0; grid-template-columns:minmax(0,1fr) auto; gap:.2rem .8rem; padding:.85rem 0; border-bottom:1px solid var(--line); }
 .source-ledger li strong,.source-ledger li span,.source-ledger li b,.source-ledger li p,.source-ledger li small { min-width:0; overflow-wrap:anywhere; }

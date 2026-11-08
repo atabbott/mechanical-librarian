@@ -2726,10 +2726,10 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.wait_for_url("**/policy?section=curation")
                 expect(page.locator("#policy-curation")).to_be_focused()
                 # A fresh container activated nothing. The seeded built-in
-                # policy is named as the active baseline and never reported as
+                # policy is named as the active policy and never reported as
                 # a completed owner activation over zero works.
                 page.locator(".cm-policy-sidebar > header").get_by_text(
-                    "Active baseline", exact=True
+                    "Active policy", exact=True
                 ).wait_for()
                 policy_body = page.locator("body").inner_text()
                 assert "Activation complete" not in policy_body
@@ -2765,13 +2765,18 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     ).count()
                     == 0
                 )
-                unsupported_description = policy_chapters.get_by_role(
-                    "button", name="Additional fields"
-                ).get_by_text(
+                # #1765: a chapter carries no caption.
+                unsupported_description = page.get_by_text(
                     "Fields with limited support that start off until you enable them.",
                     exact=True,
                 )
-                assert unsupported_description.count() == 1
+                assert unsupported_description.count() == 0
+                assert (
+                    policy_chapters.get_by_role(
+                        "button", name="Additional fields", exact=True
+                    ).inner_text()
+                    == "Additional fields"
+                )
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 390
                 ), page.evaluate(
@@ -2780,16 +2785,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                         .map(node => [node.tagName, node.className, node.textContent?.slice(0, 40), node.clientWidth, node.scrollWidth, getComputedStyle(node).gridTemplateColumns])"""
                 )
                 genres = page.get_by_role("region", name="Genres")
-                representation = genres.get_by_role(
-                    "combobox", name="Genres representation"
-                )
+                representation = genres.get_by_role("combobox", name="Genres option")
                 representation.focus()
                 page.keyboard.press("Enter")
-                page.get_by_role("listbox", name="Genres representation").wait_for()
+                page.get_by_role("listbox", name="Genres option").wait_for()
                 page.keyboard.press("Escape")
                 expect(representation).to_be_focused()
                 representation.click()
-                menu_box = page.get_by_role("listbox", name="Genres representation")
+                menu_box = page.get_by_role("listbox", name="Genres option")
                 expect(menu_box).to_have_css("scale", "none")
                 menu_box = menu_box.bounding_box()  # type: ignore[assignment]  # reason: the name is deliberately rebound from the Locator to its measured bounding box, which the next lines assert on.
                 assert menu_box is not None
@@ -2803,7 +2806,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # directions, instead of leaving for the end of the page (#1288).
                 for leaving in ("Tab", "Shift+Tab"):
                     representation.click()
-                    page.get_by_role("listbox", name="Genres representation").wait_for()
+                    page.get_by_role("listbox", name="Genres option").wait_for()
                     page.keyboard.press(leaving)
                     expect(representation).to_be_focused()
                     assert page.locator(".cm-dropdown-menu").count() == 0
@@ -2826,7 +2829,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 )
                 page.emulate_media(reduced_motion="reduce")
                 assert page.locator(".cm-dropdown-menu").count() == 0
-                genres_mode = genres.get_by_role("group", name="Genres review mode")
+                genres_mode = genres.get_by_role("group", name="Genres setting")
                 original_mode = next(
                     button.inner_text()
                     for button in genres_mode.get_by_role("button").all()
@@ -2842,7 +2845,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.locator(".cm-finish-tray").get_by_text(
                     "Draft matches the active policy", exact=True
                 ).wait_for()
-                page.get_by_text("Draft matches active policy.", exact=True).wait_for()
+                page.get_by_text(
+                    "Draft matches the active policy.", exact=True
+                ).wait_for()
                 assert (
                     page.evaluate("""() => [...document.querySelectorAll('body *')]
                         .filter(node => !node.closest('.sr-only')
@@ -2918,7 +2923,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 set_root_text(page, "")
                 page.get_by_role("button", name="Validate and preview").click()
                 page.get_by_text(
-                    "Impact preview is current. The active policy is unchanged."
+                    "Impact preview ready. The active policy is unchanged."
                 ).wait_for()
                 review_activation = page.get_by_role("button", name="Review activation")
                 set_root_text(page, "200%")
@@ -2946,7 +2951,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 _assert_primary_fill(review_activation, back_to_editing)
                 page.set_viewport_size({"width": 1440, "height": 900})
-                unsupported_description.wait_for()
+                policy_chapters.get_by_role(
+                    "button", name="Additional fields", exact=True
+                ).wait_for()
+                # The wide sidebar has room for a caption and still shows none.
+                assert unsupported_description.count() == 0
                 assert page.get_by_role(
                     "navigation", name="Policy chapters"
                 ).is_visible()
@@ -3340,6 +3349,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                 ),
                             },
                             classification="automatic_recorded",
+                            classification_cause="automatic_decided",
                             classification_reason=(
                                 "Automatic handling recorded this field; "
                                 "you may inspect or override it."
@@ -3400,7 +3410,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 page.get_by_role("heading", name="Title", exact=True).wait_for()
                 recorded = page.get_by_label("Title recorded outcome")
-                recorded.get_by_text("Resolved automatically", exact=True).wait_for()
+                recorded.get_by_text("Automatic", exact=True).wait_for()
                 expect(recorded.get_by_text("Chosen value", exact=True)).to_be_visible()
                 expect(
                     recorded.get_by_text("Synthetic title revised", exact=True)
@@ -3479,11 +3489,13 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 selected_history = page.get_by_role(
                     "heading", name="Cover chosen"
                 ).locator("..")
-                selected_history.get_by_text("Visual review", exact=False).wait_for()
                 selected_history.get_by_text(
-                    "Owner-confirmed choice: a proposed cover.", exact=False
+                    "The cover reviewer", exact=False
                 ).wait_for()
-                assert "candidate" in selected_history.inner_text().lower()
+                selected_history.get_by_text(
+                    "You chose a proposed cover.", exact=False
+                ).wait_for()
+                assert re.search(r"\d+ covers?\.", selected_history.inner_text())
                 for identifier in (
                     "cover_consideration_",
                     "cover_ref_",
@@ -3553,9 +3565,7 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 comparison = page.get_by_role("region", name="Choose a cover")
                 comparison.wait_for()
                 expect(page.get_by_alt_text("EPUB file cover")).to_be_visible()
-                comparison.get_by_text(
-                    "1 unavailable candidate", exact=False
-                ).wait_for()
+                comparison.get_by_text("1 cover not shown", exact=False).wait_for()
                 assert page.locator(".library-cover-card").count() == 1
                 candidate = page.locator(".library-cover-card").filter(
                     has=page.get_by_alt_text("EPUB file cover")
@@ -3574,7 +3584,7 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                     ".."
                 )
                 selected.get_by_text(
-                    "Owner-confirmed choice: a proposed cover.", exact=False
+                    "You chose a proposed cover.", exact=False
                 ).wait_for()
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
@@ -4534,7 +4544,7 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 _login(page, origin)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()
-                retry = page.get_by_role("button", name="Retry advisory review")
+                retry = page.get_by_role("button", name="Retry visual review")
                 expect(retry).to_be_enabled()
                 with page.expect_response(
                     lambda response: response.url.endswith(
@@ -6232,14 +6242,14 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     expect(
                         page.get_by_role(
                             "button",
-                            name=re.compile("^Narrators · Current value retained"),
+                            name=re.compile("^Narrators · Current value kept"),
                         )
                     ).to_be_visible()
                     page.set_viewport_size({"width": 1440, "height": 900})
 
                 page.get_by_role("link", name="History").click()
                 expect(
-                    page.get_by_text("Owner selected a proposed value.").first
+                    page.get_by_text("You chose a proposed value.").first
                 ).to_be_visible()
                 assert 0 == page.get_by_text(RECORDED_ONLY_REASON).count()
                 if chapter_runtime:
@@ -6424,9 +6434,8 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 expect(choice).to_be_visible()
                 expect(choice).to_contain_text("B0SYNE7P1K")
                 expect(choice).to_contain_text(
-                    "Selected from Audible and Audnexus to fill an empty ASIN field "
-                    "under a qualified automatic policy; the runtime gate "
-                    "corroborated that this recording is that product."
+                    "Chosen from Audible and Audnexus to fill the empty ASIN field. "
+                    "The running time confirms this recording is that product."
                 )
 
                 # Narrators is named by the same two authorities and has no
@@ -6446,9 +6455,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 narrators = page.locator(".direct-choice").first
                 expect(narrators).to_be_visible()
                 expect(narrators).to_contain_text("Ilsa Brandt")
-                assert (
-                    0 == page.get_by_text("under a qualified automatic policy").count()
-                )
+                assert 0 == page.get_by_text("to fill the empty ASIN field").count()
                 expect(
                     page.get_by_role(
                         "radio", name=re.compile("^Choose proposed value: ")
@@ -7923,9 +7930,15 @@ def test_sign_in_failures_are_specific_and_recoverable() -> None:
                     )
                     page.unroute("**/api/v1/session/login", throttle)
 
-                    page.get_by_text("Forgotten the owner password?").click()
+                    # One heading, with no eyebrow, tagline or reassurance
+                    # stacked around it (#1765 entry 1).
+                    expect(page.get_by_role("heading", level=1)).to_have_text(
+                        "Sign in to review your library"
+                    )
+                    assert page.locator(".eyebrow, .lede").count() == 0
+                    page.get_by_text("Forgot the owner password?").click()
                     guide = page.get_by_role(
-                        "link", name="Read the recovery steps in the deployment guide"
+                        "link", name="Recovery steps in the deployment guide"
                     )
                     expect(guide).to_be_visible()
                     expect(guide).to_have_attribute(
@@ -9994,7 +10007,7 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 ).click()
                 expect(
                     page.get_by_text(
-                        "The response was lost. The current case was reloaded before any retry."
+                        "No answer came back. Check whether your choice was recorded before choosing again."
                     )
                 ).to_be_visible()
                 page.unroute("**/decisions")
@@ -10003,7 +10016,7 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 ).click()
                 expect(
                     page.get_by_text(
-                        "The response was lost. The current case was reloaded before any retry."
+                        "No answer came back. Check whether your choice was recorded before choosing again."
                     )
                 ).to_have_count(0)
                 context.close()
@@ -10338,20 +10351,18 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                     )
                 ).to_have_count(0)
                 expect(
-                    page.get_by_role(
-                        "heading", name="Advised description · Authored content"
-                    ).first
+                    page.get_by_role("heading", name="Description advice").first
                 ).to_be_visible()
                 if state == "automatic":
                     expect(
                         page.get_by_text(
-                            "Applied and verified in the library.", exact=False
+                            "Written to the library and checked.", exact=False
                         )
                     ).to_be_visible()
                 if state == "no_change":
                     expect(
                         page.get_by_text(
-                            "No change needed; the library already had this text.",
+                            "No change needed. The library already had this text.",
                             exact=False,
                         )
                     ).to_be_visible()
@@ -10409,7 +10420,9 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                     retained = page.get_by_role(
                         "region", name="Description recorded outcome"
                     )
-                    expect(retained).to_contain_text("Resolved automatically")
+                    expect(
+                        retained.get_by_text("Automatic", exact=True)
+                    ).to_be_visible()
                     expect(retained).to_contain_text("Existing description.")
                 else:
                     expect(
@@ -10844,7 +10857,7 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             expect(page.get_by_text("English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Evidence", exact=True).click()
             page.get_by_text(
-                "Undetermined language; not an eligible choice", exact=False
+                "Not offered as a choice. The language is not known.", exact=False
             ).wait_for()
             expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
             # The page names the language beside its tag, as Library does (#1286 L1).
@@ -11002,10 +11015,13 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             if destination == "ignore":
+                # An ignored field keeps no source answers, so Evidence
+                # leaves it out once the read has finished.
+                expect(page.locator(".diagnostic-complete").first).to_be_visible()
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_have_count(0)
                 expect(
                     page.get_by_role("heading", name="Genres", exact=True)
-                ).to_be_visible()
+                ).to_have_count(0)
             else:
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_be_visible()
             if destination != "ignore":
@@ -11123,7 +11139,9 @@ def test_owner_enters_a_title_at_enlarged_text():
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
         panel = page.get_by_role("region", name="Your value for Title")
         expect(
-            page.get_by_text("There’s no other value to choose from.")
+            page.locator(
+                ".decision-context", has_text="No source offered a different value."
+            )
         ).to_have_count(0)
         panel.get_by_role("button", name="Enter a value", exact=True).click()
         field = panel.get_by_role("textbox", name="Your value for Title")
@@ -11198,8 +11216,8 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         ).to_be_focused()
         assert "genres" in _attention_destinations(page, case_id)
         page.get_by_role("link", name="History", exact=True).click()
-        expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
-        expect(page.get_by_text("Owner entered a value.")).to_be_visible()
+        expect(page.get_by_text("You withdrew your choice.")).to_be_visible()
+        expect(page.get_by_text("You entered a value.")).to_be_visible()
 
 
 def _choose_previous_title(page: Page, origin: str, case_id: str):
@@ -11602,15 +11620,18 @@ def test_same_name_series_owner_journey(media, destination):
                 if media == "ebook":
                     expect(
                         page.get_by_text(
-                            "Selected from Hardcover to fill an empty Series field"
+                            "Chosen from Hardcover to fill the empty Series field"
                         )
                     ).to_be_visible()
             else:
                 expect(choice).to_have_count(0)
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Series", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 expect(
                     page.get_by_text("Series membership: " + title, exact=False).first
@@ -11979,9 +12000,12 @@ def test_audiobook_synopsis_owner_journey(destination):
                     page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(
@@ -12067,9 +12091,12 @@ def test_ebook_synopsis_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
@@ -12265,7 +12292,12 @@ def test_ebook_isbn_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
-            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_be_visible()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
+            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_have_count(
+                0 if destination == "ignore" else 1
+            )
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
@@ -12379,7 +12411,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             # changes: the mixed case a truthful preview has to keep apart.
             page.goto(f"{origin}/policy?section=identity")
             chapters = page.get_by_role("navigation", name="Policy chapters")
-            # Language has one representation, so its destination changes.
+            # Language has one option, so its setting changes.
             page.get_by_role("region", name="Language", exact=True).get_by_role(
                 "button", name="Ignore", exact=True
             ).click()
@@ -12392,7 +12424,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                         "button", name=re.compile(f"^{chapter}")
                     ).click()
                 region = page.get_by_role("region", name=field, exact=True)
-                region.get_by_role("combobox", name=f"{field} representation").click()
+                region.get_by_role("combobox", name=f"{field} option").click()
                 page.get_by_role("option", name=option, exact=True).click()
             tags = page.get_by_role("region", name="Tags", exact=True)
             tags.get_by_role("button", name="Automatic", exact=True).click()
@@ -12433,7 +12465,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 "Not previewed.This rule takes effect on the next preparation."
             )
             expect(
-                result.get_by_text("No policy-caused changes in this sample")
+                result.get_by_text("No changes from the draft in this sample")
             ).to_have_count(0)
             assert page.locator(".cm-policy-preview-list > div").last.evaluate(
                 "node => node.classList.contains('is-unpreviewed')"

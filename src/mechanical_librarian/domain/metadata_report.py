@@ -52,6 +52,7 @@ from mechanical_librarian.domain.cover_evidence import (
     EpubCoverRecovery,
     publication_ready,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -169,6 +170,10 @@ AUDIOBOOK_MARKETPLACE_LANGUAGES: Mapping[str, tuple[str, ...]] = MappingProxyTyp
 AUDIOBOOK_PROVIDER_AUTHORITIES = frozenset(
     {"audible_catalog", "audiosilo", "audnexus", "itunes_search"}
 )
+# The audiobook authorities asked for a cover alone (ADR-0061 clause 9, #1779).
+# Their observation stays in an audio report so its cover binds, but nothing
+# else reads it there: see `provider_supplies_field_evidence`.
+COVER_ONLY_AUDIOBOOK_AUTHORITIES = frozenset({"itunes_search"})
 MAX_CONTRIBUTIONS = 16
 MAX_SERIES = 16
 MAX_TAGS = 32
@@ -6143,6 +6148,30 @@ class MetadataReport:
         return report
 
 
+def provider_supplies_field_evidence(
+    report: MetadataReport, observation: ProviderObservation
+) -> bool:
+    """Whether a report reads this observation as evidence beyond its cover.
+
+    A cover-only authority on an audio report supplies no field value, backing,
+    field result, recording fact or running time (#1779). Only the cover
+    observer and cover identity read its observation there.
+    """
+    return (
+        report.audio is None
+        or observation.authority not in COVER_ONLY_AUDIOBOOK_AUTHORITIES
+    )
+
+
+def field_evidence_providers(report: MetadataReport) -> tuple[ProviderObservation, ...]:
+    """The report's observations that `provider_supplies_field_evidence` admits."""
+    return tuple(
+        observation
+        for observation in report.providers
+        if provider_supplies_field_evidence(report, observation)
+    )
+
+
 def derive_field_results(
     local_claims: tuple[LocalClaim, ...],
 ) -> tuple[FieldResult, ...]:
@@ -7970,12 +7999,13 @@ def _cover_source_from_data(value: object) -> CoverSource:
     )
     artifact = None
     if item["artifact"] is not None:
-        artifact = CoverArtifact(
-            **_object(
+        fields = dict(
+            _object(
                 item["artifact"],
                 {
                     "artifact_id",
                     "height",
+                    "measures",
                     "media_type",
                     "original_digest",
                     "perceptual_hash",
@@ -7984,6 +8014,11 @@ def _cover_source_from_data(value: object) -> CoverSource:
                     "width",
                 },
             )
+        )
+        measures = fields.pop("measures")
+        artifact = CoverArtifact(
+            **fields,
+            measures=None if measures is None else CoverMeasures.from_data(measures),
         )
     provenance = None
     if item["provenance"] is not None:
@@ -8578,6 +8613,7 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 __all__ = [
     "AUDIO_SET_SCHEMA",
     "CORROBORATED_RULE_AUTHORITY",
+    "COVER_ONLY_AUDIOBOOK_AUTHORITIES",
     "RecordingCorroboration",
     "lane_work_ladder",
     "provider_candidate_identity_title_claims",
@@ -8670,6 +8706,8 @@ __all__ = [
     "publication_date_relation",
     "default_target_fields",
     "derive_identifier_evidence",
+    "field_evidence_providers",
+    "provider_supplies_field_evidence",
     "isbn_family",
     "normalize_date_value",
     "normalize_title",

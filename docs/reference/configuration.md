@@ -351,7 +351,7 @@ exists. What each one contacts is in
 | `audible_catalog` | Primary discovery and enrichment | Optional, default `true` |
 | `audnexus` | Per-ASIN enrichment, including chapters | Must be `false` |
 | `audiosilo` | Community corroboration and degraded mode | Must be `false` |
-| `itunes_search` | Searches audiobook listings to corroborate ebooks; receives no audiobook requests | Optional, default `true` |
+| `itunes_search` | Searches audiobook listings to corroborate ebooks, and supplies audiobook covers | Optional, default `true` |
 
 An enabled `audible_catalog` also takes `marketplaces`: the ordered,
 non-empty, duplicate-free list of Audible marketplaces an ASIN is resolved
@@ -366,9 +366,11 @@ An ebook is sent only to referenced providers in the ebook set:
 `open_library`. Audible, Audnexus and AudioSilo receive no ebook requests.
 
 An audiobook is sent only to referenced providers in the audiobook set:
-`audible_catalog`, `audnexus`, `audiosilo`, `hardcover` and `open_library`.
-A library's references narrow that set and never widen it. Google Books,
-Inventaire and iTunes receive no audiobook requests.
+`audible_catalog`, `audnexus`, `audiosilo`, `hardcover`, `itunes_search` and
+`open_library`. A library's references narrow that set and never widen it.
+iTunes gets one title-and-author search per audiobook and supplies only its
+cover. That search is sent only while its `cover_enabled` is on. Google Books
+and Inventaire receive no audiobook requests.
 
 ### Covers
 
@@ -378,10 +380,10 @@ are recorded as truncated.
 
 Settings shows a **Cover evidence** switch only for `audible_catalog` (its art
 becomes an audiobook cover source) and `itunes_search` (a matching audiobook
-listing's art is offered as an ebook cover alternative). The switch is hidden
+listing's art is offered as a cover for ebooks and audiobooks). The switch is hidden
 and off while the provider is disabled. In a configuration file it defaults to
 on; guided setup saves `cover_enabled: false` for both, so in store mode their
-covers start off.
+covers start off and iTunes is sent no audiobook until its switch is on.
 
 The screens show one fixed display name per adapter, never the instance `name`.
 

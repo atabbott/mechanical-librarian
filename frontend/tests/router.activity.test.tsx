@@ -1440,13 +1440,13 @@ describe('Activity route', () => {
               policy_changes: [
                 {
                   field: 'Title layout',
-                  setting: 'Review mode',
+                  setting: 'Setting',
                   previous: 'Ask me',
                   next: 'Automatic',
                 },
                 {
                   field: 'Description fill',
-                  setting: 'Representation',
+                  setting: 'Option',
                   previous: 'Safe plain text',
                   next: 'Visible Google text',
                 },
@@ -1498,7 +1498,7 @@ describe('Activity route', () => {
     await user.click(disclosureFor('Library policy'))
     const table = screen.getByLabelText('2 exact policy changes')
     expect(table).toHaveTextContent('Title layout')
-    expect(table).toHaveTextContent('Review mode')
+    expect(table).toHaveTextContent('Setting')
     expect(table).toHaveTextContent('Ask me')
     expect(table).toHaveTextContent('Automatic')
     expect(table).toHaveTextContent('Visible Google text')
@@ -1639,6 +1639,116 @@ describe('Activity route', () => {
       screen.queryByText('More recorded transitions could not be loaded.', { exact: false }),
     ).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  describe('a transitions retry hands focus to what replaced it (#1742)', () => {
+    const transitionId = 'effect_plan_' + 'a'.repeat(64)
+    const page = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        event_id: `transition-${String(from + index + 1)}`,
+        occurred_at: from + index + 1,
+        sequence: from + index + 1,
+        state: 'planned',
+        failure: null,
+      }))
+    const render = async (getActivityTransitions: ReviewHttp['getActivityTransitions']) => {
+      const user = userEvent.setup()
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () =>
+          activity({ events: [{ event_id: 'lifecycle', transition_id: transitionId }] }),
+        ),
+        getActivityTransitions: vi.fn(getActivityTransitions),
+      }
+      renderRoute('/activity', http)
+      await user.click(await screen.findByRole('button', { name: /^Details for /u }))
+      return user
+    }
+
+    it.each(['mismatch', 'success', 'held read'] as const)(
+      'moves focus after the recorded transitions Try again meets a %s',
+      async (outcome) => {
+        let reads = 0
+        let release: () => void = () => undefined
+        const user = await render(async () => {
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          if (outcome === 'held read')
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+          return { events: page(0, 3), has_more: false }
+        })
+        const alert = await screen.findByRole('alert')
+        await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+        if (outcome === 'held read') {
+          // A first-read retry renders the loading line in place of Try again.
+          const loading = await screen.findByText('Loading recorded transitions…')
+          expect(document.body).not.toHaveFocus()
+          expect(document.activeElement).toContainElement(loading)
+          release()
+        }
+        const target =
+          outcome === 'mismatch'
+            ? await screen.findByRole('button', { name: 'Reload' })
+            : await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+        await waitFor(() => expect(target).toHaveFocus())
+        expect(document.body).not.toHaveFocus()
+      },
+    )
+
+    it('keeps Load more transitions focusable while it reads', async () => {
+      let release: () => void = () => undefined
+      let moreReads = 0
+      const user = await render(async (_eventId, afterSequence) => {
+        if (afterSequence === undefined) return { events: page(0, 20), has_more: true }
+        moreReads += 1
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return { events: page(20, 5), has_more: false }
+      })
+      const more = await screen.findByRole('button', { name: 'Load more transitions' })
+      await user.click(more)
+      const loading = await screen.findByRole('button', { name: 'Loading transitions…' })
+      expect(loading).toBe(more)
+      expect(loading).not.toBeDisabled()
+      expect(loading).toHaveAttribute('aria-disabled', 'true')
+      expect(loading).toHaveFocus()
+      // A press while it reads is ignored.
+      await user.click(loading)
+      expect(moreReads).toBe(1)
+      await act(async () => release())
+    })
+
+    it.each(['mismatch', 'last page'] as const)(
+      'moves focus after the more transitions Try again meets a %s',
+      async (outcome) => {
+        let more = 0
+        const user = await render(async (_eventId, afterSequence) => {
+          if (afterSequence === undefined) return { events: page(0, 20), has_more: true }
+          more += 1
+          if (more === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { events: page(20, 5), has_more: false }
+        })
+        await user.click(await screen.findByRole('button', { name: 'Load more transitions' }))
+        const alert = await screen.findByRole('alert')
+        await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+        if (outcome === 'mismatch') {
+          const reload = await screen.findByRole('button', {
+            name: 'Reload',
+          })
+          await waitFor(() => expect(reload).toHaveFocus())
+        } else {
+          const list = screen.getByRole('list', { name: 'Recorded lifecycle transitions' })
+          await waitFor(() => expect(list.querySelectorAll('li')).toHaveLength(25))
+          await waitFor(() => expect(list.querySelectorAll('li')[20]).toHaveFocus())
+        }
+        expect(document.body).not.toHaveFocus()
+      },
+    )
   })
 
   it('reaches every bounded lifecycle transition and recovers a disclosure read', async () => {
@@ -3364,6 +3474,71 @@ it.each([false, null, 'error'] as const)(
     expect(http.activityCommand).not.toHaveBeenCalled()
   },
 )
+
+describe('write-permission readiness on an earlier build (#1742)', () => {
+  const reloadName = 'Reload'
+  const staleLead = (lead: string) => {
+    const element = screen.getByText(lead, { exact: false })
+    expect(element).not.toHaveAttribute('role')
+    expect(element.closest('[role="alert"]')).toBeNull()
+    return element
+  }
+
+  it('offers the reload when the readiness check meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness).mockRejectedValue(new BuildMismatchError())
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await screen.findByRole('button', { name: reloadName })
+    expect(staleLead('Permission readiness was not loaded.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry permission check' })).toBeNull()
+    expect(screen.queryByText(/Permission readiness is unavailable\./u)).toBeNull()
+  })
+
+  it('moves focus to the reload when Retry permission check meets a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness)
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+      .mockRejectedValue(new BuildMismatchError())
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await user.click(await screen.findByRole('button', { name: 'Retry permission check' }))
+    const reload = await screen.findByRole('button', { name: reloadName })
+    await waitFor(() => expect(reload).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  })
+
+  it('offers the reload, and sends no grant, when Confirm re-reads the basis on a newer build', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(
+      permissionReadiness(permissionHistory),
+    )
+    vi.mocked(http.getActivityConsent).mockRejectedValue(new BuildMismatchError())
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await waitFor(() => expect(screen.getByRole('checkbox')).toBeEnabled())
+    await user.click(screen.getByRole('checkbox'))
+    const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
+    await user.click(confirm)
+    const reload = await screen.findByRole('button', { name: reloadName })
+    staleLead('Permission readiness was not checked again, so no permission was granted.')
+    await waitFor(() => expect(reload).toHaveFocus())
+    expect(confirm).toHaveAttribute('aria-disabled', 'true')
+    await user.click(confirm)
+    expect(http.getActivityConsent).toHaveBeenCalledOnce()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    expect(
+      screen.queryByText('The activity outcome could not be confirmed.', { exact: false }),
+    ).toBeNull()
+    expect(screen.queryByText(/Permission readiness is unavailable\./u)).toBeNull()
+  })
+})
 
 it('keeps history usable during checking and discards a late result after close and reopen', async () => {
   const user = userEvent.setup()

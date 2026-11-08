@@ -447,10 +447,24 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v73",
+            "previous v73",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v73",
+            ),
+        ),
+        (
+            "previous v74",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v74",
+            ),
+        ),
+        (
+            "immediate previous v75",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v75",
             ),
         ),
         (
@@ -621,6 +635,9 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
+            ("retained_cover_bindings",),
+            ("retained_cover_listings",),
+            ("retained_cover_removals",),
             ("review_attention_facts",),
             ("review_case_episodes",),
             ("review_case_field_facts",),
@@ -861,8 +878,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         old.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
-            # history indexes, #1204's indexes, #1211's case indexes and #1232's
-            # attention facts.
+            # history indexes, #1204's indexes, #1211's case indexes, #1232's
+            # attention facts and #1363's retained cover tables.
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
@@ -870,7 +887,10 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                         persistence_schema._ATTENTION_FACT_OBJECTS
                     )
                 )
-                + "DROP TRIGGER metadata_reports_project_browse_facts;"
+                + "DROP TABLE retained_cover_listings;"
+                "DROP TABLE retained_cover_removals;"
+                "DROP TABLE retained_cover_bindings;"
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_browse_facts;"
                 "DROP TRIGGER proposal_sets_project_browse_facts;"
@@ -2625,8 +2645,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         with closing(open_repository(path)) as repository:
             if not current_scaffolding:
                 # The earlier producers predate #1199's report browse facts,
-                # #1202's history indexes, #1204's indexes, #1211's case indexes
-                # and #1232's attention facts.
+                # #1202's history indexes, #1204's indexes, #1211's case indexes,
+                # #1232's attention facts and #1363's retained cover tables.
                 repository._connection.executescript(
                     "".join(
                         f"DROP {kind.upper()} {name};"
@@ -2634,7 +2654,10 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                             persistence_schema._ATTENTION_FACT_OBJECTS
                         )
                     )
-                    + "DROP TRIGGER metadata_reports_project_browse_facts;"
+                    + "DROP TABLE retained_cover_listings;"
+                    "DROP TABLE retained_cover_removals;"
+                    "DROP TABLE retained_cover_bindings;"
+                    "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_browse_facts;"
                     "DROP TRIGGER proposal_sets_project_browse_facts;"
@@ -2653,9 +2676,13 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE review_case_episodes;"
                 )
             else:
-                # The v20 producer predates #1358's case episodes and #1310's
-                # resolution index led by the resolved id.
+                # The v20 producer predates #1358's case episodes, #1310's
+                # resolution index led by the resolved id and #1363's retained
+                # cover tables.
                 repository._connection.executescript(
+                    "DROP TABLE retained_cover_listings;"
+                    "DROP TABLE retained_cover_removals;"
+                    "DROP TABLE retained_cover_bindings;"
                     "DROP TABLE review_case_episodes;"
                     "DROP INDEX metadata_policy_resolutions_resolved;"
                     "CREATE INDEX metadata_policy_resolutions_resolved "

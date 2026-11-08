@@ -37,6 +37,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarReading,
     AudioSidecarShadow,
     AudioSidecarShadowField,
+    association_file_reference,
     association_text,
     normalize_duration_seconds,
 )
@@ -952,7 +953,8 @@ def _libation_facts(
     Claims: `asin`, `narrators[].name`, `language`, `publisher_summary` and
     `series[].sequence`.  Shadow only, until #1482 qualifies them:
     `series[].title` and `format_type`.  Association text only: `title` and
-    `authors[].name`.  A product under a `product` wrapper is read wrapped.
+    `authors[].name`; each `narrators[].name` is association text as well as
+    a claim.  A product under a `product` wrapper is read wrapped.
     """
     try:
         document = json.loads(sidecar.text)
@@ -981,6 +983,8 @@ def _libation_facts(
                         key=support_key,
                         role="narrator",
                     )
+                    # A narrator is a creator for association too (#1481).
+                    text.add_creator(item.get("name"))
         elif key == "series" and type(value) is list:
             for item in value[:_MAX_JSON_VALUES]:
                 if type(item) is not dict:
@@ -1184,7 +1188,8 @@ def _opf_sidecar_facts(
     external entity, no DTD, and no nesting is ever resolved, so an OPF sidecar
     cannot become a parser attack surface the way a real document tree would.
     `dc:title` and each `dc:creator` with no role or the role `aut` are read as
-    association text only.
+    association text only; a narrator `dc:contributor` is association text as
+    well as a claim, since a title and a narrator are enough to belong.
     """
     for name, attributes, raw in _xml_elements(sidecar.text):
         lowered = name.lower()
@@ -1208,6 +1213,7 @@ def _opf_sidecar_facts(
                 key="dc:contributor",
                 role="narrator",
             )
+            text.add_creator(value)
         elif lowered == "title":
             text.name_title(value)
         elif lowered == "creator" and _xml_role(attributes) in {None, "aut"}:
@@ -1248,7 +1254,10 @@ _LINE_KEYS: dict[str, AudioInspectionField] = {
 }
 # NFO lines read as association text only.
 _NFO_TITLE_KEYS = frozenset({"title"})
-_NFO_CREATOR_KEYS = frozenset({"author", "authors"})
+# A narrator line is association text as well as a claim (#1481).
+_NFO_CREATOR_KEYS = frozenset(
+    {"author", "authors", "narrator", "narrators", "performer"}
+)
 
 
 def _cue_file_value(line: str) -> str | None:
@@ -1287,7 +1296,7 @@ def _line_sidecar_facts(
                     # a path, a control, an over-long name -- names none of
                     # them, so it is recorded as another file, not as none.
                     file_seen = True
-                    text.file_reference = association_text(value)
+                    text.file_reference = association_file_reference(value)
                     text.file_refused = text.file_reference is None
         matched = grammar.match(line)
         if matched is None:

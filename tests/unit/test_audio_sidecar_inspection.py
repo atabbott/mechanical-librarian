@@ -209,6 +209,41 @@ def test_another_books_document_supplies_nothing(
     assert all(_MARKER not in str(claim.observed) for claim in result.claims)
 
 
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        (
+            "folder.opf",
+            "<package><metadata>"
+            f"<dc:title>{_TITLE}</dc:title>"
+            f'<dc:contributor opf:role="nrt">{_NARRATOR}</dc:contributor>'
+            "<dc:language>English</dc:language>"
+            "</metadata></package>",
+        ),
+        ("book.nfo", f"Title: {_TITLE}\nNarrator: {_NARRATOR}\nLanguage: English\n"),
+        (
+            "book.metadata.json",
+            json.dumps(
+                {
+                    "asin": _OTHER_ASIN,
+                    "title": _TITLE,
+                    "narrators": [{"name": _NARRATOR}],
+                }
+            ),
+        ),
+    ],
+)
+def test_a_document_stating_the_title_and_a_narrator_but_no_author_belongs(
+    tmp_path: Path, child: GrammarChild, name: str, text: str
+) -> None:
+    """Title plus an author or a narrator: the narrator is a creator too."""
+    result = _inspect(tmp_path, {name: text})
+
+    [entry] = result.audio.sidecars
+    assert entry.refusals == ()
+    assert entry.claims or entry.echoed
+
+
 def test_an_opf_asin_equal_to_the_asserted_one_is_withheld_as_an_echo(
     tmp_path: Path, child: GrammarChild
 ) -> None:

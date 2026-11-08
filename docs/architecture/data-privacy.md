@@ -68,7 +68,7 @@ No store, log, diagnostic, support bundle or API response contains:
   item's service and mount path, and no report, list or API response shows
   one), arbitrary EPUB text or audio content;
 - an inventory beyond the bounded current catalogue;
-- prior cover bytes, except in the recovery directory below;
+- prior cover bytes, except in the recovery and retained directories below;
 - secrets outside the settings stores above;
 - the Open Library contact email anywhere except the settings and that
   provider's requests (it is also kept out of every report identity and
@@ -89,6 +89,19 @@ abandoned. A cover upload reads only the digest-verified original and keeps
 no copy. Those bytes and their path never appear in documents, APIs, logs,
 diagnostics, fixtures, exports, support bundles or reviewer input.
 
+When an automatic switch replaces a cover that was already there, that
+original is also kept so it can be put back (#1363). The plan's recovery copy
+must hash to the plan's own pre-value; it is bound to the plan in an
+append-only record and then kept under its SHA-256 in an owner-only
+`retained-covers` directory beside the recovery directory. The directory holds
+at most 2,000 originals or 2 GiB. When it is full, nothing older is dropped:
+the new switch stops and nothing is written. If the write ends any way
+other than verified, or a newer switch pushes it off the list of the most
+recent 1,000 switches, a persisted, retryable obligation removes the copy,
+queued in the same transaction as that change. A retained original is never
+exported, logged, offered as a download or sent to a reviewer, and its path
+appears nowhere.
+
 ## What leaves the host
 
 The product sends no telemetry. It contacts only:
@@ -100,7 +113,8 @@ The product sends no telemetry. It contacts only:
   email. When Audiobookshelf names no author for an ebook, its EPUB's own
   creators are sent instead. Hardcover also receives case forms of the title
   and inverted or initials forms of an author's name, derived only from values
-  already sent;
+  already sent. iTunes Search receives an audiobook's title and author once, to
+  find its cover, and only while its cover switch is on;
 - **an AI reviewer**, only if the owner selected one
   ([AI trust boundary](ai-boundary.md)). Cover review sends opaque candidate
   references, re-encoded previews, incumbent state and bounded public provider
@@ -130,8 +144,8 @@ All owner surfaces need a session and are `private, no-store`.
   private projection to stdout; keep it out of public logs and support
   artifacts.
 - **Support preview and export** are capped, allow-listed and re-redacted;
-  databases, environment, secrets, paths, metadata, excerpts, media, covers
-  and recovery bytes are excluded.
+  databases, environment, secrets, paths, metadata, excerpts, media, covers,
+  recovery bytes and retained originals are excluded.
 
 The process also keeps validated documents in memory to serve these reads:
 up to 64 MiB of Activity facts, report text for Activity bounded at 48 Mi
