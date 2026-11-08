@@ -16,6 +16,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverEvidenceError,
     CoverSourceState,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 _MAX_PREVIEW_BYTES = 1024 * 1024
@@ -110,12 +111,14 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
             "state",
             "format",
             "height",
+            "measures",
             "perceptual_hash",
             "preview",
             "width",
         }:
             raise ValueError
         preview = base64.b64decode(value["preview"], validate=True)
+        measures = CoverMeasures.from_data(value["measures"])
         if (
             type(value["format"]) is not str
             or type(value["width"]) is not int
@@ -136,11 +139,13 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
             value["width"],
             value["height"],
             value["perceptual_hash"],
+            measures,
         )
     except CoverEvidenceError as error:
         # The hash is the child's own statement about bytes this process never
         # decodes, so a malformed one is a rejected decode rather than a fault
-        # in the report the caller is assembling.
+        # in the report the caller is assembling. Malformed measures are
+        # refused the same way, above.
         raise CoverDecodeRejected(CoverSourceState.DECODE_FAILED) from error
     return DecodedCover(artifact, preview)
 

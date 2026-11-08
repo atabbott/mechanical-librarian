@@ -110,18 +110,8 @@ def _flag(value: dict[str, object], key: str) -> bool:
 
 def _measures(value: dict[str, object]) -> CoverMeasures | None:
     raw = value.get("measures")
-    if raw is None:
-        return None
-    data = _object(raw, {"phash", "dhash", "colour", "layout"})
-    colour, layout = data["colour"], data["layout"]
-    if type(colour) is not list or type(layout) is not list:
-        raise Refusal("input shape is invalid")
-    return CoverMeasures(
-        data["phash"],  # type: ignore[arg-type]  # reason: CoverMeasures refuses a non-str
-        data["dhash"],  # type: ignore[arg-type]  # reason: as above
-        tuple(colour),
-        tuple(layout),
-    )
+    # The report's own reader, so a replay reads measures exactly as stored.
+    return None if raw is None else CoverMeasures.from_data(raw)
 
 
 def _field(
