@@ -164,6 +164,11 @@ brackets are GitHub issues.
   and a "review mode"; the chapters lose their captions; the impact preview
   counts undecided works; lost answers say "No answer came back"; and
   "authoritative", "retained", "reconciled" and "safely" are gone (#1765).
+- Activity reads in your words. The page is "Activity", without an
+  introduction; writes are paused with "Pause writes"; a stopped change says
+  the same word as its result; a policy change names each field, setting and
+  option as Policy does; lost answers say "No answer came back"; and
+  "authoritative server", "safely", "provider" and "owner" are gone (#1765).
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).

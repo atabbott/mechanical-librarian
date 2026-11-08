@@ -211,9 +211,9 @@ def test_load_more_transitions_keeps_focus_while_it_reads_and_its_retry_focuses_
             lambda route: held.append(route),
         )
         page.goto(f"{origin}/activity")
-        page.get_by_role("heading", name="Activity ledger").wait_for()
+        page.get_by_role("heading", name="Ledger", exact=True).wait_for()
         row = page.locator("article").filter(
-            has=page.get_by_role("list", name="Recorded lifecycle transitions")
+            has=page.get_by_role("list", name="Recorded transitions")
         )
         details = page.locator("article").filter(
             has=page.get_by_role("button", name=re.compile(r"^Details for "))
@@ -412,13 +412,17 @@ def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
         # Confirm re-reads the consent basis, which meets the next build: the
         # Reload at the top of the permission panel is brought into view.
         page.goto(f"{origin}/activity")
-        page.get_by_role("heading", name="Activity and recovery").wait_for()
+        page.get_by_role("heading", name="Activity", exact=True).wait_for()
         review = page.locator("#activity-consent")
         page.get_by_role("button", name="Review write permissions").click()
         page.get_by_text(
-            "Backup readiness checked. Review the included and excluded destinations.",
+            "Backup checked.",
             exact=True,
         ).wait_for()
+        readiness = review.locator(":scope > p[role='status']")
+        expect(readiness).to_have_text("Backup checked.")
+        shown = readiness.bounding_box()
+        assert shown is not None and shown["height"] > 1, shown
         review.get_by_role("checkbox", name="fiction").check()
         page.route(
             re.compile(r".*/api/v1/activity/consent-state.*"), _answer_as_next_build
@@ -438,6 +442,13 @@ def test_the_reload_a_confirm_re_read_focuses_is_scrolled_into_view(
             "masthead => masthead.getBoundingClientRect().bottom"
         )
         assert lead_top >= masthead_bottom, (lead_top, masthead_bottom)
+        # The emptied readiness line stays mounted, so its next line is
+        # announced, but takes no space while it is empty (#1765).
+        expect(readiness).to_have_count(1)
+        expect(readiness).to_have_text("")
+        hidden = readiness.bounding_box()
+        assert hidden is not None, hidden
+        assert hidden["width"] <= 1 and hidden["height"] <= 1, hidden
 
 
 @pytest.mark.parametrize(

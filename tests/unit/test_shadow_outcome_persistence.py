@@ -4281,7 +4281,9 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         assert automatic_activity[0]["origin"] == "automatic_policy"
         assert not [
             event
-            for event in activity_service.activity(search="Library owner")["events"]
+            # The automatic row is never credited to you: search text joins
+            # each label to its value with a newline (#1765).
+            for event in activity_service.activity(search="chosen by\nyou")["events"]
             if event["event_id"] == automatic.decision_id
         ]
 

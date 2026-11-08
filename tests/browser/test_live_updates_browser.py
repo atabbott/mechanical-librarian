@@ -665,7 +665,7 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
 
                 page.set_viewport_size({"width": 1440, "height": 900})
                 page.goto(f"{origin}/activity")
-                page.get_by_role("heading", name="Activity and recovery").wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 page.locator(".cm-write-consent").wait_for(timeout=8_000)
                 page.get_by_role("button", name="Review write permissions").wait_for(
                     timeout=8_000
@@ -707,14 +707,14 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 _fits_every_width(page, ".cm-activity-status")
                 page.get_by_role("button", name="Review write permissions").click()
                 page.get_by_text(
-                    "Backup readiness checked. Review the included and excluded destinations.",
+                    "Backup checked.",
                     exact=True,
                 ).wait_for()
                 expect(
                     page.get_by_role("button", name="Confirm write permissions")
                 ).to_be_disabled()
                 _fits_every_width(page, ".activity-consent-ledger")
-                page.get_by_role("button", name="Cancel permission review").click()
+                page.get_by_role("button", name="Cancel", exact=True).click()
                 # The Activity row gained two flexible columns and a policy
                 # table, and every one of them is sized by its own text: an
                 # exact change, a category pill, a setting name and two policy
@@ -819,7 +819,7 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 )
 
 
-_BASIS_CHANGED = "Your library settings changed. Review the permissions again."
+_BASIS_CHANGED = "Your library settings changed. Check write permissions again."
 # The words a consent label must keep whole, and the synthetic name that tests it.
 _CONSENT_LABELS = (
     ".activity-consent-library label strong, .activity-consent-library label small, "
@@ -881,10 +881,10 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                 _login(watcher, origin)
                 _widen_text(watcher)
                 watcher.goto(f"{origin}/activity")
-                watcher.get_by_role("heading", name="Activity and recovery").wait_for()
+                watcher.get_by_role("heading", name="Activity", exact=True).wait_for()
                 review = watcher.locator("#activity-consent")
                 checked = watcher.get_by_text(
-                    "Backup readiness checked. Review the included and excluded destinations.",
+                    "Backup checked.",
                     exact=True,
                 )
                 fiction = review.get_by_role("checkbox", name="fiction")
@@ -940,9 +940,7 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                 actor.get_by_role("button", name="Review write permissions").click()
                 actor.get_by_role("checkbox", name="history").check()
                 actor.get_by_role("button", name="Confirm write permissions").click()
-                actor.get_by_text(
-                    "Activity state refreshed from the authoritative server."
-                ).wait_for()
+                actor.get_by_text("The change was made.").wait_for()
                 review.get_by_role("status").filter(has_text=_BASIS_CHANGED).wait_for(
                     timeout=8_000
                 )
@@ -974,9 +972,7 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                 expect(confirm).to_be_enabled()
                 expect(review.get_by_text(_BASIS_CHANGED)).to_have_count(0)
                 confirm.click()
-                succeeded = watcher.get_by_text(
-                    "Activity state refreshed from the authoritative server."
-                )
+                succeeded = watcher.get_by_text("The change was made.")
                 refreshed = review.get_by_role("alert").filter(
                     has_text="Your session was refreshed. Press again."
                 )

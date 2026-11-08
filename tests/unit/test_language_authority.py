@@ -995,7 +995,8 @@ def test_language_display_name_label_in_persisted_automatic_activity(tmp_path, a
             if i["event_id"] == decision["decision_id"]
         )
         facts = {i["label"]: i["value"] for i in event["evidence"]}
-        assert facts["Policy setting"] == "Language rendering: Display name"
+        assert facts["Policy option"] == "Language: Use language display name"
+        assert "Policy setting" not in facts
         assert facts["New value"] == "English"
 
 

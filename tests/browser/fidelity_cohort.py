@@ -1271,15 +1271,15 @@ def _cohort_change(work: str, destination: str) -> tuple[str, str, str]:
 
 _COHORT_POLICY_CHANGES = [
     {
-        "field": "Title layout",
+        "field": "Title and subtitle",
         "setting": "Setting",
         "previous": "Ask me",
         "next": "Automatic",
     },
     {
-        "field": "Description fill",
+        "field": "Description",
         "setting": "Option",
-        "previous": "Safe plain text",
+        "previous": "Fill empty with safe plain text",
         "next": "Visible Google text",
     },
     {
@@ -1568,7 +1568,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                         "label": "Chosen by",
                         "value": "Automatic policy"
                         if origin == "automatic_policy"
-                        else "Library owner",
+                        else "You",
                     },
                 ],
                 "work_id": f"book-{index}",
