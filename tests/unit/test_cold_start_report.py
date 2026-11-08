@@ -930,7 +930,7 @@ def test_main_rejects_a_malformed_mount_root() -> None:
 
 
 def test_the_schema_is_pinned_at_its_sixth_version() -> None:
-    assert "cold-start-report-v9" == cold_start.COLD_START_REPORT_SCHEMA
+    assert "cold-start-report-v10" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:
@@ -2112,8 +2112,11 @@ def test_audiobook_sidecars_count_entries_refusals_echoes_and_disputes() -> None
             ),
         ),
     )
-    with_manifest = (None,) * 10 + (cold_start._sidecar_entries(audio),)
-    without = (None,) * 10 + (cold_start._sidecar_entries(single_track_audio_facts()),)
+    with_manifest = (None,) * 10 + (cold_start._sidecar_entries(audio), ())
+    without = (None,) * 10 + (
+        cold_start._sidecar_entries(single_track_audio_facts()),
+        (),
+    )
 
     assert cold_start._audiobook_sidecars([with_manifest, without]) == {
         "reports": 1,
@@ -2125,8 +2128,141 @@ def test_audiobook_sidecars_count_entries_refusals_echoes_and_disputes() -> None
         "refusals": {"sidecars_disagree": 2, "target_record": 1},
         "echoed": {"asin": 1},
         "disputed": {"contributor": 2},
+        "byte_order_mark": {
+            "documents": {},
+            "belonging": 0,
+            "facts": {},
+            "omitted": 0,
+        },
     }
     serialized = json.dumps(cold_start._sidecar_entries(audio))
     assert not any(
         name in serialized for name in ("book.nfo", "book.opf", "metadata.json")
     )
+
+
+def test_byte_order_mark_records_are_counted_by_closed_code_only() -> None:
+    """T10, controls 8 and 10 (#1796): agreement with the file's own tags.
+
+    A marked JSON agreeing with the tag ASIN, a marked NFO whose narrator
+    differs from the tag narrator, one with no tag of its kind, one omitted for
+    size and one the shadow pass refused.  No value or name leaves the script.
+    """
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioInspectionField,
+        AudioSidecarBinding,
+        AudioSidecarByteOrderMark,
+        AudioSidecarByteOrderMarkFact,
+        AudioSidecarDigest,
+        AudioSidecarKind,
+        AudioSidecarRefusal,
+        AudioSidecarStrippedLimit,
+    )
+    from mechanical_librarian.domain.metadata_report import ClaimKind, LocalClaim
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    observed = "Zqx Observed Marker"
+    canonical = "Zqx Canonical Marker"
+
+    def tag(kind: ClaimKind, value: str, role: str | None = None) -> LocalClaim:
+        return LocalClaim.create(
+            kind=kind,
+            observed=value,
+            canonical=value,
+            excerpt=value,
+            applicability="not_applicable",
+            basis="embedded_tag",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            role=role,
+        )
+
+    def entry(
+        name: str, kind: AudioSidecarKind, record: AudioSidecarByteOrderMark
+    ) -> AudioSidecarDigest:
+        return AudioSidecarDigest(
+            name,
+            "a" * 64,
+            kind,
+            AudioSidecarBinding.FOLDER,
+            byte_order_mark=record,
+        )
+
+    fact = AudioSidecarByteOrderMarkFact
+    audio = replace(
+        single_track_audio_facts(),
+        sidecars=(
+            entry(
+                "zqx-agree.metadata.json",
+                AudioSidecarKind.LIBATION,
+                AudioSidecarByteOrderMark(
+                    facts=(fact(AudioInspectionField.ASIN, "b0synth001", "B0SYNTH001"),)
+                ),
+            ),
+            entry(
+                "zqx-differ.nfo",
+                AudioSidecarKind.NFO,
+                AudioSidecarByteOrderMark(
+                    facts=(
+                        fact(
+                            AudioInspectionField.CONTRIBUTOR,
+                            observed,
+                            canonical,
+                            "narrator",
+                        ),
+                        fact(AudioInspectionField.SERIES, "Zqx Series", "Zqx Series"),
+                    )
+                ),
+            ),
+            entry(
+                "zqx-omitted.nfo",
+                AudioSidecarKind.NFO,
+                AudioSidecarByteOrderMark(facts_omitted=True),
+            ),
+            entry(
+                "zqx-output.cue",
+                AudioSidecarKind.CUE,
+                AudioSidecarByteOrderMark(
+                    omitted=AudioSidecarStrippedLimit.CHILD_OUTPUT
+                ),
+            ),
+            AudioSidecarDigest(
+                "zqx-plain.opf",
+                "a" * 64,
+                AudioSidecarKind.OPF,
+                AudioSidecarBinding.FOLDER,
+            ),
+            entry(
+                "zqx-refused.cue",
+                AudioSidecarKind.CUE,
+                AudioSidecarByteOrderMark(refusals=(AudioSidecarRefusal.OTHER_FILE,)),
+            ),
+        ),
+    )
+    claims = (
+        tag(ClaimKind.ASIN, "B0SYNTH001"),
+        tag(ClaimKind.CONTRIBUTOR, "A Different Tag Narrator", "narrator"),
+    )
+    entries = cold_start._byte_order_mark_entries(audio, claims)
+    rows: list[tuple[object, ...]] = [
+        (None,) * 10 + ((), entries),
+        (None,) * 10 + ((), ()),
+    ]
+
+    aggregate = cold_start._audiobook_sidecars(rows)["byte_order_mark"]
+
+    assert aggregate == {
+        "documents": {"cue": 2, "libation": 1, "nfo": 2},
+        "belonging": 2,
+        "facts": {
+            "asin": {"agree": 1, "differ": 0, "no_tag": 0},
+            "contributor": {"agree": 0, "differ": 1, "no_tag": 0},
+            "series": {"agree": 0, "differ": 0, "no_tag": 1},
+        },
+        "omitted": 2,
+    }
+    serialized = json.dumps([entries, aggregate])
+    for marker in (observed, canonical, "Zqx Series", "zqx", "B0SYNTH001"):
+        assert marker not in serialized

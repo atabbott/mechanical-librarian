@@ -77,6 +77,7 @@ from tests.support.audiobook_reports import (
     recorded_dispatch,
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 _ASIN = "B0SYNE7P1K"
 
@@ -2902,7 +2903,7 @@ def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> Non
     previous.pop("report_id")
     previous["report_id"] = d.report_content_address(previous)
 
-    assert "metadata-report-v74" == report.schema_version
+    assert CURRENT_REPORT_SCHEMA == report.schema_version
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(d.canonical_json(previous))
 

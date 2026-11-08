@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.domain.audio_inspection import (
@@ -37,6 +37,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarReading,
     AudioSidecarShadow,
     AudioSidecarShadowField,
+    AudioSidecarStrippedLimit,
     association_file_reference,
     association_text,
     normalize_duration_seconds,
@@ -349,13 +350,23 @@ def interpret(
     # Each sidecar is read on its own, under the one fact budget the whole
     # child answer shares, so the parent can keep or drop a document whole.
     readings: list[AudioSidecarReading] = []
+    marked: list[tuple[int, AudioSidecar]] = []
     budget = MAX_FACTS - len(facts)
     for sidecar in sidecars[: limits.sidecar_documents]:
-        reading = _sidecar_reading(sidecar, source, limits, budget)
+        reading, _ = _sidecar_reading(sidecar, source, limits, budget)
         if reading is None:
             continue
         budget -= len(reading.facts)
+        if sidecar.text.startswith(_BYTE_ORDER_MARK):
+            marked.append((len(readings), sidecar))
         readings.append(reading)
+    # A document that starts with a byte-order mark is read again without it
+    # (#1796), only after every plain reading and from what they left, so the
+    # second reading never costs a plain one a fact.
+    for index, sidecar in marked:
+        readings[index], budget = _without_byte_order_mark(
+            readings[index], sidecar, source, limits, budget
+        )
     chapters, truncated, omitted = _chapters(probe.get("chapters"), limits)
     cover = _embedded_cover(streams)
     album, creators = _file_association(container.get("tags"), limits)
@@ -542,6 +553,10 @@ class _Builder:
 
     def result(self) -> tuple[AudioInspectionFact, ...]:
         return tuple(self._facts[: self._budget])
+
+    @property
+    def truncated(self) -> bool:
+        return len(self._facts) > self._budget
 
 
 def bounded_description(
@@ -851,15 +866,48 @@ def _embedded_cover(streams: list[object]) -> AudioEmbeddedCover:
     return AudioEmbeddedCover(False)
 
 
+_BYTE_ORDER_MARK = "\ufeff"
+
+
+def _without_byte_order_mark(
+    plain: AudioSidecarReading,
+    sidecar: AudioSidecar,
+    source: Fingerprint,
+    limits: AudioInspectionLimits,
+    budget: int,
+) -> tuple[AudioSidecarReading, int]:
+    """Mark a reading, and add its reading without one leading U+FEFF.
+
+    Exactly one mark is removed, after the strict decode.  An OPF document is
+    not read again: both of its scanners start at a `<`, so a mark before the
+    first one is never read.  The text without the mark lives only while it is
+    read.
+    """
+    if sidecar.surface is AudioEvidenceSurface.SIDECAR_OPF:
+        return replace(plain, byte_order_mark=True), budget
+    stripped, truncated = _sidecar_reading(
+        replace(sidecar, text=sidecar.text[1:]), source, limits, budget
+    )
+    limit = AudioSidecarStrippedLimit.FACT_BUDGET if truncated else None
+    if stripped is None or stripped == plain:
+        return replace(plain, byte_order_mark=True, stripped_limit=limit), budget
+    return replace(
+        plain, byte_order_mark=True, stripped=stripped, stripped_limit=limit
+    ), budget - len(stripped.facts)
+
+
 def _sidecar_reading(
     sidecar: AudioSidecar,
     source: Fingerprint,
     limits: AudioInspectionLimits,
     budget: int,
-) -> AudioSidecarReading | None:
-    """Read one sidecar's facts and association text, apart from every other."""
+) -> tuple[AudioSidecarReading | None, bool]:
+    """Read one sidecar's facts and association text, apart from every other.
+
+    The flag says the fact budget cut the reading.
+    """
     if type(sidecar) is not AudioSidecar:
-        return None
+        return None, False
     builder = _Builder(source, limits, budget)
     text = _DocumentText()
     if sidecar.surface is AudioEvidenceSurface.SIDECAR_LIBATION:
@@ -871,7 +919,7 @@ def _sidecar_reading(
     elif sidecar.surface is AudioEvidenceSurface.SIDECAR_CUE:
         _line_sidecar_facts(builder, text, sidecar, _CUE_LINE, limits)
     else:
-        return None
+        return None, False
     try:
         return AudioSidecarReading(
             sidecar.name,
@@ -882,9 +930,9 @@ def _sidecar_reading(
             text.file_reference,
             tuple(text.shadow),
             text.file_refused,
-        )
+        ), builder.truncated
     except ValueError:
-        return None
+        return None, False
 
 
 class _DocumentText:

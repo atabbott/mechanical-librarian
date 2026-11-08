@@ -45,6 +45,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
 )
 from tests.support.metadata_report_schemas import synthetic_report
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 
 def _digest(path: Path) -> str:
@@ -316,7 +317,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v74"
+    assert report.schema_version == CURRENT_REPORT_SCHEMA
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -1433,7 +1434,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v74"
+    assert report.schema_version == CURRENT_REPORT_SCHEMA
 
 
 def test_a_bridged_lane_gains_every_lane_field_its_source_predates(

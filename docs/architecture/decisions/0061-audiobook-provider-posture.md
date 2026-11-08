@@ -375,8 +375,22 @@ with track-bound documents now going to their track.
    terminal), `claims` (the claims it supplied), `disputed`, `echoed`,
    `echoed_narrators` (positions in the target's narrators), and `shadow`
    (Libation's `series[].title` and `format_type`, recorded and never claimed
-   until measured, #1482). Currentness re-derives kind, binding and the
-   parent-side refusals from the listing and the re-read file list.
+   until measured, #1482), and `byte_order_mark` (what a reading without a
+   leading byte-order mark would add, never claimed, #1796). Currentness
+   re-derives kind, binding and the parent-side refusals from the listing and
+   the re-read file list.
 
 This is `metadata-report-v74` and `audio-inspection-v5`, a clean rebuild under
 [ADR-0013](0013-pre-release-clean-schema.md).
+
+## Byte-order marks in sidecars (#1796)
+
+A UTF-8 sidecar that starts with U+FEFF is read twice: as it is, and without
+one leading mark. Only the first reading supplies claims, refusals and every
+other rule above, so a mark changes nothing that is believed. The second
+reading is associated by the same rules, and what it keeps that the first did
+not is recorded in the entry's `byte_order_mark` with the refusals it would
+have had. It is never a claim and withholds nothing, until a measured run shows
+how often such files occur and whether their values agree with the file's own
+tags. Only one mark is removed; UTF-16 and UTF-32 files, with or without a
+mark, are still dropped whole.

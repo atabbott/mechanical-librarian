@@ -141,6 +141,7 @@ from tests.support.metadata_report_doubles import (
     single_track_audio_facts,
 )
 from tests.support.metadata_report_schemas import synthetic_latin_work_report
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 
 def _work_dispatch(
@@ -1131,7 +1132,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v74" == report.schema_version
+    assert CURRENT_REPORT_SCHEMA == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):

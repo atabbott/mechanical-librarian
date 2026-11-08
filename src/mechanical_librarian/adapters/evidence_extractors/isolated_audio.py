@@ -37,6 +37,7 @@ from mechanical_librarian.domain.audio_composition import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
+    MAX_BYTE_ORDER_MARK_BYTES,
     MULTI_FILE_WALL_SECONDS,
     PARENT_SIDECAR_REFUSALS,
     SIDECAR_KIND_SURFACES,
@@ -45,9 +46,13 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioInspectionOutcome,
     AudioSidecarBinding,
+    AudioSidecarByteOrderMark,
+    AudioSidecarByteOrderMarkFact,
     AudioSidecarDigest,
     AudioSidecarKind,
+    AudioSidecarReading,
     AudioSidecarRefusal,
+    AudioSidecarStrippedLimit,
     AudioTrackDigest,
     project_track_name_detail,
 )
@@ -72,6 +77,7 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
     ReportValueError,
+    audio_record_rungs,
     audio_set_content_digest,
     canonical_json,
     surviving_discovery_titles,
@@ -133,9 +139,16 @@ class IsolatedAudioInspector:
                 )
             )
             read = self._inspect_tracks(mount, tracks, maximum_bytes, sidecars, folder)
-            documents = _documents(read, sidecars)
-            outcomes = associate_sidecars(
-                association, _file_evidence(read, media_names), documents
+            documents, shadow_documents = _documents(read, sidecars)
+            evidence = _file_evidence(read, media_names)
+            outcomes = associate_sidecars(association, evidence, documents)
+            # The same rules over each reading without a byte-order mark
+            # (#1796).  Its outcomes reach the manifest's records and nothing
+            # else: claims, refusals and composition are the pass above.
+            shadow = (
+                outcomes
+                if shadow_documents is None
+                else associate_sidecars(association, evidence, shadow_documents)
             )
             inspected = _with_associated_facts(read, sidecars, outcomes)
             composed = compose_audio_inspections(inspected)
@@ -167,6 +180,7 @@ class IsolatedAudioInspector:
                     sidecars,
                     documents,
                     outcomes,
+                    shadow,
                     claim_reference_index(
                         composed, tuple(claim.reference for claim in claims)
                     ),
@@ -200,10 +214,20 @@ class IsolatedAudioInspector:
                     (),
                 ),
             )
-            if len(canonical_json(audio.to_data()).encode("utf-8")) > MAX_AUDIO_BYTES:
-                # An audio section the retained report cannot hold is evidence
-                # that can never be published, and half of it is not the item's
-                # evidence set.
+            # An audio section the retained report cannot hold is evidence that
+            # can never be published, and half of it is not the item's evidence
+            # set.  Records of what readings without a byte-order mark add are
+            # given up first, so a mark never denies an item (#1796).
+            published = next(
+                (
+                    rung
+                    for rung in audio_record_rungs(audio)
+                    if len(canonical_json(rung.to_data()).encode("utf-8"))
+                    <= MAX_AUDIO_BYTES
+                ),
+                None,
+            )
+            if published is None:
                 raise AudioItemInspectionError(
                     AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
                 )
@@ -212,7 +236,7 @@ class IsolatedAudioInspector:
                     tuple(value.digest for value in composed.tracks)
                 ),
                 claims,
-                audio,
+                published,
             )
         except MetadataReportError:
             raise
@@ -498,22 +522,45 @@ def _parent_view(
 
 def _documents(
     read: tuple[InspectedTrack, ...], sidecars: list[_OpenedSidecar]
-) -> tuple[SidecarDocument, ...]:
-    """Pair each opened document with what its child read from it, if any."""
+) -> tuple[tuple[SidecarDocument, ...], tuple[SidecarDocument, ...] | None]:
+    """Pair each opened document with what its child read from it, if any.
+
+    The first set decides claims, and its readings carry no reading without a
+    byte-order mark, so that pass cannot see one (#1796).  The second carries
+    each such reading in place of the plain one, for the records only, and
+    exists only when some document has one.
+    """
     readings = {
         (track.ordinal, reading.name): reading
         for track in read
         for reading in track.inspection.sidecars
     }
-    return tuple(
+    paired = tuple(
+        (value, readings.get((value.track or 1, value.name))) for value in sidecars
+    )
+    claimed = tuple(
         SidecarDocument(
             value.name,
             value.kind,
             value.binding,
             value.refusal,
-            readings.get((value.track or 1, value.name)),
+            None if reading is None else dataclasses.replace(reading, stripped=None),
         )
-        for value in sidecars
+        for value, reading in paired
+    )
+    if all(reading is None or reading.stripped is None for _, reading in paired):
+        return claimed, None
+    return claimed, tuple(
+        SidecarDocument(
+            value.name,
+            value.kind,
+            value.binding,
+            value.refusal,
+            reading
+            if reading is None or reading.stripped is None
+            else reading.stripped,
+        )
+        for value, reading in paired
     )
 
 
@@ -566,11 +613,18 @@ def _sidecar_manifest(
     sidecars: list[_OpenedSidecar],
     documents: tuple[SidecarDocument, ...],
     outcomes: tuple[SidecarOutcome, ...],
+    shadow: tuple[SidecarOutcome, ...],
     references: dict[tuple[str, str, str, str | None, str, str | None], str],
 ) -> tuple[AudioSidecarDigest, ...]:
-    """Record every document's classification, and the claims it contributed."""
+    """Record every document's classification, and the claims it contributed.
+
+    A document that started with a byte-order mark also records what reading
+    it without the mark adds, from the shadow pass (#1796).
+    """
     entries: list[AudioSidecarDigest] = []
-    for value, document, outcome in zip(sidecars, documents, outcomes, strict=True):
+    for value, document, outcome, unmarked in zip(
+        sidecars, documents, outcomes, shadow, strict=True
+    ):
         claims: list[str] = []
         for fact in outcome.facts:
             reference = references.get(fact_value_key(fact))
@@ -593,9 +647,89 @@ def _sidecar_manifest(
                 or set(outcome.refusals) & TERMINAL_SIDECAR_REFUSALS
                 else document.reading.shadow,
                 outcome.echoed_narrators,
+                None
+                if document.reading is None or not document.reading.byte_order_mark
+                else _byte_order_mark_record(document.reading, outcome, unmarked),
             )
         )
-    return tuple(sorted(entries, key=lambda entry: entry.name))
+    return _capped_records(tuple(sorted(entries, key=lambda entry: entry.name)))
+
+
+def _byte_order_mark_record(
+    reading: AudioSidecarReading, claimed: SidecarOutcome, unmarked: SidecarOutcome
+) -> AudioSidecarByteOrderMark:
+    """What the shadow pass decided for one document that the claimed did not.
+
+    Each value takes the inspection fact's own bounds; one that fails them is
+    dropped and marked omitted, so building a record never fails an item.
+    """
+    if reading.stripped_limit is AudioSidecarStrippedLimit.CHILD_OUTPUT:
+        return AudioSidecarByteOrderMark(omitted=reading.stripped_limit)
+    kept = {fact_value_key(fact) for fact in claimed.facts}
+    facts: list[AudioSidecarByteOrderMarkFact] = []
+    omitted = False
+    for fact in unmarked.facts:
+        if fact_value_key(fact) in kept:
+            continue
+        try:
+            entry = AudioSidecarByteOrderMarkFact.of(fact)
+        except ValueError:
+            omitted = True
+            continue
+        if entry not in facts:
+            facts.append(entry)
+    try:
+        return AudioSidecarByteOrderMark(
+            unmarked.refusals,
+            tuple(facts[:MAX_AUDIO_FACTS]),
+            omitted or len(facts) > MAX_AUDIO_FACTS,
+            reading.stripped_limit,
+        )
+    except ValueError:
+        return AudioSidecarByteOrderMark(facts_omitted=True)
+
+
+def _capped_records(
+    entries: tuple[AudioSidecarDigest, ...],
+) -> tuple[AudioSidecarDigest, ...]:
+    """Hold an item's records to `MAX_FACTS` facts and their byte bound (#1796).
+
+    Filled in manifest order; an entry that loses facts says so.
+    """
+    facts_left = MAX_AUDIO_FACTS
+    bytes_left = MAX_BYTE_ORDER_MARK_BYTES
+    capped: list[AudioSidecarDigest] = []
+    for entry in entries:
+        mark = entry.byte_order_mark
+        if mark is None or not mark.facts:
+            capped.append(entry)
+            continue
+        bytes_left -= _serialized_bytes(
+            dataclasses.replace(mark, facts=(), facts_omitted=True).to_data()
+        )
+        kept: list[AudioSidecarByteOrderMarkFact] = []
+        for fact in mark.facts:
+            size = _serialized_bytes(fact.to_data()) + 1
+            if len(kept) >= facts_left or size > bytes_left:
+                break
+            kept.append(fact)
+            bytes_left -= size
+        facts_left -= len(kept)
+        capped.append(
+            entry
+            if len(kept) == len(mark.facts)
+            else dataclasses.replace(
+                entry,
+                byte_order_mark=dataclasses.replace(
+                    mark, facts=tuple(kept), facts_omitted=True
+                ),
+            )
+        )
+    return tuple(capped)
+
+
+def _serialized_bytes(value: dict[str, object]) -> int:
+    return len(canonical_json(value).encode("utf-8"))
 
 
 def _close_sidecars(sidecars: list[_OpenedSidecar]) -> None:

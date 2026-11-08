@@ -3,7 +3,7 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v9`` JSON document to stdout.
+prints one ``cold-start-report-v10`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -81,6 +81,11 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
 )
 from mechanical_librarian.application.operations import OperationsError, StageTiming
+from mechanical_librarian.domain.audio_inspection import (
+    TERMINAL_SIDECAR_REFUSALS,
+    AudioInspectionField,
+)
+from mechanical_librarian.domain.audio_sidecar_association import comparison_key
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
     HardcoverEditionWitness,
@@ -101,6 +106,7 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_WORK_BASIS,
     TARGET_ADMISSION_BASIS,
     AudioFacts,
+    LocalClaim,
     MetadataReport,
     ProviderLaneDispatch,
     ProviderQueryKind,
@@ -116,7 +122,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v9"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v10"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -601,6 +607,7 @@ def _audiobook_rows(
                 _companion_use(report),
                 _admission_basis(report),
                 _sidecar_entries(audio),
+                _byte_order_mark_entries(audio, report.local_claims),
             )
         )
     return rows
@@ -623,6 +630,59 @@ def _sidecar_entries(
         )
         for entry in audio.sidecars
     )
+
+
+_AUDIO_FIELDS = frozenset(value.value for value in AudioInspectionField)
+
+
+def _byte_order_mark_entries(
+    audio: AudioFacts, claims: tuple[LocalClaim, ...]
+) -> tuple[tuple[str, bool, bool, tuple[tuple[str, str], ...]], ...]:
+    """Each byte-order-mark record as closed codes only (#1796).
+
+    (kind, would belong, omitted for a bound, and each recorded value's field
+    with `agree`, `differ` or `no_tag` against the file's own tags of its
+    kind).  An entry whose values were cut for a bound is counted as omitted
+    and never as belonging.  No name, digest or value.
+    """
+    tags: dict[str, set[str]] = {}
+    for claim in claims:
+        if (
+            claim.basis == "embedded_tag"
+            and type(claim.canonical) is str
+            and claim.kind.value in _AUDIO_FIELDS
+        ):
+            field = AudioInspectionField(claim.kind.value)
+            tags.setdefault(field.value, set()).add(
+                comparison_key(field, claim.canonical)
+            )
+    rows: list[tuple[str, bool, bool, tuple[tuple[str, str], ...]]] = []
+    for entry in audio.sidecars:
+        mark = entry.byte_order_mark
+        if mark is None:
+            continue
+        omitted = mark.facts_omitted or mark.omitted is not None
+        verdicts = tuple(
+            (
+                fact.field.value,
+                "no_tag"
+                if fact.field.value not in tags
+                else "agree"
+                if comparison_key(fact.field, fact.canonical or fact.observed)
+                in tags[fact.field.value]
+                else "differ",
+            )
+            for fact in mark.facts
+        )
+        rows.append(
+            (
+                entry.kind.value,
+                not omitted and not set(mark.refusals) & TERMINAL_SIDECAR_REFUSALS,
+                omitted,
+                verdicts,
+            )
+        )
+    return tuple(rows)
 
 
 def _admission_basis(report: MetadataReport) -> str | None:
@@ -1108,13 +1168,19 @@ def _audiobook_sidecars(rows: list[tuple[object, ...]]) -> dict[str, object]:
 
     `reports` holds any manifest entry; `entries` counts them by kind and
     binding; `refusals` counts documents by refusal; `echoed` and `disputed`
-    count documents by the field withheld.
+    count documents by the field withheld.  `byte_order_mark` counts the
+    documents that started with one (#1796): by kind, how many would belong
+    read without it, their recorded values by field against the file's own
+    tags, and how many were cut for a bound.
     """
     entries: Counter[tuple[str, str]] = Counter()
     refusals: Counter[str] = Counter()
     echoed: Counter[str] = Counter()
     disputed: Counter[str] = Counter()
     reports = 0
+    marked: Counter[str] = Counter()
+    verdicts: dict[str, Counter[str]] = {}
+    belonging = omitted = 0
     for row in rows:
         manifest = cast(
             "tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...]",
@@ -1126,6 +1192,17 @@ def _audiobook_sidecars(rows: list[tuple[object, ...]]) -> dict[str, object]:
             refusals.update(refused)
             echoed.update(echoes)
             disputed.update(disputes)
+        for kind, belongs, cut, facts in cast(
+            "tuple[tuple[str, bool, bool, tuple[tuple[str, str], ...]], ...]",
+            row[11],
+        ):
+            marked[kind] += 1
+            belonging += belongs
+            omitted += cut
+            for field, verdict in facts:
+                verdicts.setdefault(
+                    field, Counter({"agree": 0, "differ": 0, "no_tag": 0})
+                )[verdict] += 1
     return {
         "reports": reports,
         "entries": [
@@ -1135,6 +1212,15 @@ def _audiobook_sidecars(rows: list[tuple[object, ...]]) -> dict[str, object]:
         "refusals": dict(sorted(refusals.items())),
         "echoed": dict(sorted(echoed.items())),
         "disputed": dict(sorted(disputed.items())),
+        "byte_order_mark": {
+            "documents": dict(sorted(marked.items())),
+            "belonging": belonging,
+            "facts": {
+                field: dict(sorted(counts.items()))
+                for field, counts in sorted(verdicts.items())
+            },
+            "omitted": omitted,
+        },
     }
 
 
@@ -1456,7 +1542,7 @@ def assemble_cold_start_report(
     stage_timings: tuple[StageTiming, ...] | None = None,
     recovery: dict[str, list[tuple[object, ...]]] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v9`` document from persisted aggregates.
+    """Build the ``cold-start-report-v10`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
