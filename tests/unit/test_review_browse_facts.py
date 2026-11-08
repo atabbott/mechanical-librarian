@@ -32,11 +32,16 @@ from mechanical_librarian.domain.human_decision import HumanDecision, decision_a
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
     PROVIDER_AUTHORITIES,
+    FileFacts,
     MetadataReport,
     ProviderLaneObservation,
     ProviderStatus,
     ReportValueError,
     TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -605,3 +610,39 @@ def test_library_and_attention_reads_parse_each_document_once_in_the_store(
     works = len({(row[0], row[1]) for row in attention.rows})
     assert works < len(attention.rows)
     assert dict(parsed) == {"browse_case": works, "browse_report": works}
+
+
+@pytest.mark.parametrize(
+    ("state", "value", "unreadable"),
+    (
+        (TargetFieldState.VALUE, "cover_" + "a" * 64, True),
+        (TargetFieldState.MALFORMED, None, True),
+        (TargetFieldState.OVERSIZED, None, True),
+        (TargetFieldState.NULL, None, False),
+        (TargetFieldState.MISSING, None, False),
+    ),
+)
+def test_a_held_cover_no_report_could_read_is_unreadable_not_absent(
+    state: TargetFieldState, value: str | None, unreadable: bool
+) -> None:
+    """A malformed or oversized field holds something: "Image unavailable",
+    not "No cover" (#1363, R1)."""
+    fields = tuple(
+        TargetField(TargetDestination.COVER, state, value)
+        if field.destination is TargetDestination.COVER
+        else field
+        for field in default_target_fields("Synthetic title")
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("synthetic", "books", "item", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+        cover_sources=(),
+    )
+
+    facts = library_report_facts(browse_report(report.to_json()))
+
+    assert facts.cover is None
+    assert facts.cover_unreadable is unreadable

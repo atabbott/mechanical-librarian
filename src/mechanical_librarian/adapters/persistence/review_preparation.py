@@ -172,6 +172,30 @@ def _admits_track_root(code: str, value: object) -> bool:
     return matched is not None and int(matched.group(1)) <= MAX_AUDIO_TRACKS
 
 
+def preparation_work_id(connection_name: str, library: str, item_id: str) -> str:
+    """The one review-preparation work id of a configured library item."""
+    material = f"review-preparation-work-v1\0{connection_name}\0{library}\0{item_id}"
+    return "review_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def mark_preparation_work_fresh(
+    connection: sqlite3.Connection, connection_name: str, library: str, item_id: str
+) -> None:
+    """Make an item's next discovery prepare it afresh rather than carry it forward.
+
+    A verified cover write can leave every catalogue fact the same, because
+    Audiobookshelf writes an uploaded cover to the same path; without this the
+    next scan carries forward the report from before the write (#1363, Q17).
+    Runs inside the transaction that verifies the write, whatever the work's
+    state: a run already under way observed the cover before the write, so the
+    request outlives it and is cleared only when an extraction is claimed.
+    """
+    connection.execute(
+        "UPDATE review_preparation_work SET refresh_requested=1 WHERE work_id=?",
+        (preparation_work_id(connection_name, library, item_id),),
+    )
+
+
 class SQLiteReviewPreparationRepository(ConnectionScoped):
     """Claim, advance, complete and fail the work of one review scan."""
 
@@ -356,7 +380,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             if work is not None:
                 attempt = work[3] + 1
                 updated = self._connection.execute(
-                    "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
+                    "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=?,"
+                    "refresh_requested=CASE WHEN stage='extraction' THEN 0 "
+                    "ELSE refresh_requested END "
                     "WHERE work_id=? AND state='queued'",
                     (attempt, claimed_at, work[0]),
                 ).rowcount
@@ -524,7 +550,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             attempt = work[3] + 1
             if (
                 self._connection.execute(
-                    "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
+                    "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=?,"
+                    "refresh_requested=CASE WHEN stage='extraction' THEN 0 "
+                    "ELSE refresh_requested END "
                     "WHERE work_id=? AND state='queued'",
                     (attempt, claimed_at, work_id),
                 ).rowcount
@@ -834,15 +862,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         extraction. Runs inside `complete_review_discovery`'s transaction.
         """
         assert entry.file_identity is not None
-        material = (
-            f"review-preparation-work-v1\0{action.connection}\0"
-            f"{action.library}\0{entry.item_id}"
-        )
-        work_id = "review_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+        work_id = preparation_work_id(action.connection, action.library, entry.item_id)
         existing = self._connection.execute(
             "SELECT file_identity,source_fingerprint,producer_fingerprint,"
             "stage,state,report_id,proposal_set_id,review_case_id,outcome,"
-            "research_not_before "
+            "research_not_before,refresh_requested "
             "FROM review_preparation_work WHERE work_id=?",
             (work_id,),
         ).fetchone()
@@ -851,10 +875,17 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         report_id = proposal_set_id = review_case_id = None
         failure_code = failure_root = outcome = None
         research_not_before = None
-        if existing is not None and existing[:3] == (
-            entry.file_identity,
-            entry.source_fingerprint,
-            action.producer_fingerprint,
+        # A requested refresh (#1363) starts again at extraction, as a changed
+        # file would; the request stays until that extraction is claimed.
+        if (
+            existing is not None
+            and existing[10] == 0
+            and existing[:3]
+            == (
+                entry.file_identity,
+                entry.source_fingerprint,
+                action.producer_fingerprint,
+            )
         ):
             stage, previous_state = existing[3], existing[4]
             report_id, proposal_set_id, review_case_id = existing[5:8]

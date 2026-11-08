@@ -860,6 +860,7 @@ def _case(case_id: str) -> dict[str, object]:
                             [
                                 {
                                     "artifact_id": "cover-current-synthetic",
+                                    "candidate_kind": "candidate",
                                     "deterministic_citations": [
                                         "cover-ref-current",
                                         "cover-packet-synthetic",
@@ -903,6 +904,7 @@ def _case(case_id: str) -> dict[str, object]:
                         ),
                         {
                             "artifact_id": "cover-choice-synthetic",
+                            "candidate_kind": "candidate",
                             "deterministic_citations": [
                                 "cover-ref-choice",
                                 "cover-packet-synthetic",
@@ -944,6 +946,7 @@ def _case(case_id: str) -> dict[str, object]:
                             [
                                 {
                                     "artifact_id": "cover-unconfirmed-synthetic",
+                                    "candidate_kind": "candidate",
                                     "deterministic_citations": [],
                                     "deterministic_rank": None,
                                     "deterministic_rank_key": None,
@@ -1074,7 +1077,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v5",
+                    "schema_version": "cover-consideration-v6",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"

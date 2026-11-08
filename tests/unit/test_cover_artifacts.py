@@ -254,8 +254,11 @@ def test_a_rotated_original_measures_as_its_upright_twin() -> None:
     exif[0x0112] = 6  # Rotate 90 CW to display, so the stored pixels lie on their side.
     upright.transpose(Image.Transpose.ROTATE_90).save(turned, "PNG", exif=exif)
 
-    # The stated width and height stay the stored ones; only the pixels turn.
     assert _measured(straight.getvalue())[0] == _measured(turned.getvalue())[0]
+    # Width and height are the upright ones too, as the preview shows it
+    # (#1363, Amendment 4); the stored pixels are 360 wide.
+    decoded = cover_artifacts.decode_cover(turned.getvalue()).artifact
+    assert (decoded.width, decoded.height) == (240, 360)
 
 
 def test_stated_metadata_never_feeds_the_measures() -> None:

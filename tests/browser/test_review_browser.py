@@ -104,6 +104,13 @@ from tests.support.audiobook_reports import (
     chapter_runtime_report,
     corroborated_audiobook_report,
 )
+from tests.support.cover_operations import (
+    automatic_switch,
+    cover_operation,
+    list_switch,
+    record_cover_operation,
+    retained_source,
+)
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
@@ -523,6 +530,7 @@ def _server(
     retained_component_text: str | None = None,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cover_duplicate: bool = False,
+    put_back: bool = False,
     cohort: int = 0,
     preparation: bool = False,
     preparation_terminal: bool = False,
@@ -628,6 +636,8 @@ def _server(
             expected_revision=1, api_key="synthetic-key", model="synthetic/cover-a"
         )
     cover_considerations = None
+    # The verified switch a Put back undoes (#1363).
+    switch = None
     if cover:
         # Real pixel dimensions, because containment is a property of the
         # rendered image's intrinsic ratio against its frame and a 1x1 preview
@@ -674,6 +684,10 @@ def _server(
                 for field in base.target.fields
             )
         )
+        if put_back:
+            switch = automatic_switch(
+                base.target, _PUT_BACK_ARTIFACT.artifact_id, incumbent.artifact_id
+            )
         report = MetadataReport.create(
             target=TargetFacts(
                 base.target.connection,
@@ -694,9 +708,19 @@ def _server(
             )
             if automatic_fixture
             else base.providers,
-            cover_sources=base.cover_sources,
+            cover_sources=(
+                (
+                    *base.cover_sources,
+                    retained_source(switch.plan.plan_id, _PUT_BACK_ARTIFACT),
+                )
+                if switch is not None
+                else base.cover_sources
+            ),
         )
         artifacts = CoverArtifactStore(database.parent / "cover-artifacts")
+        if put_back:
+            # Report assembly stages the retained original it decodes (#1363).
+            artifacts.stage_preview(_PUT_BACK_ARTIFACT, _PUT_BACK_PREVIEW)
         for index, (source, payload) in enumerate(
             zip(sources, payloads, strict=True), 1
         ):
@@ -744,6 +768,10 @@ def _server(
                 reviewer_revision_current=(
                     reviewer_access.revision_is_current if reviewer_access else None
                 ),
+                retained_original=repository.retained_cover_original,
+                # The retained copy is checked by tests/unit/test_cover_retention.py;
+                # here it is taken as present.
+                require_retained=lambda _digest: None,
             )
             repository.bind_owner_cover_validation(
                 cover_considerations.require_owner_cover
@@ -1282,6 +1310,11 @@ def _server(
         ]
         if retained_decoration is not None and automatic_fixture:
             repository.persist_shadow_outcome(case_id, 4)
+        if switch is not None:
+            assert cover_considerations is not None
+            _seed_put_back_switch(
+                repository, cover_considerations, report, case_id, switch
+            )
     if preparation:
         repository.request_review_scan(
             "primary",
@@ -1966,6 +1999,73 @@ def _server(
 
 OWNER_TITLE = "Real Tigers Revisited"
 OWNER_EDIT = "Real Tigers: Library Edition"
+
+
+_PUT_BACK_ORIGINAL = b"synthetic replaced original"
+_PUT_BACK_PREVIEW = _cover_preview(9, width=400, height=600)
+_PUT_BACK_ARTIFACT = CoverArtifact.create(
+    _PUT_BACK_ORIGINAL, _PUT_BACK_PREVIEW, "image/png", 400, 600
+)
+PUT_BACK_REFUSED = "The cover was changed in Audiobookshelf, so it was not put back."
+
+
+def _seed_put_back_switch(
+    repository, considerations, report: MetadataReport, case_id: str, switch
+) -> None:
+    """Record the verified automatic switch whose original is listed (#1363).
+
+    Its write replaced the retained original with the current cover, so the
+    work is in Switched and its prepared comparison offers the original back.
+    """
+    list_switch(
+        repository._connection,
+        switch,
+        _PUT_BACK_ARTIFACT.original_digest,
+        len(_PUT_BACK_ORIGINAL),
+    )
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    considerations.ensure(
+        case_id,
+        report.to_json(),
+        next(value for value in case.proposals if value["destination"] == "cover"),
+    )
+
+
+def _end_put_back_stale(database: Path) -> None:
+    """End the owner's Put back write as the guarded write does when the
+    cover changed in Audiobookshelf first: stale, target_changed (#1363)."""
+    with closing(sqlite3.connect(database)) as connection:
+        decision_id, case_id, switched = connection.execute(
+            "SELECT owner.decision_id,decision.review_case_id,switch.document "
+            "FROM cover_selection_authorities owner "
+            "JOIN human_decisions decision ON decision.decision_id=owner.decision_id "
+            "JOIN field_effects switch "
+            "ON switch.plan_id=json_extract(owner.document,'$.retained_plan_id') "
+            "WHERE owner.kind='owner'"
+        ).fetchone()
+        plan = json.loads(switched)["plan"]
+        target = TargetFacts(
+            plan["connection"],
+            plan["library"],
+            plan["work_id"],
+            default_target_fields("Synthetic title"),
+        )
+        record_cover_operation(
+            connection,
+            cover_operation(
+                target,
+                decision_id=decision_id,
+                review_case_id=case_id,
+                pre_value=plan["desired_value"],
+                desired_value=_PUT_BACK_ARTIFACT.artifact_id,
+                state="stale",
+                failure="target_changed",
+                at=1_100,
+            ),
+        )
+        connection.commit()
 
 
 def _seed_owner_write(
@@ -5202,6 +5302,131 @@ def test_cover_choice_records_in_one_tap(width: int, mode: str) -> None:
                 page.wait_for_timeout(300)
                 assert len(decisions) == 1, decisions
                 expect(page.get_by_role("dialog")).to_have_count(0)
+            browser.close()
+
+
+@pytest.mark.parametrize("refused", (False, True), ids=("J2", "J3"))
+def test_switched_row_puts_back_the_replaced_original(refused: bool) -> None:
+    """#1363 J2/J3: Put back records the original; a changed cover refuses it.
+
+    J2: the Switched row offers Put back beside Keep and Others, the comparison
+    names the original "Replaced cover", and Put back records choosing it, so
+    the row reads Put back while its write runs. J3: when that write meets a
+    cover changed in Audiobookshelf, the row says so, no longer offers Put
+    back, still offers Keep and Others, and the copy stays.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        database = root / "review.sqlite3"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1280, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            decisions: list[dict[str, Any]] = []
+            page.on(
+                "request",
+                lambda request: (
+                    decisions.append(json.loads(request.post_data or "{}"))
+                    if request.method == "POST" and "/decisions" in request.url
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=database,
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    put_back=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&view=covers&tab=switched")
+                row = page.locator(".covers-switched-row")
+                expect(row).to_have_count(1)
+                expect(row.get_by_role("button", name="Keep")).to_be_visible()
+                others = row.get_by_role("button", name="Others")
+                others.click()
+                expect(
+                    row.get_by_role("radio", name="Choose Replaced cover")
+                ).to_be_visible()
+                others.click()
+
+                row.get_by_role("button", name="Put back").click()
+                expect(row.locator(".status-pill")).to_have_text("Put back")
+                assert len(decisions) == 1, decisions
+                (decision,) = decisions
+                assert decision["outcome"] == "accept"
+                original = "cover_" + hashlib.sha256(_PUT_BACK_ORIGINAL).hexdigest()
+                assert decision["selected_value"] == {
+                    "kind": "cover",
+                    "value": original,
+                }
+                # The server keeps the row listed while the write runs.
+                page.reload()
+                row = page.locator(".covers-switched-row")
+                expect(row.locator(".status-pill")).to_have_text("Put back")
+
+                if refused:
+                    _end_put_back_stale(database)
+                    page.reload()
+                    row = page.locator(".covers-switched-row")
+                    expect(row.get_by_text(PUT_BACK_REFUSED)).to_be_visible()
+                    expect(row.get_by_role("button", name="Put back")).to_have_count(0)
+                    expect(row.get_by_role("button", name="Keep")).to_be_visible()
+                    expect(row.get_by_role("button", name="Others")).to_be_visible()
+                    with closing(sqlite3.connect(database)) as connection:
+                        assert (
+                            connection.execute(
+                                "SELECT COUNT(*) FROM retained_cover_removals"
+                            ).fetchone()[0]
+                            == 0
+                        )
+                    # The row reflows at 390 and 320 px, and at 320 px with
+                    # 200% text: nothing scrolls sideways or is cut off, the
+                    # text keeps a readable width and no image runs into it.
+                    for width, text in ((390, ""), (320, ""), (320, "200%")):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        set_root_text(page, text)
+                        layout = cast(
+                            "dict[str, float]",
+                            row.evaluate(
+                                """row => {
+                                  const box = node => node.getBoundingClientRect()
+                                  const text = box(row.querySelector('.covers-switched-text'))
+                                  const images = [...row.querySelectorAll('figure')].map(box)
+                                  const refusal = box(row.querySelector('.covers-failure'))
+                                  const page = document.scrollingElement
+                                  return {
+                                    overflow: page.scrollWidth - page.clientWidth,
+                                    textWidth: text.width,
+                                    refusalRight: refusal.right,
+                                    viewport: window.innerWidth,
+                                    overlap: Math.max(0, ...images.map(image =>
+                                      image.bottom > text.top && image.top < text.bottom
+                                        ? image.right - text.left : 0)),
+                                  }
+                                }"""
+                            ),
+                        )
+                        assert layout["overflow"] <= 0, (width, text, layout)
+                        assert layout["textWidth"] >= 200, (width, text, layout)
+                        assert layout["refusalRight"] <= layout["viewport"], layout
+                        assert layout["overlap"] <= 0, (width, text, layout)
+                    set_root_text(page, "")
             browser.close()
 
 

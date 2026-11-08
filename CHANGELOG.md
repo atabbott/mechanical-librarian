@@ -211,6 +211,17 @@ brackets are GitHub issues.
   and whether they agree with the audio file's tags (#1796).
 - A paused field's reason is no longer repeated beside it as a comparison
   condition (#1802).
+- **Clean rebuild required.** An automatic cover switch can be put back. While
+  the replaced cover's copy is kept, Covers' Switched row and the book's
+  comparison offer it as **Replaced cover**, and **Put back** writes it to
+  Audiobookshelf through the same guarded write as any cover choice; the copy
+  is released once that write is confirmed. If the cover was changed in
+  Audiobookshelf first, the row says so and the copy stays. A switched work is
+  prepared again at the next scan, which one write asks for, and Put back is
+  offered once it is. A cover that could not be read, including one too large
+  or not an image, reads **Image unavailable** instead of **No cover** in
+  Covers and on the book page, and a rotated cover reports the size it is
+  shown at (#1363).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -472,7 +472,21 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v76",
+            "previous v76",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v76",
+            ),
+        ),
+        (
+            "previous v77",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v77",
+            ),
+        ),
+        (
+            "immediate previous v78",
             lambda connection: create_prior_schema(
                 connection,
                 PREVIOUS_REPORT_SCHEMA,
@@ -2641,6 +2655,14 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     ).read_text()
                 )["cover_considerations_sql"],
             )
+        # Their owner selection CHECK named v2, before #1363's Put back.
+        old.setattr(
+            persistence_schema,
+            "_COVER_SELECTION_AUTHORITIES_SQL",
+            persistence_schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
+                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
+            ),
+        )
         # The earlier producers predate #1245's report discriminator; the v20
         # producer wrote report v54.
         old.setattr(

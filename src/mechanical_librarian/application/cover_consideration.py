@@ -72,6 +72,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSourceKind,
     CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverElectionCandidate,
@@ -81,6 +82,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     MetadataReport,
     TargetDestination,
+    TargetField,
     TargetFieldState,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -89,13 +91,8 @@ from mechanical_librarian.domain.proposal_set import (
     work_route_cover_offered,
     work_route_cover_sources,
 )
-from mechanical_librarian.domain.validation import (
-    closed_document,
-    nonempty_text,
-    prefixed_hex_identity,
-)
 
-SCHEMA_VERSION = "cover-consideration-v5"
+SCHEMA_VERSION = "cover-consideration-v6"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -118,7 +115,6 @@ _CONSIDERATION_FIELDS = frozenset(
         "replay_reference",
         "report_document",
         "report_id",
-        "retained_original",
         "review_case_id",
         "reviewer_access_revision",
         "reviewer_engine",
@@ -152,21 +148,33 @@ def cover_consideration_replay_digest(
     ).hexdigest()
 
 
+def _target_cover(report: MetadataReport) -> TargetField:
+    return next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.COVER
+    )
+
+
 def _cover_incumbent(
     report: MetadataReport,
     candidates: list[dict[str, object]],
 ) -> tuple[dict[str, object], str | None]:
     incumbent = next((item for item in candidates if item["incumbent"]), None)
-    target_cover = next(
-        field
-        for field in report.target.fields
-        if field.destination is TargetDestination.COVER
-    )
+    target_cover = _target_cover(report)
     incumbent_state = (
         "available"
         if incumbent is not None
         else "unavailable"
-        if target_cover.state is TargetFieldState.VALUE
+        # A cover Audiobookshelf holds but that could not be read, including
+        # one too large or not an image, reads "Image unavailable" on the book
+        # page as in Covers (#1363, contract 7.1).
+        if target_cover.state
+        in {
+            TargetFieldState.VALUE,
+            TargetFieldState.MALFORMED,
+            TargetFieldState.OVERSIZED,
+        }
         else "absent"
     )
     return (
@@ -178,46 +186,98 @@ def _cover_incumbent(
     )
 
 
-_RETAINED_ORIGINAL = closed_document(
-    artifact_id=prefixed_hex_identity("cover_"),
-    decision_id=nonempty_text,
-    original_sha256=prefixed_hex_identity(""),
-    plan_id=prefixed_hex_identity("effect_plan_"),
-)
+_DECISION_ID = re.compile(r"[A-Za-z0-9_.:-]{1,256}")
 
 
-def _retained_original_shape(value: object) -> bool:
-    return value is None or (
-        _RETAINED_ORIGINAL(value)
-        and cast("dict[str, str]", value)["artifact_id"]
-        == "cover_" + cast("dict[str, str]", value)["original_sha256"]
-    )
+def _retained_candidate(
+    report: MetadataReport,
+    binding: tuple[str, str, str] | None,
+    reviewed: list[dict[str, object]],
+    incumbent_digest: str | None,
+) -> dict[str, object] | None:
+    """The retained original as an owner-only candidate (#1363, D2).
 
-
-def _retained_original(
-    retained: tuple[str, str, str] | None, incumbent_digest: str | None
-) -> dict[str, str] | None:
-    """The original an automatic switch replaced, while it is not the current cover.
-
-    Inert until activation (#1363 PR 4): it is recorded on the consideration
-    but never projected, offered or selectable.
+    It is offered only when the report carries the work's ``retained``
+    source and ``binding`` (digest, plan, decision) is the switch that source
+    names, and only while it is not already the current cover or the same
+    image as a reviewed candidate, so one picture is never two cards. Like the
+    proposal's cover alternatives, it is offered only over a populated cover and
+    never fills an empty one. It has no identity, no rank and no reviewer
+    evidence: it is a way back, never an automatic choice.
     """
-    if retained is None or retained[0] == incumbent_digest:
+    if binding is None or _target_cover(report).state is not TargetFieldState.VALUE:
         return None
-    digest, plan_id, decision_id = retained
+    digest, plan_id, decision_id = binding
+    if (
+        digest == incumbent_digest
+        or re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id) is None
+        or _DECISION_ID.fullmatch(decision_id) is None
+    ):
+        return None
+    source = next(
+        (
+            source
+            for source in report.cover_sources
+            if source.kind is CoverSourceKind.RETAINED
+            and source.source_id == cover_source_id(CoverSourceKind.RETAINED, plan_id)
+            and source.artifact is not None
+            and source.artifact.original_digest == digest
+        ),
+        None,
+    )
+    if (
+        source is None
+        or source.artifact is None
+        or any(item["artifact_id"] == source.artifact.artifact_id for item in reviewed)
+    ):
+        return None
+    artifact = source.artifact
+    ordinal = len(reviewed)
+    reference = cover_source_reference(report.report_id, source.source_id)
     return {
-        "artifact_id": "cover_" + digest,
+        "artifact_id": artifact.artifact_id,
+        "candidate_kind": "retained",
         "decision_id": decision_id,
-        "original_sha256": digest,
+        "deterministic_citations": [reference],
+        "deterministic_rank": None,
+        "deterministic_rank_key": None,
+        "height": artifact.height,
+        "identity": None,
+        "incumbent": False,
+        "match_state": "match_not_confirmed",
+        "observation": None,
+        "ordinal": ordinal,
+        "original_sha256": artifact.original_digest,
         "plan_id": plan_id,
+        "preview_sha256": artifact.preview_digest,
+        "reference": reference,
+        "selectable": True,
+        "source_kinds": [CoverSourceKind.RETAINED.value],
+        "state": "available",
+        "transport_sha256": artifact.preview_digest,
+        "width": artifact.width,
     }
+
+
+def _retained_binding(candidate: Mapping[str, object]) -> tuple[str, str, str] | None:
+    """The binding a stored retained candidate names, or None for any other."""
+    if candidate.get("candidate_kind") != "retained":
+        return None
+    digest, plan_id, decision_id = (
+        candidate.get("original_sha256"),
+        candidate.get("plan_id"),
+        candidate.get("decision_id"),
+    )
+    if not all(type(value) is str for value in (digest, plan_id, decision_id)):
+        raise ValueError("retained cover candidate is invalid")
+    return cast(str, digest), cast(str, plan_id), cast(str, decision_id)
 
 
 def _validated_cover_consideration(
     document: str,
     parse_report: Callable[[str], MetadataReport] | None = None,
 ) -> tuple[dict[str, object], MetadataReport]:
-    """Read one canonical v4 consideration and its bound report."""
+    """Read one canonical v6 consideration and its bound report."""
     value = _load_object(document, "cover consideration")
     consideration_id = value.get("consideration_id")
     created_at = value.get("created_at")
@@ -305,12 +365,6 @@ def _validated_cover_consideration(
             policy_report_document is not None
             and type(policy_report_document) is not str
         )
-        or not _retained_original_shape(value.get("retained_original"))
-        or (
-            value.get("retained_original") is not None
-            and cast("dict[str, str]", value["retained_original"])["original_sha256"]
-            == value.get("incumbent_digest")
-        )
     ):
         raise ValueError("cover consideration document is invalid")
     identity = dict(value)
@@ -347,6 +401,21 @@ def _validated_cover_consideration(
     )
     if policy.document != policy_document or policy.reference != policy_reference:
         raise ValueError("cover consideration policy is invalid")
+    _validated_candidates(value, report, policy, policy_report_document)
+    return value, report
+
+
+def _validated_candidates(
+    value: dict[str, object],
+    report: MetadataReport,
+    policy: CoverPolicy,
+    policy_report_document: str | None,
+) -> None:
+    """Require a consideration's candidates, omissions and incumbent to be rebuilt exactly.
+
+    The reviewed candidates are rebuilt from the bound packet and reviewer
+    documents; a trailing retained original is checked against the report.
+    """
     packet_document = cast("str | None", value.get("packet_document"))
     identity_document = cast("str | None", value.get("identity_document"))
     observation_document = cast("str | None", value.get("observation_document"))
@@ -417,6 +486,20 @@ def _validated_cover_consideration(
         expected_incumbent, expected_incumbent_digest = _cover_incumbent(
             report, expected_candidates
         )
+        # A retained original may follow the reviewed candidates. Whether one
+        # is listed depends on its binding being live when the consideration
+        # was built, so it is checked against the report rather than rebuilt.
+        stored = cast("list[dict[str, object]]", value["candidates"])
+        if len(stored) == len(expected_candidates) + 1:
+            retained = stored[-1]
+            if retained != _retained_candidate(
+                report,
+                _retained_binding(retained),
+                expected_candidates,
+                expected_incumbent_digest,
+            ):
+                raise ValueError
+            expected_candidates = [*expected_candidates, retained]
         if (
             value["candidates"] != expected_candidates
             or value["omissions"] != expected_omissions
@@ -432,7 +515,6 @@ def _validated_cover_consideration(
         ValueError,
     ) as error:
         raise ValueError("cover consideration evidence is invalid") from error
-    return value, report
 
 
 # One statement per retained cover source. The provider rows read the one
@@ -775,6 +857,10 @@ class CoverConsideration:
         return str(self.data["consideration_id"])
 
 
+def _no_retained_store(_digest: str) -> None:
+    raise CoverConsiderationError("unavailable")
+
+
 class CoverConsiderationService:
     """Build, persist, project, and authorize one visual owner decision."""
 
@@ -800,6 +886,7 @@ class CoverConsiderationService:
         retained_original: (
             Callable[[str, str, str], tuple[str, str, str] | None] | None
         ) = None,
+        require_retained: Callable[[str], None] | None = None,
     ) -> None:
         self._store = store
         self._require_artifact = require_artifact
@@ -822,6 +909,7 @@ class CoverConsiderationService:
         self._bind_policy = bind_policy or (lambda _policy, _replay: None)
         self._provider_fetching = provider_fetching or (lambda _report: False)
         self._retained_original = retained_original or (lambda *_target: None)
+        self._require_retained = require_retained or _no_retained_store
 
     def update_policy(self, policy: CoverPolicy) -> None:
         """Bind a validated policy before publishing its immutable snapshot."""
@@ -1358,12 +1446,16 @@ class CoverConsiderationService:
             candidates = []
 
         incumbent, incumbent_digest = _cover_incumbent(report, candidates)
-        retained = _retained_original(
+        retained = _retained_candidate(
+            report,
             self._retained_original(
                 report.target.connection, report.target.library, report.target.item
             ),
+            candidates,
             incumbent_digest,
         )
+        if retained is not None:
+            candidates = [*candidates, retained]
         body: dict[str, object] = {
             "candidates": candidates,
             "created_at": self._clock(),
@@ -1381,7 +1473,6 @@ class CoverConsiderationService:
             "report_document": report_document,
             "report_id": report.report_id,
             "replay_digest": replay_digest,
-            "retained_original": retained,
             "replay_reference": (
                 evidence.replay_reference
                 if evidence is not None and evidence.replay_reference is not None
@@ -1515,6 +1606,7 @@ class CoverConsiderationService:
             result.append(
                 {
                     "artifact_id": artifact.artifact_id,
+                    "candidate_kind": "candidate",
                     "height": artifact.height,
                     "identity": identity_row,
                     "deterministic_citations": list(
@@ -1578,18 +1670,26 @@ class CoverConsiderationService:
         policy_document = cast("str | None", value["policy_report_document"])
         policy = None if policy_document is None else json.loads(policy_document)
         matched_book = _matched_book_references(value, report)
-        candidates = [
-            dict(
-                cast("dict[str, object]", item),
-                manual_eligible=manual_cover_eligible(cast("dict[str, object]", item)),
+        live = self._live_retained(report)
+        candidates = []
+        for item in cast("list[dict[str, object]]", value["candidates"]):
+            candidate = dict(item)
+            binding = _retained_binding(candidate)
+            if binding is not None and binding != live:
+                # A released original stays in its immutable consideration but
+                # can no longer be put back (#1363, R2).
+                candidate.update(selectable=False, state="excluded")
+            # The binding names internal plan and decision rows; the owner's
+            # page needs neither.
+            candidate.pop("plan_id", None)
+            candidate.pop("decision_id", None)
+            candidate.update(
+                manual_eligible=manual_cover_eligible(candidate),
                 match_reason=(
-                    "matched_book"
-                    if cast("dict[str, object]", item)["reference"] in matched_book
-                    else None
+                    "matched_book" if candidate["reference"] in matched_book else None
                 ),
             )
-            for item in cast("list[object]", value["candidates"])
-        ]
+            candidates.append(candidate)
         incumbent = cast("dict[str, object]", value["incumbent"])
         omissions = cast("list[object]", value["omissions"])
         # The stored failure code is an open string; only a closed OpenRouter
@@ -1636,9 +1736,19 @@ class CoverConsiderationService:
             "target_fingerprint": value["target_fingerprint"],
         }
 
+    def _live_retained(self, report: MetadataReport) -> tuple[str, str, str] | None:
+        return self._retained_original(
+            report.target.connection, report.target.library, report.target.item
+        )
+
     def image(
         self, review_case_id: str, consideration_id: str, reference: str
-    ) -> bytes:
+    ) -> tuple[bytes, bool]:
+        """One candidate's preview, and whether it is the retained original.
+
+        The retained original's preview is never cached: the copy it stands
+        for can be released at any time (#1363, data-privacy).
+        """
         document = self._store.current_cover_consideration_document(review_case_id)
         if document is None:
             raise CoverConsiderationError("not_found")
@@ -1653,7 +1763,10 @@ class CoverConsiderationService:
         )
         if candidate is None:
             raise CoverConsiderationError("not_found")
-        return self.retained_preview(str(candidate["preview_sha256"]))
+        return (
+            self.retained_preview(str(candidate["preview_sha256"])),
+            candidate.get("candidate_kind") == "retained",
+        )
 
     def retained_preview(self, preview_sha256: str) -> bytes:
         """Read one retained preview by the digest its caller already bound."""
@@ -1742,6 +1855,28 @@ class CoverConsiderationService:
             raise CoverConsiderationError("stale")
         if self._require_artifact is None:
             raise CoverConsiderationError("unavailable")
+        retained = next(
+            (
+                binding
+                for binding in map(
+                    _retained_binding,
+                    cast("list[dict[str, object]]", value["candidates"]),
+                )
+                if binding is not None and "cover_" + binding[0] == artifact_id
+            ),
+            None,
+        )
+        if retained is not None:
+            # Putting an original back needs its binding still listed with no
+            # removal and its private copy intact, both before anything commits
+            # (#1363, D3).
+            if retained != self._live_retained(report):
+                raise CoverConsiderationError("stale")
+            try:
+                self._require_retained(retained[0])
+            except (OSError, ValueError) as error:
+                raise CoverConsiderationError("stale") from error
+            return
         try:
             for source in report.cover_sources:
                 if (

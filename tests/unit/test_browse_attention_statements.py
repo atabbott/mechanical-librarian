@@ -341,7 +341,7 @@ def _cover_selection(
     _, target = _consideration(repository, case_id)
     key = _hex(f"selection:{case_id}:{kind}")
     document = (
-        json.dumps({"schema_version": "cover-selection-authority-v2"})
+        json.dumps({"schema_version": "cover-selection-authority-v3"})
         if kind == "owner"
         else json.dumps(
             {

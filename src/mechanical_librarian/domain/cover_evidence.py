@@ -20,7 +20,7 @@ from mechanical_librarian.domain.evidence_bounds import (
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
 _SOURCE_ID = re.compile(
-    r"^(?:abs|audible_catalog|epub|hardcover|inventaire|itunes_search|open_library)"
+    r"^(?:abs|audible_catalog|epub|hardcover|inventaire|itunes_search|open_library|retained)"
     r"_[0-9a-f]{64}$"
 )
 _IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
@@ -46,6 +46,11 @@ class CoverSourceKind(StrEnum):
     # independent signal and emit no cover source at all.
     AUDIBLE_CATALOG = "audible_catalog"
     ITUNES_SEARCH = "itunes_search"
+    # The original an automatic switch replaced, read back from the private
+    # retained store while its switch is listed (#1363, ADR-0093). It is the
+    # owner's alternative only: never a provider's cover, never sent to a
+    # reviewer, never elected, never chosen automatically.
+    RETAINED = "retained"
 
 
 LOCAL_COVER_SOURCE_KINDS = frozenset({CoverSourceKind.ABS, CoverSourceKind.EPUB})
@@ -325,7 +330,13 @@ class CoverSource:
             and self.state is CoverSourceState.RETRIEVED
         ):
             raise CoverEvidenceError("cover final host is inconsistent")
-        if self.kind in LOCAL_COVER_SOURCE_KINDS:
+        if self.kind is CoverSourceKind.RETAINED:
+            if (
+                self.provenance is not None
+                or self.state is not CoverSourceState.RETRIEVED
+            ):
+                raise CoverEvidenceError("retained cover source is invalid")
+        elif self.kind in LOCAL_COVER_SOURCE_KINDS:
             if self.provenance is not None:
                 raise CoverEvidenceError("local cover provenance is invalid")
         elif self.provenance is not None and self.provenance.provider == "":
@@ -444,24 +455,30 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         type(source) is not CoverSource for source in sources
     ):
         raise CoverEvidenceError("cover sources are invalid")
-    # Two local rows, twelve admitted provider rows, and at most five explicit
-    # truncation rows for each of the configuration schema's 32 providers.
-    if len(sources) > 2 + 12 + 5 * 32 or len(
+    # Two local rows, one retained original, twelve admitted provider rows, and
+    # at most five explicit truncation rows for each of the configuration
+    # schema's 32 providers.
+    if len(sources) > 2 + 1 + 12 + 5 * 32 or len(
         {source.source_id for source in sources}
     ) != len(sources):
         raise CoverEvidenceError("cover sources are invalid")
     local = [source for source in sources if source.kind in LOCAL_COVER_SOURCE_KINDS]
-    # Every kind that is not one of the two local ones is a provider row, so an
+    retained = [source for source in sources if source.kind is CoverSourceKind.RETAINED]
+    # Every kind that is neither local nor retained is a provider row, so an
     # admitted cover-bearing provider enters this arithmetic by joining the
     # enum rather than by being named again here.
     provider = [
-        source for source in sources if source.kind not in LOCAL_COVER_SOURCE_KINDS
+        source
+        for source in sources
+        if source.kind not in LOCAL_COVER_SOURCE_KINDS
+        and source.kind is not CoverSourceKind.RETAINED
     ]
     admitted_provider = [
         source for source in provider if source.state is not CoverSourceState.TRUNCATED
     ]
     if (
         len(local) > 2
+        or len(retained) > 1
         or any(source.provenance is None for source in provider)
         or len(admitted_provider) > 12
         or len(

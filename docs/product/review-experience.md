@@ -443,9 +443,17 @@ filled an empty cover reads **No cover** before. The original is listed only
 while its copy is retained
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
 **Keep** records keeping the current cover, releases that copy and marks the
-row **Kept**; **Others** opens the comparison. Both appear only when another
-cover can be chosen, since keeping the current cover is a choice only beside
-another. A cover field in the work view links to its book in Covers, which
+row **Kept**; **Others** opens the comparison. A replaced cover is itself a
+choice, so a replaced row offers **Put back**, **Keep** and **Others** once
+the work is prepared again after its switch. **Put back** records choosing
+the original, which the guarded write uploads from the retained copy; the
+row reads **Put back** while that write runs and leaves Switched when it
+verifies, which releases the copy. If the cover was changed in
+Audiobookshelf first, the row says "The cover was changed in
+Audiobookshelf, so it was not put back." and keeps Keep and Others. In the
+comparison the original is the **Replaced cover** card. A fill replaced
+nothing, so its row offers Keep and Others only when another cover can be
+chosen. A cover field in the work view links to its book in Covers, which
 opens it wherever it falls in All.
 
 ## Evidence and History

@@ -420,10 +420,17 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
             file,
             tuple(lanes),
             library_cover,
+            # A malformed or oversized field holds something too, just not a
+            # cover this report could read (#1363, R1).
             library_cover is None
             and any(
                 field.destination is TargetDestination.COVER
-                and field.state is TargetFieldState.VALUE
+                and field.state
+                in {
+                    TargetFieldState.VALUE,
+                    TargetFieldState.MALFORMED,
+                    TargetFieldState.OVERSIZED,
+                }
                 for field in target.fields
             ),
         )

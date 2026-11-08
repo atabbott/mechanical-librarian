@@ -86,14 +86,33 @@ const bookSearch = (reviewCaseId: string) => ({ lens: 'all' as const, preview: r
 const focusLater = (find: () => HTMLElement | null | undefined) =>
   requestAnimationFrame(() => find()?.focus({ preventScroll: false }))
 
-type Outcome = 'switched' | 'kept' | 'changed' | 'skipped'
+type Outcome = 'switched' | 'kept' | 'changed' | 'put_back' | 'skipped'
 const outcomeCopy = (outcome: Outcome, title: string) =>
   ({
     switched: `Switched ${title}.`,
     kept: `Kept ${title}.`,
     changed: `Changed ${title}.`,
+    put_back: `Put back ${title}.`,
     skipped: `Skipped ${title}.`,
   })[outcome]
+const donePills = {
+  switched: 'Changed',
+  kept: 'Kept',
+  changed: 'Changed',
+  put_back: 'Put back',
+  skipped: 'Changed',
+} satisfies Record<Outcome, string>
+const putBackRefusedCopy = 'The cover was changed in Audiobookshelf, so it was not put back.'
+// A Put back's write still running: the row already reads as put back.
+const putBackPending = new Set(['planned', 'claimed', 'applying', 'reconciling', 'retryable'])
+/** A Put back whose write found the cover changed in Audiobookshelf first. */
+const putBackRefused = (work: CoverWorkView) =>
+  work.switched?.put_back?.state === 'stale' && work.switched.put_back.failure === 'target_changed'
+/** The original an automatic switch replaced, while it can still be put back (#1363). */
+const retainedCandidate = (field: ReviewField | undefined) =>
+  field?.coverConsideration?.candidates.find(
+    (candidate) => candidate.candidateKind === 'retained' && candidate.selectable,
+  )
 type Failure = { kind: 'stale' } | { kind: 'message'; text: string }
 const failureOf = (error: unknown, field: ReviewField | undefined): Failure =>
   error instanceof ApiError && error.code === 'stale'
@@ -259,7 +278,13 @@ function CoverComparison({
       () => {
         setProgress({ command, phase: 'confirmed' })
         onRecorded(
-          outcome === 'keep_current' ? 'kept' : work.group === 'auto' ? 'changed' : 'switched',
+          outcome === 'keep_current'
+            ? 'kept'
+            : value?.value !== undefined && value.value === retainedCandidate(field)?.artifactId
+              ? 'put_back'
+              : work.group === 'auto'
+                ? 'changed'
+                : 'switched',
         )
       },
       (error: unknown) => {
@@ -372,6 +397,13 @@ function SwitchedRow({
   const switched = work.switched
   if (!switched) return null
   const titleId = `covers-switched-${work.review_case_id}`
+  // The server's own record of a Put back: still writing reads as put back,
+  // and a target that changed first says why nothing was put back.
+  const putBack = switched.put_back
+  // A refusal outranks this view's own Put back mark, which the list drops,
+  // so the row offers Keep and Others again and says why.
+  const refused = putBackRefused(work)
+  const shown = done ?? (putBack && putBackPending.has(putBack.state) ? 'put_back' : undefined)
   // Keep is the book's keep-current command; its case is read first so the
   // command carries the exact proposal and selection it answers. The command
   // admits keep-current only beside another cover, so a switch with no other
@@ -394,6 +426,33 @@ function SwitchedRow({
         coverCommand(field, 'keep_current', null),
       )
       onRecorded('kept')
+    } catch (error) {
+      setFailure(failureOf(error, field))
+    } finally {
+      setKeeping(false)
+    }
+  }
+  // Put back is the book's accept of the original the switch replaced, read
+  // from its case as Keep is; an original no longer offered is stale.
+  const putBackOriginal = async () => {
+    setFailure(null)
+    setKeeping(true)
+    let field: ReviewField | undefined
+    try {
+      const detail = await queryClient.query({
+        ...detailQuery(http, work.review_case_id),
+        staleTime: 0,
+      })
+      field = coverField(detail.fields)
+      const original = retainedCandidate(field)
+      if (!field || !original) throw new ApiError(409, 'stale')
+      await submitCover(
+        http,
+        queryClient,
+        work.review_case_id,
+        coverCommand(field, 'accept', { kind: 'cover', value: original.artifactId }),
+      )
+      onRecorded('put_back')
     } catch (error) {
       setFailure(failureOf(error, field))
     } finally {
@@ -458,12 +517,17 @@ function SwitchedRow({
           <p className="covers-failure" role="alert">
             {failure.text}
           </p>
+        ) : refused && !done ? (
+          // Announced once if it arrives with a live update while the row is open.
+          <p className="covers-failure" role="status">
+            {putBackRefusedCopy}
+          </p>
         ) : null}
       </div>
       <div className="covers-switched-actions">
-        {done ? (
+        {shown ? (
           <>
-            <StatusPill tone="accent">{done === 'kept' ? 'Kept' : 'Changed'}</StatusPill>
+            <StatusPill tone="accent">{donePills[shown]}</StatusPill>
             {work.choosable ? (
               <button ref={change} type="button" aria-describedby={titleId} onClick={onOpen}>
                 Change
@@ -472,6 +536,18 @@ function SwitchedRow({
           </>
         ) : work.choosable ? (
           <>
+            {/* Offered only while the book's comparison has the original: before
+                the book is prepared again after its switch, it cannot be chosen. */}
+            {!switched.put_back_offered || refused ? null : (
+              <button
+                type="button"
+                aria-describedby={titleId}
+                disabled={keeping}
+                onClick={() => void putBackOriginal()}
+              >
+                Put back
+              </button>
+            )}
             <button
               type="button"
               aria-describedby={titleId}
@@ -727,7 +803,16 @@ export default function CoversView() {
     tab === 'decide' || tab === 'kept'
       ? groupOrder.flatMap((group) => works.filter((work) => work.group === group))
       : works
-  const firstOpen = ordered.find((work) => done[work.review_case_id] === undefined)
+  // A Put back recorded here whose write the server then reports refused is
+  // no longer marked: the book is undecided again (#1363).
+  const marked: Readonly<Record<string, Outcome>> = Object.fromEntries(
+    Object.entries(done).filter(
+      ([id, outcome]) =>
+        outcome !== 'put_back' ||
+        !works.some((work) => work.review_case_id === id && putBackRefused(work)),
+    ),
+  )
+  const firstOpen = ordered.find((work) => marked[work.review_case_id] === undefined)
   // A selection the tab no longer holds is dropped, so a phone never shows
   // neither the list nor a book.
   useEffect(() => {
@@ -792,7 +877,7 @@ export default function CoversView() {
       return
     }
     const index = ordered.indexOf(work)
-    const next = ordered.slice(index + 1).find((item) => done[item.review_case_id] === undefined)
+    const next = ordered.slice(index + 1).find((item) => marked[item.review_case_id] === undefined)
     select(next?.review_case_id)
   }
   const replaced = (reviewCaseId: string) => {
@@ -908,7 +993,7 @@ export default function CoversView() {
                 key={work.review_case_id}
                 work={work}
                 index={index}
-                done={done[work.review_case_id]}
+                done={marked[work.review_case_id]}
                 open={selectedId === work.review_case_id}
                 onOpen={() =>
                   select(selectedId === work.review_case_id ? undefined : work.review_case_id)
@@ -922,7 +1007,7 @@ export default function CoversView() {
           <CoverWall
             works={works}
             selectedId={selectedId}
-            done={done}
+            done={marked}
             select={select}
             panel={closable}
           />
@@ -945,7 +1030,7 @@ export default function CoversView() {
                             work={work}
                             index={works.indexOf(work)}
                             selected={work.review_case_id === selected?.review_case_id}
-                            done={done[work.review_case_id] !== undefined}
+                            done={marked[work.review_case_id] !== undefined}
                             onSelect={() => select(work.review_case_id)}
                           />
                         ))}

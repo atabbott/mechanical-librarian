@@ -953,6 +953,7 @@ def test_application_shares_aggregate_with_covers_and_caps_the_metadata_share(
             _local_sources,
             _descriptors,
             aggregate_deadline,
+            _retained=None,
         ):
             observed.append(("cover", aggregate_deadline))
             return ()
@@ -2788,7 +2789,13 @@ def test_initial_failure_passes_exact_partial_descriptors_to_cover_observer():
             return local
 
         def observe(
-            self, _target, providers, _local, candidate_descriptors, aggregate_deadline
+            self,
+            _target,
+            providers,
+            _local,
+            candidate_descriptors,
+            aggregate_deadline,
+            _retained=None,
         ):
             seen.append((providers, candidate_descriptors))
             return ()
@@ -3092,7 +3099,9 @@ def test_each_provider_receives_at_most_its_share_of_the_aggregate(
             boundaries.append(("current", aggregate_deadline))
             return local
 
-        def observe(self, _target, _providers, local, _descriptors, aggregate):
+        def observe(
+            self, _target, _providers, local, _descriptors, aggregate, _retained=None
+        ):
             boundaries.append(("cover", aggregate))
             return local
 
@@ -4396,7 +4405,9 @@ def test_a_deadline_stop_names_the_share_or_the_aggregate_that_bound_it(
             clock[0] += 5
             return local
 
-        def observe(self, _target, _providers, local, _descriptors, _aggregate):
+        def observe(
+            self, _target, _providers, local, _descriptors, _aggregate, _retained=None
+        ):
             return local
 
     bindings = (

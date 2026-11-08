@@ -33,8 +33,11 @@ export const coverNames = (
   >[],
 ) => {
   const proposed = candidates.filter((item) => !item.incumbent)
+  // The original a switch replaced is named for what it is, not a source (#1363).
   const base = (item: (typeof proposed)[number]) =>
-    `${item.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' and ') || 'Proposed'} cover`
+    item.sourceKinds.includes('retained')
+      ? coverSourceLabels.retained
+      : `${item.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' and ') || 'Proposed'} cover`
   const sized = (item: (typeof proposed)[number]) =>
     `${base(item)}, ${String(item.width)} × ${String(item.height)} px`
   const count = (name: (item: (typeof proposed)[number]) => string, value: string) =>

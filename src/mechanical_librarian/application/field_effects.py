@@ -363,6 +363,7 @@ class GuardedFieldApplication:
         recovery_hook: Callable[[FieldEffectPlan], None] | None = None,
         timing: StageTimer | None = None,
         cover_retention: CoverRetention | None = None,
+        cover_rescan: Callable[[str, str], None] | None = None,
     ) -> None:
         self._repository = repository
         self._target = target
@@ -381,6 +382,9 @@ class GuardedFieldApplication:
         # Composition always supplies retention; only a harness that never
         # replaces a populated cover automatically may leave it out (#1363).
         self._cover_retention = cover_retention
+        # A verified cover write asks for the scan that prepares its work
+        # afresh; the request never raises after the write commits (#1363).
+        self._cover_rescan = cover_rescan or (lambda _connection, _library: None)
         self._draining = threading.Event()
         self._admission_lock = threading.Lock()
 
@@ -856,6 +860,8 @@ class GuardedFieldApplication:
                 plan_id, "verified", None, self._clock()
             )
             self._recover_cleanup(result)
+            if operation.plan.destination == "cover":
+                self._cover_rescan(operation.plan.connection, operation.plan.library)
             return result
         if observed.matches(operation.plan, desired=False):
             if (
@@ -953,6 +959,7 @@ class GuardedFieldApplication:
         )
         if operation.plan.destination == "cover":
             self._recover_cleanup(result)
+            self._cover_rescan(operation.plan.connection, operation.plan.library)
         return result
 
     def _stale(

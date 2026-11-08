@@ -470,3 +470,19 @@ edition covers, and a report carries forward while its file and configuration
 fingerprints are unchanged, so a stored report would never offer them. The
 proposal policy is unchanged. Every earlier application database is rejected
 before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1363's Put back also takes the clean-rebuild branch.
+`metadata-report-v79` adds a `retained` cover source: the original an
+automatic switch replaced, read from the retained store while its copy is
+listed, and a report decoded under v78 states none. A report carries forward
+while its file and configuration fingerprints are unchanged, so a stored report
+would never offer the original back; a verified cover write therefore sets
+`review_preparation_work.refresh_requested`, whatever the work's state, so the
+next discovery extracts again, even after a run that observed the cover before
+the write, and only claiming that extraction clears it. Every decoded cover
+reports its oriented size.
+`fixed-conservative-v46` makes the retained original an owner-only cover
+alternative, `cover-consideration-v6` names each candidate's kind, and
+`cover-selection-authority-v3` records the switch a Put back undoes, so a
+verified Put back releases its copy. Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.

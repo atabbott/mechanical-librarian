@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 from argon2 import PasswordHasher
@@ -30,19 +30,34 @@ from mechanical_librarian.application.review_covers import (
     replaced_cover_preview,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.domain import field_effect
+from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    TargetDestination,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.support.cover_producers import _qualified_cover_report
+from mechanical_librarian.interfaces.web import app
+from tests.support.cover_operations import (
+    automatic_switch,
+    list_switch,
+    retained_source,
+)
+from tests.support.cover_producers import _preview, _qualified_cover_report
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
 
 ORIGIN = "https://review.test"
+# The original an automatic switch replaced, kept so it can be put back.
+_ORIGINAL_BYTES = b"replaced original"
+_ORIGINAL_PREVIEW = _preview(9)
+_ORIGINAL = CoverArtifact.create(
+    _ORIGINAL_BYTES, _ORIGINAL_PREVIEW, "image/png", 400, 600
+)
 
 
 @dataclass
@@ -81,11 +96,42 @@ def _library(
     *,
     readable_current: bool = True,
     title: str | None = None,
+    put_back: bool = False,
 ) -> Iterator[_Library]:
+    """With ``put_back``, item-1's current cover is a verified automatic switch
+    whose original is listed, and its report offers that original (#1363)."""
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     base, _ = _qualified_cover_report(root, readable_current=readable_current)
     artifacts = CoverArtifactStore(root / "artifacts")
     repository = open_repository(root / "application.sqlite3", cross_thread=True)
+    switch = None
+    if put_back:
+        current = next(
+            field.value
+            for field in base.target.fields
+            if field.destination is TargetDestination.COVER
+        )
+        switch = automatic_switch(
+            base.target, _ORIGINAL.artifact_id, cast(str, current)
+        )
+        base = MetadataReport.create(
+            target=base.target,
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=(
+                *base.cover_sources,
+                retained_source(switch.plan.plan_id, _ORIGINAL),
+            ),
+        )
+        artifacts.stage_preview(_ORIGINAL, _ORIGINAL_PREVIEW)
+        list_switch(
+            repository._connection,
+            switch,
+            _ORIGINAL.original_digest,
+            len(_ORIGINAL_BYTES),
+        )
     sources = base.cover_sources
     service = CoverConsiderationService(
         repository,
@@ -99,6 +145,9 @@ def _library(
         require_artifact=artifacts.require_artifact,
         clock=lambda: 10,
         bind_policy=repository.bind_current_cover_authority,
+        retained_original=repository.retained_cover_original,
+        # The copy itself is checked in test_cover_retention.py.
+        require_retained=lambda _digest: None,
     )
     # The live reads composition binds: cover currentness for attention, and
     # the owner cover recheck for a decision.
@@ -272,10 +321,19 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
         assert first["group"] == "auto"
         assert first["switched"]["at"] == 100
         assert first["switched"]["filled"] is False
+        # Listed, but its work was not prepared again since the switch, so its
+        # comparison lacks the original and Put back is not offered (#1363).
+        assert first["switched"]["put_back_offered"] is False
         before = first["switched"]["before"]
         assert str(before["url"]).startswith(f"/api/v1/covers/replaced?plan={newer}")
         # A fill replaced nothing, so it has no Before and offers nothing back.
-        assert fill["switched"] == {"at": 50, "before": None, "filled": True}
+        assert fill["switched"] == {
+            "at": 50,
+            "before": None,
+            "filled": True,
+            "put_back": None,
+            "put_back_offered": False,
+        }
         assert (
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
             == before["preview_sha256"]
@@ -606,3 +664,194 @@ def test_a_cursor_carries_the_longest_accepted_title_and_item(
         shown = [item["review_case_id"] for item in first["items"] + second["items"]]
         assert sorted(shown) == sorted(library.cases.values())
         assert len(set(shown)) == len(shown)
+
+
+def test_a_put_back_reads_in_the_field_effect_vocabulary_exactly() -> None:
+    """The wire names a Put back's write by the effect's own closed values (#1363)."""
+    fields = app._CoverPutBack.model_fields
+    state = fields["state"].annotation
+    failure = fields["failure"].annotation
+    assert set(get_args(state)) == set(field_effect._STATES)
+    (failures, _none) = get_args(failure)
+    assert set(get_args(failures)) | {None} == set(field_effect.FIELD_EFFECT_FAILURES)
+
+
+def _owner_answer(
+    library: _Library, item: str, *, retained_plan: str | None, at: int
+) -> str:
+    """Record the owner's current cover answer for one work, and return its id.
+
+    A Put back's v3 document names the switch it undoes. The consideration
+    that would bind it is outside this read, so its foreign key is not
+    enforced while it is written.
+    """
+    decision_id = "human_decision_" + "9" * 64
+    selection_id = "cover_selection_" + "9" * 64
+    document = {
+        "candidate_kind": "candidate" if retained_plan is None else "retained",
+        "retained_plan_id": retained_plan,
+        "schema_version": "cover-selection-authority-v3",
+    }
+    connection = library.repository._connection
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=OFF")
+    try:
+        connection.execute(
+            "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
+            "library_name,item_id,kind,decision_id,consideration_id,"
+            "supersedes_selection_id,occurred_at,document) "
+            "VALUES(?,'primary','ebooks',?,'owner',?,?,NULL,?,?)",
+            (
+                selection_id,
+                item,
+                decision_id,
+                "cover_consideration_" + "9" * 64,
+                at,
+                json.dumps(document),
+            ),
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO current_cover_selection_authorities("
+            "connection_name,library_name,item_id,selection_id) "
+            "VALUES('primary','ebooks',?,?)",
+            (item, selection_id),
+        )
+        connection.commit()
+    finally:
+        connection.execute("PRAGMA foreign_keys=ON")
+    return decision_id
+
+
+@pytest.mark.parametrize("put_back", (True, False), ids=("put_back", "other_answer"))
+def test_a_put_back_keeps_its_switch_listed_with_its_writes_state(
+    tmp_path: Path, put_back: bool
+) -> None:
+    """Only a Put back of the switch keeps it listed, carrying its write (#1363, Q18)."""
+    with _library(tmp_path) as library:
+        plan_id = _switch(
+            library,
+            "item-1",
+            plan="1",
+            at=100,
+            original=_abs_digest(library.report),
+            sequence=1,
+        )
+        decision_id = _owner_answer(
+            library, "item-1", retained_plan=plan_id if put_back else None, at=200
+        )
+
+        page = _page(library.repository, "switched", None)
+        if not put_back:
+            # Any other answer after the switch takes the work out of Switched.
+            assert page["items"] == []
+            return
+        (row,) = page["items"]
+        # Recorded, and its write not yet planned.
+        assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
+
+        library.repository._connection.execute(
+            "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+            "library_name,work_id,destination,state,attempt,updated_at,document) "
+            "VALUES(?,?,'primary','ebooks','item-1','cover','stale',0,300,?)",
+            (
+                "effect_plan_" + "7" * 64,
+                decision_id,
+                json.dumps({"failure": "target_changed"}),
+            ),
+        )
+        library.repository._connection.commit()
+        (row,) = _page(library.repository, "switched", None)["items"]
+        assert row["switched"]["put_back"] == {
+            "state": "stale",
+            "failure": "target_changed",
+        }
+
+
+@pytest.mark.parametrize("released", (False, True), ids=("listed", "released"))
+def test_put_back_records_the_original_only_while_its_copy_is_listed(
+    tmp_path: Path, released: bool
+) -> None:
+    """Put back is the owner's accept of the original (#1363, D3, D5).
+
+    While the copy is listed it records, and the row stays in Switched with
+    its write planned. Once released, the same command is refused as stale
+    before anything commits (ADR-0091).
+    """
+    with _library(tmp_path, put_back=True) as library:
+        case_id = library.cases["item-1"]
+        with _client(library) as (client, headers):
+            detail = client.get(f"/api/v1/review-cases/{case_id}")
+            assert detail.status_code == 200, detail.text
+            field = next(
+                value
+                for value in detail.json()["fields"]
+                if value["destination"] == "cover"
+            )
+            consideration = field["cover_consideration"]
+            (original,) = (
+                candidate
+                for candidate in consideration["candidates"]
+                if candidate["candidate_kind"] == "retained"
+            )
+            assert original["artifact_id"] == _ORIGINAL.artifact_id
+            assert original["selectable"] is True
+            # The original's preview is never cached; a reviewed one is
+            # immutable (data-privacy, "Prior cover bytes").
+            images = f"/api/v1/review-cases/{case_id}/cover-considerations/" + str(
+                consideration["consideration_id"]
+            )
+            for candidate in consideration["candidates"]:
+                image = client.get(f"{images}/images/{candidate['reference']}")
+                assert image.status_code == 200, image.text
+                assert image.headers["Cache-Control"] == (
+                    "no-store, private"
+                    if candidate["candidate_kind"] == "retained"
+                    else "private, max-age=31536000, immutable"
+                )
+            plan_id = library.repository._connection.execute(
+                "SELECT plan_id FROM retained_cover_listings"
+            ).fetchone()[0]
+            # Its comparison has the original, so Covers offers Put back.
+            (listed,) = client.get("/api/v1/covers?view=switched").json()["items"]
+            assert listed["switched"]["put_back_offered"] is True
+            if released:
+                _release(library, plan_id)
+
+            response = client.post(
+                f"/api/v1/review-cases/{case_id}/decisions",
+                headers={**headers, "Idempotency-Key": "put-back-original-0001"},
+                json={
+                    "destination": "cover",
+                    "outcome": "accept",
+                    "proposal_id": field["proposal_id"],
+                    "selected_value": {
+                        "kind": "cover",
+                        "value": original["artifact_id"],
+                    },
+                    "target_fingerprint": field["target_fingerprint"],
+                    "consideration_id": consideration["consideration_id"],
+                    "cover_confirmation": {
+                        "expected_selection_id": field["current_cover_selection_id"],
+                        "confirm_unverified_match": True,
+                    },
+                },
+            )
+
+            owner = library.repository._connection.execute(
+                "SELECT json_extract(document,'$.candidate_kind'),"
+                "json_extract(document,'$.retained_plan_id') "
+                "FROM cover_selection_authorities WHERE kind='owner'"
+            ).fetchall()
+            switched = client.get("/api/v1/covers?view=switched").json()["items"]
+            if released:
+                assert response.status_code == 409, response.text
+                assert response.json()["error"]["code"] == "stale"
+                assert owner == []
+                assert switched == []
+                return
+            assert response.status_code == 200, response.text
+            assert owner == [("retained", plan_id)]
+            (row,) = switched
+            assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
+            # The recorded Put back's comparison still offers the original.
+            assert row["switched"]["put_back_offered"] is True

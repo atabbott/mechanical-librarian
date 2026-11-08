@@ -2268,6 +2268,7 @@ class CoverObserver(Protocol):
         local_sources: tuple[CoverSource, ...],
         descriptors: tuple[ProviderCoverDescriptor, ...] = (),
         aggregate_deadline: float | None = None,
+        retained: tuple[str, str, str] | None = None,
     ) -> tuple[CoverSource, ...]: ...
 
 
@@ -2302,6 +2303,9 @@ class ReportRepository(Protocol):
     def complete_provider_recovery_outbox(
         self, outbox_id: str, *, delivered_at: int
     ) -> None: ...
+    def retained_cover_original(
+        self, connection: str, library: str, work_id: str
+    ) -> tuple[str, str, str] | None: ...
     def close(self) -> None: ...
 
 
@@ -3987,6 +3991,11 @@ class GenerateMetadataReport:
                         current_sources,
                         tuple(descriptors),
                         cover_aggregate_deadline,
+                        # Read when the report is assembled, so a switch
+                        # listed before this preparation is offered back.
+                        repository.retained_cover_original(
+                            self._connection.name, self._library.name, item
+                        ),
                     )
                 )
             report = MetadataReport.create(
@@ -4405,6 +4414,11 @@ class GenerateMetadataReport:
                         current_sources,
                         tuple(descriptors),
                         cover_aggregate_deadline,
+                        # Read when the report is assembled, so a switch
+                        # listed before this preparation is offered back.
+                        repository.retained_cover_original(
+                            self._connection.name, self._library.name, item
+                        ),
                     )
                 )
             report = MetadataReport.create(

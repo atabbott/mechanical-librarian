@@ -43,6 +43,7 @@ import {
   NetworkUnavailableError,
   PageCsrfTokenStore,
   ReviewApiClient,
+  mapCoverConsideration,
   derivePolicyDraftDisplay,
   policyAutomaticQualification,
   SessionExpiredError,
@@ -1640,7 +1641,7 @@ describe('ReviewApiClient', () => {
             ...cover,
             consideration: {
               ...cover.consideration,
-              candidates: Array.from({ length: 13 }, () => coverCandidate()),
+              candidates: Array.from({ length: 14 }, () => coverCandidate()),
             },
           },
         ],
@@ -5935,5 +5936,58 @@ describe('policy decoding (#1692)', () => {
     expect((refusal as Error).message).not.toContain('/')
     expect(uncertainWriteOutcome(refusal)).toBe(true)
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+})
+
+describe('the retained original as a cover candidate (#1363)', () => {
+  const retained = (overrides: Record<string, unknown> = {}) =>
+    coverCandidate({
+      artifact_id: 'retained-artifact',
+      candidate_kind: 'retained',
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      identity: null,
+      match_state: 'match_not_confirmed',
+      ordinal: 0,
+      reference: 'retained-1',
+      source_kinds: ['retained'],
+      state: 'available',
+      ...overrides,
+    })
+  // The decoder admits the shape; the mapping owns the cross-field rules.
+  const read = async (candidate: unknown) =>
+    mapCoverConsideration(
+      coverConsideration({
+        // No reviewed cover, so no policy: the original alone is offered.
+        candidates: [candidate],
+        ready: (candidate as { selectable: boolean }).selectable,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'retained-1', selection: 'proposed' }),
+        ],
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it('maps the original with no identity, rank or match claim', async () => {
+    const [mapped] = (await read(retained())).candidates
+    expect(mapped).toMatchObject({
+      candidateKind: 'retained',
+      identity: null,
+      deterministicRank: null,
+      selectable: true,
+      manualEligible: true,
+      sourceKinds: ['retained'],
+    })
+  })
+
+  it.each([
+    ['an identity', { identity: coverCandidate().identity }],
+    ['a rank', { deterministic_rank: 1 }],
+    ['a confirmed match', { match_state: 'same_book' }],
+    ['the current cover', { incumbent: true }],
+    ['eligibility it cannot be chosen with', { selectable: false }],
+    ['another source', { source_kinds: ['open_library'] }],
+  ])('refuses an original with %s', async (_name, overrides) => {
+    await expect(read(retained(overrides))).rejects.toThrow(ApiError)
   })
 })

@@ -574,6 +574,15 @@ reads an owner-entered value. Clearing, rollback and undo are not available
 An owner may choose a retained cover whose match is not confirmed, but not
 one with a positive contradiction.
 
+The original an automatic switch replaced is a `retained` cover source: read
+locally from the owner-only retained store, never placed in a reviewer packet,
+a provider request or a support bundle, and never served. Only the owner can
+choose it. Put back is an owner cover decision
+([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md)) under
+every effect guard; it is refused as stale before commit once the copy is
+released, and an original changed in Audiobookshelf first ends the write stale
+(#1363).
+
 ### Automatic decisions
 
 Automatic policy is decision-only

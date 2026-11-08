@@ -27,6 +27,7 @@ const base = detail.fields[0]
 if (!base) throw new Error('the cover fixture needs a field')
 const candidate = (suffix: string, incumbent: boolean) => ({
   artifactId: `cover_${suffix.repeat(64)}`,
+  candidateKind: 'candidate' as const,
   deterministicCitations: [`citation-${suffix}`],
   deterministicRank: incumbent ? null : 0,
   deterministicRankKey: [1, 0, -960000, -800, -1200, incumbent ? 0 : 1, suffix],
@@ -44,6 +45,36 @@ const candidate = (suffix: string, incumbent: boolean) => ({
   sourceKinds: [incumbent ? ('epub' as const) : ('open_library' as const)],
   state: incumbent ? ('excluded' as const) : ('acceptable' as const),
   width: 800,
+})
+// The original an automatic switch replaced, offered back (#1363).
+const retained = (selectable = true) => ({
+  ...candidate('4', false),
+  candidateKind: 'retained' as const,
+  deterministicRank: null,
+  deterministicRankKey: null,
+  identity: null,
+  matchState: 'match_not_confirmed' as const,
+  ordinal: 2,
+  selectable,
+  manualEligible: selectable,
+  sourceKinds: ['retained' as const],
+  state: selectable ? ('available' as const) : ('excluded' as const),
+  width: 500,
+  height: 500,
+})
+const withRetained = (value: CaseDetailView, selectable = true): CaseDetailView => ({
+  ...value,
+  fields: value.fields.map((field) =>
+    field.coverConsideration
+      ? {
+          ...field,
+          coverConsideration: {
+            ...field.coverConsideration,
+            candidates: [...field.coverConsideration.candidates, retained(selectable)],
+          },
+        }
+      : field,
+  ),
 })
 const coverDetail = (id: string, title: string): CaseDetailView => ({
   ...detail,
@@ -354,9 +385,13 @@ describe('Covers view (#1633)', () => {
             url: `/api/v1/covers/replaced?plan=p&preview=${'b'.repeat(64)}`,
           },
           filled: false,
+          put_back: null,
+          put_back_offered: true,
         },
       }),
-      work('case-2', 'auto', { switched: { at, before: null, filled: true } }),
+      work('case-2', 'auto', {
+        switched: { at, before: null, filled: true, put_back: null, put_back_offered: false },
+      }),
     ])
     const http = coversHttp({ switched })
     renderRoute('/library?lens=all&view=covers&tab=switched', http)
@@ -372,8 +407,10 @@ describe('Covers view (#1633)', () => {
       'href',
       '/library?lens=all&preview=case-1',
     )
-    // Put back lands with #1363 PR 4; until then a switch offers Keep and Others.
-    expect(within(first).queryByRole('button', { name: 'Put back' })).toBeNull()
+    // A replaced cover offers Put back beside Keep and Others (#1363).
+    expect(within(first).getByRole('button', { name: 'Put back' })).toHaveAccessibleDescription(
+      'First Book',
+    )
     expect(within(first).getByRole('button', { name: 'Others' })).toHaveAccessibleDescription(
       'First Book',
     )
@@ -382,6 +419,8 @@ describe('Covers view (#1633)', () => {
     if (!fill) throw new Error('a fill row is required')
     expect(within(fill).getAllByText('No cover')).toHaveLength(1)
     expect(within(fill).queryByRole('img', { name: 'Previous cover' })).toBeNull()
+    // A fill replaced nothing, so there is nothing to put back.
+    expect(within(fill).queryByRole('button', { name: 'Put back' })).toBeNull()
     await user.click(within(first).getByRole('button', { name: 'Keep' }))
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
     expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
@@ -398,7 +437,9 @@ describe('Covers view (#1633)', () => {
   it('says Image unavailable when a replaced cover has no stored preview', async () => {
     const at = Math.floor(Date.now() / 1000) - 7200
     const switched = page('switched', [
-      work('case-1', 'auto', { switched: { at, before: null, filled: false } }),
+      work('case-1', 'auto', {
+        switched: { at, before: null, filled: false, put_back: null, put_back_offered: false },
+      }),
     ])
     renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
     const [row] = await screen.findAllByRole('listitem')
@@ -457,7 +498,13 @@ describe('Covers view (#1633)', () => {
     const user = userEvent.setup()
     const switched = page('switched', [
       work('case-1', 'auto', {
-        switched: { at: Math.floor(Date.now() / 1000) - 60, before: preview('b'), filled: false },
+        switched: {
+          at: Math.floor(Date.now() / 1000) - 60,
+          before: preview('b'),
+          filled: false,
+          put_back: null,
+          put_back_offered: true,
+        },
       }),
     ])
     const http = coversHttp({ switched })
@@ -748,5 +795,163 @@ describe('Covers view (#1633)', () => {
     http.getCovers.mockImplementation(() => new Promise(() => undefined))
     renderRoute('/library?lens=all&view=covers', http)
     expect(await screen.findByText('Loading covers…')).toBeVisible()
+  })
+})
+
+describe('Put back (#1363)', () => {
+  const switchedRow = (
+    put_back: NonNullable<CoverWorkView['switched']>['put_back'] = null,
+    put_back_offered = true,
+  ) =>
+    page('switched', [
+      work('case-1', 'auto', {
+        switched: {
+          at: Math.floor(Date.now() / 1000) - 60,
+          before: preview('b', 500, 500),
+          filled: false,
+          put_back,
+          put_back_offered,
+        },
+      }),
+    ])
+
+  it('puts the replaced original back through the book decision and lands on Change', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ switched: switchedRow() })
+    http.getCaseDetail.mockImplementation(async (id) =>
+      withRetained(coverDetail(id, titles[id] ?? id)),
+    )
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Put back' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+      destination: 'cover',
+      outcome: 'accept',
+      selectedValue: { kind: 'cover', value: `cover_${'4'.repeat(64)}` },
+      considerationId: 'cover_consideration_case-1',
+      // The original carries no match claim, so the choice itself confirms it.
+      coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+    })
+    expect(await screen.findByText('Put back First Book.')).toBeVisible()
+    expect(within(row).getByText('Put back')).toBeVisible()
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Change' })).toHaveFocus())
+  })
+
+  it('refuses as stale when the original is no longer offered, recording nothing', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ switched: switchedRow() })
+    http.getCaseDetail.mockImplementation(async (id) =>
+      withRetained(coverDetail(id, titles[id] ?? id), false),
+    )
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Put back' }))
+    expect(
+      await within(row).findByText(
+        "This book's covers changed since the page loaded. Nothing was changed.",
+      ),
+    ).toBeVisible()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('offers no Put back before the book is prepared again after its switch', async () => {
+    // The comparison has no original yet, so Put back could not be recorded.
+    const http = coversHttp({ switched: switchedRow(null, false) })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).queryByRole('button', { name: 'Put back' })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Keep' })).toBeVisible()
+    expect(within(row).getByRole('button', { name: 'Others' })).toBeVisible()
+  })
+
+  it('reads a running Put back as put back', async () => {
+    const http = coversHttp({ switched: switchedRow({ state: 'applying', failure: null }) })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).getByText('Put back')).toBeVisible()
+    expect(within(row).queryByRole('button', { name: 'Put back' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: 'Keep' })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Change' })).toBeVisible()
+  })
+
+  it('says why nothing was put back when the cover changed in Audiobookshelf', async () => {
+    const http = coversHttp({
+      switched: switchedRow({ state: 'stale', failure: 'target_changed' }),
+    })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    const refusal = within(row).getByText(
+      'The cover was changed in Audiobookshelf, so it was not put back.',
+    )
+    expect(refusal).toBeVisible()
+    // Announced if it arrives with a live update while the row is open.
+    expect(refusal).toHaveAttribute('role', 'status')
+    expect(within(row).queryByRole('button', { name: 'Put back' })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Keep' })).toBeVisible()
+  })
+
+  it('drops its own Put back mark when a live update reports the write refused', async () => {
+    const user = userEvent.setup()
+    const updates = createLiveStream()
+    const http = coversHttp({ switched: switchedRow() })
+    http.getCaseDetail.mockImplementation(async (id) =>
+      withRetained(coverDetail(id, titles[id] ?? id)),
+    )
+    renderRoute('/library?lens=all&view=covers&tab=switched', http, updates)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Put back' }))
+    expect(await screen.findByText('Put back First Book.')).toBeVisible()
+    expect(within(row).getByRole('button', { name: 'Change' })).toBeVisible()
+    // The write then finds the cover changed in Audiobookshelf first.
+    http.getCovers.mockResolvedValue(switchedRow({ state: 'stale', failure: 'target_changed' }))
+    await act(async () => {
+      updates.announce({ sequence: 5, subject: 'case-1', topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    const [refusedRow] = await screen.findAllByRole('listitem')
+    if (!refusedRow) throw new Error('a switched row is required')
+    expect(
+      await within(refusedRow).findByText(
+        'The cover was changed in Audiobookshelf, so it was not put back.',
+      ),
+    ).toHaveAttribute('role', 'status')
+    // Neither the Put back mark nor its button remains.
+    expect(within(refusedRow).queryByText('Put back')).toBeNull()
+    expect(within(refusedRow).queryByRole('button', { name: 'Change' })).toBeNull()
+    expect(within(refusedRow).queryByRole('button', { name: 'Put back' })).toBeNull()
+    expect(within(refusedRow).getByRole('button', { name: 'Keep' })).toBeVisible()
+    expect(within(refusedRow).getByRole('button', { name: 'Others' })).toBeVisible()
+  })
+
+  it('labels the original Replaced cover in the comparison, with no match claim', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ switched: switchedRow() })
+    http.getCaseDetail.mockImplementation(async (id) =>
+      withRetained(coverDetail(id, titles[id] ?? id)),
+    )
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Others' }))
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this book use?',
+    })
+    const card = within(group).getByRole('radio', { name: 'Choose Replaced cover' })
+    expect(within(card).getByText('Replaced cover')).toBeVisible()
+    expect(within(card).queryByText('Match not confirmed')).toBeNull()
+    await user.click(card)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1].selectedValue).toEqual({
+      kind: 'cover',
+      value: `cover_${'4'.repeat(64)}`,
+    })
+    expect(await screen.findByText('Put back First Book.')).toBeVisible()
   })
 })

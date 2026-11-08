@@ -416,9 +416,12 @@ function LibraryCoverChoicesContent({
       : (names.get(candidate.reference) ?? 'Proposed cover')
     const evidenceKey = `cover:${key}`
     const open = expandedEvidence.has(evidenceKey)
+    // The original a switch replaced is this book's own cover from before, so
+    // it carries no match claim and is named for what it is (#1363).
+    const retained = candidate.candidateKind === 'retained'
     return (
       <article
-        className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' ? ' is-unconfirmed' : ''}`}
+        className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' && !retained ? ' is-unconfirmed' : ''}`}
         key={candidate.reference}
         onFocusCapture={revealFocusedCoverChoice}
       >
@@ -459,20 +462,24 @@ function LibraryCoverChoicesContent({
               ) : null}
             </small>
             <strong>
-              {candidate.matchState === 'same_edition'
-                ? 'Same edition'
-                : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
-                  ? 'Same book'
-                  : 'Match not confirmed'}
+              {retained
+                ? coverSourceLabels.retained
+                : candidate.matchState === 'same_edition'
+                  ? 'Same edition'
+                  : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
+                    ? 'Same book'
+                    : 'Match not confirmed'}
               {/* The identity stays unverified: only the wording names its basis (#1642). */}
               {candidate.matchReason === 'matched_book' ? ' · recording not confirmed' : ''}
             </strong>
             <span className="cover-dimensions">
               {`${String(candidate.width)} × ${String(candidate.height)} px`}
             </span>
-            <span className="cover-sources">
-              {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
-            </span>
+            {retained ? null : (
+              <span className="cover-sources">
+                {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
+              </span>
+            )}
             {context?.rationale ? <em>{context.rationale}</em> : null}
             {!eligibleCandidate ||
             candidate.matchState === 'match_not_confirmed' ||

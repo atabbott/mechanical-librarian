@@ -38,10 +38,16 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 from mechanical_librarian.domain.reviewer_access import ReviewerEngine
@@ -843,7 +849,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_a592f95ca148842f7b42fd2924ad1f77bdc961e110c475e0966b24f8e3cfe30b"
+        "cover_replay_7e01dc0df44fb20c807b63543128f0ca598a9c42b4a96d733ac438abac4c3eeb"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -886,7 +892,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_84583b39d1c1435ff62e103c01d6f253d51e94a398e92c2d96266c604ac2b266"
+        "cover_replay_97e8f9dcef35140f8d252313b1b071cdee3c070fa67d1c87c46af9b28984dba0"
     )
     assert (
         replayed_qualified.ensure(
@@ -1001,7 +1007,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v5"
+    assert different_document["schema_version"] == "cover-consideration-v6"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 
@@ -1164,9 +1170,10 @@ def test_each_served_image_is_the_artifact_that_choice_would_apply(
     consideration_id = str(value["consideration_id"])
     served: dict[str, bytes] = {}
     for candidate in value["candidates"]:
-        payload = case.service.image(
+        payload, retained = case.service.image(
             case_id, consideration_id, str(candidate["reference"])
         )
+        assert retained is False
         assert hashlib.sha256(payload).hexdigest() == candidate["preview_sha256"]
         assert payload == case.payload_by_artifact[candidate["artifact_id"]]
         served[str(candidate["reference"])] = payload
@@ -2097,95 +2104,340 @@ def test_a_verified_work_route_cover_never_gains_automatic_authority(
         repository.close()
 
 
+_PLAN = "effect_plan_" + "b" * 64
+_DECISION = "automatic_decision_" + "c" * 64
+
+
+def _retained_source() -> CoverSource:
+    artifact = CoverArtifact.create(
+        b"retained-original", _preview(9), "image/png", 400, 600
+    )
+    return CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.RETRIEVED,
+        artifact,
+    )
+
+
 def _retaining_service(
-    case: _Case, retained: tuple[str, str, str] | None
-) -> tuple[CoverConsiderationService, list[tuple[str, str, str]]]:
+    case: _Case,
+    retained: tuple[str, str, str] | None,
+    require_retained: Any = None,
+) -> tuple[
+    CoverConsiderationService,
+    list[tuple[str, str, str]],
+    list[tuple[str, str, str] | None],
+]:
+    """The service, the lookups it made, and a cell a test empties to release."""
     asked: list[tuple[str, str, str]] = []
+    live = [retained]
 
     def lookup(connection: str, library: str, item: str):
         asked.append((connection, library, item))
-        return retained
+        return live[0]
 
-    return (
-        CoverConsiderationService(
-            case.store,
-            read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
-            read_preview_digest=lambda digest: case.payload_by_preview[digest],
-            clock=lambda: case.now,
-            retained_original=lookup,
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        require_artifact=lambda _artifact: None,
+        clock=lambda: case.now,
+        retained_original=lookup,
+        require_retained=require_retained,
+    )
+    return service, asked, live
+
+
+def _with_cover(
+    report: MetadataReport,
+    state: TargetFieldState,
+    sources: tuple[CoverSource, ...],
+) -> MetadataReport:
+    """``report`` with its cover target in ``state`` over ``sources``."""
+    held = next(
+        (
+            source.artifact.artifact_id
+            for source in sources
+            if source.kind is CoverSourceKind.ABS and source.artifact is not None
         ),
-        asked,
+        None,
+    )
+    target = report.target
+    return MetadataReport.create(
+        target=TargetFacts(
+            target.connection,
+            target.library,
+            target.item,
+            tuple(
+                TargetField(
+                    field.destination,
+                    state,
+                    held if state is TargetFieldState.VALUE else None,
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
     )
 
 
-def test_a_retained_original_is_recorded_on_the_consideration_but_never_offered(
+def _over_a_cover(sources: tuple[CoverSource, ...]) -> MetadataReport:
+    """A report whose current cover is populated, as a switch leaves it."""
+    return _with_cover(_report(sources), TargetFieldState.VALUE, sources)
+
+
+def _retained_report(case: _Case) -> tuple[MetadataReport, tuple[str, str, str]]:
+    source = _retained_source()
+    assert source.artifact is not None
+    return (
+        _over_a_cover((*case.sources, source)),
+        (source.artifact.original_digest, _PLAN, _DECISION),
+    )
+
+
+def test_a_retained_original_is_an_owner_only_candidate(case: _Case) -> None:
+    """Put back's candidate: no identity, no rank, never reviewed (#1363, D2)."""
+    report, binding = _retained_report(case)
+    service, asked, _ = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "r" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    target = report.target
+    assert (target.connection, target.library, target.item) in asked
+    stored = json.loads(case.store.current[case_id])
+    assert "retained_original" not in stored
+    retained = stored["candidates"][-1]
+    assert retained["candidate_kind"] == "retained"
+    assert (retained["plan_id"], retained["decision_id"]) == (_PLAN, _DECISION)
+    assert [candidate["candidate_kind"] for candidate in stored["candidates"]] == [
+        "candidate",
+        "candidate",
+        "retained",
+    ]
+    offered = projected["candidates"][-1]
+    assert offered["artifact_id"] == "cover_" + binding[0]
+    assert offered["identity"] is None
+    assert offered["deterministic_rank"] is None
+    assert offered["selectable"] is True
+    assert offered["manual_eligible"] is True
+    assert offered["source_kinds"] == ["retained"]
+    assert "plan_id" not in offered and "decision_id" not in offered
+    # It never reaches a reviewer: the packet holds only the other covers.
+    packet = json.loads(cast(str, stored["packet_document"]))
+    assert len(packet["candidates"]) == 2
+    service.validate_decision(
+        case_id,
+        projected["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": offered["artifact_id"]},
+    )
+    service.require_owner_cover(case.store.current[case_id], offered["artifact_id"])
+
+
+def test_a_released_original_can_no_longer_be_put_back(case: _Case) -> None:
+    report, binding = _retained_report(case)
+    service, _, live = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "u" * 64
+    service.ensure(case_id, report.to_json(), case.proposal)
+    document = case.store.current[case_id]
+    live[0] = None
+
+    offered = service.project_historical(document)["candidates"][-1]
+
+    assert (offered["selectable"], offered["state"]) == (False, "excluded")
+    assert offered["manual_eligible"] is False
+    with pytest.raises(CoverConsiderationError, match="stale"):
+        service.require_owner_cover(document, offered["artifact_id"])
+
+
+def test_a_retained_original_whose_copy_fails_its_check_is_stale(
     case: _Case,
 ) -> None:
-    """Inert until activation: recorded, but not projected or selectable (#1363)."""
-    retained = ("a" * 64, "effect_plan_" + "b" * 64, "automatic_decision_" + "c" * 64)
-    service, asked = _retaining_service(case, retained)
-    case_id = "review_case_" + "r" * 64
+    report, binding = _retained_report(case)
+
+    def missing(_digest: str) -> None:
+        raise ValueError("retained cover unavailable")
+
+    service, _, _ = _retaining_service(case, binding, missing)
+    case_id = "review_case_" + "v" * 64
+    service.ensure(case_id, report.to_json(), case.proposal)
+
+    with pytest.raises(CoverConsiderationError, match="stale"):
+        service.require_owner_cover(case.store.current[case_id], "cover_" + binding[0])
+
+
+def test_a_retained_original_needs_its_source_in_the_report(case: _Case) -> None:
+    """A binding with no retained source in the report offers nothing."""
+    _, binding = _retained_report(case)
+    service, _, _ = _retaining_service(case, binding)
+    case_id = "review_case_" + "w" * 64
 
     projected = service.ensure(case_id, case.report.to_json(), case.proposal)
 
-    target = case.report.target
-    assert asked == [(target.connection, target.library, target.item)]
-    document = json.loads(case.store.current[case_id])
-    assert document["retained_original"] == {
-        "artifact_id": "cover_" + "a" * 64,
-        "decision_id": "automatic_decision_" + "c" * 64,
-        "original_sha256": "a" * 64,
-        "plan_id": "effect_plan_" + "b" * 64,
-    }
-    assert "retained_original" not in projected
-    assert "cover_" + "a" * 64 not in {
+    assert "cover_" + binding[0] not in {
         candidate["artifact_id"] for candidate in projected["candidates"]
     }
-    with pytest.raises(CoverConsiderationError, match="invalid_choice"):
-        service.validate_decision(
-            case_id,
-            projected["consideration_id"],
-            "accept",
-            {"kind": "cover", "value": "cover_" + "a" * 64},
-        )
-    assert service.project(case.store.current[case_id]) is not None
 
 
-def test_a_retained_original_that_is_the_current_cover_is_not_recorded(
+def test_a_retained_original_that_is_the_current_cover_is_not_offered(
     case: _Case,
 ) -> None:
     case_id = "review_case_" + "s" * 64
-    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    report = _over_a_cover(case.sources)
+    first = case.service.ensure(case_id, report.to_json(), case.proposal)
     incumbent = json.loads(case.store.current[case_id])["incumbent_digest"]
     assert incumbent is not None
-    service, _ = _retaining_service(
-        case,
-        (incumbent, "effect_plan_" + "b" * 64, "automatic_decision_" + "c" * 64),
-    )
+    service, _, _ = _retaining_service(case, (incumbent, _PLAN, _DECISION))
 
-    replay = service.ensure(case_id, case.report.to_json(), case.proposal)
+    replay = service.ensure(case_id, report.to_json(), case.proposal)
 
     assert replay["consideration_id"] == first["consideration_id"]
-    assert json.loads(case.store.current[case_id])["retained_original"] is None
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in json.loads(case.store.current[case_id])["candidates"]
+    )
+
+
+def test_a_retained_original_that_a_provider_also_offers_is_one_card(
+    case: _Case,
+) -> None:
+    """One picture is never two cards: the reviewed candidate stands (#1363)."""
+    # A provider's cover, not the current one.
+    reviewed = next(
+        source
+        for source in case.sources
+        if source.artifact is not None and source.kind is not CoverSourceKind.ABS
+    )
+    assert reviewed.artifact is not None
+    same = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.RETRIEVED,
+        reviewed.artifact,
+    )
+    report = _over_a_cover((*case.sources, same))
+    binding = (reviewed.artifact.original_digest, _PLAN, _DECISION)
+    service, _, _ = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "y" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    offered = [candidate["artifact_id"] for candidate in projected["candidates"]]
+    assert offered.count(reviewed.artifact.artifact_id) == 1
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in json.loads(case.store.current[case_id])["candidates"]
+    )
+
+
+def test_a_retained_original_never_fills_an_empty_cover(case: _Case) -> None:
+    """Over an empty cover the proposal withholds the original, so the
+    comparison never offers a card its decision would refuse (#1363, D2)."""
+    source = _retained_source()
+    assert source.artifact is not None
+    sources = (
+        *(
+            candidate
+            for candidate in case.sources
+            if candidate.kind is not CoverSourceKind.ABS
+        ),
+        source,
+    )
+    report = _with_cover(_report(sources), TargetFieldState.MISSING, sources)
+    binding = (source.artifact.original_digest, _PLAN, _DECISION)
+    service, _, _ = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "e" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    assert projected["candidates"]
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in projected["candidates"]
+    )
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in json.loads(case.store.current[case_id])["candidates"]
+    )
 
 
 @pytest.mark.parametrize(
     "tamper",
     (
-        pytest.param({"artifact_id": "cover_" + "d" * 64}, id="artifact_mismatch"),
+        pytest.param({"width": 1}, id="width"),
         pytest.param({"plan_id": "plan"}, id="bad_plan"),
+        pytest.param({"identity": {}}, id="identity"),
         pytest.param({"extra": 1}, id="extra_key"),
     ),
 )
-def test_a_malformed_retained_original_is_refused(
+def test_a_malformed_retained_candidate_is_refused(
     case: _Case, tamper: dict[str, object]
 ) -> None:
-    retained = ("a" * 64, "effect_plan_" + "b" * 64, "automatic_decision_" + "c" * 64)
-    service, _ = _retaining_service(case, retained)
+    report, binding = _retained_report(case)
+    service, _, _ = _retaining_service(case, binding)
     case_id = "review_case_" + "t" * 64
-    service.ensure(case_id, case.report.to_json(), case.proposal)
+    service.ensure(case_id, report.to_json(), case.proposal)
     document = json.loads(case.store.current[case_id])
-    document["retained_original"] = {**document["retained_original"], **tamper}
+    document["candidates"][-1] = {**document["candidates"][-1], **tamper}
 
-    with pytest.raises(ValueError, match="cover consideration document is invalid"):
+    with pytest.raises(ValueError, match="cover consideration"):
         service.project_historical(json.dumps(document))
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    (
+        ("malformed", "unavailable"),
+        ("oversized", "unavailable"),
+        ("missing", "absent"),
+    ),
+)
+def test_a_held_cover_that_could_not_be_read_is_an_unavailable_current_cover(
+    case: _Case, state: str, expected: str
+) -> None:
+    """The book page names it "Image unavailable", as Covers does (#1363, 7.1)."""
+    from mechanical_librarian.application.cover_consideration import (
+        _cover_incumbent,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetFacts,
+        TargetField,
+        TargetFieldState,
+    )
+
+    target = case.report.target
+    report = MetadataReport.create(
+        target=TargetFacts(
+            target.connection,
+            target.library,
+            target.item,
+            tuple(
+                TargetField(field.destination, TargetFieldState(state))
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in target.fields
+            ),
+        ),
+        file=case.report.file,
+        local_claims=case.report.local_claims,
+        local_reasons=case.report.local_reasons,
+        providers=case.report.providers,
+        cover_sources=(),
+    )
+
+    incumbent, digest = _cover_incumbent(report, [])
+
+    assert (incumbent["state"], incumbent["reference"], digest) == (
+        expected,
+        None,
+        None,
+    )

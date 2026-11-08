@@ -287,6 +287,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
     `initials_spelling` refusal (#1780); a v49 report holds no audio
     section. v78 added no key: it widens the closed cover designation and
     truncation sets and their bounds for Hardcover's edition covers (#1778).
+    v79 reports each cover artifact's width and height as oriented and adds
+    the `retained` cover source, neither of which a v49 report, holding no
+    automatic switch, could carry (#1363).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -381,10 +384,14 @@ assert (
 )
 
 
-# Every producer before #1451 kept no re-search mark on a preparation work.
+# Every producer before #1451 kept no re-search mark on a preparation work,
+# and every one before #1363 no refresh request.
 PRIOR_REVIEW_WORK_SQL = persistence_schema._REVIEW_WORK_SQL.replace(
     "research_not_before INTEGER CHECK(research_not_before IS NULL OR "
     "research_not_before>=0), ",
+    "",
+).replace(
+    "refresh_requested INTEGER NOT NULL DEFAULT 0 CHECK(refresh_requested IN (0,1)), ",
     "",
 )
 assert PRIOR_REVIEW_WORK_SQL != persistence_schema._REVIEW_WORK_SQL

@@ -485,6 +485,8 @@ export const COVER_SOURCE_KINDS = [
   'inventaire',
   'audible_catalog',
   'itunes_search',
+  // The original an automatic switch replaced, offered back to the owner (#1363).
+  'retained',
 ] as const
 export type CoverSourceKind = (typeof COVER_SOURCE_KINDS)[number]
 // One typed statement about an item's media, in the closed shape both the
@@ -736,11 +738,13 @@ export interface CoverObservationView {
 }
 export interface CoverCandidateView {
   artifactId: string
+  /** `retained` is the original an automatic switch replaced: Put back (#1363). */
+  candidateKind: 'candidate' | 'retained'
   deterministicCitations: readonly string[]
   deterministicRank: number | null
   deterministicRankKey: readonly (number | string)[] | null
   height: number
-  identity: Readonly<Record<string, unknown>>
+  identity: Readonly<Record<string, unknown>> | null
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
   /** A proposed cover from the matched book; the recording stays unconfirmed (#1642). */
@@ -2986,11 +2990,57 @@ const mapCoverObservation = (
   }
 }
 
+/**
+ * The retained original as the owner's way back (#1363, D2): never the
+ * current cover, never reviewed or ranked, and choosable exactly while the
+ * server still offers it, which it does only while its copy is kept.
+ */
+const mapRetainedCandidate = (
+  candidate: CoverConsiderationDto['candidates'][number],
+): CoverCandidateView => {
+  if (
+    candidate.identity !== null ||
+    candidate.incumbent ||
+    candidate.match_state !== 'match_not_confirmed' ||
+    candidate.match_reason !== null ||
+    candidate.observation !== null ||
+    candidate.deterministic_rank !== null ||
+    candidate.deterministic_rank_key !== null ||
+    candidate.manual_eligible !== candidate.selectable ||
+    candidate.source_kinds.length !== 1 ||
+    candidate.source_kinds[0] !== 'retained'
+  )
+    throw new ApiError(502, 'contradictory_retained_cover')
+  return {
+    artifactId: candidate.artifact_id,
+    candidateKind: 'retained',
+    deterministicCitations: candidate.deterministic_citations,
+    deterministicRank: null,
+    deterministicRankKey: null,
+    height: candidate.height,
+    identity: null,
+    incumbent: false,
+    matchState: 'match_not_confirmed',
+    observation: null,
+    originalSha256: candidate.original_sha256,
+    ordinal: candidate.ordinal,
+    previewSha256: candidate.preview_sha256,
+    reference: candidate.reference,
+    selectable: candidate.selectable,
+    manualEligible: candidate.manual_eligible,
+    sourceKinds: candidate.source_kinds,
+    state: candidate.state,
+    width: candidate.width,
+  }
+}
+
 export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsiderationView => {
   const providerFetching = value.provider_fetching
   const ready = value.ready
   const candidates = value.candidates.map((candidate): CoverCandidateView => {
+    if (candidate.candidate_kind === 'retained') return mapRetainedCandidate(candidate)
     const { identity, incumbent, selectable } = candidate
+    if (identity === null) throw new ApiError(502, 'contradictory_cover_identity')
     const deterministicRank = candidate.deterministic_rank
     const deterministicRankKey = candidate.deterministic_rank_key
     // X52: the rank key's first six items are integers and the last is the
@@ -3038,6 +3088,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       throw new ApiError(502, 'contradictory_cover_match_reason')
     return {
       artifactId: candidate.artifact_id,
+      candidateKind: 'candidate',
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
       deterministicRankKey,
@@ -3089,7 +3140,9 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
   )
     throw new ApiError(502, 'misaligned_cover_choice_contexts')
   const { policy } = value
-  if ((policy === null) !== (candidates.length === 0))
+  // A policy judges the reviewed covers; the retained original is never
+  // reviewed, so it may be the only candidate beside no policy (#1363).
+  if ((policy === null) !== candidates.every((candidate) => candidate.candidateKind === 'retained'))
     throw new ApiError(502, 'invalid_cover_policy_candidates')
   const policyStatus = policy === null ? null : policy.status
   const policyOwnerReady = policy === null ? false : policy.owner_ready

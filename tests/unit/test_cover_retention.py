@@ -22,6 +22,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.adapters.retained_covers import (
+    ContentAddressedOriginals,
     RetainedCoverFull,
     RetainedCoverStore,
 )
@@ -776,3 +777,47 @@ def test_the_newest_original_is_the_last_verified_switch_in_the_same_second(
 
     newest = effects.repository.retained_cover_original("primary", "books", "book-1")
     assert newest is not None and newest[1] == plans[-1]
+
+
+def test_the_store_reads_back_only_an_intact_private_original(tmp_path: Path) -> None:
+    """Put back reads the kept bytes, verified, and refuses anything else (#1363)."""
+    root = tmp_path / "retained"
+    store = RetainedCoverStore(root)
+    store.keep(OLD_DIGEST, OLD)
+
+    assert store.read(OLD_DIGEST) == OLD
+    store.require(OLD_DIGEST)
+    kept = root / f"{OLD_DIGEST}.retained"
+    with pytest.raises(ValueError):
+        store.read(hashlib.sha256(b"never kept").hexdigest())
+    os.chmod(kept, 0o644)
+    with pytest.raises(ValueError):
+        store.require(OLD_DIGEST)
+    os.chmod(kept, 0o600)
+    kept.write_bytes(b"altered")
+    with pytest.raises(ValueError):
+        store.read(OLD_DIGEST)
+    kept.unlink()
+    other = tmp_path / "elsewhere"
+    other.write_bytes(OLD)
+    os.chmod(other, 0o600)
+    kept.symlink_to(other)
+    with pytest.raises(ValueError):
+        store.read(OLD_DIGEST)
+
+
+def test_the_writer_reads_an_original_from_either_store(tmp_path: Path) -> None:
+    class _Artifacts:
+        def read_original_digest(self, digest: str) -> bytes:
+            if digest == "a" * 64:
+                return b"from the artifact store"
+            raise MetadataReportError("artifact is unavailable")
+
+    root = tmp_path / "retained"
+    RetainedCoverStore(root).keep(OLD_DIGEST, OLD)
+    reader = ContentAddressedOriginals(_Artifacts(), root)
+
+    assert reader.read_original_digest("a" * 64) == b"from the artifact store"
+    assert reader.read_original_digest(OLD_DIGEST) == OLD
+    with pytest.raises(MetadataReportError, match="artifact is unavailable"):
+        reader.read_original_digest("b" * 64)

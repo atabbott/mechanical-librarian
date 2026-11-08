@@ -244,6 +244,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "candidates": [
             {
                 "artifact_id": "cover_" + "c" * 64,
+                "candidate_kind": "candidate",
                 "deterministic_citations": [candidate_reference],
                 "deterministic_rank": None,
                 "deterministic_rank_key": [
@@ -316,7 +317,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v5",
+        "schema_version": "cover-consideration-v6",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -324,7 +325,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
     covers.project.return_value = view
     covers.project_for_review.return_value = (view, "current")
     covers.ensure.return_value = view
-    covers.image.return_value = b"\x89PNG\r\n\x1a\nsynthetic"
+    covers.image.return_value = (b"\x89PNG\r\n\x1a\nsynthetic", False)
     configuration = ReviewWebConfiguration(
         tls_certificate_file="/synthetic/review.crt",
         tls_private_key_file="/synthetic/review.key",

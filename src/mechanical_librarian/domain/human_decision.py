@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Literal, Mapping, Self
+from typing import Literal, Mapping, Self, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -62,7 +62,14 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
 
     Callers first validate the complete retained consideration and currentness;
     this predicate neither validates a document nor grants automatic authority.
+    A retained original has no identity to contradict: it is eligible while
+    its projection still offers it, which requires its binding to be live
+    (#1363, D2).
     """
+    if candidate.get("candidate_kind") == "retained":
+        return (
+            candidate.get("incumbent") is False and candidate.get("selectable") is True
+        )
     identity = candidate.get("identity")
     return (
         candidate.get("incumbent") is False
@@ -77,6 +84,22 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
         and "retained_creator_or_contributor_disagreement"
         not in identity.get("reasons", ())
     )
+
+
+def owner_cover_selection_kind(
+    outcome: str, candidate: Mapping[str, object] | None
+) -> tuple[str | None, str | None]:
+    """A ``cover-selection-authority-v3`` choice's candidate kind and retained plan.
+
+    Only an accept names a kind: ``retained`` with its switch's plan for the
+    original an automatic switch replaced, else ``candidate``. Keep and reject
+    name none (#1363, D3).
+    """
+    if outcome != "accept" or candidate is None:
+        return None, None
+    if candidate.get("candidate_kind") == "retained":
+        return "retained", cast(str, candidate["plan_id"])
+    return "candidate", None
 
 
 def validate_cover_confirmation(value: object) -> dict[str, object]:

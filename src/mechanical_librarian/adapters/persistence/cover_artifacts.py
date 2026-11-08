@@ -55,6 +55,16 @@ class CoverArtifactStore:
         self._put(artifact.original_digest, original)
         self._put(artifact.preview_digest, preview)
 
+    def stage_preview(self, artifact: CoverArtifact, preview: bytes) -> None:
+        """Create or verify only the preview blob of an artifact.
+
+        The retained original a switch replaced keeps its bytes in the
+        retained store alone, so a release leaves no copy here (#1363).
+        """
+        if type(artifact) is not CoverArtifact or type(preview) is not bytes:
+            raise MetadataReportError("artifact is invalid")
+        self._put(artifact.preview_digest, preview)
+
     def require_current(self) -> None:
         descriptor = self._directory()
         os.close(descriptor)

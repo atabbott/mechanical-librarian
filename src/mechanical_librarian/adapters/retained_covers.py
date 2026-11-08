@@ -13,8 +13,10 @@ import hashlib
 import os
 import stat
 from pathlib import Path
+from typing import Protocol
 
 from mechanical_librarian.adapters.private_recovery import require_private_directory
+from mechanical_librarian.application.metadata_report import MetadataReportError
 
 MAXIMUM_RETAINED_ENTRIES = 2000
 MAXIMUM_RETAINED_BYTES = 2 * 1024 * 1024 * 1024
@@ -111,6 +113,39 @@ class RetainedCoverStore:
         if removed:
             self._sync_root()
 
+    def read(self, digest: str) -> bytes:
+        """Return one kept original, verified against its digest.
+
+        Only the guarded writer that puts it back and the report's decoder
+        read it; a missing, altered or non-private file is refused, never
+        repaired here.
+        """
+        path = self._path(digest)
+        require_private_directory(self._root, _ERROR)
+        try:
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as error:
+            raise ValueError(_ERROR) from error
+        try:
+            self._require_private_file(os.fstat(descriptor))
+            chunks: list[bytes] = []
+            size = 0
+            while chunk := os.read(descriptor, 1024 * 1024):
+                size += len(chunk)
+                if size > MAXIMUM_ORIGINAL_BYTES:
+                    raise ValueError(_ERROR)
+                chunks.append(chunk)
+        finally:
+            os.close(descriptor)
+        original = b"".join(chunks)
+        if not original or hashlib.sha256(original).hexdigest() != digest:
+            raise ValueError(_ERROR)
+        return original
+
+    def require(self, digest: str) -> None:
+        """Refuse unless the kept original is present, private and intact."""
+        self.read(digest)
+
     def _digest(self, path: Path) -> str:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
@@ -161,9 +196,36 @@ class RetainedCoverStore:
             os.close(descriptor)
 
 
+class _OriginalReader(Protocol):
+    def read_original_digest(self, digest: str) -> bytes: ...
+
+
+class ContentAddressedOriginals:
+    """Read an original by digest from the artifact store, else the retained one.
+
+    Both stores verify SHA-256, so either answer is the same original. The
+    guarded cover writer uses it, so putting a retained original back needs
+    no copy into the artifact store (#1363, D4).
+    """
+
+    def __init__(self, artifacts: _OriginalReader, retained_root: Path) -> None:
+        self._artifacts = artifacts
+        self._retained_root = retained_root
+
+    def read_original_digest(self, digest: str) -> bytes:
+        try:
+            return self._artifacts.read_original_digest(digest)
+        except MetadataReportError:
+            try:
+                return RetainedCoverStore(self._retained_root).read(digest)
+            except ValueError as error:
+                raise MetadataReportError("artifact is unavailable") from error
+
+
 __all__ = [
     "MAXIMUM_RETAINED_BYTES",
     "MAXIMUM_RETAINED_ENTRIES",
+    "ContentAddressedOriginals",
     "RetainedCoverFull",
     "RetainedCoverStore",
 ]

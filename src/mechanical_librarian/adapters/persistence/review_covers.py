@@ -9,11 +9,15 @@ Switched follows the release rule (ADR-0093, Amendment 6). A replaced cover
 is listed while its switch is in `retained_cover_listings` with no removal,
 so a released original never shows; a fill replaced nothing and comes from
 its verified plan with no previous cover. Either leaves once the owner
-records a cover decision after it, or a later cover write lands.
+records a cover decision after it, or a later cover write lands. A Put back
+of the switch is the one answer that keeps it listed: its copy is released
+only when the Put back's write verifies, and until then the row carries that
+write's state, so a Put back the target refused can say so (#1363, Q18).
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import cast
 
@@ -28,6 +32,7 @@ from mechanical_librarian.application.review_covers import (
     CoverPageSnapshot,
     CoverRow,
     CoverView,
+    PutBack,
     SwitchCover,
 )
 
@@ -71,7 +76,38 @@ _SWITCH_SQL = (
     "WHERE current.connection_name=effect.connection_name "
     "AND current.library_name=effect.library_name "
     "AND current.item_id=effect.work_id AND answered.kind='owner' "
-    "AND answered.occurred_at>=effect.updated_at))"
+    "AND answered.occurred_at>=effect.updated_at "
+    "AND json_extract(answered.document,'$.retained_plan_id') IS NOT effect.plan_id))"
+)
+# The owner's current Put back of one switch and its write's state. A Put back
+# recorded before its write is planned reads as planned.
+_PUT_BACK_SQL = (
+    "SELECT json_object('state',COALESCE(effect.state,'planned'),"
+    "'failure',json_extract(effect.document,'$.failure')) "
+    "FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "LEFT JOIN field_effects effect ON effect.decision_id=answered.decision_id "
+    "AND effect.destination='cover' "
+    "WHERE current.connection_name=? AND current.library_name=? "
+    "AND current.item_id=? AND answered.kind='owner' "
+    "AND json_extract(answered.document,'$.retained_plan_id')=? "
+    "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
+)
+# Whether the work's current comparison offers this switch's original, so
+# Put back can be recorded now; before the work is prepared again after its
+# switch it does not, and Put back is not offered (#1363).
+_PUT_BACK_OFFERED_SQL = (
+    "SELECT EXISTS (SELECT 1 FROM current_cover_considerations current "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current.consideration_id,"
+    "json_each(consideration.document,'$.candidates') candidate "
+    "WHERE current.review_case_id=? "
+    "AND json_extract(candidate.value,'$.candidate_kind')='retained' "
+    "AND json_extract(candidate.value,'$.plan_id')=? "
+    "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event "
+    "WHERE event.consideration_id=consideration.consideration_id "
+    "AND event.kind='stale'))"
 )
 # Library's cover attention, read from the same facts its lens reads.
 _DECIDING_SQL = (
@@ -100,7 +136,8 @@ _WORKS_SQL = (
     # page cursor that carries it stays bounded for every accepted title
     # (application/review_covers.py); titles sharing that prefix fall back
     # to item and case order, which is still one total order.
-    "substr(facts.title_key,1,256) AS title_key,ml.item_id,"
+    "substr(facts.title_key,1,256) AS title_key,"
+    "ml.connection_name,ml.library_name,ml.item_id,"
     + _CHOOSABLE_SQL
     + " AS choosable,switch.plan_id,switch.switched_at,switch.sequence,"
     "switch.original_digest,switch.replacement,CASE WHEN "
@@ -184,6 +221,21 @@ def _replacement(
     return None if found is None else SwitchCover(plan_id, *found)
 
 
+def _put_back(
+    connection: sqlite3.Connection,
+    target: tuple[object, object, object],
+    plan_id: str,
+) -> PutBack | None:
+    row = connection.execute(_PUT_BACK_SQL, (*target, plan_id)).fetchone()
+    if row is None:
+        return None
+    value = json.loads(row[0])
+    state, failure = value.get("state"), value.get("failure")
+    if type(state) is not str or (failure is not None and type(failure) is not str):
+        raise MetadataReportError("review covers are unavailable")
+    return PutBack(state, failure)
+
+
 def read_cover_page(
     connection: sqlite3.Connection,
     view: CoverView,
@@ -215,8 +267,7 @@ def read_cover_page(
     rows = connection.execute(
         _WORKS_SQL + "SELECT review_case_id,report_document,cover_group,choosable,"
         "switched_at,plan_id,original_digest,replacement,"
-        + _VIEW_KEY_SQL[view]
-        + " FROM work "
+        "connection_name,library_name,item_id," + _VIEW_KEY_SQL[view] + " FROM work "
         "WHERE "
         + " AND ".join(where)
         + " ORDER BY "
@@ -237,7 +288,9 @@ def read_cover_page(
         case_id, report, group, choosable, switched_at, plan_id, digest, replacement = (
             row[:8]
         )
-        key = row[8:]
+        # The work's target, for its owner's current Put back (#1363, Q18).
+        target = (row[8], row[9], row[10])
+        key = row[11:]
         if (
             type(case_id) is not str
             or type(report) is not str
@@ -247,6 +300,7 @@ def read_cover_page(
         ):
             raise MetadataReportError("review covers are unavailable")
         auto = group == "auto"
+        replaced = auto and digest is not None
         page.append(
             CoverRow(
                 case_id,
@@ -256,12 +310,18 @@ def read_cover_page(
                 cast(int, switched_at) if auto else None,
                 auto and digest is None,
                 _replaced(connection, cast(str, plan_id), cast(str, digest))
-                if auto and digest is not None
+                if replaced
                 else None,
                 _replacement(connection, cast(str, plan_id), replacement)
                 if auto
                 else None,
                 tuple(key),
+                _put_back(connection, target, cast(str, plan_id)) if replaced else None,
+                replaced
+                and connection.execute(
+                    _PUT_BACK_OFFERED_SQL, (case_id, plan_id)
+                ).fetchone()[0]
+                == 1,
             )
         )
     return CoverPageSnapshot(
