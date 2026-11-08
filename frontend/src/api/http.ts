@@ -813,6 +813,9 @@ export type HistoryItemView = (
       engine: string
       candidate: DescriptionCandidateDto | null
       selected: boolean
+      // Who chose the advice. Read only on a choice; null when the event
+      // carries no decision.
+      chosenBy: 'owner' | 'automatic' | null
     }
   | {
       category: 'owner'
@@ -2790,6 +2793,8 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       engine: item.engine,
       candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
       selected: item.kind === 'description_selected',
+      chosenBy:
+        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
     }
   // Only an owner decision states what it may go on to do; a retained F45
   // decision is the only one that carries a reason (#968).
