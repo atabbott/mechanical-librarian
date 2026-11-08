@@ -36,22 +36,16 @@ const coverStateLabels = {
 const coverPrepareFailureCopy = ({ action, error }: CoverPrepareFailure) =>
   action === 'prepare'
     ? uncertainWriteOutcome(error)
-      ? 'The cover comparison could not be confirmed. It may have been prepared; the current case was reloaded. Check it before preparing again.'
-      : refusalCopy(
-          error,
-          'The comparison could not be prepared. The existing cover remains unchanged.',
-        )
+      ? 'No answer came back. Check whether the cover comparison was prepared before preparing it again.'
+      : refusalCopy(error, 'The cover comparison could not be prepared. Nothing was changed.')
     : uncertainWriteOutcome(error)
-      ? 'The advisory retry could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.'
-      : refusalCopy(
-          error,
-          'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
-        )
+      ? 'No answer came back. Check whether the visual review restarted before retrying it.'
+      : refusalCopy(error, 'The visual review could not be retried. Nothing was changed.')
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
-    ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
+    ? 'The reviewer profile must set memory_bytes to 1073741824. Generate a new profile, replace the configured one, then restart the service.'
     : reason === 'profile contract requires process_limit=32'
-      ? 'The reviewer profile must set process_limit to 32. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
+      ? 'The reviewer profile must set process_limit to 32. Generate a new profile, replace the configured one, then restart the service.'
       : null
 // Only keyboard focus reveals a card. Focus from a pointer arrives on
 // mousedown, so scrolling then moved the card from under the press and lost
@@ -140,18 +134,22 @@ function CoverObservationEvidence({
   label,
   mediaKind,
   observation,
+  reviewCompleted,
 }: {
   label: string
   mediaKind: string
   observation: CoverObservationView | null
+  reviewCompleted: boolean
 }) {
+  // A review that did not run is said once in the header; a card says only
+  // that a completed review has no result for it (#1765).
   if (observation === null)
-    return (
+    return reviewCompleted ? (
       <section className="cover-observation is-unavailable" aria-label={`${label} visual checks`}>
         <strong>Visual checks unavailable</strong>
-        <small>No complete reviewer evidence was recorded for this cover.</small>
+        <small>The visual review has no result for this cover.</small>
       </section>
-    )
+    ) : null
   const expectedBranding = audioFileFormat(mediaKind)
     ? 'audiobook'
     : mediaKind === 'epub' || mediaKind === 'ebook'
@@ -220,7 +218,7 @@ function CoverObservationEvidence({
         ) : null}
       </div>
       <details className="cover-observation-details">
-        <summary>Visual observation details</summary>
+        <summary>Visual check details</summary>
         <div>
           <section aria-label="Defect checks">
             <strong>Defect checks</strong>
@@ -303,9 +301,7 @@ function LibraryCoverChoicesContent({
   if (consideration?.current !== true)
     return (
       <section aria-label="Prepare cover comparison">
-        <p role="status">
-          No current cover comparison is available. The existing cover remains unchanged.
-        </p>
+        <p role="status">No cover comparison is ready.</p>
         <button
           type="button"
           disabled={disabled || cover.prepare.isPending}
@@ -344,14 +340,15 @@ function LibraryCoverChoicesContent({
   const excludedReason = (candidate: (typeof candidates)[number]) =>
     candidate.matchReason === 'matched_book'
       ? 'From the matched book, not a confirmed recording.'
-      : candidate.matchState === 'match_not_confirmed'
-        ? "Match not confirmed · We couldn't confirm that this cover belongs to this book or edition."
+      : // The card's title already says Match not confirmed, so no line repeats it (#1765).
+        candidate.matchState === 'match_not_confirmed'
+        ? null
         : candidate.observation === null
-          ? 'Reviewer observations unavailable; deterministic match evidence is retained.'
+          ? 'The reviewer did not check this cover.'
           : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
             ? policyReasons.length
               ? policyReasons.map(coverNoteLabel).join(', ')
-              : 'Not among the covers your policy accepts'
+              : 'Your cover settings do not accept this cover.'
             : coverStateLabels[candidate.state]
   const cardState = (candidate: (typeof candidates)[number]) => {
     const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
@@ -480,7 +477,9 @@ function LibraryCoverChoicesContent({
             {!eligibleCandidate ||
             candidate.matchState === 'match_not_confirmed' ||
             candidate.matchReason === 'matched_book' ? (
-              <span className="choice-recommendation">{excludedReason(candidate)}</span>
+              excludedReason(candidate) === null ? null : (
+                <span className="choice-recommendation">{excludedReason(candidate)}</span>
+              )
             ) : recommended && context?.recommendationReason ? (
               <span className="choice-recommendation">{context.recommendationReason}</span>
             ) : null}
@@ -491,6 +490,7 @@ function LibraryCoverChoicesContent({
           label={label}
           mediaKind={mediaKind}
           observation={candidate.observation}
+          reviewCompleted={consideration.reviewerStatus === 'completed'}
         />
         {context && (context.evidence.length || context.limitations.length) ? (
           <button
@@ -514,9 +514,9 @@ function LibraryCoverChoicesContent({
     consideration.reviewerStatus === 'failed' || consideration.reviewerStatus === 'unavailable'
   const reviewerLabel =
     consideration.reviewerStatus === 'completed'
-      ? 'Advisory visual review complete'
+      ? 'Visual review complete'
       : reviewerUnavailable
-        ? 'Visual review is unavailable. Only the eligible choices shown below can be selected.'
+        ? 'Visual review is unavailable.'
         : 'Manual cover comparison'
   // A review that failed at chat time says what to change (#1330-#1332).
   const reviewerDetail = consideration.reviewerFailureCode
@@ -542,20 +542,21 @@ function LibraryCoverChoicesContent({
             : consideration.ready
               ? 'Cover choices ready'
               : consideration.providerFetching
-                ? 'Waiting for active cover searches'
-                : 'No confirmed cover recommendation'}
+                ? 'Still searching for covers'
+                : 'No cover recommended'}
         </strong>
-        <small>
-          {recommendedReference !== null
-            ? 'The technically best confirmed match is ready for your decision.'
-            : consideration.ready && policyReasons.includes('actual_target_unverified')
-              ? 'The current cover could not be verified, so automatic replacement is withheld.'
+        {/* The recommended card carries its own reason, so its header has no caption (#1765). */}
+        {recommendedReference !== null ? null : (
+          <small>
+            {consideration.ready && policyReasons.includes('actual_target_unverified')
+              ? 'The cover in Audiobookshelf could not be confirmed, so it is not replaced automatically.'
               : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
-                ? 'No confirmed alternative improves the current cover, so automatic replacement is withheld.'
+                ? 'No confirmed cover is better than the current one, so it is not replaced automatically.'
                 : consideration.providerFetching
-                  ? 'Retained covers remain visible. Choices become available when fetching pauses.'
+                  ? 'Covers found so far are shown. You can choose when the search finishes.'
                   : 'Only confirmed matches can be recommended.'}
-        </small>
+          </small>
+        )}
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
       {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
@@ -564,14 +565,13 @@ function LibraryCoverChoicesContent({
       ) : null}
       {field.humanDecision ? (
         <p className="reviewer-unavailable-detail">
-          Owner choice takes precedence over automation.{' '}
           {field.editable
-            ? 'You can choose a replacement before application begins.'
-            : 'This cover choice is not currently available for revision.'}
+            ? 'You can change your choice until it is written.'
+            : 'Your choice is being written and cannot be changed yet.'}
         </p>
       ) : field.automaticDecision ? (
         <p className="reviewer-unavailable-detail">
-          Automatically selected. Only a strictly better confirmed cover can update this choice.
+          Chosen automatically. Only a better confirmed cover, or your choice, replaces it.
         </p>
       ) : null}
       {coversLink ? (
@@ -594,7 +594,7 @@ function LibraryCoverChoicesContent({
           disabled={disabled || cover.prepare.isPending}
           onClick={() => cover.prepare.mutate('retry')}
         >
-          Retry advisory review
+          Retry visual review
         </Button>
       ) : null}
       {failure ? <p role="alert">{coverPrepareFailureCopy(failure)}</p> : null}
@@ -605,13 +605,10 @@ function LibraryCoverChoicesContent({
           aria-label={question}
           onKeyDown={moveChoiceFocus}
         >
-          <aside>
-            <strong>Current reference</strong>
-            {card(incumbent, candidates.indexOf(incumbent))}
-          </aside>
+          <aside>{card(incumbent, candidates.indexOf(incumbent))}</aside>
           <div className="library-cover-gallery">
             <header>
-              <strong>Retrieved alternatives</strong>
+              <strong>Other covers</strong>
               <small>{String(alternatives.length)} available</small>
             </header>
             <div>
@@ -699,14 +696,14 @@ function LibraryCoverChoicesContent({
       {unavailable.length ? (
         <details className="library-cover-excluded">
           <summary>
-            {String(unavailable.length)} unavailable candidate
-            {unavailable.length === 1 ? '' : 's'} <small>Reasons retained</small>
+            {String(unavailable.length)} cover{unavailable.length === 1 ? '' : 's'} not shown{' '}
+            <small>Show why</small>
           </summary>
           {unavailable.map((omission, index) => (
             <p key={String(index)}>
               {typeof omission.reason === 'string'
                 ? coverNoteLabel(omission.reason)
-                : 'Unavailable source retained in history'}
+                : 'No reason was recorded.'}
             </p>
           ))}
         </details>

@@ -140,9 +140,22 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- The review case page says what happened in your words: history reads "You
+  chose a proposed value." and "Automatic kept the current value." instead of
+  "Owner selected…" and "Automatic policy…", entries no longer repeat their
+  heading in a sentence, and Evidence and History drop "retained", "durable"
+  and "observations". The notice that the app was updated now says "Reload",
+  like every other reload button (#1765).
+- The sign-in page has one heading, "Sign in to review your library", without
+  the eyebrow, tagline and paragraph about write permission around it, and the
+  forgotten-password steps say what to do in short sentences (#1765).
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).
+- Library's field decisions read plainly. Evidence, automatic statements,
+  cover checks and decision failures drop internal words, a lost answer says
+  what to check, and the writing box says whether a change was written
+  (#1765).
 - Library has a Covers view beside Works for going through every book's
   cover: To decide, Kept, Switched (automatic switches, with the cover before
   and now) and All, 50 books at a time. One tap records a choice and opens the

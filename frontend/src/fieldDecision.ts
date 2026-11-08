@@ -56,35 +56,30 @@ export const effectSummary = (field: ReviewField) => {
     if (advice.application_outcome === 'verified')
       return {
         state: 'Applied and verified',
-        detail:
-          'This authored description was applied and verified in the library. Its record is retained in History.',
+        detail: 'Activity lists it.',
       }
     if (advice.application_outcome === 'no_change_required')
       return {
         state: 'No change needed',
-        detail:
-          'The library already held the selected description. This authored choice is retained in History.',
+        detail: 'Activity lists it.',
       }
     if (!advice.selected_advice?.current)
       return {
-        state: 'Earlier choice retained',
-        detail:
-          'This choice is no longer current. History retains the choice; Activity shows any recorded application progress.',
+        state: 'Earlier choice',
+        detail: 'Activity shows whether it was written.',
       }
+    // The advice card already says Activity shows whether the library was
+    // changed, so the box adds nothing while writing is on (L5).
     return field.effectCapability === 'allowed'
-      ? {
-          state: 'Choice recorded',
-          detail: "Activity shows this change's progress.",
-        }
+      ? { state: 'Choice recorded', detail: null }
       : field.effectCapability === 'unavailable'
         ? {
-            state: 'Choice recorded · External update unavailable',
-            detail:
-              'No external update capability is configured. Activity shows any recorded application progress.',
+            state: 'Choice recorded · Not written',
+            detail: 'No library connection is set up to write it.',
           }
         : {
-            state: 'Choice recorded · External update guarded',
-            detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}. Activity shows any recorded application progress.`,
+            state: 'Choice recorded · Paused',
+            detail: `Writing is paused because ${writeHoldReasons[field.effectCapability]}.`,
           }
   }
   // Only a change the owner recorded for the library has an effect to report;
@@ -99,12 +94,12 @@ export const effectSummary = (field: ReviewField) => {
     ? { state: 'Change recorded', detail: "Activity shows this change's progress." }
     : field.effectCapability === 'unavailable'
       ? {
-          state: 'Change recorded · External update unavailable',
-          detail: 'No external update capability is configured.',
+          state: 'Change recorded · Not written',
+          detail: 'No library connection is set up to write it.',
         }
       : {
-          state: 'Change recorded · External update guarded',
-          detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}.`,
+          state: 'Change recorded · Paused',
+          detail: `Writing is paused because ${writeHoldReasons[field.effectCapability]}.`,
         }
 }
 export const sameSelectedValue = (
@@ -144,6 +139,13 @@ const recordedSelected = (
         !field.manualHold &&
         field.automaticDecision !== null &&
         automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
+// A recorded pick is Automatic's while the owner has not decided, no carried
+// hold pauses it and no press of theirs is pending, so its card says so (#1765).
+export const automaticallySelected = (field: ReviewField, progress: ChoiceProgress) =>
+  (progress === null || progress.phase === 'failed') &&
+  field.humanDecision === null &&
+  !field.manualHold &&
+  field.automaticDecision !== null
 export const choiceSelected = (
   field: ReviewField,
   progress: ChoiceProgress,
@@ -190,11 +192,11 @@ export const decisionValue = (field: ReviewField) => {
 }
 export const completionOutcome = (field: ReviewField) =>
   authoredOwnerRecorded(field)
-    ? 'Advised description selected'
+    ? 'Adviser’s description chosen'
     : field.humanDecision?.outcome === 'reject'
-      ? 'No action recorded'
+      ? 'Change declined'
       : field.humanDecision?.outcome === 'keep_current'
-        ? 'Current value retained'
+        ? 'Current value kept'
         : field.humanDecision?.outcome === 'accept'
-          ? 'Proposed value selected'
-          : 'Recorded outcome'
+          ? 'Proposed value chosen'
+          : 'Decided'

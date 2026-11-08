@@ -745,3 +745,33 @@ def test_a_corrupt_kept_file_is_replaced_with_the_verified_original(
     assert stat.S_IMODE(kept.stat().st_mode) == 0o600
     assert not effects.recovery.exists(planned.plan.plan_id)
     assert list(_root(effects).glob("*.tmp")) == []
+
+
+def test_the_newest_original_is_the_last_verified_switch_in_the_same_second(
+    effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A work's newest original follows verification order, not plan identity."""
+    monkeypatch.setattr(effects, "clock", lambda: 100)
+    originals: dict[str, bytes] = {}
+    effects.recovery = PrivateCoverRecoveryStore(
+        Path(effects.temporary.name) / "same-work-recovery",
+        lambda plan: originals[plan.plan_id],
+    )
+    service = _service(effects, RetainedCoverStore(_root(effects)))
+    plans = []
+    for index in range(4):
+        original = f"original-{index}".encode()
+        planned = _automatic_plan(
+            effects,
+            service,
+            pre="cover_" + hashlib.sha256(original).hexdigest(),
+            suffix=hashlib.sha256(f"same-work-{index}".encode()).hexdigest(),
+        )
+        originals[planned.plan.plan_id] = original
+        assert service.apply(planned.plan.plan_id).state == "verified"
+        plans.append(planned.plan.plan_id)
+    # The plan identities sort in another order than the switches verified.
+    assert max(plans) != plans[-1]
+
+    newest = effects.repository.retained_cover_original("primary", "books", "book-1")
+    assert newest is not None and newest[1] == plans[-1]

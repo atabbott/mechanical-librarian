@@ -208,16 +208,20 @@ class SQLiteRetainedCoverRepository(ConnectionScoped):
         """The newest original kept for a work: its digest, plan and decision.
 
         Only a verified plan's copy with no removal counts, so a write that is
-        pending, or ended without landing, offers nothing to put back.
+        pending, or ended without landing, offers nothing to put back. The
+        newest is the highest listing sequence, as the release rule orders it,
+        so switches verified in the same second or after a clock step keep
+        their order.
         """
         row = self._connection.execute(
             "SELECT binding.original_digest,binding.plan_id,binding.decision_id "
             "FROM retained_cover_bindings binding JOIN field_effects effect "
-            "USING(plan_id) WHERE binding.connection_name=? "
+            "USING(plan_id) JOIN retained_cover_listings listing USING(plan_id) "
+            "WHERE binding.connection_name=? "
             "AND binding.library_name=? AND binding.work_id=? "
             "AND effect.state='verified' AND NOT EXISTS (SELECT 1 FROM "
             "retained_cover_removals removal WHERE removal.plan_id=binding.plan_id) "
-            "ORDER BY effect.updated_at DESC,binding.plan_id DESC LIMIT 1",
+            "ORDER BY listing.sequence DESC LIMIT 1",
             (connection, library, work_id),
         ).fetchone()
         return None if row is None else (str(row[0]), str(row[1]), str(row[2]))

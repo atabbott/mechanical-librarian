@@ -24,18 +24,18 @@ export const humanReasons = {
   withdraw: 'You withdrew your decision for this field.',
 } satisfies Record<DecisionOutcome, string>
 export const automaticReasons = {
-  candidate: 'Automatic policy chose a proposed value.',
-  keep_current: 'Automatic policy kept the current value.',
-  ignore: 'Automatic policy leaves this field unchanged.',
+  candidate: 'Automatic chose a proposed value.',
+  keep_current: 'Automatic kept the current value.',
+  ignore: 'Automatic leaves this field as it is.',
 } satisfies Record<AutomaticOutcome, string>
 export const dispositionReasons = {
-  reject: 'The proposed change was set aside; compare the values yourself.',
-  propose_change: 'A change is proposed; compare it with the current value.',
-  acceptable_choice: 'More than one value is acceptable; choose the one this work should use.',
-  unresolved_choice: 'The sources do not settle one value; compare the values yourself.',
-  keep: 'The current value is proposed to stay; compare the alternatives.',
-  defer: 'This field waits for your comparison of the values.',
-  ineligible: 'None of these values can be applied for you; compare them yourself.',
+  reject: 'The proposed change was set aside. Compare the values yourself.',
+  propose_change: 'A change is proposed. Compare it with the current value.',
+  acceptable_choice: 'More than one value would do. Choose the one this work should use.',
+  unresolved_choice: 'The sources do not settle on one value. Compare them yourself.',
+  keep: 'The current value is proposed to stay. Compare the other values.',
+  defer: 'This field waits for your choice.',
+  ineligible: 'None of these values can be applied for you. Compare them yourself.',
 } satisfies Record<ProposalOutcome, string>
 export const fieldReason = (field: ReviewField) =>
   bounded(
@@ -48,8 +48,8 @@ export const fieldReason = (field: ReviewField) =>
           : field.classificationReason &&
               !/needs (?:your )?review/iu.test(field.classificationReason)
             ? field.classificationReason
-            : 'No eligible owner decision is available.',
-    'Retained reviewer notice',
+            : 'Nothing to decide for this field.',
+    'No reason can be shown.',
   )
 // An optional choice already says no review is needed, so a limitation worded
 // as asking the owner to choose is left off its evidence too (#1557).
@@ -89,7 +89,7 @@ export const noticeText = (field: ReviewField, notice: string, mediaKind: string
         ? UNOFFERED_DISSENT_TEXT
         : materialReasonLabel(notice)
 export const UNOFFERED_DISSENT_TEXT =
-  'Another source gave a value that isn’t offered here; choose whether to use this one'
+  'Another source gave a value that isn’t offered here. Choose whether to use this one'
 // One candidate for an empty field shows no disagreement: the value it
 // disagrees with is not offered, such as one in another language (#1497).
 export const loneCandidateForEmpty = (field: ReviewField) =>

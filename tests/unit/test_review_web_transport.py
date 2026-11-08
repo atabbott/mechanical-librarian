@@ -229,11 +229,17 @@ def test_sign_in_page_speaks_the_owners_language(
 ) -> None:
     page = web.client.get("/login")
     assert page.status_code == 200
-    assert (
-        "Sign in to see what needs your attention in your library. Nothing changes"
-        " in your library until you give write permission, and every change is"
-        " checked before it is written."
-    ) in page.text
+    assert '<h1 id="login-title">Sign in to review your library</h1>' in page.text
+    # One heading: no eyebrow, tagline or reassurance stacked around it, and no
+    # implementation words in the recovery steps (#1765 entry 1).
+    for removed in (
+        "Private owner access",
+        "Private review workspace",
+        "Review your library with confidence.",
+        "Nothing changes in your library until you give write permission",
+        "verifier",
+    ):
+        assert removed not in page.text
     # The design document's vocabulary never reaches the owner (#1286).
     for term in ("exact-current", "exception cases", "safeguards"):
         assert term not in page.text

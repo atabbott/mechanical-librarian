@@ -457,7 +457,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 ).click()
                                 expect(
                                     page.get_by_text(
-                                        "Owner chose the current value.", exact=True
+                                        "You kept the current value.", exact=True
                                     )
                                 ).to_be_visible()
                                 if actors is not None:
