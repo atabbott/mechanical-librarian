@@ -181,6 +181,9 @@ brackets are GitHub issues.
   and now) and All, 50 books at a time. One tap records a choice and opens the
   next book, and a book whose covers changed is refused on its own. Keeping an
   automatic switch releases the replaced cover's copy (#1633).
+- Tooling: a read-only workbench script lists Library links to the ebook
+  series fields where only Hardcover names a series and it differs from yours,
+  so you can label them in the qualification run (#1811).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
