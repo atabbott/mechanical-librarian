@@ -15,6 +15,7 @@ from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
+    ProviderConnectionConfiguration,
     ReportLimits,
     TargetConnectionConfiguration,
     dispatch_adapters,
@@ -92,6 +93,7 @@ from mechanical_librarian.domain.metadata_report import (
     COMPANION_ISBN_AUTHORITIES,
     COMPANION_ISBN_WORK_BASIS,
     CORROBORATED_RULE_AUTHORITY,
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     LANE_TITLE_BASES,
     MAX_ASIN_DISCOVERY_LANES,
     MAX_AUDIO_EDITIONS,
@@ -2316,6 +2318,25 @@ class ProviderBinding:
     enabled: bool
     factory: Callable[[], MetadataProvider]
     authority: str | None = None
+    cover_enabled: bool = False
+
+
+def provider_binding(
+    provider: ProviderConnectionConfiguration,
+    factory: Callable[[], MetadataProvider],
+) -> ProviderBinding:
+    """Bind one configured provider connection, its cover switch included.
+
+    Dispatch reads `cover_enabled` to leave a cover-only audiobook authority
+    unasked while its covers are off (#1779).
+    """
+    return ProviderBinding(
+        provider.name,
+        provider.enabled,
+        factory,
+        provider.adapter,
+        provider.cover_enabled,
+    )
 
 
 def observe_provider(
@@ -3915,6 +3936,11 @@ class GenerateMetadataReport:
         or recorded, and neither the configured connections nor `bindings` can
         widen the set.
 
+        A cover-only audiobook authority (iTunes Search) whose `cover_enabled`
+        is false is skipped for an audiobook the same way, after its enabled
+        check: its answer would supply only a cover the observer discards, so
+        it is never sent the title and author (#1779).
+
         An audiobook's AudioSilo binding runs last, and only when no Audible
         or Audnexus observation of this pass, or of `prior_observations` (the
         phase-one answers an ASIN feed follows), admitted a recording by stated
@@ -3964,6 +3990,14 @@ class GenerateMetadataReport:
                         ),
                     )
                 )
+                continue
+            if (
+                binding_plan.audio is not None
+                and binding.authority in COVER_ONLY_AUDIOBOOK_AUTHORITIES
+                and not binding.cover_enabled
+            ):
+                # Asked for nothing but a cover the observer would discard, it
+                # is sent no title or author at all (#1779).
                 continue
             if _audiosilo_not_needed(
                 binding,

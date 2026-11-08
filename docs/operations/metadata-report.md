@@ -221,8 +221,8 @@ contradiction but never admits.
 Audiobooks go to the Audible catalog, Audnexus, AudioSilo, Hardcover, iTunes
 Search and Open Library, never to Google Books or Inventaire
 ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)).
-iTunes Search is asked for a cover only: nothing else it states is read for an
-audiobook. Its answer never matches an audiobook and its failure never limits
+iTunes Search is asked for a cover only, and only while its `cover_enabled` is
+on: nothing else it states is read for an audiobook. Its answer never matches an audiobook and its failure never limits
 one, so an audiobook only iTunes found stays Not matched.
 Discovery has two phases:
 

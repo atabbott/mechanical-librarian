@@ -265,9 +265,10 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
 - **iTunes Search**: `GET` to `itunes.apple.com/search`, with the query only
   in `term`. It states no narrator or runtime, so it never satisfies runtime
   corroboration. An ebook walks its title-and-author ladder. An audiobook asks
-  one search, the first rung of its asserted lane, for a cover only: no field
-  value, backing, recording fact or recovery job comes from it
-  (`provider_supplies_field_evidence`, ADR-0061 clause 9).
+  one search, the first rung of its asserted lane, for a cover only, and only
+  while iTunes' `cover_enabled` is true: no field value, backing, recording
+  fact or recovery job comes from it (`provider_supplies_field_evidence`,
+  ADR-0061 clause 9).
 
 Audible, Audnexus, AudioSilo and iTunes send no credential and retry only
 after `Retry-After` on 429 and 503, which Audible caps at one minute.

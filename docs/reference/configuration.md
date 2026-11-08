@@ -369,7 +369,8 @@ An audiobook is sent only to referenced providers in the audiobook set:
 `audible_catalog`, `audnexus`, `audiosilo`, `hardcover`, `itunes_search` and
 `open_library`. A library's references narrow that set and never widen it.
 iTunes gets one title-and-author search per audiobook and supplies only its
-cover. Google Books and Inventaire receive no audiobook requests.
+cover, so it is searched only while its `cover_enabled` is on. Google Books and
+Inventaire receive no audiobook requests.
 
 ### Covers
 
@@ -382,7 +383,7 @@ becomes an audiobook cover source) and `itunes_search` (a matching audiobook
 listing's art is offered as a cover for ebooks and audiobooks). The switch is hidden
 and off while the provider is disabled. In a configuration file it defaults to
 on; guided setup saves `cover_enabled: false` for both, so in store mode their
-covers start off.
+covers start off and iTunes is sent no audiobook until its switch is on.
 
 The screens show one fixed display name per adapter, never the instance `name`.
 

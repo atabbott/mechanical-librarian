@@ -353,7 +353,14 @@ class _FakeAudiobookProvider:
         )
 
 
-def _configuration(covers: bool = False) -> ApplicationConfiguration:
+def _configuration(
+    covers: bool = False, store_covers: bool = True
+) -> ApplicationConfiguration:
+    """Audible's covers follow `covers`; the store's are on unless said.
+
+    The store is asked about an audiobook only while its covers are on
+    (#1779), so a fixture that expects it asked keeps them on.
+    """
     return ApplicationConfiguration(
         (
             TargetConnectionConfiguration(
@@ -387,7 +394,7 @@ def _configuration(covers: bool = False) -> ApplicationConfiguration:
             ),
             ProviderConnectionConfiguration("silo", True, False, None, "audiosilo"),
             ProviderConnectionConfiguration(
-                "store", True, covers, None, "itunes_search"
+                "store", True, store_covers, None, "itunes_search"
             ),
         ),
         provider_recovery_generation=1,
@@ -424,10 +431,11 @@ def _run(
     providers: Mapping[str, MetadataProvider | Callable[[], MetadataProvider]],
     *,
     covers: bool = False,
+    store_covers: bool = True,
 ) -> tuple[str, object]:
     """Publish one audiobook report through the real composition seam."""
     database = root / "reports.sqlite"
-    configuration = _configuration(covers)
+    configuration = _configuration(covers, store_covers)
     composition.CoverArtifactStore(root / "artifacts", create=True)
     repository = open_repository(database)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
@@ -808,7 +816,9 @@ def _published_with_covers(
 
     providers = _cover_providers(calls, audible_url=audible_url)
     with patch.object(cover_evidence_observer, "fetch_remote_cover", side_effect=fetch):
-        serialized, repository = _run(root, providers, covers=covers)
+        serialized, repository = _run(
+            root, providers, covers=covers, store_covers=covers
+        )
     repository.close()
     return MetadataReport.from_json(serialized)
 
@@ -860,6 +870,10 @@ def test_a_disabled_cover_switch_acquires_no_audiobook_cover_bytes(
             covers=False,
         )
 
+    # With its covers off the store is never asked about the audiobook, so
+    # its title and author are not sent for a cover nothing reads (#1779).
+    assert [] == [value for value in calls if value[0] == "itunes_search"]
+    assert "store" not in {value.provider for value in published.providers}
     assert not [
         source
         for source in published.cover_sources

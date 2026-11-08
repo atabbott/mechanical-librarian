@@ -3414,20 +3414,33 @@ class _ItemTarget:
 
 
 def _dispatch_binding(
-    name: str, constructed: list[str], observed: list[str]
+    name: str,
+    constructed: list[str],
+    observed: list[str],
+    *,
+    cover_enabled: bool = True,
 ) -> ProviderBinding:
+    """A binding whose covers are on unless said otherwise.
+
+    iTunes is asked for an audiobook only while its covers are on (#1779).
+    """
+
     def factory() -> _UnavailableProvider:
         constructed.append(name)
         return _UnavailableProvider(name, observed)
 
-    return ProviderBinding(name, True, factory, authority=name)
+    return ProviderBinding(
+        name, True, factory, authority=name, cover_enabled=cover_enabled
+    )
 
 
 def _never_built(name: str, *, enabled: bool = True) -> ProviderBinding:
     def factory() -> _UnavailableProvider:
         pytest.fail(f"{name} was built")
 
-    return ProviderBinding(name, enabled, factory, authority=name)
+    return ProviderBinding(
+        name, enabled, factory, authority=name, cover_enabled=enabled
+    )
 
 
 def _mixed_service(
@@ -3552,6 +3565,39 @@ def test_a_mixed_library_dispatches_each_media_kind_only_to_its_set() -> None:
             if name in recovery_adapters(audio=item == "audiobook")
         ] == [job.adapter for job in jobs[item]]
     assert "itunes_search" not in [job.adapter for job in jobs["audiobook"]]
+
+
+def test_itunes_with_its_covers_off_is_never_asked_about_an_audiobook() -> None:
+    """#1779: its only audiobook answer is a cover the observer would discard.
+
+    It is left out as an adapter outside the dispatch set is: never built, sent
+    nothing and not recorded. An ebook still asks it, covers or not.
+    """
+    constructed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
+    observed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
+    reports: dict[str, MetadataReport] = {}
+    for item in ("audiobook", "ebook"):
+        bindings = tuple(
+            _dispatch_binding(
+                name,
+                constructed[item],
+                observed[item],
+                cover_enabled=name != "itunes_search",
+            )
+            for name in _EVERY_ADAPTER
+        )
+        reports[item] = MetadataReport.from_json(_mixed_service(bindings).run(item, 0))
+
+    assert "itunes_search" not in constructed["audiobook"]
+    assert "itunes_search" not in observed["audiobook"]
+    assert "itunes_search" not in [
+        value.provider for value in reports["audiobook"].providers
+    ]
+    assert sorted(constructed["audiobook"]) == sorted(
+        AUDIOBOOK_DISPATCH_ADAPTERS - {"itunes_search"}
+    )
+    assert "itunes_search" in constructed["ebook"]
+    assert "itunes_search" in [value.provider for value in reports["ebook"].providers]
 
 
 @pytest.mark.parametrize(

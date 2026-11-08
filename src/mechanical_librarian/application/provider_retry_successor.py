@@ -50,6 +50,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     companion_binding_plan,
     metadata_discovery_plan,
+    provider_binding,
     provider_observation,
     refit_companion_books,
     require_report_current,
@@ -1071,7 +1072,7 @@ def resolve_configured_retry(
         )
 
     return ConfiguredProviderRetry(
-        ProviderBinding(name, True, factory, adapter),
+        provider_binding(provider, factory),
         adapter,
         generation,
         google_burst_remaining=(
