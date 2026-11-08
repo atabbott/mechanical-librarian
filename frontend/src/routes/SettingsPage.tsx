@@ -12,7 +12,6 @@ import {
 } from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
 import { Button } from '../components/Button'
-import { reloadCurrentApplication } from '../chunkRecovery'
 import { ChangeCount } from '../components/ChangeCount'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
@@ -20,8 +19,10 @@ import { FieldInput, FieldRow } from '../components/FieldRow'
 import { FinishTray } from '../components/FinishTray'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { SegmentedControl } from '../components/SegmentedControl'
+import { ReloadApplication, StaleBuildRead } from '../components/StaleBuildRead'
 import { StatusPill } from '../components/StatusPill'
 import { controlId, descriptionId, errorId, offOn, unitId } from '../fieldControls'
+import { focusAfterRetry } from '../focusAfterRetry'
 import { languageName } from '../labels'
 import { ProviderThrottleNotice, settingsRoute, useReviewContext } from '../router'
 import {
@@ -308,14 +309,16 @@ export default function SettingsPage() {
     retry: false,
   })
   const [saved, setSaved] = useState(false)
-  const [reconciliation, setReconciliation] = useState<'idle' | 'checking' | 'failed' | 'checked'>(
-    'idle',
-  )
+  // `stale`: the reload met a newer build, so only reloading the tab can show the settings.
+  const [reconciliation, setReconciliation] = useState<
+    'idle' | 'checking' | 'failed' | 'stale' | 'checked'
+  >('idle')
   const [recoveryGeneration, setRecoveryGeneration] = useState(0)
   const [savedGeneration, setSavedGeneration] = useState(0)
   const reconciliationTarget = useRef<HTMLDivElement>(null)
+  const staleReload = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => {
-    reconciliationTarget.current?.focus()
+    ;(reconciliation === 'stale' ? staleReload : reconciliationTarget).current?.focus()
   }, [reconciliation])
   const reconcileUncertainSave = async () => {
     setSaved(false)
@@ -324,7 +327,7 @@ export default function SettingsPage() {
     if (result.isSuccess) {
       setRecoveryGeneration((value) => value + 1)
       setReconciliation('checked')
-    } else setReconciliation('failed')
+    } else setReconciliation(result.error instanceof BuildMismatchError ? 'stale' : 'failed')
   }
   if (query.isPending)
     return (
@@ -338,9 +341,7 @@ export default function SettingsPage() {
     return (
       <section className="settings-state" data-route-focus tabIndex={-1}>
         <h1>Settings were not loaded</h1>
-        <button type="button" onClick={() => reloadCurrentApplication()}>
-          Reload
-        </button>
+        <ReloadApplication />
       </section>
     )
   if (query.isError && query.data === undefined)
@@ -357,7 +358,11 @@ export default function SettingsPage() {
     <>
       <ProviderThrottleNotice />
       {saved ? <SavedNotice>Settings saved and in use.</SavedNotice> : null}
-      {reconciliation !== 'idle' ? (
+      {reconciliation === 'stale' ? (
+        <div key="stale" className="settings-stale-recovery">
+          <StaleBuildRead lead="No answer came back for the Settings save." ref={staleReload} />
+        </div>
+      ) : reconciliation !== 'idle' ? (
         <div
           className="settings-stale-recovery"
           role="alert"
@@ -384,7 +389,10 @@ export default function SettingsPage() {
       <SettingsEditor
         key={`${query.data.authority}:${String(recoveryGeneration)}:${String(savedGeneration)}`}
         view={query.data}
-        saveBlocked={reconciliation === 'checking' || reconciliation === 'failed'}
+        saveBlocked={
+          reconciliation === 'checking' || reconciliation === 'failed' || reconciliation === 'stale'
+        }
+        reloadEnded={reconciliation === 'failed' || reconciliation === 'stale'}
         onSaved={(value) => {
           queryClient.setQueryData(['settings'], value)
           queryClient.setQueryData(['appearance'], {
@@ -408,6 +416,7 @@ export default function SettingsPage() {
 const SettingsEditor = ({
   view,
   saveBlocked,
+  reloadEnded,
   onSaved,
   onEdited,
   onStale,
@@ -415,6 +424,8 @@ const SettingsEditor = ({
 }: {
   view: SettingsView
   saveBlocked: boolean
+  /** The reload after an uncertain save failed or met a newer build: nothing is still coming. */
+  reloadEnded: boolean
   onSaved: (value: SettingsView) => void
   onEdited: () => void
   onStale: () => Promise<unknown>
@@ -437,6 +448,9 @@ const SettingsEditor = ({
   const [libraryPage, setLibraryPage] = useState(0)
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
   const statusTarget = useRef<HTMLParagraphElement>(null)
+  // Set once a save meets a newer build: no later save can succeed in this tab.
+  const [buildStale, setBuildStale] = useState(false)
+  const statusReload = useRef<HTMLButtonElement>(null)
   const routeSection = useRef<HTMLElement>(null)
   // The loading state that held route focus has just unmounted; keep focus in
   // the route rather than leave it on the document body.
@@ -471,7 +485,11 @@ const SettingsEditor = ({
     retry: false,
     onSuccess: (value) => onSaved(value),
     onError: (error) => {
-      if (error instanceof ApiError && error.status === 409) {
+      // A newer build refuses the save with a 409 too; it is not a conflict to rebase.
+      if (error instanceof BuildMismatchError) {
+        setBuildStale(true)
+        focusAfterRetry(() => statusReload.current)
+      } else if (error instanceof ApiError && error.status === 409) {
         setStatus('stale')
         void onStale().then(() =>
           setStatus((current) => (current === 'stale' ? 'unconfirmed' : current)),
@@ -590,7 +608,10 @@ const SettingsEditor = ({
   const statusCopy = mutation.isPending
     ? 'Saving settings…'
     : status === 'uncertain'
-      ? 'Save outcome uncertain. Waiting for current settings.'
+      ? // Once the reload has ended, the message above the form says what is true.
+        reloadEnded
+        ? null
+        : 'Save outcome uncertain. Waiting for current settings.'
       : status === 'failed'
         ? refusalCopy(
             mutation.error,
@@ -1205,7 +1226,12 @@ const SettingsEditor = ({
                   : 'No unsaved changes'}
               </strong>
               {changed ? <span>{changedSections.map((item) => item.label).join(', ')}</span> : null}
-              {statusCopy ? (
+              {buildStale ? (
+                <StaleBuildRead
+                  lead="Settings were not saved. Reloading discards your unsaved changes."
+                  ref={statusReload}
+                />
+              ) : statusCopy ? (
                 <p
                   ref={statusTarget}
                   tabIndex={-1}
@@ -1245,7 +1271,7 @@ const SettingsEditor = ({
               <Button
                 variant="primary"
                 type="button"
-                disabled={!changed || mutation.isPending || saveBlocked}
+                disabled={!changed || mutation.isPending || saveBlocked || buildStale}
                 onClick={save}
               >
                 {mutation.isPending ? 'Saving…' : 'Save settings'}
