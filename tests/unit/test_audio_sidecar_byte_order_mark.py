@@ -827,6 +827,44 @@ def test_the_item_wide_byte_cap_counts_every_record_envelope() -> None:
     assert capped[0].byte_order_mark.facts
 
 
+def test_the_byte_cap_holds_when_records_without_facts_fill_it_exactly() -> None:
+    """Control 8: a record left with no facts writes `false`, the longer flag."""
+    empty = tuple(
+        dataclasses.replace(
+            _digests(1)[0],
+            name=f"{index}.nfo",
+            byte_order_mark=AudioSidecarByteOrderMark(),
+        )
+        for index in range(1, 8)
+    )
+
+    def total(tail: int) -> int:
+        filler = dataclasses.replace(
+            _digests(1)[0],
+            name="0.nfo",
+            byte_order_mark=AudioSidecarByteOrderMark(
+                facts=tuple(
+                    AudioSidecarByteOrderMarkFact(
+                        _F.DESCRIPTION, f"{index:03d}" + "x" * 497, None
+                    )
+                    for index in range(114)
+                )
+                + (AudioSidecarByteOrderMarkFact(_F.DESCRIPTION, "y" * tail, None),)
+            ),
+        )
+        return sum(
+            len(canonical_json(entry.byte_order_mark.to_data()).encode("utf-8"))
+            for entry in isolated_audio._capped_records((filler, *empty))
+            if entry.byte_order_mark is not None
+        )
+
+    # Sweep the last fact's length so that, for one of them, it fills the
+    # budget left after every envelope to the byte.
+    totals = [total(tail) for tail in range(1, 513)]
+    assert max(totals) <= MAX_BYTE_ORDER_MARK_BYTES
+    assert max(totals) >= MAX_BYTE_ORDER_MARK_BYTES - 16
+
+
 # --- Through the parent inspector (S4, S6, S7, controls 4, 7, 8, 9) ----------
 
 

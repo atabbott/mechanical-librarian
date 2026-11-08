@@ -701,8 +701,9 @@ def _capped_records(
     facts_left = MAX_AUDIO_FACTS
     bytes_left = MAX_BYTE_ORDER_MARK_BYTES - sum(
         _serialized_bytes(
+            # `false` is the longer literal, so this is the larger envelope.
             dataclasses.replace(
-                entry.byte_order_mark, facts=(), facts_omitted=True
+                entry.byte_order_mark, facts=(), facts_omitted=False
             ).to_data()
         )
         for entry in entries
