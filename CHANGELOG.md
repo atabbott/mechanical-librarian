@@ -61,6 +61,11 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** Hardcover now finds a widely published ebook by
+  its title and author instead of refusing it for having many editions. It
+  matches the title whatever its capitals, searches with the EPUB's own authors
+  when Audiobookshelf names none, and no longer repeats a search it has just
+  sent (#1777).
 - **Clean rebuild required.** A source lookup that failed inside Mechanical
   Librarian reads as **Failed in Mechanical Librarian** in Sources and, when
   nothing matched, in Library's Not matched lens, instead of "Could not be
@@ -135,6 +140,9 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- Retrying description advice while preparation is paused is now confirmed
+  instead of reported as failed. The retry was already saved and runs at the
+  first library scan after preparation resumes (#1784).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author

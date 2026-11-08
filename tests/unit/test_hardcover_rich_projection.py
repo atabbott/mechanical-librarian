@@ -165,6 +165,67 @@ def test_edition_overflow_rejects_hostile_creator_identity_bindings(
         )
 
 
+def _overflow_with(contributions: list[dict[str, object]]) -> bytes:
+    book = {"id": 10, "title": "Anchored work", "contributions": contributions}
+    return json.dumps(
+        hardcover_envelope(
+            [{"id": index, "book_id": 10} for index in range(1, 7)], [book]
+        )
+    ).encode()
+
+
+def test_edition_overflow_skips_an_illustrator_and_keeps_the_author() -> None:
+    value = hardcover_metadata._parse_edition_enrichment_overflow(
+        _overflow_with(
+            [
+                {
+                    "id": 1,
+                    "contribution": "Illustrator",
+                    "author": {"id": 8, "name": "Bea Example"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 7, "name": "Ada Example"},
+                },
+            ]
+        ),
+        "catalogue",
+    )
+
+    assert value is not None
+    assert ("Ada Example",) == tuple(claim.value for claim in value.authors)
+    assert 1 == len(value.identity_bindings)
+
+
+def test_edition_overflow_still_refuses_a_duplicate_author_beside_a_skipped_role() -> (
+    None
+):
+    with pytest.raises(ValueError):
+        hardcover_metadata._parse_edition_enrichment_overflow(
+            _overflow_with(
+                [
+                    {
+                        "id": 1,
+                        "contribution": "Illustrator",
+                        "author": {"id": 8, "name": "Bea Example"},
+                    },
+                    {
+                        "id": 2,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                    {
+                        "id": 3,
+                        "contribution": None,
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                ]
+            ),
+            "catalogue",
+        )
+
+
 @pytest.mark.parametrize("count", (5, 6, 7), ids=("five", "six", "seven"))
 def test_edition_overflow_probe_has_exact_five_six_seven_boundary(count: int) -> None:
     book = [
@@ -407,6 +468,9 @@ def test_response_cap_and_candidate_probe_are_terminal() -> None:
 
 
 def test_edition_overflow_retains_only_work_scoped_witness() -> None:
+    """Only the ISBN lane still reads editions, so only it can overflow into a
+    witness (#1380). Qualification drops it, since an ISBN cannot state the
+    exact work, so it never reaches a report."""
     rows = [
         {
             "id": index,
@@ -453,7 +517,7 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
         65_536,
     )
 
-    provider_result = provider.observe(work_lookup())
+    provider_result = provider.observe(isbn_lookup((isbn_claim(),)))
     observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED == observation.status
@@ -477,47 +541,6 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
         }
         & {witness.title, *(claim.value for claim in witness.authors)}
     )
-    report = MetadataReport.create(
-        target=TargetFacts(
-            "primary",
-            "ebooks",
-            "item-1",
-            tuple(
-                TargetField(
-                    TargetDestination.AUTHORS,
-                    TargetFieldState.VALUE,
-                    ("Ada Example",),
-                )
-                if field.destination is TargetDestination.AUTHORS
-                else field
-                for field in default_target_fields("Anchored work")
-            ),
-        ),
-        file=FileFacts(0, "a" * 64, "b" * 64),
-        local_claims=(),
-        local_reasons=("no_opening_claims",),
-        providers=(observation,),
-    )
-    assert report == MetadataReport.from_json(report.to_json())
-    for mutate in (
-        lambda document: next(
-            field.update({"value": "Other work"})
-            for field in document["target"]["fields"]
-            if field["destination"] == "title"
-        ),
-        lambda document: next(
-            field.update({"value": ["Other author"]})
-            for field in document["target"]["fields"]
-            if field["destination"] == "authors"
-        ),
-        lambda document: document["providers"][0]["edition_enrichment_overflow"].update(
-            {"title": "Anchored work (Expanded)"}
-        ),
-    ):
-        document = report.to_data()
-        mutate(document)
-        with pytest.raises(ReportValueError):
-            MetadataReport.from_json(hardcover_metadata.canonical_json(document))
 
 
 def test_exact_rich_caps_and_pinned_schema_are_admitted() -> None:
@@ -718,7 +741,8 @@ def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() 
         and claim.state is FieldState.VALID
         and claim.role is None
     ]
-    assert {ClaimScope.EDITION, ClaimScope.WORK} == {claim.scope for claim in creators}
+    # The WORK lane answers with the book alone (#1380).
+    assert {ClaimScope.WORK} == {claim.scope for claim in creators}
     work_creator = next(claim for claim in creators if claim.scope is ClaimScope.WORK)
     assert ((work_creator.reference, "hardcover-author-0000000001", None),) == tuple(
         (binding.claim_reference, binding.identity, binding.role)
@@ -738,7 +762,7 @@ def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() 
         evidence.kind for evidence in observation.candidates[0].evidence
     }
     sibling_claims = observation.candidates[0].claims
-    assert {"Synthetic title", "9780306406157"} == {
+    assert {"Synthetic title"} == {
         claim.value
         for claim in sibling_claims
         if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
@@ -880,7 +904,7 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
     )
     assert () == qualified.candidates[0].identity_bindings
     sibling_claims = observation.candidates[0].claims
-    assert {"Synthetic title", "9780306406157"} == {
+    assert {"Synthetic title"} == {
         claim.value
         for claim in sibling_claims
         if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}

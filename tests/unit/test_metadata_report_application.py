@@ -161,7 +161,11 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     work_query_ladder,
 )
-from tests.support.hardcover_evidence import hardcover_envelope, isbn_claim
+from tests.support.hardcover_evidence import (
+    books_envelope,
+    hardcover_envelope,
+    isbn_claim,
+)
 from tests.support.metadata_report_doubles import (
     FakeAudioInspector,
     FakeInspector,
@@ -400,7 +404,7 @@ def test_wrong_work_adapter_evidence_stays_inspectable_but_cannot_reopen_authori
     )
     assert requests == [
         ("catalogue", "MetadataEvidenceByIsbn"),
-        ("catalogue", "MetadataEvidenceByWork"),
+        ("catalogue", "BooksByTitleAuthor"),
         ("secondary_catalogue", "isbn:9780306406157"),
         (
             "secondary_catalogue",
@@ -4867,3 +4871,124 @@ def test_a_companion_needs_an_audiobook_and_an_epub() -> None:
         TargetSnapshot("ebook", "Title", (selected,), companion=_COMPANION)
     with pytest.raises(MetadataReportError):
         _companion_snapshot(TargetFile("e" * 64, "book.pdf", "pdf"))
+
+
+def _creator(value: str, role: str | None, occurrence: int) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.CREATOR,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        applicability="not_applicable",
+        basis="package_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role=role,
+        occurrence=occurrence,
+    )
+
+
+def _creator_report(
+    creators: tuple[LocalClaim, ...],
+) -> tuple[MetadataReport, list[dict[str, object]]]:
+    sent: list[dict[str, object]] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append(body)
+        return httpx.Response(
+            200,
+            json=books_envelope(
+                [
+                    {
+                        "id": 10,
+                        "title": "Current title",
+                        "release_date": "2001-02-03",
+                        "contributions": [
+                            {
+                                "id": 1,
+                                "contribution": None,
+                                "author": {"id": 7, "name": "Ada Example"},
+                            },
+                            {
+                                "id": 2,
+                                "contribution": None,
+                                "author": {"id": 8, "name": "Bea Example"},
+                            },
+                        ],
+                    }
+                ]
+            ),
+        )
+
+    selected = TargetFile("a" * 64, "one.epub", "epub")
+    service = GenerateMetadataReport(
+        target=FakeTarget([TargetSnapshot("ebook", "Current title", (selected,))] * 2),
+        inspector=FakeInspector(InspectionResult("c" * 64, creators)),
+        repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
+        providers=(
+            ProviderBinding(
+                "catalogue",
+                True,
+                lambda: HardcoverMetadataProvider(
+                    "catalogue",
+                    httpx.Client(transport=httpx.MockTransport(answer)),
+                    65_536,
+                ),
+                authority="hardcover",
+            ),
+        ),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    )
+    return MetadataReport.from_json(service.run("item-1", 0)), sent
+
+
+def test_an_ebook_with_no_target_author_asks_with_its_epub_creators() -> None:
+    report, sent = _creator_report(
+        (
+            _creator("Ada Example", None, 1),
+            _creator("Cy Example", "trl", 2),
+            _creator("Bea Example", "aut", 3),
+        )
+    )
+
+    assert sent
+    assert all(
+        ["Ada Example", "Bea Example"]
+        == cast("dict[str, list[str]]", body["variables"])["authors"]
+        for body in sent
+    )
+    (provider,) = report.providers
+    (lane,) = provider.lanes
+    assert ProviderQueryKind.WORK is lane.kind
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert ("hardcover-work-0000000010",) == tuple(
+        candidate.work_identity for candidate in lane.candidates
+    )
+    # The basis is part of the lane, and the stored report replays it.
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+@pytest.mark.parametrize(
+    "creators",
+    (
+        tuple(_creator(f"Author {index}", None, index) for index in range(1, 6)),
+        (_creator("Ada Example", None, 1), _creator("ada example", None, 2)),
+        (_creator("Cy Example", "trl", 1),),
+    ),
+    ids=("five", "repeated", "translator_only"),
+)
+def test_an_ebook_without_one_to_four_distinct_epub_authors_asks_nothing(
+    creators: tuple[LocalClaim, ...],
+) -> None:
+    report, sent = _creator_report(creators)
+
+    assert [] == sent
+    assert all(not provider.lanes for provider in report.providers)

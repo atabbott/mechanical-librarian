@@ -275,7 +275,8 @@ gives recording authority only.
 
 A work lane asks at most three rungs — normalized, subtitle-stripped,
 punctuation-folded — and stops on `candidates`. `candidate_limit_exceeded`
-triggers one narrowing retry and ends the ladder. On an audiobook plan a fully
+triggers one narrowing retry and ends the ladder; Hardcover skips that retry
+when it would send the author list it has just sent. On an audiobook plan a fully
 refused rung moves on, and an exhausted lane records each rung as
 `exhausted_dispatch`. An ebook plan stops at the first rung with products; when
 nothing is admitted, Open Library, Google Books, Inventaire and iTunes record
@@ -384,7 +385,7 @@ and rate-limit holds are in
 | --- | --- |
 | Audible catalog | 6 results per search; 25 when the item states one composed runtime, under a 262,144-byte bound, keeping products in the loose band or stating no runtime (more than five is `candidate_limit_exceeded`); 1 MiB aggregate |
 | Google Books | requests 6 rows, keeps 5; 5 transport retries per query; 54 attempts |
-| Hardcover | 27 attempts; three relationship levels; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
+| Hardcover | 27 attempts; three relationship levels; a work lane asks for 11 books, keeps at most 5 after folding, sends at most 4 title and 16 author spellings and no body over 16 KiB; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
 | Inventaire | 3-row search, 2 candidates; 3 attempts per request, 27 per observation; at most 2 MiB |
 | Open Library | 1 transport retry per request, 4 per observation; 49 attempts |
 | iTunes Search | ebook work lanes only; 5 rows; 6 distinct candidates overflow |
@@ -393,6 +394,16 @@ and rate-limit holds are in
   (`provider_declared_error`). `Genre` maps to genre; `Mood` and
   `ContentWarning` to tag. An unlabelled creator is never author evidence
   alone.
+- **Hardcover work lanes.** On both media a work lane asks for books, not
+  editions, by exact title and author, so a widely published book is no longer
+  over the limit for its editions. Each rung sends the title, its capitalised,
+  title-case and lower-case forms, and the stored authors followed by up to two
+  inverted or initials forms of each. These spellings are query-only and never
+  admit a book. A book whose `canonical_id` names another admitted book in the
+  same answer is folded into it, one hop only. An ebook with no target author
+  asks with one to four distinct EPUB package creators that have no role or an
+  author role, and the lane records that basis. A WORK lane keeps no overflow
+  witness ([ADR-0056](../architecture/decisions/0056-edition-overflow-work-witness.md)).
 - **Google Books.** The work relation is `unresolved`; none is invented.
   Descriptions use the inert Google Books visible-text projection. The
   optional API key appears in no report, log or artifact.

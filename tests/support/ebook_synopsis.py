@@ -1,5 +1,8 @@
 """Synthetic ebook WORK evidence produced by the real Hardcover adapter."""
 
+import json
+from typing import cast
+
 import httpx
 
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
@@ -22,6 +25,14 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.audiobook_reports import publish_audiobook_preview
 from tests.support.hardcover_evidence import hardcover_envelope
 from tests.support.proposal_evidence import _fields, _report
+
+
+def _answer(request: httpx.Request, envelope: dict[str, object]) -> dict[str, object]:
+    """Answer the books-first WORK search with the envelope's books alone."""
+    if json.loads(request.content)["operationName"] != "BooksByTitleAuthor":
+        return envelope
+    data = cast("dict[str, list[dict[str, object]]]", envelope["data"])
+    return {"data": {"books": data["books"], "tags": data["tags"]}}
 
 
 def synopsis_report(
@@ -84,7 +95,9 @@ def synopsis_report(
         )
         with httpx.Client(
             transport=httpx.MockTransport(
-                lambda request, payload=payload: httpx.Response(200, json=payload)
+                lambda request, payload=payload: httpx.Response(
+                    200, json=_answer(request, payload)
+                )
             )
         ) as client:
             adapter = HardcoverMetadataProvider(

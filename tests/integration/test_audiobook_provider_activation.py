@@ -575,7 +575,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v72" == published.schema_version
+        assert "metadata-report-v73" == published.schema_version
         # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -2648,7 +2648,7 @@ def _dispatch_flow(
         evaluate_report,
     )
     from tests.support.audiobook_providers import payload
-    from tests.support.hardcover_evidence import hardcover_envelope
+    from tests.support.hardcover_evidence import hardcover_answer
 
     root.mkdir(mode=0o700, exist_ok=True)
     seen: dict[str, list[str]] = {
@@ -2742,10 +2742,10 @@ def _dispatch_flow(
         "hardcover",
         client(
             "hardcover",
-            lambda _request: httpx.Response(
+            lambda request: httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
-                json=hardcover_envelope([], []),
+                json=hardcover_answer(request, [], []),
             ),
         ),
         262144,

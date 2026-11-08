@@ -662,7 +662,7 @@ def test_output_is_aggregate_only(tmp_path: Path, profile: Profile) -> None:
         assert code == 0, stderr
         assert _SENTINEL not in stdout and _SENTINEL not in stderr
         assert str(tmp_path) not in stdout
-    assert "### Breakdown: T1" in stdout
+    assert "## Breakdown: T1" in stdout
     code, stdout, _ = _run(
         _arguments(
             [("snap-a", database, EBOOK_REVISION)], tmp_path, "--breakdown", "T1"
@@ -1137,10 +1137,7 @@ def test_a6_splits_scalar_abstention_from_the_rich_residual(
     markdown = _run([*arguments, "--format", "markdown"], attention=probe)[1]
     assert "upstream echo" not in markdown
     if not rich_split:
-        assert (
-            "not separable on that snapshot: rich-preview refusals collapsed"
-            in markdown
-        )
+        assert "not separable: rich-preview refusals collapsed" in markdown
 
 
 def test_a_scalar_destination_set_outside_the_vocabulary_refuses(
@@ -1710,7 +1707,7 @@ def test_markdown_renders_rows_in_rank_order(tmp_path: Path) -> None:
     t1 = next(line for line in table if line.split(" | ")[1] == "T1")
     assert t1.endswith("| filed as #4242 |")
     assert t1.count("(1 actionable; 1 decided automatically)") == 2
-    assert "### Attention per case" in lines
+    assert "## Attention per case" in lines
 
 
 def test_a_bad_follow_on_refuses(tmp_path: Path) -> None:
@@ -1966,7 +1963,7 @@ def test_destination_and_medium_splits_sum_to_the_row(tmp_path: Path) -> None:
     assert _rows(stdout)["C1"]["split"] is None and _rows(stdout)["X1"]["split"] is None
     assert json.loads(stdout)["breakdown"] is None
     markdown = _run([*_arguments(snapshots, tmp_path), "--format", "markdown"])[1]
-    assert "### Breakdown" not in markdown
+    assert "## Breakdown" not in markdown
 
 
 def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -> None:
@@ -2081,7 +2078,7 @@ def test_the_breakdown_classes_partition_the_actionable_fields(tmp_path: Path) -
     # The corroborated and owner columns (#1748): no correlations and no
     # owner decisions table in this fixture.
     unmeasured = "| not estimable | not recorded | not recorded |"
-    assert lines[lines.index("### Breakdown: T1") + 4 :][:2] == [
+    assert lines[lines.index("## Breakdown: T1") + 4 :][:2] == [
         "| asin | 1 | 0 | 0/0/0 | 1 | not estimable | not estimable "
         "| 0 | 0 | 0 | 0 | 0 | 0/0/0 | 0/0 " + unmeasured,
         "| authors | 1 | 1 | 1/1/0 | 0 | 0.500 (0.095) | not estimable "
@@ -2756,7 +2753,7 @@ def test_markdown_notes_automatic_decisions_only_when_non_zero(tmp_path: Path) -
     # Recorded, but nothing settled on the audiobook side: no note.
     assert "| 0 / 0 (0 actionable) |" in ranked("T1")
     assert "decided automatically" not in ranked("A3")
-    breakdown = lines[lines.index("### Breakdown: A2") + 2 :]
+    breakdown = lines[lines.index("## Breakdown: A2") + 2 :]
     # The automatic column follows Pick preserves; the corroborated and owner
     # columns (#1748) follow it.
     assert (

@@ -509,7 +509,11 @@ class GenerateProviderRetrySuccessor:
                 companion=source.companion,
             )
             if audio
-            else metadata_discovery_plan(snapshot, source.local_claims)
+            else metadata_discovery_plan(
+                snapshot,
+                source.local_claims,
+                library_languages=source.library_languages,
+            )
         )
         plan = companion_binding_plan(full, original.authority) if audio else full
         if plan.overflow:
