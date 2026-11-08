@@ -16,8 +16,8 @@ that does not apply, or establish an edition no catalogue lists
 [automation policy](automation-policy.md)). Evidence from the file still
 passes every check: policy, unchanged library values, supported writes,
 backups, write permission, read-back and the audit record. A contradicted,
-malformed, ambiguous or other-edition fact is never written automatically just
-because it is in your file.
+malformed, ambiguous or other-edition fact is never written automatically,
+even though it is in your file.
 
 When an audiobook item also holds an EPUB, only the EPUB's title, creator,
 ISBN and publisher are read. They help find and confirm the book, and are
@@ -33,8 +33,8 @@ The first pass reads the package metadata: every declared identifier, title,
 subtitle, creator and contributor, with their roles and file-as values. It
 also reads language, publisher, date events, subject, description, series and
 position, cover declarations, and the manifest, spine, guide, landmarks and
-navigation. Versions 1.0 and 2.x are read as OPF 2.0.1, including the guide
-and NCX, and 3.x is supported. Any other version is refused as
+navigation. Package versions 1.0 and 2.x are read as OPF 2.0.1, including the
+guide and NCX, and 3.x is supported. Any other version is refused as
 `unsupported_version`.
 
 The second pass reads the opening pages. It first picks documents marked as
@@ -44,53 +44,58 @@ a similar role. The marks come from landmarks, navigation, guide entries and
 and they outrank reading order. Where the marks fall short, it reads the
 earliest eligible documents in reading order. It skips cover-only images,
 navigation already read, blank or script-only documents, and previews and
-advertisements it can detect. It also skips anything after a marked move into
-the body. It stops when the opening roles are covered, the body begins or a
-limit is reached. Each document read records the rule and semantic term that
-picked it. A picked document that is encrypted or missing is not read. It is
-recorded with a warning and still counts toward the document limit.
+advertisements it can detect. It also skips anything after the point the file
+marks as the start of the body. It stops when the opening roles are covered,
+the body begins or a limit is reached. Each document read records the rule and
+semantic term that picked it. A picked document that is encrypted or missing
+is not read. It is recorded with a warning and still counts toward the
+document limit.
 
 The third pass reads the back of the book. It takes the last eight documents
 in reading order, from the end, and opens at most four XHTML or HTML
 documents. A document counts only if it has a copyright marker: copyright, ©,
-"all rights reserved", colophon or credits. A skipped slot (excluded, missing,
-encrypted, an image or a repeat) is never replaced by another. If this pass
-reaches a size or fact limit, it records `rear_resource_limit` and keeps what
-it found. In the package and opening passes, a size limit ends the inspection.
-Malformed or unsafe markup at the back fails the whole inspection as
-`malformed`, as in the other passes. Front and back follow the same rules,
-and a fact's position adds no weight.
+"all rights reserved", colophon or credits. A skipped document (excluded,
+missing, encrypted, an image or a repeat) is not replaced by an earlier one, so
+the pass never looks past the last eight. If this pass reaches a size or fact
+limit, it records `rear_resource_limit` and keeps what it found. In the package
+pass, a size limit ends the inspection. So does a size limit on all the opening
+pages together, but one opening document over its own limit is skipped with a
+warning. Malformed or unsafe markup at the back fails the whole inspection as
+`malformed`, as in the package pass. In the opening pages, such a document is
+skipped with a warning. Front and back use the same rules to decide what
+counts, and a fact's position adds no weight.
 
 The extractor follows the
 [EPUB 3.3 Recommendation](https://www.w3.org/TR/2026/REC-epub-33-20260113/).
 The only vendor extension it reads is Calibre's `calibre:series` and
 `calibre:series_index` pair. It is a fallback and never outranks the standard
-series metadata. A prefixed lookalike such as `vendor:fulltitle` is never
+collection metadata. A prefixed lookalike such as `vendor:fulltitle` is never
 treated as a standard structural-semantics term.
 
 ## What is recorded
 
-The opening and back pages can supply the title and subtitle, the publisher
-and imprint, dated events, typed identifiers, and series and position. They
-can supply contributors, each with a role from a fixed list: author, editor,
-translator, illustrator, foreword, designer, photographer, cartographer or
-adapter. A role the metadata states that is not on the list is recorded as
+The opening and back pages can supply the title and subtitle, the publisher and
+imprint, dated events, identifiers with their type, and series and position.
+They can supply contributors, each with a role from a fixed list: author,
+editor, translator, illustrator, foreword, designer, photographer, cartographer
+or adapter. A role the metadata states that is not on the list is recorded as
 `other`. They can also supply edition, revision, printing, translation and
-illustration statements, and membership of an omnibus or anthology.
-Omnibus, anthology and navigation structure are recorded as facts about the
-file's structure. They never set the title or say which work the file is, and
-never change the chosen title or your choices.
+illustration statements, and membership of an omnibus or anthology. Omnibus,
+anthology and navigation structure are recorded as facts about the file's
+structure. They are never used as the title or to say which work the file is.
+They never change the chosen title or your choices.
 
-A chapter heading never becomes the book's title just because it comes early.
+Coming early does not make a chapter heading the book's title.
 The author role comes only from a whole attribution line, such as "By" or
 "Author:" and the names. A package creator with no stated role keeps no role.
 Supported MARC relators map to the fixed roles, and a contributor keeps all
 their roles. Book-producer (`bkp`) and other production, conversion, scanning,
-software, retailer and workflow credits are typed credits, never
-contributors. Adjacent credits split only where a full stop or "and" comes
-before another role cue. `A. B. Carter` stays whole,
-`Translated by Alice. Illustrated by Bob` gives two people, and
-`Translated and illustrated by Bea Artist` is one person with both roles.
+software, retailer and workflow credits are kept as credits of their kind,
+never as contributors. Adjacent credits split only where a full stop,
+semicolon, pipe, line break or "and" comes before another role cue.
+`A. B. Carter` stays whole, `Translated by Alice. Illustrated by Bob` gives two
+people, and `Translated and illustrated by Bea Artist` is one person with both
+roles.
 
 A subtitle, publisher or imprint needs an explicit EPUB semantic term or an
 exact `Subtitle:`, `Publisher:` or `Imprint:` label. Copyright holders,
@@ -137,7 +142,7 @@ never a publication date.
   label, with or without a colon. Inside a Library of Congress
   Cataloging-in-Publication block, a bare run of ten digits is read as one
   too, unless an ISBN, ebook or print label sits before or beside it. A short
-  line just before or after it that is only such a label, such as "eBook
+  line directly before or after it that is only such a label, such as "eBook
   ISBN", "ISBN-10:" or "(paperback)", counts as beside it. The block's
   labelled or hyphenated ISBNs are still read as ISBNs. A heading the
   extractor skips, such as one inside SVG or other non-HTML markup or in
@@ -159,8 +164,9 @@ changed:
 - `invalid`: its checksum or its format check failed.
 - `unresolved`: valid, but its relationship cannot be established.
 
-Each occurrence gets its own relationship: a print, ambiguous or inferred one
-is never accepted just because another form of that ISBN was. A source that
+Each place an ISBN appears gets its own relationship. A print, ambiguous or
+inferred one is accepted only on its own evidence, never because the same ISBN
+was accepted elsewhere in the file or in another form. A source that
 puts two ISBNs on one work links them within that source only, never as
 independent confirmation.
 
@@ -170,12 +176,12 @@ depends on which applicable facts agree. No single score decides it.
 
 ## Partial files
 
-An applicable ISBN in the opening pages names an edition, not a complete
-work. An excerpt, preview, omnibus or file with misleading front matter can
-share the opening title and ISBN. Reading stops where the body begins, and
-neither file length nor agreement among sources shows the book is complete.
-When package or opening evidence conflicts on something material with
-evidence about the whole work, both are kept for you to review.
+An applicable ISBN in the opening pages names an edition, not a complete work.
+An excerpt, preview, omnibus or file with misleading front matter can share the
+opening title and ISBN. The opening pass stops where the body begins, and
+neither file length nor agreement among sources shows the book is complete. When
+package or opening evidence conflicts on something material with evidence about
+the whole work, both are kept for you to review.
 
 ## Limits and failure
 
@@ -183,11 +189,12 @@ The `epub-opening-limits-v1` profile reads at most five opening documents by
 default. It also limits bytes, text, nodes and depth for each document and
 for the whole selection, plus navigation links, facts, warnings and excerpts.
 The child process has 30 seconds of CPU time and a default wall clock of 60
-seconds. The opening and back passes share nine document opens. Each pass also
-has its own budget. The opening pass defaults to 5 MiB, 524,288 characters,
-100,000 nodes and 64 facts. The back pass is fixed at 4 MiB, 262,144
-characters, 50,000 nodes and 16 facts. Opening values and hard caps are in
-`src/mechanical_librarian/domain/epub_opening.py`, and back-pass values are in
+seconds. Between them, the opening and back passes open at most nine
+documents. Each pass also has its own budget. The opening pass defaults to
+5 MiB, 524,288 characters, 100,000 nodes and 64 facts. The back pass is fixed
+at 4 MiB, 262,144 characters, 50,000 nodes and 16 facts. Opening values and
+hard caps are in `src/mechanical_librarian/domain/epub_opening.py`, and
+back-pass values are in
 `src/mechanical_librarian/adapters/evidence_extractors/epub_local.py`. No
 setting or command changes them.
 
@@ -204,9 +211,9 @@ unstable file, a malformed package, encryption, an unsupported version, a
 timeout or absent front matter gives a named outcome. That outcome never means
 metadata is missing and never quarantines the item.
 
-A changed file fingerprint replaces earlier evidence. Evidence is reused only
-with the same fingerprint and the current extractor, configuration and
-selection versions (extractor `epub-opening-v5`). A citation from another
+When a file's fingerprint changes, its earlier evidence is replaced. Evidence is
+reused only with the same fingerprint and the current extractor, configuration
+and selection versions (extractor `epub-opening-v5`). A citation from another
 version is refused.
 
 ## Privacy
