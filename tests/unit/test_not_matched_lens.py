@@ -584,7 +584,7 @@ def test_the_refused_lane_reads_as_a_refusal_on_its_report(tmp_path: Path) -> No
         assert [
             (source["status"], source["reason"])
             for source in cast("list[dict[str, object]]", refused["provider_sources"])
-        ] == [("no_match", "Found candidates, but none was this work.")]
+        ] == [("no_match", "Found possible matches, but none was this work.")]
         assert ("no_match", "Returned no matching metadata.") in [
             (source["status"], source["reason"])
             for source in cast("list[dict[str, object]]", plain["provider_sources"])
@@ -596,7 +596,7 @@ def test_the_refused_lane_reads_as_a_refusal_on_its_report(tmp_path: Path) -> No
         assert [
             outcome["reason"]
             for outcome in cast("list[dict[str, object]]", row["preparation_outcomes"])
-        ] == ["Found candidates, but none was this work."]
+        ] == ["Found possible matches, but none was this work."]
     finally:
         repository.close()
 
@@ -906,7 +906,13 @@ def test_an_ebook_lane_refusal_reads_as_a_refusal_in_library_and_report(
         assert [
             (source["provider"], source["status"], source["reason"])
             for source in cast("list[dict[str, object]]", detail["provider_sources"])
-        ] == [("Open Library", "no_match", "Found candidates, but none was this work.")]
+        ] == [
+            (
+                "Open Library",
+                "no_match",
+                "Found possible matches, but none was this work.",
+            )
+        ]
         row = _items(
             browse.library(lens="not_matched", search=None, limit=50, cursor=None)
         )["refused-ebook"]
@@ -916,7 +922,7 @@ def test_an_ebook_lane_refusal_reads_as_a_refusal_in_library_and_report(
         assert [
             outcome["reason"]
             for outcome in cast("list[dict[str, object]]", row["preparation_outcomes"])
-        ] == ["Found candidates, but none was this work."]
+        ] == ["Found possible matches, but none was this work."]
     finally:
         repository.close()
 

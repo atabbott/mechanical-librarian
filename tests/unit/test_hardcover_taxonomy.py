@@ -42,6 +42,8 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationFamily,
 )
 from tests.support.hardcover_evidence import (
+    books_envelope,
+    hardcover_answer,
     hardcover_envelope,
     isbn_claim,
     isbn_lookup,
@@ -51,8 +53,7 @@ from tests.support.hardcover_evidence import (
 
 def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
     requests: list[dict[str, object]] = []
-    matching = hardcover_envelope(
-        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+    matching = books_envelope(
         [
             {
                 "id": 1,
@@ -73,7 +74,9 @@ def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=(hardcover_envelope([], []) if len(requests) == 1 else matching),
+            json=(
+                hardcover_answer(request, [], []) if len(requests) == 1 else matching
+            ),
         )
 
     provider = HardcoverMetadataProvider(
@@ -87,8 +90,18 @@ def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert [
-        {"authors": ["Ada Example"], "title": "Current title: Subtitle"},
-        {"authors": ["Ada Example"], "title": "Current title"},
+        {
+            "authors": ["Ada Example"],
+            "titles": [
+                "Current title: Subtitle",
+                "Current Title: Subtitle",
+                "current title: subtitle",
+            ],
+        },
+        {
+            "authors": ["Ada Example"],
+            "titles": ["Current title", "Current Title", "current title"],
+        },
     ] == [request["variables"] for request in requests]
     assert (
         observation.dispatch_lineage is not None
@@ -100,8 +113,7 @@ def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
 
 def test_latin_fold_reaches_hardcover_only_on_the_final_bounded_dispatch() -> None:
     requests: list[dict[str, object]] = []
-    matching = hardcover_envelope(
-        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+    matching = books_envelope(
         [
             {
                 "id": 1,
@@ -122,7 +134,7 @@ def test_latin_fold_reaches_hardcover_only_on_the_final_bounded_dispatch() -> No
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope([], []) if len(requests) < 3 else matching,
+            json=hardcover_answer(request, [], []) if len(requests) < 3 else matching,
         )
 
     observation = (
@@ -143,13 +155,19 @@ def test_latin_fold_reaches_hardcover_only_on_the_final_bounded_dispatch() -> No
     assert [
         {
             "authors": ["Jos\N{LATIN SMALL LETTER E WITH ACUTE}"],
-            "title": "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+            "titles": [
+                "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                "caf\N{LATIN SMALL LETTER E WITH ACUTE}: notes",
+            ],
         },
         {
             "authors": ["Jos\N{LATIN SMALL LETTER E WITH ACUTE}"],
-            "title": "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            "titles": [
+                "Caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+                "caf\N{LATIN SMALL LETTER E WITH ACUTE}",
+            ],
         },
-        {"authors": ["Jose"], "title": "Cafe"},
+        {"authors": ["Jose"], "titles": ["Cafe", "cafe"]},
     ] == [request["variables"] for request in requests]
     assert observation.dispatch_lineage is not None
     assert observation.dispatch_lineage.rung is WorkDispatchRung.PUNCTUATION_FOLDED
@@ -193,8 +211,7 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
 
 def test_filename_author_prefix_shapes_hardcover_query_but_never_admits() -> None:
     lookup = work_lookup("Ada_Example_-_Plain Work")
-    payload = hardcover_envelope(
-        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+    payload = books_envelope(
         [
             {
                 "id": 1,
@@ -237,13 +254,10 @@ def test_filename_author_prefix_shapes_hardcover_query_but_never_admits() -> Non
     assert qualified.transformation_lineage is None
 
 
-def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> None:
+def test_hardcover_candidate_limit_retries_with_the_first_author_alone() -> None:
+    """The retry reuses the books document with the first stored author (#1380)."""
     requests: list[dict[str, object]] = []
-    overflow = hardcover_envelope(
-        [
-            {"id": index, "book_id": index, "isbn_10": None, "isbn_13": None}
-            for index in range(1, 7)
-        ],
+    overflow = books_envelope(
         [
             {
                 "id": index,
@@ -265,7 +279,7 @@ def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> Non
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=overflow if len(requests) == 1 else hardcover_envelope([], []),
+            json=overflow if len(requests) == 1 else hardcover_answer(request, [], []),
         )
 
     observation = (
@@ -280,24 +294,17 @@ def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> Non
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 2 == len(requests)
-    assert {"author": "Ada Example", "title": "Current title"} == requests[1][
-        "variables"
-    ]
-    assert "_eq:$author" in cast("str", requests[1]["query"])
+    assert {
+        "authors": ["Ada Example"],
+        "titles": ["Current title", "Current Title", "current title"],
+    } == requests[1]["variables"]
+    assert requests[0]["query"] == requests[1]["query"]
+    assert "_eq:" not in cast("str", requests[1]["query"])
 
 
 def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
     captured: list[dict[str, object]] = []
-    payload = hardcover_envelope(
-        [
-            {
-                "id": 1,
-                "book_id": 1,
-                "isbn_10": None,
-                "isbn_13": "9780306406157",
-                "release_date": "2001-02-03",
-            }
-        ],
+    payload = books_envelope(
         [
             {
                 "id": 1,
@@ -360,10 +367,11 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
     provider_result = provider.observe(lookup)
     observation = qualify_provider_observation((provider_result).observation, lookup)
     assert ProviderQueryKind.WORK == observation.query_kind
-    assert "MetadataEvidenceByWork" == captured[0]["operationName"]
-    assert {"authors": ["Ada Example"], "title": "Current title"} == captured[0][
-        "variables"
-    ]
+    assert "BooksByTitleAuthor" == captured[0]["operationName"]
+    assert {
+        "authors": ["Ada Example"],
+        "titles": ["Current title", "Current Title", "current title"],
+    } == captured[0]["variables"]
     work_claims = [
         claim
         for claim in observation.candidates[0].claims
@@ -375,10 +383,10 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
     assert {"Hopeful", "Violence"} == {
         claim.value for claim in work_claims if claim.kind is ClaimKind.TAG
     }
+    # A book states no edition date, so no edition date text survives (#1380).
     assert {
         ProviderEvidenceKind.AUTHOR_IDENTITY,
         ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-        ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
         ProviderEvidenceKind.TAXONOMY,
     } == {value.kind for value in observation.candidates[0].evidence}
     taxonomy = sorted(
@@ -425,12 +433,6 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
         if value.kind is ProviderEvidenceKind.FIRST_PUBLICATION_DATE
     )
     assert (ClaimScope.WORK, "2001-02-03") == (publication.scope, publication.value)
-    retained = next(
-        value
-        for value in observation.candidates[0].evidence
-        if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-    )
-    assert () == retained.links
     default_cover = next(
         value
         for value in provider_result.cover_descriptors
@@ -553,17 +555,7 @@ def test_equal_taxonomy_values_keep_type_and_source_order_through_replay() -> No
 
 
 def _observe_book(book: dict[str, object]) -> ProviderObservation:
-    payload = hardcover_envelope(
-        [
-            {
-                "id": 1,
-                "book_id": 1,
-                "isbn_10": None,
-                "isbn_13": None,
-            }
-        ],
-        [book],
-    )
+    payload = books_envelope([book])
     return (
         HardcoverMetadataProvider(
             "catalogue",

@@ -120,19 +120,15 @@ def hours_minutes(seconds: int, *, exact: bool = False) -> str:
 AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
     AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER: (
         "A complete recording runs within "
-        f"{hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition's stated "
+        f"{hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition’s stated "
         "running time."
     ),
     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH: (
-        "The embedded chapter durations align with the matched edition's, "
-        "allowing one skipped chapter at each end."
+        "The embedded chapter lengths match the edition’s, allowing one "
+        "skipped chapter at each end."
     ),
-    AudioHealthKind.TRACK_SEQUENCE_GAP: (
-        "The declared track sequence runs without a hole."
-    ),
-    AudioHealthKind.TRACK_SEQUENCE_DISORDER: (
-        "The declared track sequence rises with the file order."
-    ),
+    AudioHealthKind.TRACK_SEQUENCE_GAP: ("The track numbers run without a gap."),
+    AudioHealthKind.TRACK_SEQUENCE_DISORDER: ("The track numbers rise in file order."),
     AudioHealthKind.TRACK_DURATION_UNAVAILABLE: (
         "Every track states its own running time."
     ),
@@ -140,27 +136,25 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
         "Either every track carries embedded chapters or none does."
     ),
     AudioHealthKind.TAG_DISAGREES_ACROSS_TRACKS: (
-        "One item states one value per tagged field."
+        "All files of a book give the same value for each tag."
     ),
     AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS: (
-        "One item states one ASIN across its files."
+        "All files of a book give the same ASIN."
     ),
     AudioHealthKind.CONTAINER_UNEXPECTED: (
-        "Each file holds the container its admitted file type names."
+        "Each file’s container matches its file extension."
     ),
     AudioHealthKind.CODEC_UNEXPECTED: (
-        "Each file's audio stream is "
+        "Each file’s audio stream is "
         + " or ".join(sorted(ADMITTED_AUDIO_CODECS))
         + "."
     ),
     AudioHealthKind.DURATION_UNSTATED: (
-        "Each file's container states the running time of what it holds."
+        "Each file’s container states the running time of what it holds."
     ),
-    AudioHealthKind.STREAM_ENCRYPTED: (
-        "No file's samples are protected by a rights-management scheme."
-    ),
+    AudioHealthKind.STREAM_ENCRYPTED: ("No file is protected by DRM."),
     AudioHealthKind.MEDIA_UNREADABLE: (
-        "Every file of the item opens and reads within the supported bounds."
+        "Every file opens and reads within Mechanical Librarian’s limits."
     ),
 }
 # One citation per track is the widest an item-wide set observation gets, plus
@@ -453,9 +447,9 @@ def _chapter_observations(
                 # two bare chapter numbers that disagree read as a muddle
                 # rather than as the comparison that was actually made.
                 if ordinal > stated_ordinal:
-                    observed += ", aligned past this recording's first chapter"
+                    observed += ", aligned past this recording’s first chapter"
                 elif stated_ordinal > ordinal:
-                    expected += ", aligned past the edition's first chapter"
+                    expected += ", aligned past the edition’s first chapter"
             stated.append(
                 AudioHealthObservation(
                     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH,

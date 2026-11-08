@@ -160,11 +160,14 @@ it; a file-managed deployment shows the file instruction instead. With nothing
 waiting the notice takes no space.
 
 A work whose preparation could not finish stays in Library as a
-non-interactive row, Preparation failed safely, with its title while the
-catalogue still matches. Each failure code maps to one safe reason and one
-posture: an owner action, a pending automatic recovery, or no action. Unknown
-codes are rejected, not given invented guidance. The row shows its stage,
-reason, posture and a copyable reference, never a path or provider payload.
+non-interactive row, Could not finish, with its title while the catalogue
+still matches. Each failure code maps to one reason and one next step: a
+change you make and then a scan, an automatic retry, or scanning the library
+again, which queues a failed book again from the step that failed. That retry
+rereads what earlier steps saved, so saved data that could not be read says
+Library has no step that fixes it. Unknown codes are rejected, not given
+invented guidance. The row shows its reason, next step and a copyable
+reference, never a stage code, path or provider payload.
 If its catalogue identity has changed it reads `Preparation unavailable`.
 
 ## Library
@@ -183,29 +186,33 @@ The lenses are All (the default), Needs attention, No attention needed, Not
 matched and Could not finish, in one row that scrolls sideways when the panel is narrow. Lens,
 search, cursors, selected work and field live in the URL, so deep links and
 Back and Forward work. The pager offers only the moves that exist and is absent
-when the works fit on one page.
+when the works fit on one page. An empty list says so in one line; with no
+library connected it links to Settings to add one.
 
-Works needing a decision come first: those with complete provider evidence,
-then those with a limited lane, under **Provider evidence complete** and
-**Provider evidence limited**. Complete does not promise a match, and limited
-does not promise a retry. Works that could not finish follow under
-**Could not finish**, then Not matched, then the rest. The other
-lenses are alphabetical.
+Works needing a decision come first: those whose lookups all finished, then
+those with a lookup that gave no usable answer, under **Every lookup
+finished** and **Some lookups gave no usable answer**, with no caption. The
+first does not promise a match, and the second does not promise a retry. Works
+that could not finish follow under **Could not finish**, then Not matched, then
+the rest. The other lenses are alphabetical.
 
 A work with no case, nothing to decide and no admitted provider evidence is
 **Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
 gives one reason, in order: **Found, but not this work** (a provider found
 candidates, but work-identity admission refused them all, for audiobooks and
-ebooks alike), **Providers unavailable** (adding **; will be checked again**
-only while a recovery job is scheduled), **Failed in Mechanical Librarian** (a
-source failed inside Mechanical Librarian itself, which is never retried), or
-**No provider matched**. An audiobook's iTunes listing is only its cover:
-it never matches the audiobook, and an iTunes failure never limits it or makes
-its providers unavailable. If the recovery store cannot answer, Library drops only that promise and still loads
+ebooks alike), **Sources unavailable** (reading **Sources unavailable, retry
+scheduled** only while a recovery job is scheduled), **Failed in Mechanical
+Librarian** (a source failed inside Mechanical Librarian itself, which is never
+retried), or **No source matched**. If the
+recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
+An audiobook's iTunes listing is only its cover. It never matches the
+audiobook, so one that only iTunes found reads **No source matched**. An iTunes
+failure never makes its sources unavailable, and never puts it under **Some
+lookups gave no usable answer**.
 
-A work whose latest preparation could not finish is a **Preparation failed
-safely** row in **Could not finish**, counted beside Works as `2 could not
+A work whose latest preparation could not finish reads **Could not finish**
+and sits under that heading, counted beside Works as `2 could not
 finish`, even if an earlier report was retained or unmatched. A decision still
 open on a retained case keeps it in Needs attention. An ebook whose
 provider matched it but offered no change worth a proposal stays in No
@@ -274,13 +281,13 @@ The server classifies every field, and the tab status follows from it:
   beside the current value, and says turning on Automatic decides it again.
 
 Fields with nothing to decide sit in one collapsed panel headed `No change:`
-and their names, with any field waiting for a recovery or unavailable counted
-separately; each row gives its value and why nothing changed.
+and their names, with any field waiting or unavailable counted separately;
+each row gives its value and why nothing changed.
 
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An
 unknown recorded reason reads as unknown. A hold from an earlier case says an
-earlier owner decision is pausing automatic handling. Until requested fresh
+earlier decision keeps Automatic off for the field. Until requested fresh
 checks finish, the field says they were requested, also after a reload. An
 unconfirmed request reloads the case and says whether it shows the request.
 
@@ -353,7 +360,7 @@ keeps the title and offers series name and position separately.
 
 When Mechanical Librarian found the matched recording by a title other than
 the audiobook's own, a note says how, at the top of the Evidence page, in
-Recorded evidence and in Library's Whole-work context. The section is named
+Recorded evidence and in Library's Recording match section. The section is named
 "How this recording was matched", quotes what was searched, and offers the
 Recording source as the chapter note does (#1723):
 
@@ -410,10 +417,10 @@ Audiobooks carry a Media health section: container mismatches, unexpected
 codecs, missing running time, rights-managed audio, and running time short of
 the matched edition. Observations refuse nothing and offer no action
 ([ADR-0074](../architecture/decisions/0074-headers-only-media-health-facts.md)).
-An empty check reads `No media-health observations were recorded.` The same
-section appears beside an audiobook case's fields in Library, beneath a row
-whose latest preparation stopped but which keeps earlier evidence, and on a
-failed preparation row. Those three show it only when it has an observation.
+The section appears only when it has an observation: in a work's Recorded
+evidence, beside an audiobook case's fields in Library, beneath a row whose
+latest preparation stopped but which keeps earlier evidence, and on a failed
+preparation row.
 
 ## Policy
 

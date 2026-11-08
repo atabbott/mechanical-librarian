@@ -1530,7 +1530,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert response is not None
             assert response.status == 200
             page.get_by_text(
-                "This work is not available in the current Library result.", exact=True
+                "This work is not in the current list of works.", exact=True
             ).wait_for()
             assert page.get_by_role("button", name="Try again").count() == 0
             assert page.locator(".workspace-detail").count() == 1
@@ -1685,7 +1685,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         # A terminal case-less failure is information, not an unavailable
         # decision target: no click, detail surface, retry, or provider record.
         assert no_case_row.evaluate("node => node.tagName") == "ARTICLE"
-        assert no_case_row.get_attribute("aria-label") == "Terminal preparation failure"
+        assert no_case_row.get_attribute("aria-label") == "Could not finish"
         assert no_case_row.get_by_role("button").count() == 0
         assert no_case_row.locator("a, button, details, [tabindex]").count() == 0
         assert "Reference: prep-" in no_case_row.inner_text()
@@ -1751,14 +1751,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         # A published work with no review case still opens, and says so.
         page.get_by_text("Pre-admission observation", exact=True).click()
         work_detail.get_by_role("heading", name="Pre-admission observation").wait_for()
-        assert (
-            "No review decision is recorded for this work." in work_detail.inner_text()
-        )
+        assert "Nothing to decide for this work." in work_detail.inner_text()
         assert "Ember Lane" in work_detail.locator(".library-work-values").inner_text()
-        assert (
-            "2 lookups recorded for this work"
-            in work_detail.locator(".work-sources").inner_text()
-        )
+        assert "2 lookups" in work_detail.locator(".work-sources").inner_text()
         # Browsing is reversible: the same pager walks the bounded window back.
         page.get_by_role("button", name="\u2190 Previous").click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
@@ -1782,9 +1777,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "cursor=" not in page.url
         assert search_box.input_value() == "Spoken stories"
         search_box.fill("no synthetic work has this phrase")
-        page.get_by_text(
-            "No exact-current works match this search and lens."
-        ).wait_for()
+        page.get_by_text("No works match this search.").wait_for()
         page.get_by_role("button", name="Clear search", exact=True).click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
         assert search_box.input_value() == ""
@@ -2115,9 +2108,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=needs_attention&preview=case-1&field=title"
         )
-        diagnostic_links = page.get_by_role(
-            "navigation", name="Read-only work diagnostics"
-        )
+        diagnostic_links = page.get_by_role("navigation", name="Evidence and history")
         expect(diagnostic_links.get_by_role("link", name="Evidence")).to_be_visible()
         expect(diagnostic_links.get_by_role("link", name="History")).to_be_visible()
         diagnostic_links.get_by_role("link", name="Evidence").click()
@@ -2320,7 +2311,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("button", name="Resume after fresh checks").click()
         page.get_by_text(
-            "Fresh checks requested. Manual handling remains until they complete.",
+            "Fresh checks requested.",
             exact=True,
         ).wait_for()
         assert return_automatic_requests == 1
@@ -2347,7 +2338,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("button", name="Resume after fresh checks").click()
         page.get_by_text(
-            "Fresh checks requested. Manual handling remains until they complete.",
+            "Fresh checks requested.",
             exact=True,
         ).wait_for()
         assert return_automatic_requests == 2

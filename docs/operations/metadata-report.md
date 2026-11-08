@@ -171,18 +171,18 @@ a field or can become a proposal.
 | Observation | Expectation it checks |
 | --- | --- |
 | `runtime_short_of_provider` | a complete recording runs within 1 min 30 s of the edition's stated running time |
-| `chapter_structure_mismatch` | chapter durations align with the matched edition's, allowing one skipped chapter at each end |
-| `track_sequence_gap` | the declared track sequence has no hole |
-| `track_sequence_disorder` | the declared sequence rises with file order |
+| `chapter_structure_mismatch` | the embedded chapter lengths match the edition's, allowing one skipped chapter at each end |
+| `track_sequence_gap` | the track numbers run without a gap |
+| `track_sequence_disorder` | the track numbers rise in file order |
 | `track_duration_unavailable` | every track states a usable running time |
 | `chapter_atoms_partial` | every track carries embedded chapters, or none does |
-| `tag_disagrees_across_tracks` | one value per tagged field |
-| `asin_disagrees_across_tracks` | one ASIN across the files |
-| `container_unexpected` | each file holds the container its extension names |
+| `tag_disagrees_across_tracks` | all files of a book give the same value for each tag |
+| `asin_disagrees_across_tracks` | all files of a book give the same ASIN |
+| `container_unexpected` | each file's container matches its file extension |
 | `codec_unexpected` | each audio stream is aac or mp3 |
 | `duration_unstated` | each container states its running time |
-| `stream_encrypted` | no Apple-protected sample entries |
-| `media_unreadable` | every file opens and reads within bounds |
+| `stream_encrypted` | no file is protected by DRM (Apple-protected sample entries) |
+| `media_unreadable` | every file opens and reads within Mechanical Librarian's limits |
 
 The last four come from headers only; no sample is decoded
 ([ADR-0074](../architecture/decisions/0074-headers-only-media-health-facts.md)).
@@ -191,7 +191,8 @@ A chapter mismatch is stated only
 where identity was settled by chapters. A shortfall is stated once per
 edition, and not at all if another provider compared the same edition and
 found none. No observation refuses an item. Where the evidence needed is
-absent the section says nothing, so an empty section is not an all-clear.
+absent nothing is stated and Library shows no Media health section, which is
+not an all-clear.
 
 ## Provider discovery
 
@@ -274,7 +275,8 @@ gives recording authority only.
 
 A work lane asks at most three rungs — normalized, subtitle-stripped,
 punctuation-folded — and stops on `candidates`. `candidate_limit_exceeded`
-triggers one narrowing retry and ends the ladder. On an audiobook plan a fully
+triggers one narrowing retry and ends the ladder; Hardcover skips that retry
+when it would send the author list it has just sent. On an audiobook plan a fully
 refused rung moves on, and an exhausted lane records each rung as
 `exhausted_dispatch`; Open Library and iTunes ask an audiobook only the first
 rung, with no narrowing retry. An ebook plan stops at the first rung with products; when
@@ -384,7 +386,7 @@ and rate-limit holds are in
 | --- | --- |
 | Audible catalog | 6 results per search; 25 when the item states one composed runtime, under a 262,144-byte bound, keeping products in the loose band or stating no runtime (more than five is `candidate_limit_exceeded`); 1 MiB aggregate |
 | Google Books | requests 6 rows, keeps 5; 5 transport retries per query; 54 attempts |
-| Hardcover | 27 attempts; three relationship levels; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
+| Hardcover | 27 attempts; three relationship levels; a work lane asks for 11 books, keeps at most 5 after folding, sends at most 4 title and 16 author spellings and no body over 16 KiB; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
 | Inventaire | 3-row search, 2 candidates; 3 attempts per request, 27 per observation; at most 2 MiB |
 | Open Library | 1 transport retry per request, 4 per observation; 49 attempts |
 | iTunes Search | work lanes; on an audiobook, the asserted lane's first rung only; 5 rows; 6 distinct candidates overflow |
@@ -393,6 +395,16 @@ and rate-limit holds are in
   (`provider_declared_error`). `Genre` maps to genre; `Mood` and
   `ContentWarning` to tag. An unlabelled creator is never author evidence
   alone.
+- **Hardcover work lanes.** On both media a work lane asks for books, not
+  editions, by exact title and author, so a widely published book is no longer
+  over the limit for its editions. Each rung sends the title, its capitalised,
+  title-case and lower-case forms, and the stored authors followed by up to two
+  inverted or initials forms of each. These spellings are query-only and never
+  admit a book. A book whose `canonical_id` names another admitted book in the
+  same answer is folded into it, one hop only. An ebook with no target author
+  asks with one to four distinct EPUB package creators that have no role or an
+  author role, and the lane records that basis. A WORK lane keeps no overflow
+  witness ([ADR-0056](../architecture/decisions/0056-edition-overflow-work-witness.md)).
 - **Google Books.** The work relation is `unresolved`; none is invented.
   Descriptions use the inert Google Books visible-text projection. The
   optional API key appears in no report, log or artifact.

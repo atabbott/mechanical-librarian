@@ -97,7 +97,7 @@ export function RecordingIdentityBasis({
           ? ''
           : 'Book-level evidence is recorded for this work.',
       narrators ? 'A Hardcover audio edition supports a narrator choice.' : '',
-      'The exact recording remains unresolved.',
+      'The exact recording is not known.',
     ]
     return (
       <section className="diagnostic-entry" aria-label="Book-level evidence">
@@ -108,7 +108,7 @@ export function RecordingIdentityBasis({
             : fieldCount > 1
               ? 'Your choices apply only to these fields. '
               : ''}
-          Recording identifiers and automatic changes are unavailable from this evidence.
+          This evidence cannot set recording identifiers or make automatic changes.
         </p>
       </section>
     )
@@ -119,8 +119,8 @@ export function RecordingIdentityBasis({
     <section className="diagnostic-entry" aria-label="How this recording was matched">
       {value !== null ? (
         <p>
-          Complete chapter timing and structure corroborate this recording where overall runtime is
-          unavailable.
+          Its chapter timings and structure confirm this recording, since no total running time is
+          available.
         </p>
       ) : null}
       {admission !== null ? <p>{admissionSentence(admission)}</p> : null}

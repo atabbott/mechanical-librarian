@@ -48,16 +48,16 @@ export function WorkSources({
   comparison?: boolean
 }) {
   if (!outcomes.length) return null
-  const ledgerLabel = `${String(outcomes.length)} ${outcomes.length === 1 ? 'lookup recorded' : 'lookups recorded'} for this work`
+  const lookups = `${String(outcomes.length)} ${outcomes.length === 1 ? 'lookup' : 'lookups'}`
   return (
     <details className="work-sources">
       <summary>
         {comparison ? (
-          <span>{ledgerLabel}</span>
+          <span>{`${String(outcomes.length)} source ${outcomes.length === 1 ? 'lookup' : 'lookups'}`}</span>
         ) : (
           <>
             <span>Sources</span>
-            <small>{ledgerLabel}</small>
+            <small>{lookups}</small>
           </>
         )}
       </summary>
@@ -118,9 +118,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
         scope={data.audiobookReviewScope}
         offered={[]}
       />
-      {data.evidence.length === 0 ? (
-        <p role="status">No local evidence was recorded for this work.</p>
-      ) : (
+      {data.evidence.length === 0 ? null : (
         <dl className="library-work-values">
           {data.evidence.map((claim, index) => (
             <div key={`${claim.kind}-${claim.basis}-${String(index)}`}>
@@ -148,11 +146,9 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
         </dl>
       )}
       {data.evidenceTruncated ? (
-        <p role="status">
-          Only the first {String(data.evidence.length)} recorded observations are shown.
-        </p>
+        <p role="status">Only the first {String(data.evidence.length)} values are shown.</p>
       ) : null}
-      <MediaHealth observations={data.mediaHealth} />
+      {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
       <p className="library-work-cover-presence">
         {data.coverPresent
           ? `Embedded cover art is present${
@@ -164,7 +160,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
         <details className="library-work-chapters">
           <summary>
             Chapters ({String(data.chapters.length)}
-            {data.chaptersTruncated ? ', truncated' : ''})
+            {data.chaptersTruncated ? ', not all shown' : ''})
           </summary>
           <ol>
             {data.chapters.map((chapter) => (
@@ -196,7 +192,7 @@ export function WorkSummary({ work }: { work: LibraryWorkView }) {
         </div>
       </header>
       <p className="library-work-summary-reason" role="status">
-        {summary?.reason ?? 'No review decision is recorded for this work.'}
+        {summary?.reason ?? 'Nothing to decide for this work.'}
       </p>
       {work.preparation ? (
         <aside className="comparison-notice" aria-label="Preparation condition">
