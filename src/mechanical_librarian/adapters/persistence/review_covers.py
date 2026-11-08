@@ -95,7 +95,11 @@ _WORKS_SQL = (
     "WITH "
     + _SWITCH_SQL
     + ", work AS (SELECT ml.review_case_id,mr.document AS report_document,"
-    "facts.title_key,ml.item_id,"
+    # The order key takes the folded title's first 256 characters, so a
+    # page cursor that carries it stays bounded for every accepted title
+    # (application/review_covers.py); titles sharing that prefix fall back
+    # to item and case order, which is still one total order.
+    "substr(facts.title_key,1,256) AS title_key,ml.item_id,"
     + _CHOOSABLE_SQL
     + " AS choosable,switch.plan_id,switch.switched_at,switch.sequence,"
     "switch.original_digest,CASE WHEN "

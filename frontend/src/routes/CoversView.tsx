@@ -15,7 +15,11 @@ import { formatClock } from '../dates'
 import { submitDecisionCase } from '../decisionEcho'
 import type { ChoiceProgress, ReviewField } from '../fieldDecision'
 import { mediaKindLabels } from '../labels'
-import { invalidateForegroundQueries, useRequiredQuery as useQuery } from '../queryWork'
+import {
+  invalidateForegroundQueries,
+  queryWorkClass,
+  useRequiredQuery as useQuery,
+} from '../queryWork'
 import { ownerRefusalCopy, requestKey } from '../reviewDecisionController'
 import { routeFailureCopy } from '../routeFailure'
 import { detailQuery, libraryRoute, usePreparation, useReviewContext } from '../router'
@@ -401,7 +405,9 @@ function SwitchedRow({
           // A fill replaced nothing: its caption says so, once.
           <span className="covers-image-missing" aria-hidden="true" />
         ) : (
-          <CoverImage cover={switched.before} unreadable={false} alt="Previous cover" />
+          // A replacement always had a cover; with no preview to show, it is
+          // unavailable, never "No cover".
+          <CoverImage cover={switched.before} unreadable alt="Previous cover" />
         )}
         <figcaption>
           Before
@@ -658,8 +664,13 @@ export default function CoversView() {
   const noLibraryConnected = usePreparation().data?.libraries.length === 0
   const pages = useInfiniteQuery({
     queryKey: ['covers', tab] as const,
-    queryFn: ({ pageParam, signal }) =>
-      http.getCovers(tab, pageParam ? { cursor: pageParam } : {}, signal),
+    queryFn: (context) =>
+      http.getCovers(
+        tab,
+        context.pageParam ? { cursor: context.pageParam } : {},
+        context.signal,
+        queryWorkClass(context),
+      ),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor,
     staleTime: 15_000,
@@ -692,7 +703,8 @@ export default function CoversView() {
   // A linked book past the loaded pages is read on its own.
   const linked = useQuery({
     queryKey: ['covers', tab, 'book', selectedId] as const,
-    queryFn: ({ signal }) => http.getCovers(tab, { cover: selectedId ?? '' }, signal),
+    queryFn: (context) =>
+      http.getCovers(tab, { cover: selectedId ?? '' }, context.signal, queryWorkClass(context)),
     enabled: Boolean(selectedId) && pages.isSuccess && !listed,
     staleTime: 15_000,
     retry: false,

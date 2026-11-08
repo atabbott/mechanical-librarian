@@ -61,10 +61,14 @@ def _page(
     return cast(dict[str, Any], cover_page(store, view, cursor, cover))
 
 
-def _for_item(report: MetadataReport, item: str) -> MetadataReport:
+def _for_item(
+    report: MetadataReport, item: str, title: str | None = None
+) -> MetadataReport:
     """The same synthetic report for another work, under its own identity."""
     data = json.loads(report.to_json())
     data["target"]["item"] = item
+    if title is not None:
+        data["target"]["fields"][0]["value"] = title
     data.pop("report_id")
     data["report_id"] = report_content_address(data)
     return MetadataReport.from_json(_canonical_json(data))
@@ -72,7 +76,11 @@ def _for_item(report: MetadataReport, item: str) -> MetadataReport:
 
 @contextmanager
 def _library(
-    root: Path, items: tuple[str, ...] = ("item-1",), *, readable_current: bool = True
+    root: Path,
+    items: tuple[str, ...] = ("item-1",),
+    *,
+    readable_current: bool = True,
+    title: str | None = None,
 ) -> Iterator[_Library]:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     base, _ = _qualified_cover_report(root, readable_current=readable_current)
@@ -99,7 +107,11 @@ def _library(
     cases: dict[str, str] = {}
     try:
         for item in items:
-            report = base if item == "item-1" else _for_item(base, item)
+            report = (
+                base
+                if item == "item-1" and title is None
+                else _for_item(base, item, title)
+            )
             repository.publish(report, lambda: True)
             proposal = evaluate_report(report)
             repository.publish_proposal(proposal)
@@ -531,3 +543,21 @@ def test_keeping_a_switched_cover_releases_its_original_and_leaves_switched(
             ).fetchall() == [(plan_id, "released", "pending")]
             switched = client.get("/api/v1/covers?view=switched").json()
             assert switched["items"] == []
+
+
+def test_a_cursor_carries_the_longest_accepted_title_and_item(
+    tmp_path: Path,
+) -> None:
+    """A page ending on a long title or item id still reads the next page."""
+    title = "\u66f8" * 512
+    items = tuple(
+        f"{index:03d}-" + "i" * 500 for index in range(1, COVER_PAGE_SIZE + 3)
+    )
+    with _library(tmp_path, items, title=title) as library:
+        first = _page(library.repository, "all", None)
+        cursor = first["next_cursor"]
+        assert isinstance(cursor, str)
+        second = _page(library.repository, "all", cursor)
+        shown = [item["review_case_id"] for item in first["items"] + second["items"]]
+        assert sorted(shown) == sorted(library.cases.values())
+        assert len(set(shown)) == len(shown)

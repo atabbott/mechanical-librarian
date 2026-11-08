@@ -51,7 +51,11 @@ _KEY_TYPES: dict[CoverView, tuple[type, ...]] = {
     "all": (str, str, str),
 }
 _CASE_ID = re.compile(r"review_case_[0-9a-f]{64}")
-_CURSOR_LIMIT = 1024
+# The largest key a cursor carries: a title key prefix of 256 code points
+# (4 UTF-8 bytes each, doubled for JSON escapes), an item id of up to 512
+# bytes (doubled), a case id, the binding and the integers: under 3,400
+# bytes, under 4,600 characters of base64. The route accepts the same.
+_CURSOR_LIMIT = 6144
 
 
 @dataclass(frozen=True, slots=True)

@@ -12167,7 +12167,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 1024,
+                  "maxLength": 6144,
                   "type": "string"
                 },
                 {

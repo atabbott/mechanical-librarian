@@ -4284,7 +4284,7 @@ def _register_cover_routes(
     async def covers(
         request: Request,
         view: Literal["decide", "kept", "switched", "all"] = Query(default="decide"),
-        cursor: str | None = Query(default=None, max_length=1024),
+        cursor: str | None = Query(default=None, max_length=6144),
         cover: str | None = Query(default=None, max_length=76),
         ml_session: str | None = Security(session_cookie),
     ) -> _CoversResponse | Response:

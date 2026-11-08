@@ -366,6 +366,18 @@ describe('Covers view (#1633)', () => {
     await waitFor(() => expect(within(first).getByRole('button', { name: 'Change' })).toHaveFocus())
   })
 
+  it('says Image unavailable when a replaced cover has no stored preview', async () => {
+    const at = Math.floor(Date.now() / 1000) - 7200
+    const switched = page('switched', [
+      work('case-1', 'auto', { switched: { at, before: null, filled: false } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).getByText('Image unavailable')).toBeVisible()
+    expect(within(row).queryByText('No cover')).toBeNull()
+  })
+
   it('reads Covers again on a library update and keeps the decided book in place', async () => {
     const user = userEvent.setup()
     const updates = createLiveStream()
@@ -384,6 +396,9 @@ describe('Covers view (#1633)', () => {
     const choose = screen.getByRole('region', { name: 'Choose' })
     expect(await within(choose).findByText('Third Book')).toBeVisible()
     expect(within(choose).getByText('Second Book')).toBeVisible()
+    // The first read is the owner's; a live update reads again as background work.
+    expect(http.getCovers.mock.calls[0]?.[3]).toBe('foreground')
+    expect(http.getCovers.mock.calls.at(-1)?.[3]).toBe('background')
     const suggested = screen.getByRole('region', { name: 'Switch suggested' })
     expect(within(suggested).getByText('First Book')).toBeVisible()
     expect(within(suggested).getByText('Reviewed')).toBeVisible()
@@ -516,7 +531,12 @@ describe('Covers view (#1633)', () => {
     const added = await screen.findByRole('button', { name: /^Third Book/u })
     // The next page resumes after the last book shown, wherever decisions moved
     // the books before it (#1633 review B1).
-    expect(http.getCovers).toHaveBeenCalledWith('decide', { cursor: 'cursor-2' }, expect.anything())
+    expect(http.getCovers).toHaveBeenCalledWith(
+      'decide',
+      { cursor: 'cursor-2' },
+      expect.anything(),
+      'foreground',
+    )
     await waitFor(() => expect(added).toHaveFocus())
     expect(screen.getByRole('button', { name: /^First Book.*Reviewed$/u })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Show more covers' })).toBeNull()
@@ -630,7 +650,12 @@ describe('Covers view (#1633)', () => {
     )
     renderRoute('/library?lens=all&view=covers&tab=all&cover=case-77', http)
     expect(await screen.findByRole('heading', { level: 2, name: 'Late Book' })).toBeVisible()
-    expect(http.getCovers).toHaveBeenCalledWith('all', { cover: 'case-77' }, expect.anything())
+    expect(http.getCovers).toHaveBeenCalledWith(
+      'all',
+      { cover: 'case-77' },
+      expect.anything(),
+      'foreground',
+    )
   })
 
   it('drops a linked book the tab does not hold', async () => {
