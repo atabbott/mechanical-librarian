@@ -37,6 +37,8 @@ from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
     AudioItemInspectionError,
     TargetFile,
+    TargetSnapshot,
+    audiobook_discovery_plan,
 )
 from mechanical_librarian.bootstrap import audio_child
 from mechanical_librarian.domain import metadata_report
@@ -67,7 +69,10 @@ from mechanical_librarian.domain.audio_sidecar_association import (
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
+    ClaimKind,
+    ClaimScope,
     FileFacts,
+    LocalClaim,
     MetadataReport,
     ReportValueError,
     TargetDestination,
@@ -79,6 +84,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     default_target_fields,
     echoed_target_values,
+    normalize_title,
 )
 from tests.support.audio_grammar_child import GrammarChild
 from tests.support.metadata_report_doubles import single_track_audio_facts
@@ -1056,6 +1062,100 @@ def test_no_marked_value_or_association_text_reaches_a_log_or_stderr(
     for marker in (_MARKER, "Zqx Marker Author", "Zqx Marker File"):
         assert marker not in report
     assert all(_MARKER not in title.title for title in result.audio.discovery_titles)
+
+
+_RECORDED_NARRATOR = "Zqx Recorded Narrator"
+_RECORDED_ASIN = "B0ZQXMRK01"
+
+
+def test_a_recorded_value_reaches_no_log_stderr_or_plan_query(
+    tmp_path: Path,
+    child: _BoundedChild,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T8, control 9: values the shadow pass records stay in the record.
+
+    Both documents belong, so the reading without the mark keeps their hidden
+    values and the record holds them; they still reach no output, no claim
+    and no query of the discovery plan.
+    """
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    result = _inspect(
+        tmp_path,
+        {
+            "book.metadata.json": _BOM
+            + _libation(_RECORDED_ASIN, narrators=[{"name": _RECORDED_NARRATOR}]),
+            "book.nfo": _BOM
+            + _nfo(
+                f"Narrator: {_RECORDED_NARRATOR}",
+                f"Title: {_TITLE}",
+                f"Author: {_AUTHOR}",
+            ),
+        },
+    )
+    plan = audiobook_discovery_plan(
+        TargetSnapshot(
+            "audiobook",
+            _TITLE,
+            (TargetFile("1" * 64, f"Item/{_TRACK}", "m4b"),),
+            fields=tuple(
+                {value.destination: value for value in _context(()).fields}.get(
+                    field.destination, field
+                )
+                for field in default_target_fields(_TITLE)
+            ),
+            own_file_names=(_TRACK, "book.metadata.json", "book.nfo"),
+        ),
+        (
+            LocalClaim.create(
+                kind=ClaimKind.TITLE,
+                observed=_TITLE,
+                canonical=normalize_title(_TITLE),
+                excerpt=_TITLE,
+                applicability="not_applicable",
+                basis="target_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=0,
+            ),
+            *result.claims,
+        ),
+        audio=result.audio,
+    )
+
+    markers = (_RECORDED_ASIN, _RECORDED_NARRATOR)
+    recorded = json.dumps(
+        [
+            entry.byte_order_mark.to_data()
+            for entry in result.audio.sidecars
+            if entry.byte_order_mark is not None
+        ]
+    )
+    assert [marker for marker in markers if marker not in recorded] == []
+    captured = capsys.readouterr()
+    queries = repr(
+        (
+            plan.lanes,
+            plan.local_claims,
+            plan.work_title,
+            plan.work_authors,
+            plan.echoed_languages,
+            plan.echoed_narrators,
+            plan.companion_linked_asins,
+        )
+    )
+    for text in (captured.out, captured.err, caplog.text, queries):
+        for marker in markers:
+            assert marker not in text
+    claims = repr(
+        [(claim.observed, claim.canonical, claim.reference) for claim in result.claims]
+    )
+    assert all(marker not in claims for marker in markers)
+    assert plan.lanes
 
 
 def _target_fields() -> tuple[TargetField, ...]:

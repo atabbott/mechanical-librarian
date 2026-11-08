@@ -2269,3 +2269,31 @@ def test_byte_order_mark_records_are_counted_by_closed_code_only() -> None:
     serialized = json.dumps([entries, aggregate])
     for marker in (observed, canonical, "Zqx Series", "zqx", "B0SYNTH001"):
         assert marker not in serialized
+
+    # Control 10: the script's whole output, not only these rows.
+    with tempfile.TemporaryDirectory() as temporary:
+        database = Path(temporary) / "application.sqlite3"
+        repository = open_repository(database)
+        for value in _census_reports():
+            repository.publish(value, lambda: True)
+        repository.close()
+        connection = cold_start._open_read_only(database)
+        try:
+            snapshot = cold_start.cold_start_snapshot(connection)
+        finally:
+            connection.close()
+    stored = cast("list[tuple[object, ...]]", snapshot["audiobooks"])
+    snapshot["audiobooks"] = [stored[0][:11] + (entries,), *stored[1:]]
+    report = cold_start.assemble_cold_start_report(
+        _dispatch_configuration(), snapshot, None, {}, 1
+    )
+    [block] = [
+        library
+        for library in cast("list[dict[str, object]]", report["libraries"])
+        if library["library"] == "audiobooks"
+    ]
+    sidecars = cast("dict[str, object]", block["audiobook_sidecars"])
+    assert sidecars["byte_order_mark"] == aggregate
+    whole = json.dumps(report)
+    for marker in (observed, canonical, "Zqx Series", "zqx", "B0SYNTH001"):
+        assert marker not in whole
