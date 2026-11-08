@@ -1263,6 +1263,7 @@ class InspectCurrentReviewCase:
             "manual_return_failed": manual_hold
             and destination in snapshot.return_failed_destinations,
             "classification": classification.state,
+            "classification_cause": classification.cause,
             "classification_reason": classification.reason,
             "editable": classification.editable and has_owner_action,
             "navigation_role": classification.navigation_role,

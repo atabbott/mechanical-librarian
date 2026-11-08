@@ -169,8 +169,9 @@ brackets are GitHub issues.
   first library scan after preparation resumes (#1784).
 - Library's field decisions read plainly. Evidence, automatic statements,
   cover checks and decision failures drop internal words, a lost answer says
-  what to check, and the writing box says whether a change was written
-  (#1765).
+  what to check, the writing box says whether a change was written, and a
+  cover comparison that could not be loaded names the button that tries again
+  (#1765, #1791).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
