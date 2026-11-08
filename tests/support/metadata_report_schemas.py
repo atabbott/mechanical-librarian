@@ -280,13 +280,16 @@ def retained_report_as_current(document: str) -> MetadataReport:
     added each cover artifact's same-art `measures`: null here, since an
     earlier producer measured no preview. v74 added no key: it plans iTunes' one
     cover search for an audiobook (#1779), which a v49 report, being an ebook's,
-    never needed.
+    never needed. v76 reports each cover artifact's width and height as
+    oriented and adds the `retained` cover source, neither of which a v49
+    report, holding no automatic switch, could carry (#1363). v75 is another
+    branch's number, so this producer has no v75.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v74"
+    data["schema_version"] = "metadata-report-v76"
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -520,7 +523,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v74'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v76'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -539,10 +542,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v74'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v76'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v74'", f"= '{version}'"
+            "= 'metadata-report-v76'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

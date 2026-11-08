@@ -120,6 +120,10 @@ def _decode(data: bytes) -> dict[str, object]:
             except (Image.DecompressionBombError, Image.DecompressionBombWarning):
                 return {"state": "oversized"}
             oriented = ImageOps.exif_transpose(image)
+            # The reported size is the oriented one, as the preview, the hash
+            # and the measures read it, so shape facts follow what is shown
+            # (#1363, ADR-0093 Amendment 4).
+            width, height = oriented.width, oriented.height
             # The hash and the same-art measures are computed here because
             # this is the one place the untrusted bytes are ever decoded, and
             # nowhere else may decode them again to get them. The hash reads
@@ -139,8 +143,8 @@ def _decode(data: bytes) -> dict[str, object]:
         "format": {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}[
             image.format
         ],
-        "width": image.width,
-        "height": image.height,
+        "width": width,
+        "height": height,
         "measures": measures,
         "perceptual_hash": perceptual_hash,
         "preview": base64.b64encode(encoded).decode("ascii"),

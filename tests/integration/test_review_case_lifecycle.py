@@ -1606,8 +1606,12 @@ def test_owner_confirmed_unknown_cover_lifecycle(
             "SELECT document FROM cover_selection_authorities"
         ).fetchone()[0]
     )
-    assert retained["schema_version"] == "cover-selection-authority-v2"
+    assert retained["schema_version"] == "cover-selection-authority-v3"
     assert retained["observed_identity"]["outcome"] == "unknown"
+    assert (retained["candidate_kind"], retained["retained_plan_id"]) == (
+        "candidate",
+        None,
+    )
     if effect_state == "planned" and not successor_case and race_order is None:
         import sqlite3
 

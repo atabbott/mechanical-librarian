@@ -243,6 +243,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "candidates": [
             {
                 "artifact_id": "cover_" + "c" * 64,
+                "candidate_kind": "candidate",
                 "deterministic_citations": [candidate_reference],
                 "deterministic_rank": None,
                 "deterministic_rank_key": [
@@ -314,7 +315,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v5",
+        "schema_version": "cover-consideration-v6",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }

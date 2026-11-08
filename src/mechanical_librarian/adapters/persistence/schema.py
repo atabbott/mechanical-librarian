@@ -69,6 +69,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
+    owner_cover_selection_kind,
     validate_cover_confirmation,
 )
 from mechanical_librarian.domain.metadata_policy import (
@@ -109,7 +110,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v74'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v76'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -795,7 +796,7 @@ _COVER_SELECTION_AUTHORITIES_SQL = (
     "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
-    "CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='cover-selection-authority-v2' ELSE 0 END) IS 1), "
+    "CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='cover-selection-authority-v3' ELSE 0 END) IS 1), "
     "CHECK(kind<>'automatic' OR (CASE WHEN json_valid(document) "
     "AND json_type(document,'$.decision_document')='text' "
     "THEN CASE WHEN json_valid(json_extract(document,'$.decision_document')) "
@@ -2301,7 +2302,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 or _canonical_json(document) != row[9]
                 or document.get("schema_version")
                 != (
-                    "cover-selection-authority-v2"
+                    "cover-selection-authority-v3"
                     if row[4] == "owner"
                     else "cover-selection-authority-v1"
                 )
@@ -2420,7 +2421,12 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     )
                 ):
                     raise ValueError
+                candidate_kind, retained_plan_id = owner_cover_selection_kind(
+                    human_decision.outcome, candidate
+                )
                 owner_facts = {
+                    "candidate_kind": candidate_kind,
+                    "retained_plan_id": retained_plan_id,
                     "confirmation": confirmation,
                     "observed_identity": None
                     if candidate is None
@@ -2448,7 +2454,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     "decision_id": row[5],
                     "kind": row[4],
                     "rank_key": expected_rank,
-                    "schema_version": "cover-selection-authority-v2"
+                    "schema_version": "cover-selection-authority-v3"
                     if row[4] == "owner"
                     else "cover-selection-authority-v1",
                     "selection_id": expected_selection_id,

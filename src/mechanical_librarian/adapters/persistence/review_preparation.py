@@ -172,6 +172,39 @@ def _admits_track_root(code: str, value: object) -> bool:
     return matched is not None and int(matched.group(1)) <= MAX_AUDIO_TRACKS
 
 
+def preparation_work_id(connection_name: str, library: str, item_id: str) -> str:
+    """The one review-preparation work id of a configured library item."""
+    material = f"review-preparation-work-v1\0{connection_name}\0{library}\0{item_id}"
+    return "review_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+# No catalogue fingerprint is all zeros, so a work carrying this one never
+# equals its next discovery and starts again at extraction.
+_FRESH_PREPARATION_FINGERPRINT = "0" * 64
+
+
+def mark_preparation_work_fresh(
+    connection: sqlite3.Connection, connection_name: str, library: str, item_id: str
+) -> None:
+    """Make an item's next discovery prepare it afresh rather than carry it forward.
+
+    A verified cover write can leave every catalogue fact the same, because
+    Audiobookshelf writes an uploaded cover to the same path; without this the
+    next scan carries forward the report from before the write (#1363, Q17).
+    Runs inside the transaction that verifies the write. Only a work at rest is
+    marked: a queued or running work's claim reads this fingerprint and would
+    end stale, so it keeps its own run.
+    """
+    connection.execute(
+        "UPDATE review_preparation_work SET source_fingerprint=? "
+        "WHERE work_id=? AND state IN ('complete','failed','stale')",
+        (
+            _FRESH_PREPARATION_FINGERPRINT,
+            preparation_work_id(connection_name, library, item_id),
+        ),
+    )
+
+
 class SQLiteReviewPreparationRepository(ConnectionScoped):
     """Claim, advance, complete and fail the work of one review scan."""
 
@@ -834,11 +867,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         extraction. Runs inside `complete_review_discovery`'s transaction.
         """
         assert entry.file_identity is not None
-        material = (
-            f"review-preparation-work-v1\0{action.connection}\0"
-            f"{action.library}\0{entry.item_id}"
-        )
-        work_id = "review_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+        work_id = preparation_work_id(action.connection, action.library, entry.item_id)
         existing = self._connection.execute(
             "SELECT file_identity,source_fingerprint,producer_fingerprint,"
             "stage,state,report_id,proposal_set_id,review_case_id,outcome,"

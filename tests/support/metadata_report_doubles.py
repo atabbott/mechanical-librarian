@@ -200,5 +200,11 @@ class FakeReportRepository:
     ) -> str | None:
         return None
 
+    def retained_cover_original(
+        self, connection: str, library: str, work_id: str
+    ) -> tuple[str, str, str] | None:
+        """No automatic switch was ever kept here (#1363)."""
+        return None
+
     def close(self) -> None:
         self.closed = True

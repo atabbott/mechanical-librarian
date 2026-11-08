@@ -181,6 +181,16 @@ brackets are GitHub issues.
   and now) and All, 50 books at a time. One tap records a choice and opens the
   next book, and a book whose covers changed is refused on its own. Keeping an
   automatic switch releases the replaced cover's copy (#1633).
+- **Clean rebuild required.** An automatic cover switch can be put back. While
+  the replaced cover's copy is kept, Covers' Switched row and the book's
+  comparison offer it as **Replaced cover**, and **Put back** writes it to
+  Audiobookshelf through the same guarded write as any cover choice; the copy
+  is released once that write is confirmed. If the cover was changed in
+  Audiobookshelf first, the row says so and the copy stays. A switched work is
+  prepared again at the next scan, which one write asks for. A cover that
+  could not be read, including one too large or not an image, reads
+  **Image unavailable** instead of **No cover**, and a rotated cover reports
+  the size it is shown at (#1363).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

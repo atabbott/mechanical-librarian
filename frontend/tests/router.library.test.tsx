@@ -5082,6 +5082,7 @@ describe('Library route', () => {
     })
     const candidate = (index: number, incumbent = false) => ({
       artifactId: `cover_${String(index).repeat(64)}`,
+      candidateKind: 'candidate' as const,
       deterministicCitations: [`citation-${String(index)}`],
       deterministicRank: incumbent ? null : index - 1,
       deterministicRankKey: [1, 0, -960000, -800, -1200, index, reference(index)],
@@ -5802,6 +5803,7 @@ describe('Library route', () => {
         candidates: [
           {
             artifactId: `cover_${'a'.repeat(64)}`,
+            candidateKind: 'candidate' as const,
             deterministicCitations: ['citation-a'],
             deterministicRank: 1,
             deterministicRankKey: [
@@ -6060,6 +6062,7 @@ describe('Library route', () => {
             candidates: [
               {
                 artifactId: 'cover-current',
+                candidateKind: 'candidate' as const,
                 deterministicCitations: ['citation-current'],
                 deterministicRank: null,
                 deterministicRankKey: [1, 0, -10000, -100, -100, 0, 'current'],
@@ -6080,6 +6083,7 @@ describe('Library route', () => {
               },
               {
                 artifactId: 'cover-alt',
+                candidateKind: 'candidate' as const,
                 deterministicCitations: ['citation-alternative'],
                 deterministicRank: 1,
                 deterministicRankKey: [1, 0, -10000, -100, -100, 1, 'alternative'],
@@ -6205,6 +6209,7 @@ describe('Library route', () => {
       candidates: [
         {
           artifactId: `cover_${'a'.repeat(64)}`,
+          candidateKind: 'candidate' as const,
           deterministicCitations: ['citation-a'],
           deterministicRank: 1,
           deterministicRankKey: [
@@ -6351,6 +6356,7 @@ describe('Library route', () => {
     candidates: [
       {
         artifactId: `cover_${'a'.repeat(64)}`,
+        candidateKind: 'candidate' as const,
         deterministicCitations: ['citation-a'],
         deterministicRank: 1,
         deterministicRankKey: [
@@ -8313,6 +8319,7 @@ describe('Library route', () => {
     if (!base) throw new Error('cover stale fixture requires a field')
     const candidate = (suffix: string, incumbent: boolean) => ({
       artifactId: `cover_${suffix.repeat(64)}`,
+      candidateKind: 'candidate' as const,
       deterministicCitations: [`citation-${suffix}`],
       deterministicRank: incumbent ? null : 0,
       deterministicRankKey: [1, 0, -960000, -800, -1200, incumbent ? 0 : 1, suffix],
@@ -8538,6 +8545,7 @@ describe('Library route', () => {
       if (!base) throw new Error('cover stale fixture requires a field')
       const candidate = (suffix: string, incumbent: boolean) => ({
         artifactId: `cover_${suffix.repeat(64)}`,
+        candidateKind: 'candidate' as const,
         deterministicCitations: [`citation-${suffix}`],
         deterministicRank: incumbent ? null : 0,
         deterministicRankKey: [1, 0, -960000, -800, -1200, incumbent ? 0 : 1, suffix],

@@ -397,6 +397,7 @@ export const coverSourceLabels = {
   inventaire: 'Inventaire',
   audible_catalog: 'Audible',
   itunes_search: 'Apple Books',
+  retained: 'Replaced cover',
 } satisfies Record<CoverSourceKind, string>
 
 // A cover policy's notes and a cover's omission reasons reach the browser

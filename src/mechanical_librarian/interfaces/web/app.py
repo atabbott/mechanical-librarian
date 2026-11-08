@@ -471,11 +471,14 @@ class _CoverObservation(_ClosedModel):
 
 class _CoverCandidate(_ClosedModel):
     artifact_id: str
+    # A retained candidate is the original an automatic switch replaced: the
+    # owner's way back, with no identity, rank or reviewer evidence (#1363).
+    candidate_kind: Literal["candidate", "retained"]
     deterministic_citations: list[str]
     deterministic_rank: int | None = Field(ge=0)
     deterministic_rank_key: list[int | str] | None = Field(min_length=7, max_length=7)
     height: _Count
-    identity: _CoverIdentity
+    identity: _CoverIdentity | None
     incumbent: bool
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     # A proposed cover from the exactly matched book of an audiobook with no
@@ -497,6 +500,7 @@ class _CoverCandidate(_ClosedModel):
             "inventaire",
             "audible_catalog",
             "itunes_search",
+            "retained",
         ]
     ]
     state: Literal["acceptable", "available", "excluded", "recommended"]
@@ -545,7 +549,8 @@ class _CoverPolicyReport(_ClosedModel):
 
 
 class _CoverConsiderationResponse(_ClosedModel):
-    candidates: list[_CoverCandidate] = Field(max_length=12)
+    # Twelve reviewed previews and at most one retained original.
+    candidates: list[_CoverCandidate] = Field(max_length=13)
     choice_contexts: list["_ChoiceContext"]
     consideration_id: str
     current: bool
@@ -562,7 +567,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v5"]
+    schema_version: Literal["cover-consideration-v6"]
     supersedes_id: str | None
     target_fingerprint: str
 
@@ -1173,10 +1178,56 @@ class _CoverPreview(_ClosedModel):
     width: int = Field(ge=1, le=8192)
 
 
+class _CoverPutBack(_ClosedModel):
+    # The owner's Put back of this switch: its write's own state and failure,
+    # so a Put back refused because the cover changed reads stale with
+    # target_changed (#1363, Q18).
+    failure: (
+        Literal[
+            "ambiguous",
+            "authority",
+            "authority_superseded",
+            "backup",
+            "capability",
+            "circuit_open",
+            "connection",
+            "connection_exhausted",
+            "consent",
+            "consent_revoked",
+            "cover_recovery",
+            "cover_retention",
+            "dependency",
+            "not_applied",
+            "not_sent",
+            "owner_abandoned",
+            "readback",
+            "restart_readback",
+            "restore_unavailable",
+            "retry_exhausted",
+            "target_changed",
+            "target_failure",
+            "third_value",
+        ]
+        | None
+    )
+    state: Literal[
+        "planned",
+        "claimed",
+        "applying",
+        "reconciling",
+        "retryable",
+        "verified",
+        "stale",
+        "superseded",
+        "abandoned",
+    ]
+
+
 class _CoverSwitch(_ClosedModel):
     at: _Count
     before: _CoverPreview | None
     filled: bool
+    put_back: _CoverPutBack | None
 
 
 class _CoverWork(_ClosedModel):

@@ -81,9 +81,9 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v74` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v76` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
-| `fixed-conservative-v45` | The proposal policy |
+| `fixed-conservative-v46` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
@@ -101,10 +101,10 @@ refused.
 | --- | --- |
 | `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
-| `cover-consideration-v5` | A cover consideration, bound to its report by identity and digest |
+| `cover-consideration-v6` | A cover consideration, bound to its report by identity and digest; each candidate names its kind, so the original an automatic switch replaced can be put back |
 | `cover-policy-report-v2` | Cover policy evaluation; owner readiness and automatic recommendation are independent |
 | `cover-automatic-decision-v3` | An automatic cover decision |
-| `cover-selection-authority-v1`, `cover-selection-authority-v2` | Cover selections: v1 wraps an automatic choice, v2 an owner choice |
+| `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
 | `field-effect-consent-envelope-v1` | The consent envelope whose identity digests the destination set |
 | `field-effect-plan-v1`, `field-effect-operation-v1`, `field-effect-event-v1` | Guarded write plans, operations and their append-only audit events |

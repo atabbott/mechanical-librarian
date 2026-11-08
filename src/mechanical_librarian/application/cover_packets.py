@@ -97,7 +97,13 @@ def prepare_cover_packet(
 ) -> PreparedCoverPacket:
     """Project exact report-bound previews into one deterministic private packet."""
     report = MetadataReport.from_json(report_document)
-    sources = report.cover_sources
+    # A retained original is the owner's way back, never a reviewer's input:
+    # it is never sent to a reviewer (#1363, ADR-0093).
+    sources = tuple(
+        source
+        for source in report.cover_sources
+        if source.kind is not CoverSourceKind.RETAINED
+    )
     if report.audio is not None and not admitted_audiobook_identity(report):
         # With no admitted recording, the gallery holds only the library's
         # own cover and the covers the work route offers (#1642).

@@ -177,10 +177,36 @@ def test_a_perceptual_hash_is_a_64_bit_lower_case_hex_value_or_absent() -> None:
             CoverArtifact.create(b"a", b"b", "image/png", 2, 3, invalid)
 
 
-@pytest.mark.parametrize("kind", tuple(CoverSourceKind))
+@pytest.mark.parametrize(
+    "kind",
+    tuple(value for value in CoverSourceKind if value is not CoverSourceKind.RETAINED),
+)
 def test_canonical_source_vocabulary_is_admitted(kind: CoverSourceKind) -> None:
     source = CoverSource(cover_source_id(kind, "work-1"), kind, CoverSourceState.ABSENT)
     assert source.source_id.startswith(kind.value + "_")
+
+
+def test_a_retained_source_is_only_a_retrieved_original_with_no_provenance() -> None:
+    artifact = CoverArtifact.create(b"original", b"preview", "image/png", 2, 3)
+    source_id = cover_source_id(CoverSourceKind.RETAINED, "effect_plan_" + "a" * 64)
+    source = CoverSource(
+        source_id, CoverSourceKind.RETAINED, CoverSourceState.RETRIEVED, artifact
+    )
+
+    assert source.source_id.startswith("retained_")
+    assert source.to_data()["provenance"] is None
+    with pytest.raises(CoverEvidenceError, match="retained cover source is invalid"):
+        CoverSource(source_id, CoverSourceKind.RETAINED, CoverSourceState.ABSENT)
+    with pytest.raises(CoverEvidenceError, match="retained cover source is invalid"):
+        CoverSource(
+            source_id,
+            CoverSourceKind.RETAINED,
+            CoverSourceState.RETRIEVED,
+            artifact,
+            provenance=CoverProvenance(
+                "inventaire", CoverDesignation.WORK, "inventaire-work-wd-Q1"
+            ),
+        )
 
 
 @pytest.mark.parametrize("state", tuple(CoverSourceState))
@@ -396,7 +422,12 @@ def test_only_a_retrieved_open_library_source_states_a_final_host(
     tuple(
         value
         for value in CoverSourceKind
-        if value not in {CoverSourceKind.OPEN_LIBRARY, *LOCAL_COVER_SOURCE_KINDS}
+        if value
+        not in {
+            CoverSourceKind.OPEN_LIBRARY,
+            CoverSourceKind.RETAINED,
+            *LOCAL_COVER_SOURCE_KINDS,
+        }
     ),
 )
 def test_other_provider_kinds_never_state_a_final_host(kind: CoverSourceKind) -> None:

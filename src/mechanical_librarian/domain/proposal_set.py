@@ -129,7 +129,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v45"
+POLICY_VERSION = "fixed-conservative-v46"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -141,7 +141,7 @@ _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
 _COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
 _REPRESENTATION_ID = re.compile(r"^representation_[0-9a-f]{64}$")
 _EVIDENCE_REFERENCE = re.compile(
-    r"^(?:local|provider|evidence|abs|epub|hardcover|open_library|inventaire|audible_catalog|itunes_search)_[0-9a-f]{64}$"
+    r"^(?:local|provider|evidence|abs|epub|hardcover|open_library|inventaire|audible_catalog|itunes_search|retained)_[0-9a-f]{64}$"
 )
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -4920,7 +4920,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         considered = tuple(
             source
             for source in considered
-            if source.kind is CoverSourceKind.ABS
+            if source.kind in {CoverSourceKind.ABS, CoverSourceKind.RETAINED}
             or source in offered
             or (
                 source.state
@@ -4928,10 +4928,17 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
                 and _cover_bound_to_work_source(report, source)
             )
         )
+    # A retained original is only ever a way back to a replaced cover: it is
+    # offered over a populated cover and never fills an empty one (#1363, D2).
     retrieved = [
         source
         for source in considered
-        if source.state is CoverSourceState.RETRIEVED and source.artifact is not None
+        if source.state is CoverSourceState.RETRIEVED
+        and source.artifact is not None
+        and (
+            source.kind is not CoverSourceKind.RETAINED
+            or target.state is TargetFieldState.VALUE
+        )
     ]
     grouped: dict[str, list[Any]] = {}
     for source in retrieved:

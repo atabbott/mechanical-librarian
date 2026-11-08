@@ -23,6 +23,7 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.retained_covers import (
+    live_retained_cover,
     release_kept_retained_covers,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -55,6 +56,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
+    owner_cover_selection_kind,
     validate_cover_confirmation,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
@@ -564,7 +566,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v5"
+                or value.get("schema_version") != "cover-consideration-v6"
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest
@@ -757,41 +759,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 or consideration["target_fingerprint"] != decision.target_fingerprint
             ):
                 raise HumanDecisionError("stale")
-            selected = None
-            valid_choice = True
-            if decision.outcome == "accept":
-                selected = next(
-                    (
-                        candidate
-                        for candidate in cast(
-                            "list[dict[str, object]]", consideration["candidates"]
-                        )
-                        if decision.selected_value
-                        == {"kind": "cover", "value": candidate["artifact_id"]}
-                    ),
-                    None,
-                )
-                if (
-                    selected is None
-                    or selected["incumbent"] is True
-                    or not manual_cover_eligible(selected)
-                ):
-                    valid_choice = False
-            elif decision.outcome == "keep_current":
-                selected = next(
-                    (
-                        candidate
-                        for candidate in cast(
-                            "list[dict[str, object]]", consideration["candidates"]
-                        )
-                        if candidate["incumbent"] is True
-                    ),
-                    None,
-                )
-                if selected is None or decision.selected_value is not None:
-                    valid_choice = False
-            elif decision.selected_value is not None:
-                valid_choice = False
+            selected, valid_choice = _owner_selected_candidate(
+                decision, cast("list[dict[str, object]]", consideration["candidates"])
+            )
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             raise MetadataReportError("cover consideration is unavailable") from error
         target = case.target
@@ -819,6 +789,26 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             return
         if confirmation["expected_selection_id"] != (
             None if prior is None else prior["selection_id"]
+        ):
+            raise HumanDecisionError("stale")
+        # Putting an original back needs its switch still listed with no
+        # removal. Like every refusal here, it is decided before anything
+        # commits (#1363, D3; ADR-0091).
+        if (
+            selected is not None
+            and decision.outcome == "accept"
+            and selected.get("candidate_kind") == "retained"
+            and live_retained_cover(
+                self._connection,
+                cast(str, connection_name),
+                cast(str, library_name),
+                cast(str, item_id),
+            )
+            != (
+                selected.get("original_sha256"),
+                selected.get("plan_id"),
+                selected.get("decision_id"),
+            )
         ):
             raise HumanDecisionError("stale")
         # The decision repository calls this before checking the prior effect,
@@ -851,39 +841,15 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "cover_selection_"
             + hashlib.sha256(decision.to_json().encode("utf-8")).hexdigest()
         )
-        selection_document = _canonical_json(
-            {
-                "candidate_artifact_id": (
-                    None if selected is None else selected["artifact_id"]
-                ),
-                "consideration_id": consideration_id,
-                "decision_document": decision.to_json(),
-                "decision_id": decision.decision_id,
-                "kind": "owner",
-                "rank_key": (
-                    None if selected is None else selected["deterministic_rank_key"]
-                ),
-                "schema_version": "cover-selection-authority-v2",
-                "confirmation": confirmation,
-                "observed_identity": None if selected is None else selected["identity"],
-                "candidate_reference": None
-                if selected is None
-                else selected["reference"],
-                "original_sha256": None
-                if selected is None
-                else selected["original_sha256"],
-                "preview_sha256": None
-                if selected is None
-                else selected["preview_sha256"],
-                "consideration_digest": hashlib.sha256(
-                    expanded_document.encode()
-                ).hexdigest(),
-                "target": dict(case.target),
-                "selection_id": selection_id,
-                "supersedes_selection_id": (
-                    None if prior is None else prior["selection_id"]
-                ),
-            }
+        selection_document = _owner_selection_document(
+            decision,
+            selected,
+            consideration_id,
+            confirmation,
+            expanded_document,
+            dict(case.target),
+            selection_id,
+            None if prior is None else cast(str, prior["selection_id"]),
         )
         self._connection.execute(
             "INSERT INTO cover_selection_authorities(selection_id,connection_name,library_name,item_id,kind,decision_id,consideration_id,supersedes_selection_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -920,6 +886,85 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 cast(str, item_id),
                 decision.occurred_at,
             )
+
+
+def _owner_selected_candidate(
+    decision: HumanDecision, candidates: list[dict[str, object]]
+) -> tuple[dict[str, object] | None, bool]:
+    """The candidate an owner cover decision names, and whether it may name it.
+
+    Accept names one manually eligible candidate that is not the current
+    cover, which may be the retained original; keep names the current cover;
+    reject names nothing.
+    """
+    if decision.outcome == "accept":
+        selected = next(
+            (
+                candidate
+                for candidate in candidates
+                if decision.selected_value
+                == {"kind": "cover", "value": candidate["artifact_id"]}
+            ),
+            None,
+        )
+        return selected, (
+            selected is not None
+            and selected["incumbent"] is not True
+            and manual_cover_eligible(selected)
+        )
+    if decision.outcome == "keep_current":
+        selected = next(
+            (candidate for candidate in candidates if candidate["incumbent"] is True),
+            None,
+        )
+        return selected, selected is not None and decision.selected_value is None
+    return None, decision.selected_value is None
+
+
+def _owner_selection_document(
+    decision: HumanDecision,
+    selected: dict[str, object] | None,
+    consideration_id: str,
+    confirmation: dict[str, object],
+    expanded_document: str,
+    target: dict[str, object],
+    selection_id: str,
+    supersedes_selection_id: str | None,
+) -> str:
+    """The canonical ``cover-selection-authority-v3`` document of one owner choice."""
+    candidate_kind, retained_plan_id = owner_cover_selection_kind(
+        decision.outcome, selected
+    )
+    return _canonical_json(
+        {
+            "candidate_artifact_id": (
+                None if selected is None else selected["artifact_id"]
+            ),
+            "candidate_kind": candidate_kind,
+            "consideration_id": consideration_id,
+            "decision_document": decision.to_json(),
+            "decision_id": decision.decision_id,
+            "kind": "owner",
+            "rank_key": (
+                None if selected is None else selected["deterministic_rank_key"]
+            ),
+            "retained_plan_id": retained_plan_id,
+            "schema_version": "cover-selection-authority-v3",
+            "confirmation": confirmation,
+            "observed_identity": None if selected is None else selected["identity"],
+            "candidate_reference": None if selected is None else selected["reference"],
+            "original_sha256": None
+            if selected is None
+            else selected["original_sha256"],
+            "preview_sha256": None if selected is None else selected["preview_sha256"],
+            "consideration_digest": hashlib.sha256(
+                expanded_document.encode()
+            ).hexdigest(),
+            "target": target,
+            "selection_id": selection_id,
+            "supersedes_selection_id": supersedes_selection_id,
+        }
+    )
 
 
 __all__ = ["SQLiteCoverConsiderationRepository"]

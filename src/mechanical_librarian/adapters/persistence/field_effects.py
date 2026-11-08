@@ -54,8 +54,12 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _consent_state,
 )
 from mechanical_librarian.adapters.persistence.retained_covers import (
+    release_put_back_retained_cover,
     release_unlisted_retained_covers,
     schedule_retained_cover_removal,
+)
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    mark_preparation_work_fresh,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
@@ -2150,6 +2154,18 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 release_unlisted_retained_covers(
                     self._connection, operation.plan.plan_id, changed_at
                 )
+                mark_preparation_work_fresh(
+                    self._connection,
+                    operation.plan.connection,
+                    operation.plan.library,
+                    operation.plan.work_id,
+                )
+                if operation.plan.authority.origin == "human":
+                    release_put_back_retained_cover(
+                        self._connection,
+                        operation.plan.authority.decision_id,
+                        changed_at,
+                    )
 
     def _upsert_field_effect_cleanup(
         self, plan_id: str, state: str, attempt: int, changed_at: int

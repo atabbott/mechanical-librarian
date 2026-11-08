@@ -70,6 +70,18 @@ class SwitchCover:
 
 
 @dataclass(frozen=True, slots=True)
+class PutBack:
+    """The owner's Put back of a listed switch: its write's state and failure.
+
+    Both are the field effect's own closed values, so a Put back the target
+    refused because its cover changed reads ``stale`` and ``target_changed``.
+    """
+
+    state: str
+    failure: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class CoverRow:
     review_case_id: str
     report_document: str
@@ -85,6 +97,7 @@ class CoverRow:
     # report keeps its pre-write cover until the next scan.
     replacement: SwitchCover | None
     key: CoverKey
+    put_back: PutBack | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +177,9 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
                 replaced.height,
             ),
             "filled": row.filled,
+            "put_back": None
+            if row.put_back is None
+            else {"failure": row.put_back.failure, "state": row.put_back.state},
         }
     return {
         "authors": _report_authors(target),

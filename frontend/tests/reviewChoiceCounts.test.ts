@@ -40,6 +40,7 @@ const candidate = (
   overrides: Partial<NonNullable<Field['coverConsideration']>['candidates'][number]> = {},
 ) => ({
   artifactId: `cover-${String(ordinal)}`,
+  candidateKind: 'candidate' as const,
   deterministicCitations: ['citation'],
   deterministicRank: ordinal,
   deterministicRankKey: [1, 0, -960000, -800, -1200, ordinal, `reference-${String(ordinal)}`],

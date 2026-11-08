@@ -187,7 +187,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema,
             "_REPORTS_SQL",
             schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v74'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v76'", "= 'metadata-report-v49'"
             ),
         ),
         patch.object(
@@ -207,6 +207,14 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         ),
         patch.object(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL),
+        # The owner selection CHECK names the version this inventory recorded.
+        patch.object(
+            schema,
+            "_COVER_SELECTION_AUTHORITIES_SQL",
+            schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
+                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
+            ),
+        ),
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's

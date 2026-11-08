@@ -100,7 +100,11 @@ other than verified, or a newer switch pushes it off the list of the most
 recent 1,000 switches, a persisted, retryable obligation removes the copy,
 queued in the same transaction as that change. A retained original is never
 exported, logged, offered as a download or sent to a reviewer, and its path
-appears nowhere.
+appears nowhere. While a copy is retained, the owner sees the replaced cover's
+stored preview in Covers and on the book page and can put it back, which
+uploads the retained original through the guarded write; the preview is never
+cached, and the retained original is never served. A Put back that verifies
+releases the copy in the same transaction.
 
 ## What leaves the host
 

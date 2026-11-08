@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.field_effect_runtime import (
+    CoalescedScanRequest,
     DurableBackupReadiness,
     PersistedEffectConsent,
     PersistedEffectDependencies,
@@ -110,7 +111,10 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
 )
-from mechanical_librarian.adapters.retained_covers import RetainedCoverStore
+from mechanical_librarian.adapters.retained_covers import (
+    ContentAddressedOriginals,
+    RetainedCoverStore,
+)
 from mechanical_librarian.adapters.reviewers.codex_auth_lease import (
     CodexAuthLeaseCoordinator,
     LazyCodexAuth,
@@ -564,12 +568,15 @@ def compose_audiobookshelf_field_effect_target(
     *,
     credentials: dict[str, str] | None = None,
     artifact_identity: tuple[int, int] | None = None,
+    retained_root: Path | None = None,
 ) -> AudiobookshelfFieldEffectTarget:
     """Compose one field-local ABS target from an already validated snapshot.
 
     The continuous runtime registers this target behind the guarded application,
     authority, consent, backup, currentness, and capability gates. Qualification
     callers may compose the same target independently without bypassing them.
+    With ``retained_root`` an original missing from the artifact store is read
+    from the retained store, which is how Put back writes it (#1363, D4).
     """
     connection, library, _mount, _providers = configuration.select(
         connection_name, library_name
@@ -581,7 +588,11 @@ def compose_audiobookshelf_field_effect_target(
         client_factory=_target_client_factory(configuration, credentials, connection),
         endpoint=connection.endpoint,
         library_id=library.library_id,
-        artifacts=artifacts,
+        artifacts=(
+            artifacts
+            if retained_root is None
+            else ContentAddressedOriginals(artifacts, retained_root)
+        ),
         maximum_response_bytes=configuration.limits.target_response_bytes,
     )
 
@@ -622,6 +633,9 @@ def compose_continuous_guarded_application(
     if not configured:
         raise ConfigurationError("guarded application has no configured library")
     artifact_identity = CoverArtifactStore(artifact_store_path, create=True).identity
+    private_root = (
+        _private_root(database_path) if private_root is None else private_root
+    )
     targets = {
         key: compose_audiobookshelf_field_effect_target(
             configuration,
@@ -629,6 +643,7 @@ def compose_continuous_guarded_application(
             *key,
             credentials=credentials,
             artifact_identity=artifact_identity,
+            retained_root=private_root / "retained-covers",
         )
         for key in configured
     }
@@ -638,9 +653,6 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
-    private_root = (
-        _private_root(database_path) if private_root is None else private_root
-    )
     recovery_root = private_root / "cover-recovery"
     recovery_root.mkdir(mode=0o700, exist_ok=True)
     recovery = PrivateCoverRecoveryStore(
@@ -660,6 +672,10 @@ def compose_continuous_guarded_application(
     reevaluation = PersistedForwardReevaluation(
         lambda connection, library: preparation.request(connection, library)
     )
+    cover_rescan = CoalescedScanRequest(
+        preparation.progress,
+        lambda connection, library: preparation.request(connection, library),
+    )
     applications = {
         key: GuardedFieldApplication(
             repository,
@@ -673,6 +689,7 @@ def compose_continuous_guarded_application(
             reevaluation,
             lambda: int(time.time()),
             cover_retention=retention,
+            cover_rescan=cover_rescan,
         )
         for key in configured
     }
@@ -1005,7 +1022,10 @@ def run_metadata_report_loaded(
         mount=mount,
         limits=configuration.limits,
         cover_observer=CoverEvidenceObserver(
-            target, artifacts, tuple(provider_configs)
+            target,
+            artifacts,
+            tuple(provider_configs),
+            database_path.parent / "private" / "retained-covers",
         ),
         publication_authority_guard=artifacts.require_current,
         publication_receipt=(
@@ -1611,6 +1631,7 @@ def create_review_pipeline(
             cast("ReviewWebConfiguration", configuration.review),
             reviewer_access,
             provider_recovery=provider_recovery,
+            retained_root=database_path.parent / "private" / "retained-covers",
         )
 
     stages = ReviewPipelineStages(
@@ -2262,6 +2283,7 @@ def compose_store_runtime_generation(
             reviewer_access,
             provider_recovery,
             None if activation is None else activation.cover_currentness,
+            retained_root=private_root / "retained-covers",
         )
         try:
             if field_application is not None:
@@ -2807,6 +2829,7 @@ def run_review_server(
                 review,
                 reviewer_access,
                 provider_recovery,
+                retained_root=private_root / "retained-covers",
             )
             try:
                 if field_application is not None:
@@ -3151,6 +3174,8 @@ def _compose_cover_considerations(
     reviewer_access: ReviewerAccessOperations,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     currentness: ValidatedDocumentCache | None = None,
+    *,
+    retained_root: Path | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -3194,6 +3219,11 @@ def _compose_cover_considerations(
         bind_policy=bind_policy,
         provider_fetching=provider_fetching,
         retained_original=repository.retained_cover_original,
+        # Opened per check, so composing never creates the private directory.
+        # Without a retained store a Put back is refused as unavailable.
+        require_retained=None
+        if retained_root is None
+        else lambda digest: RetainedCoverStore(retained_root).require(digest),
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
     repository.bind_cover_consideration_currentness(
@@ -3294,6 +3324,7 @@ def run_cover_review(
             configuration.review,
             reviewer_access,
             provider_recovery,
+            retained_root=database_path.parent / "private" / "retained-covers",
         )
         application = compose_review_application(
             state_owner=repository,

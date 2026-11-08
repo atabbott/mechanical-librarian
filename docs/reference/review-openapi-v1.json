@@ -4048,6 +4048,14 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "candidate_kind": {
+            "enum": [
+              "candidate",
+              "retained"
+            ],
+            "title": "Candidate Kind",
+            "type": "string"
+          },
           "deterministic_citations": {
             "items": {
               "type": "string"
@@ -4096,7 +4104,14 @@
             "type": "integer"
           },
           "identity": {
-            "$ref": "#/components/schemas/_CoverIdentity"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "incumbent": {
             "title": "Incumbent",
@@ -4167,7 +4182,8 @@
                 "open_library",
                 "inventaire",
                 "audible_catalog",
-                "itunes_search"
+                "itunes_search",
+                "retained"
               ],
               "type": "string"
             },
@@ -4196,6 +4212,7 @@
         },
         "required": [
           "artifact_id",
+          "candidate_kind",
           "deterministic_citations",
           "deterministic_rank",
           "deterministic_rank_key",
@@ -4253,7 +4270,7 @@
             "items": {
               "$ref": "#/components/schemas/_CoverCandidate"
             },
-            "maxItems": 12,
+            "maxItems": 13,
             "title": "Candidates",
             "type": "array"
           },
@@ -4395,7 +4412,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v5",
+            "const": "cover-consideration-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -4925,6 +4942,68 @@
         "title": "_CoverPreview",
         "type": "object"
       },
+      "_CoverPutBack": {
+        "additionalProperties": false,
+        "properties": {
+          "failure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ambiguous",
+                  "authority",
+                  "authority_superseded",
+                  "backup",
+                  "capability",
+                  "circuit_open",
+                  "connection",
+                  "connection_exhausted",
+                  "consent",
+                  "consent_revoked",
+                  "cover_recovery",
+                  "cover_retention",
+                  "dependency",
+                  "not_applied",
+                  "not_sent",
+                  "owner_abandoned",
+                  "readback",
+                  "restart_readback",
+                  "restore_unavailable",
+                  "retry_exhausted",
+                  "target_changed",
+                  "target_failure",
+                  "third_value"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "state": {
+            "enum": [
+              "planned",
+              "claimed",
+              "applying",
+              "reconciling",
+              "retryable",
+              "verified",
+              "stale",
+              "superseded",
+              "abandoned"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "failure",
+          "state"
+        ],
+        "title": "_CoverPutBack",
+        "type": "object"
+      },
       "_CoverQualification": {
         "additionalProperties": false,
         "properties": {
@@ -5002,12 +5081,23 @@
           "filled": {
             "title": "Filled",
             "type": "boolean"
+          },
+          "put_back": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverPutBack"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "at",
           "before",
-          "filled"
+          "filled",
+          "put_back"
         ],
         "title": "_CoverSwitch",
         "type": "object"

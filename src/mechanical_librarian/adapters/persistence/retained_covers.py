@@ -108,6 +108,55 @@ def release_kept_retained_covers(
     )
 
 
+def release_put_back_retained_cover(
+    connection: sqlite3.Connection, decision_id: str, changed_at: int
+) -> None:
+    """Release the original an owner's Put back has just written back.
+
+    Runs inside the transaction that verifies the Put back's write. The owner's
+    ``cover-selection-authority-v3`` names the switch it undid, so only that
+    switch's copy is released, through the same retryable obligation. A Put
+    back that ends any other way keeps the copy (#1363, D5).
+    """
+    connection.execute(
+        "INSERT INTO retained_cover_removals(plan_id,reason,state,attempt,updated_at) "
+        "SELECT listing.plan_id,'released','pending',0,? "
+        "FROM cover_selection_authorities selection "
+        "JOIN retained_cover_listings listing "
+        "ON listing.plan_id=json_extract(selection.document,'$.retained_plan_id') "
+        "WHERE selection.decision_id=? AND selection.kind='owner' "
+        "AND json_extract(selection.document,'$.candidate_kind')='retained' "
+        "ON CONFLICT(plan_id) DO NOTHING",
+        (changed_at, decision_id),
+    )
+
+
+def live_retained_cover(
+    connection: sqlite3.Connection, connection_name: str, library: str, work_id: str
+) -> tuple[str, str, str] | None:
+    """The newest original kept for a work: its digest, plan and decision.
+
+    Only a verified plan's copy with no removal counts, so a write that is
+    pending, or ended without landing, offers nothing to put back. The
+    newest is the highest listing sequence, as the release rule orders it,
+    so switches verified in the same second or after a clock step keep
+    their order. Report assembly, the consideration and the owner's Put back
+    all read this one statement, so they agree on what is live.
+    """
+    row = connection.execute(
+        "SELECT binding.original_digest,binding.plan_id,binding.decision_id "
+        "FROM retained_cover_bindings binding JOIN field_effects effect "
+        "USING(plan_id) JOIN retained_cover_listings listing USING(plan_id) "
+        "WHERE binding.connection_name=? "
+        "AND binding.library_name=? AND binding.work_id=? "
+        "AND effect.state='verified' AND NOT EXISTS (SELECT 1 FROM "
+        "retained_cover_removals removal WHERE removal.plan_id=binding.plan_id) "
+        "ORDER BY listing.sequence DESC LIMIT 1",
+        (connection_name, library, work_id),
+    ).fetchone()
+    return None if row is None else (str(row[0]), str(row[1]), str(row[2]))
+
+
 class SQLiteRetainedCoverRepository(ConnectionScoped):
     """Record bindings and run the removal obligation for retained originals."""
 
@@ -205,26 +254,7 @@ class SQLiteRetainedCoverRepository(ConnectionScoped):
     def retained_cover_original(
         self, connection: str, library: str, work_id: str
     ) -> tuple[str, str, str] | None:
-        """The newest original kept for a work: its digest, plan and decision.
-
-        Only a verified plan's copy with no removal counts, so a write that is
-        pending, or ended without landing, offers nothing to put back. The
-        newest is the highest listing sequence, as the release rule orders it,
-        so switches verified in the same second or after a clock step keep
-        their order.
-        """
-        row = self._connection.execute(
-            "SELECT binding.original_digest,binding.plan_id,binding.decision_id "
-            "FROM retained_cover_bindings binding JOIN field_effects effect "
-            "USING(plan_id) JOIN retained_cover_listings listing USING(plan_id) "
-            "WHERE binding.connection_name=? "
-            "AND binding.library_name=? AND binding.work_id=? "
-            "AND effect.state='verified' AND NOT EXISTS (SELECT 1 FROM "
-            "retained_cover_removals removal WHERE removal.plan_id=binding.plan_id) "
-            "ORDER BY listing.sequence DESC LIMIT 1",
-            (connection, library, work_id),
-        ).fetchone()
-        return None if row is None else (str(row[0]), str(row[1]), str(row[2]))
+        return live_retained_cover(self._connection, connection, library, work_id)
 
     def _finish_removal(self, plan_id: str, changed_at: int, state: str) -> None:
         if type(changed_at) is not int or changed_at < 0:
@@ -249,7 +279,9 @@ class SQLiteRetainedCoverRepository(ConnectionScoped):
 
 __all__ = [
     "MAXIMUM_LISTED_SWITCHES",
+    "live_retained_cover",
     "SQLiteRetainedCoverRepository",
+    "release_put_back_retained_cover",
     "release_unlisted_retained_covers",
     "schedule_retained_cover_removal",
 ]

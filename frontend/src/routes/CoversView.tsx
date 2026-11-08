@@ -86,14 +86,30 @@ const bookSearch = (reviewCaseId: string) => ({ lens: 'all' as const, preview: r
 const focusLater = (find: () => HTMLElement | null | undefined) =>
   requestAnimationFrame(() => find()?.focus({ preventScroll: false }))
 
-type Outcome = 'switched' | 'kept' | 'changed' | 'skipped'
+type Outcome = 'switched' | 'kept' | 'changed' | 'put_back' | 'skipped'
 const outcomeCopy = (outcome: Outcome, title: string) =>
   ({
     switched: `Switched ${title}.`,
     kept: `Kept ${title}.`,
     changed: `Changed ${title}.`,
+    put_back: `Put back ${title}.`,
     skipped: `Skipped ${title}.`,
   })[outcome]
+const donePills = {
+  switched: 'Changed',
+  kept: 'Kept',
+  changed: 'Changed',
+  put_back: 'Put back',
+  skipped: 'Changed',
+} satisfies Record<Outcome, string>
+const putBackRefusedCopy = 'The cover was changed in Audiobookshelf, so it was not put back.'
+// A Put back's write still running: the row already reads as put back.
+const putBackPending = new Set(['planned', 'claimed', 'applying', 'reconciling', 'retryable'])
+/** The original an automatic switch replaced, while it can still be put back (#1363). */
+const retainedCandidate = (field: ReviewField | undefined) =>
+  field?.coverConsideration?.candidates.find(
+    (candidate) => candidate.candidateKind === 'retained' && candidate.selectable,
+  )
 type Failure = { kind: 'stale' } | { kind: 'message'; text: string }
 const failureOf = (error: unknown, field: ReviewField | undefined): Failure =>
   error instanceof ApiError && error.code === 'stale'
@@ -259,7 +275,13 @@ function CoverComparison({
       () => {
         setProgress({ command, phase: 'confirmed' })
         onRecorded(
-          outcome === 'keep_current' ? 'kept' : work.group === 'auto' ? 'changed' : 'switched',
+          outcome === 'keep_current'
+            ? 'kept'
+            : value?.value !== undefined && value.value === retainedCandidate(field)?.artifactId
+              ? 'put_back'
+              : work.group === 'auto'
+                ? 'changed'
+                : 'switched',
         )
       },
       (error: unknown) => {
@@ -372,6 +394,11 @@ function SwitchedRow({
   const switched = work.switched
   if (!switched) return null
   const titleId = `covers-switched-${work.review_case_id}`
+  // The server's own record of a Put back: still writing reads as put back,
+  // and a target that changed first says why nothing was put back.
+  const putBack = switched.put_back
+  const shown = done ?? (putBack && putBackPending.has(putBack.state) ? 'put_back' : undefined)
+  const refused = putBack?.state === 'stale' && putBack.failure === 'target_changed'
   // Keep is the book's keep-current command; its case is read first so the
   // command carries the exact proposal and selection it answers. The command
   // admits keep-current only beside another cover, so a switch with no other
@@ -394,6 +421,33 @@ function SwitchedRow({
         coverCommand(field, 'keep_current', null),
       )
       onRecorded('kept')
+    } catch (error) {
+      setFailure(failureOf(error, field))
+    } finally {
+      setKeeping(false)
+    }
+  }
+  // Put back is the book's accept of the original the switch replaced, read
+  // from its case as Keep is; an original no longer offered is stale.
+  const putBackOriginal = async () => {
+    setFailure(null)
+    setKeeping(true)
+    let field: ReviewField | undefined
+    try {
+      const detail = await queryClient.query({
+        ...detailQuery(http, work.review_case_id),
+        staleTime: 0,
+      })
+      field = coverField(detail.fields)
+      const original = retainedCandidate(field)
+      if (!field || !original) throw new ApiError(409, 'stale')
+      await submitCover(
+        http,
+        queryClient,
+        work.review_case_id,
+        coverCommand(field, 'accept', { kind: 'cover', value: original.artifactId }),
+      )
+      onRecorded('put_back')
     } catch (error) {
       setFailure(failureOf(error, field))
     } finally {
@@ -458,12 +512,14 @@ function SwitchedRow({
           <p className="covers-failure" role="alert">
             {failure.text}
           </p>
+        ) : refused && !done ? (
+          <p className="covers-failure">{putBackRefusedCopy}</p>
         ) : null}
       </div>
       <div className="covers-switched-actions">
-        {done ? (
+        {shown ? (
           <>
-            <StatusPill tone="accent">{done === 'kept' ? 'Kept' : 'Changed'}</StatusPill>
+            <StatusPill tone="accent">{donePills[shown]}</StatusPill>
             {work.choosable ? (
               <button ref={change} type="button" aria-describedby={titleId} onClick={onOpen}>
                 Change
@@ -472,6 +528,16 @@ function SwitchedRow({
           </>
         ) : work.choosable ? (
           <>
+            {switched.filled || refused ? null : (
+              <button
+                type="button"
+                aria-describedby={titleId}
+                disabled={keeping}
+                onClick={() => void putBackOriginal()}
+              >
+                Put back
+              </button>
+            )}
             <button
               type="button"
               aria-describedby={titleId}

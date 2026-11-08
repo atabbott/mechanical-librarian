@@ -144,6 +144,7 @@ export const coverIdentity = (overrides: Overrides = {}) => ({
 // `_CoverCandidate`: a confirmed, ranked and acceptable alternative.
 export const coverCandidate = (overrides: Overrides = {}) => ({
   artifact_id: 'artifact-1',
+  candidate_kind: 'candidate',
   deterministic_citations: ['citation-1'],
   deterministic_rank: 1,
   deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-1'],
@@ -209,7 +210,7 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
   reviewer_model: null,
   reviewer_status: 'unavailable',
   reviewer_unavailable_reason: null,
-  schema_version: 'cover-consideration-v5',
+  schema_version: 'cover-consideration-v6',
   supersedes_id: null,
   target_fingerprint: 'fingerprint-1',
   ...overrides,

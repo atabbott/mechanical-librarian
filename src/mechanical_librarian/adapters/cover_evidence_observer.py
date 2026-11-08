@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -18,6 +19,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
+from mechanical_librarian.adapters.retained_covers import RetainedCoverStore
 from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
 )
@@ -89,10 +91,12 @@ class CoverEvidenceObserver:
         target: TargetCoverReader,
         artifacts: CoverArtifactStore,
         providers: tuple[ProviderConnectionConfiguration, ...] = (),
+        retained_root: Path | None = None,
     ) -> None:
         self._target = target
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
+        self._retained_root = retained_root
 
     def observe_current(
         self,
@@ -180,13 +184,49 @@ class CoverEvidenceObserver:
         local_sources: tuple[CoverSource, ...],
         descriptors: tuple[ProviderCoverDescriptor, ...] = (),
         aggregate_deadline: float | None = None,
+        retained: tuple[str, str, str] | None = None,
     ) -> tuple[CoverSource, ...]:
         now = time.monotonic()
         aggregate = now + 60.0 if aggregate_deadline is None else aggregate_deadline
         deadline = CoverDeadline(aggregate, min(now + 20.0, aggregate))
         return (
             *local_sources,
+            *self._retained_source(retained, deadline),
             *self._provider_covers(providers, descriptors, deadline=deadline),
+        )
+
+    def _retained_source(
+        self, binding: tuple[str, str, str] | None, deadline: CoverDeadline
+    ) -> tuple[CoverSource, ...]:
+        """The listed original this work's newest switch replaced, if any.
+
+        ``binding`` is the work's live retained binding (digest, plan and
+        decision), read by report assembly from its own repository. The bytes
+        go through the same constrained decoder as every other cover, so the
+        artifact carries current measures and oriented dimensions. A copy that
+        is gone, altered, refused or past the deadline is simply not offered:
+        the source exists only as a retrieved image (#1363, D1).
+        """
+        if (
+            binding is None
+            or self._retained_root is None
+            or time.monotonic() >= deadline.aggregate_deadline
+        ):
+            return ()
+        digest, plan_id, _decision_id = binding
+        try:
+            original = RetainedCoverStore(self._retained_root).read(digest)
+            decoded = decode_cover(original, deadline=deadline.aggregate_deadline)
+        except (ValueError, CoverDecodeRejected, CoverDecodeTimeout):
+            return ()
+        self._artifacts.stage(decoded.artifact, original, decoded.preview)
+        return (
+            CoverSource(
+                cover_source_id(CoverSourceKind.RETAINED, plan_id),
+                CoverSourceKind.RETAINED,
+                CoverSourceState.RETRIEVED,
+                decoded.artifact,
+            ),
         )
 
     def _provider_covers(

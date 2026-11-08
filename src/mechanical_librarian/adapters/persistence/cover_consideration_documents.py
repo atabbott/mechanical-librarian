@@ -1,4 +1,4 @@
-"""Lossless SQLite representation of an expanded v4 cover consideration.
+"""Lossless SQLite representation of an expanded v6 cover consideration.
 
 Reports are immutable canonical evidence owned by metadata_reports. Readers bind
 both documents in one SQLite snapshot; application hashes always cover expansion.
@@ -26,7 +26,7 @@ def compact_cover_consideration(
         report = (parse_report or MetadataReport.from_json)(report_document)
         if (
             type(value) is not dict
-            or value.get("schema_version") != "cover-consideration-v5"
+            or value.get("schema_version") != "cover-consideration-v6"
             or value.get("report_document") != report_document
             or value.get("report_id") != report.report_id
             or "report_document_digest" in value
@@ -66,7 +66,7 @@ def expand_cover_consideration(
         if (
             type(value) is not dict
             or "report_document" in value
-            or value.get("schema_version") != "cover-consideration-v5"
+            or value.get("schema_version") != "cover-consideration-v6"
             or value.get("report_id") != report_id
             or value.get("report_document_digest") != report_document_digest
             or hashlib.sha256(report_document.encode("utf-8")).hexdigest()

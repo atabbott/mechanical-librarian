@@ -3764,3 +3764,107 @@ def test_a_work_route_packet_names_a_pending_work_cover() -> None:
         "reason": "source_timeout",
         "reference": cover_source_reference(report.report_id, pending.source_id),
     } in omissions
+
+
+def test_a_retained_original_never_reaches_the_reviewer_packet() -> None:
+    """The original a switch replaced is the owner's way back only (#1363, D2)."""
+    payloads = (_preview(1), _preview(2), _preview(3))
+    incumbent, alternative = (
+        _source(1, payloads[0], incumbent=True),
+        _source(2, payloads[1]),
+    )
+    retained_artifact = CoverArtifact.create(
+        b"retained-original", payloads[2], "image/png", 303, 453
+    )
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, "effect_plan_" + "b" * 64),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.RETRIEVED,
+        retained_artifact,
+    )
+    as_provider = _source(3, payloads[2])
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(
+            (incumbent, alternative, retained, as_provider),
+            (*payloads, payloads[2]),
+            strict=True,
+        )
+        if source.artifact is not None
+    }
+
+    def packet_images(*sources: CoverSource) -> int:
+        packet = prepare_cover_packet(
+            _report(sources).to_json(),
+            lambda artifact, _variant: by_artifact[artifact],
+        )
+        return len(packet.images)
+
+    assert packet_images(incumbent, alternative, retained) == 2
+    # Negative control: the same image from any other source is reviewed.
+    assert packet_images(incumbent, alternative, as_provider) == 3
+
+
+@pytest.mark.parametrize("current", (True, False), ids=("replaced", "empty"))
+def test_a_retained_original_is_a_cover_alternative_only_over_a_cover(
+    current: bool,
+) -> None:
+    """The proposal set offers the original back, and never to fill (#1363, D2).
+
+    The full proposal evaluation runs, so a retained source's evidence
+    reference must be one the proposal set admits.
+    """
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+    )
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalAssessment,
+        evaluate_report,
+    )
+
+    payloads = (_preview(1), _preview(2))
+    incumbent = _source(1, payloads[0], incumbent=True)
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, "effect_plan_" + "b" * 64),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"retained-original", payloads[1], "image/png", 300, 450),
+    )
+    base = _report((incumbent, retained))
+    assert incumbent.artifact is not None and retained.artifact is not None
+    fields = tuple(
+        TargetField(
+            TargetDestination.COVER,
+            TargetFieldState.VALUE,
+            incumbent.artifact.artifact_id,
+        )
+        if field.destination is TargetDestination.COVER and current
+        else field
+        for field in base.target.fields
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("synthetic", "books", "item", fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        cover_sources=base.cover_sources,
+    )
+
+    (cover,) = (
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.COVER
+    )
+
+    offered = {
+        alternative.value.value: alternative for alternative in cover.alternatives
+    }
+    if not current:
+        assert retained.artifact.artifact_id not in offered
+        return
+    back = offered[retained.artifact.artifact_id]
+    assert back.assessment is ProposalAssessment.REPLACES_TARGET
+    assert back.evidence_references == (retained.source_id,)
