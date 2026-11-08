@@ -90,7 +90,12 @@ def test_an_old_tab_reloads_on_its_next_read_and_an_expired_one_signs_in() -> No
                     "Mechanical Librarian was updated."
                 ).is_visible()
                 page.get_by_role("heading", name="Activity was not loaded").wait_for()
-                page.get_by_role("button", name="Reload", exact=True).wait_for()
+                # The shell notice and the page each offer one Reload button,
+                # with the same name as every other stale-build button.
+                notice.get_by_role("button", name="Reload", exact=True).wait_for()
+                page.locator("#main-content").get_by_role(
+                    "button", name="Reload", exact=True
+                ).wait_for()
                 assert page.get_by_role("button", name="Try again").count() == 0
 
                 # An expired session names no build, so the tab signs in again
