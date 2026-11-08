@@ -171,6 +171,11 @@ from mechanical_librarian.domain.metadata_report import (
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
+from mechanical_librarian.domain.validation import (
+    nonempty_text,
+    optional,
+    tuple_of,
+)
 from mechanical_librarian.domain.work_identity import (
     CORROBORATED_TITLE_PRODUCTION,
     WorkDispatchLineage,
@@ -287,10 +292,7 @@ class TargetSnapshot:
     own_file_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        if self.own_file_names is not None and (
-            type(self.own_file_names) is not tuple
-            or any(type(value) is not str or not value for value in self.own_file_names)
-        ):
+        if not optional(tuple_of(nonempty_text))(self.own_file_names):
             raise MetadataReportError("target file names are invalid")
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
@@ -400,10 +402,7 @@ class MetadataLookup:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
-            or type(self.echoed_languages) is not tuple
-            or any(
-                type(value) is not str or not value for value in self.echoed_languages
-            )
+            or not tuple_of(nonempty_text)(self.echoed_languages)
             or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -584,10 +583,7 @@ class MetadataDiscoveryPlan:
         ) or (
             type(self.corroborated_rule) is not bool
             or not library_languages_valid(self.library_languages)
-            or type(self.echoed_languages) is not tuple
-            or any(
-                type(value) is not str or not value for value in self.echoed_languages
-            )
+            or not tuple_of(nonempty_text)(self.echoed_languages)
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
