@@ -9592,6 +9592,42 @@ describe('Library route', () => {
     },
   )
 
+  it('leaves focus where the owner moved it in the rail when the opening reveal runs late (#1742)', async () => {
+    const user = userEvent.setup()
+    renderRoute('/library?lens=all', createHttp())
+    const toggle = await screen.findByRole('button', { name: /Attention/ })
+    await routeSettled()
+    // A slow page can run the reveal's two frames after the owner has already
+    // moved into the rail, as a Load more whose page lands first does.
+    const queued = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      queued.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      queued.delete(id)
+    })
+    const runFrames = () => {
+      // The reveal queues its second frame from its first.
+      while (queued.size) {
+        const callbacks = [...queued.values()]
+        queued.clear()
+        for (const callback of callbacks) callback(0)
+      }
+    }
+    await user.click(toggle)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    const heading = within(rail).getByRole('heading', { name: 'Attention' })
+    // Tab from the toggle reaches the rail's first control, its Close.
+    const close = within(rail).getByRole('button', { name: 'Close' })
+    act(() => close.focus())
+    expect(queued.size).toBeGreaterThan(0)
+    act(runFrames)
+    expect(close).toHaveFocus()
+    expect(heading).not.toHaveFocus()
+  })
+
   it.each([
     ['wide, with no selection', '/library?lens=all', false],
     ['wide, with a selected work', '/library?lens=all&preview=case-1', false],
