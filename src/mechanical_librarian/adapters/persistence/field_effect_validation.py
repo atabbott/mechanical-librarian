@@ -1490,6 +1490,69 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
         }
         if cleanups != expected_cleanups:
             raise FieldEffectError("invalid_cleanup")
+
+        # An original kept for Put back is bound to the automatic plan that
+        # replaced it, and every bound plan that ended unverified owes its
+        # removal (#1363).
+        bound: set[str] = set()
+        for (
+            plan_id,
+            decision_id,
+            connection_name,
+            library_name,
+            work_id,
+            digest,
+        ) in connection.execute(
+            "SELECT plan_id,decision_id,connection_name,library_name,work_id,"
+            "original_digest FROM retained_cover_bindings"
+        ):
+            operation = operations.get(plan_id)
+            if (
+                operation is None
+                or operation.plan.destination != "cover"
+                or operation.plan.authority.origin != "automatic_policy"
+                or operation.plan.pre_value != "cover_" + digest
+                or (decision_id, connection_name, library_name, work_id)
+                != (
+                    operation.plan.authority.decision_id,
+                    operation.plan.connection,
+                    operation.plan.library,
+                    operation.plan.work_id,
+                )
+            ):
+                raise FieldEffectError("invalid_retained_cover")
+            bound.add(plan_id)
+        removals = dict(
+            connection.execute("SELECT plan_id,reason FROM retained_cover_removals")
+        )
+        for plan_id in bound | set(removals):
+            operation = operations.get(plan_id)
+            if operation is None or plan_id not in bound:
+                raise FieldEffectError("invalid_retained_cover")
+            # An unverified end always owes its removal; a verified switch
+            # owes one only once it left the bounded list.
+            reason = removals.get(plan_id)
+            if operation.state == "verified":
+                owed = reason in {None, "released"}
+            elif operation.state in TERMINAL_STATES and (
+                operation.state,
+                operation.failure,
+            ) != ("stale", "connection"):
+                owed = reason == "unverified"
+            else:
+                owed = reason is None
+            if not owed:
+                raise FieldEffectError("invalid_retained_cover")
+        # Every verified switch that kept an original is listed, and nothing
+        # else is: the list order is the order of verification.
+        listed = {
+            row[0]
+            for row in connection.execute("SELECT plan_id FROM retained_cover_listings")
+        }
+        if listed != {
+            plan_id for plan_id in bound if operations[plan_id].state == "verified"
+        }:
+            raise FieldEffectError("invalid_retained_cover")
     except (
         json.JSONDecodeError,
         KeyError,

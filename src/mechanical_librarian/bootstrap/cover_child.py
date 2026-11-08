@@ -16,15 +16,15 @@ import warnings
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
+from mechanical_librarian.adapters.cover_measures import (
+    PREVIEW_BOX,
+    difference_hash,
+    measure_preview,
+)
+
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 _MAX_PREVIEW_BYTES = 1024 * 1024
 _MAX_PIXELS = 16_777_216
-# A 64-bit difference hash: eight rows of nine grayscale samples, compared left
-# to right, gives eight bits a row.  The hash is computed here because this is
-# the one place the untrusted bytes are ever decoded, and nowhere else may
-# decode them again to get it.
-_HASH_WIDTH = 9
-_HASH_HEIGHT = 8
 
 
 def _limits() -> None:
@@ -91,31 +91,6 @@ def _isolate_network() -> None:
         raise OSError(ctypes.get_errno(), "network syscall filter is unavailable")
 
 
-def _difference_hash(image: Image.Image) -> str:
-    """Return the 64-bit difference hash of one decoded image as 16 hex digits.
-
-    Rows run top to bottom and bits run most significant first, so the same
-    image always produces the same string and two images may be compared by
-    Hamming distance without either side knowing how the bits were laid out.
-    """
-    samples = image.convert("L").resize(
-        (_HASH_WIDTH, _HASH_HEIGHT), Image.Resampling.LANCZOS
-    )
-    # One grayscale byte per sample in row-major order, so the raster is read
-    # without a pixel-access object.
-    raster = samples.tobytes()
-    if len(raster) != _HASH_WIDTH * _HASH_HEIGHT:
-        raise ValueError("cover hash sampling failed")
-    value = 0
-    for row in range(_HASH_HEIGHT):
-        offset = row * _HASH_WIDTH
-        for column in range(_HASH_WIDTH - 1):
-            value = (value << 1) | int(
-                raster[offset + column] > raster[offset + column + 1]
-            )
-    return f"{value:016x}"
-
-
 def _decode(data: bytes) -> dict[str, object]:
     if not (
         features.check("jpg") and features.check("zlib") and features.check("webp")
@@ -145,11 +120,15 @@ def _decode(data: bytes) -> dict[str, object]:
             except (Image.DecompressionBombError, Image.DecompressionBombWarning):
                 return {"state": "oversized"}
             oriented = ImageOps.exif_transpose(image)
-            # The hash reads the same orientation the preview does, so a
-            # rotated original and its upright twin hash alike.
-            perceptual_hash = _difference_hash(oriented)
+            # The hash and the same-art measures are computed here because
+            # this is the one place the untrusted bytes are ever decoded, and
+            # nowhere else may decode them again to get them. The hash reads
+            # the same orientation the preview does, so a rotated original and
+            # its upright twin hash alike.
+            perceptual_hash = difference_hash(oriented)
             preview = oriented.convert("RGBA")
-            preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
+            preview.thumbnail(PREVIEW_BOX, Image.Resampling.LANCZOS)
+            measures = measure_preview(preview)
             output = io.BytesIO()
             preview.save(output, "PNG", optimize=False, compress_level=9)
     encoded = output.getvalue()
@@ -162,6 +141,7 @@ def _decode(data: bytes) -> dict[str, object]:
         ],
         "width": image.width,
         "height": image.height,
+        "measures": measures,
         "perceptual_hash": perceptual_hash,
         "preview": base64.b64encode(encoded).decode("ascii"),
     }

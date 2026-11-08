@@ -370,7 +370,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
                 ).fetchone()[0],
                 "replay_digest": replay_digest,
                 "review_case_id": case.review_case_id,
-                "schema_version": "cover-consideration-v4",
+                "schema_version": "cover-consideration-v5",
                 "supersedes_id": None,
             },
             separators=(",", ":"),

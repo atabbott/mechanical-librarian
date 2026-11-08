@@ -828,7 +828,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_49813bbafb8fe90845cb0ffab0f394f2f68ccdaf15ea04294feff7150bafd33b"
+        "cover_replay_322ce6f9b9afeded5e0bee94644ed53fd640552e21dd78de6b9218488692239b"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -871,7 +871,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_be89b2f953fb9e25231ca6d900b72cf41017ee18cda9ea285e7af1d61340aa14"
+        "cover_replay_262c567fa54cdecb7594fbc498d7ec9ae2cc77a00d0dc9667439a3c5840824c3"
     )
     assert (
         replayed_qualified.ensure(
@@ -986,7 +986,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v4"
+    assert different_document["schema_version"] == "cover-consideration-v5"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 
@@ -1534,7 +1534,8 @@ def test_base_produced_observation_is_refused_and_current_semantics_create_one_s
         reviewer_identity=lambda: (1, "openrouter", model, profile),
         reviewer_revision_current=lambda revision: revision == 1,
     )
-    with pytest.raises(ValueError, match="report schema is unsupported"):
+    # A cover-consideration-v4 document is refused before its report is read.
+    with pytest.raises(ValueError, match="cover consideration document is invalid"):
         service.project_historical(raw)
     current = service.ensure(
         prior["review_case_id"], report.to_json(), fixture["proposal"]
@@ -1977,3 +1978,97 @@ def test_a_verified_work_route_cover_never_gains_automatic_authority(
             )
     finally:
         repository.close()
+
+
+def _retaining_service(
+    case: _Case, retained: tuple[str, str, str] | None
+) -> tuple[CoverConsiderationService, list[tuple[str, str, str]]]:
+    asked: list[tuple[str, str, str]] = []
+
+    def lookup(connection: str, library: str, item: str):
+        asked.append((connection, library, item))
+        return retained
+
+    return (
+        CoverConsiderationService(
+            case.store,
+            read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+            read_preview_digest=lambda digest: case.payload_by_preview[digest],
+            clock=lambda: case.now,
+            retained_original=lookup,
+        ),
+        asked,
+    )
+
+
+def test_a_retained_original_is_recorded_on_the_consideration_but_never_offered(
+    case: _Case,
+) -> None:
+    """Inert until activation: recorded, but not projected or selectable (#1363)."""
+    retained = ("a" * 64, "effect_plan_" + "b" * 64, "automatic_decision_" + "c" * 64)
+    service, asked = _retaining_service(case, retained)
+    case_id = "review_case_" + "r" * 64
+
+    projected = service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    target = case.report.target
+    assert asked == [(target.connection, target.library, target.item)]
+    document = json.loads(case.store.current[case_id])
+    assert document["retained_original"] == {
+        "artifact_id": "cover_" + "a" * 64,
+        "decision_id": "automatic_decision_" + "c" * 64,
+        "original_sha256": "a" * 64,
+        "plan_id": "effect_plan_" + "b" * 64,
+    }
+    assert "retained_original" not in projected
+    assert "cover_" + "a" * 64 not in {
+        candidate["artifact_id"] for candidate in projected["candidates"]
+    }
+    with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+        service.validate_decision(
+            case_id,
+            projected["consideration_id"],
+            "accept",
+            {"kind": "cover", "value": "cover_" + "a" * 64},
+        )
+    assert service.project(case.store.current[case_id]) is not None
+
+
+def test_a_retained_original_that_is_the_current_cover_is_not_recorded(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "s" * 64
+    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    incumbent = json.loads(case.store.current[case_id])["incumbent_digest"]
+    assert incumbent is not None
+    service, _ = _retaining_service(
+        case,
+        (incumbent, "effect_plan_" + "b" * 64, "automatic_decision_" + "c" * 64),
+    )
+
+    replay = service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    assert replay["consideration_id"] == first["consideration_id"]
+    assert json.loads(case.store.current[case_id])["retained_original"] is None
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        pytest.param({"artifact_id": "cover_" + "d" * 64}, id="artifact_mismatch"),
+        pytest.param({"plan_id": "plan"}, id="bad_plan"),
+        pytest.param({"extra": 1}, id="extra_key"),
+    ),
+)
+def test_a_malformed_retained_original_is_refused(
+    case: _Case, tamper: dict[str, object]
+) -> None:
+    retained = ("a" * 64, "effect_plan_" + "b" * 64, "automatic_decision_" + "c" * 64)
+    service, _ = _retaining_service(case, retained)
+    case_id = "review_case_" + "t" * 64
+    service.ensure(case_id, case.report.to_json(), case.proposal)
+    document = json.loads(case.store.current[case_id])
+    document["retained_original"] = {**document["retained_original"], **tamper}
+
+    with pytest.raises(ValueError, match="cover consideration document is invalid"):
+        service.project_historical(json.dumps(document))
