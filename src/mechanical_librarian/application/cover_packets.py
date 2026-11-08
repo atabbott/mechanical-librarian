@@ -25,6 +25,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
 )
 from mechanical_librarian.domain.cover_evidence import (
     PREVIEW_VARIANT,
+    CoverDesignation,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
@@ -90,6 +91,25 @@ class _Candidate:
     @property
     def source_kinds(self) -> tuple[str, ...]:
         return tuple(sorted({source.kind.value for source in self.sources}))
+
+    @property
+    def listed_only(self) -> bool:
+        """Whether every provider source of this preview is a listed edition."""
+        return {
+            source.provenance.designation
+            for source in self.sources
+            if source.provenance is not None
+        } == {CoverDesignation.LISTED_EDITION}
+
+    def priority(self, source_counts: dict[str, int]) -> tuple[int, int, int, str, str]:
+        return candidate_priority(
+            source_counts,
+            self.source_kinds,
+            self.identity_rank,
+            self.width,
+            self.height,
+            self.reference,
+        )
 
 
 def prepare_cover_packet(
@@ -203,6 +223,23 @@ def _omit_group(
         )
 
 
+def _packet_order(selected: list[_Candidate]) -> list[_Candidate]:
+    """The kept candidates in the order the packet validator recomputes."""
+    ordered = [value for value in selected if value.incumbent]
+    remaining = [value for value in selected if not value.incumbent]
+    source_counts = {kind.value: 0 for kind in CoverSourceKind}
+    for value in ordered:
+        for source_kind in value.source_kinds:
+            source_counts[source_kind] += 1
+    while remaining:
+        candidate = min(remaining, key=lambda value: value.priority(source_counts))
+        remaining.remove(candidate)
+        ordered.append(candidate)
+        for source_kind in candidate.source_kinds:
+            source_counts[source_kind] += 1
+    return ordered
+
+
 def _finalize_cover_packet(
     candidates: list[_Candidate],
     omissions: list[dict[str, object]],
@@ -240,17 +277,12 @@ def _finalize_cover_packet(
     for value in selected:
         for source_kind in value.source_kinds:
             source_counts[source_kind] += 1
+    # A listed edition can never be confirmed, so every other cover is kept
+    # before one (#1778), and the kept ones are then put in packet order.
     while remaining and len(selected) < MAX_COVER_PREVIEWS:
         candidate = min(
             remaining,
-            key=lambda value: candidate_priority(
-                source_counts,
-                value.source_kinds,
-                value.identity_rank,
-                value.width,
-                value.height,
-                value.reference,
-            ),
+            key=lambda value: (value.listed_only, value.priority(source_counts)),
         )
         remaining.remove(candidate)
         if selected_bytes + len(candidate.payload) > MAX_COVER_PACKET_BYTES:
@@ -264,6 +296,7 @@ def _finalize_cover_packet(
         _omit_group(omissions, value, "shortlist_limit")
     if not selected:
         raise ValueError("cover packet has no eligible previews")
+    selected = _packet_order(selected)
 
     candidate_data: list[dict[str, object]] = []
     images: list[CoverPacketImage] = []

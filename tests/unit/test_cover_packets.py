@@ -105,6 +105,7 @@ from mechanical_librarian.application.cover_observation import (  # noqa: E402
 from mechanical_librarian.application.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     PreparedCoverPacket,
+    cover_source_reference,
     prepare_cover_packet,
 )
 from mechanical_librarian.application.cover_policy import (  # noqa: E402
@@ -1437,6 +1438,95 @@ def test_a_full_gallery_shortlists_twelve_and_keeps_the_incumbent() -> None:
     }
     assert "listed_edition" not in designations
     assert "related_edition" in designations
+
+
+def test_a_full_gallery_cuts_listed_editions_before_a_book_cover() -> None:
+    """Hardcover's book cover outlasts its unconfirmed edition covers (#1778).
+
+    A listed edition projects as `related_edition`, which ranks above a
+    `default` cover, but it can never be confirmed while the book cover can.
+    So the shortlist keeps every other cover before a listed-only one, and
+    the kept covers stay in the order the packet validator recomputes.
+    """
+    payloads = [_preview(index, width=index + 1) for index in range(14)]
+    sources = [
+        _source(0, payloads[0], incumbent=True),
+        _source(1, payloads[1], embedded=True),
+        CoverSource(
+            cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:default:2"),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(b"default-2", payloads[2], "image/png", 400, 600),
+            provenance=CoverProvenance(
+                "hardcover", CoverDesignation.DEFAULT, "hardcover-work-0000000007"
+            ),
+        ),
+    ]
+    for index in range(3, 10):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.HARDCOVER, f"hardcover:listed:{index}"),
+                CoverSourceKind.HARDCOVER,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"listed-{index}".encode(), payloads[index], "image/png", 400, 600
+                ),
+                provenance=CoverProvenance(
+                    "hardcover",
+                    CoverDesignation.LISTED_EDITION,
+                    "hardcover-work-0000000007",
+                    f"hardcover-edition-{index:010d}",
+                ),
+            )
+        )
+    for index in range(10, 14):
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.OPEN_LIBRARY, f"open-library:{index}"),
+                CoverSourceKind.OPEN_LIBRARY,
+                CoverSourceState.RETRIEVED,
+                CoverArtifact.create(
+                    f"open-{index}".encode(), payloads[index], "image/png", 300, 450
+                ),
+                provenance=CoverProvenance(
+                    "open-library", CoverDesignation.WORK, f"OL{index}W"
+                ),
+                final_host=CoverFinalHost.US_ARCHIVE,
+            )
+        )
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    report = _report(tuple(sources))
+    # `prepare_cover_packet` binds its own document, so a kept order the
+    # validator would not recompute fails here.
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    document = json.loads(packet.document)
+    cut = {
+        value["reference"]
+        for value in document["omissions"]
+        if value["reason"] == "shortlist_limit"
+    }
+
+    assert len(packet.images) == 12
+    assert document["candidates"][0]["incumbent"]
+    assert ["default"] == [
+        item["designation"]
+        for candidate in document["candidates"]
+        for item in candidate["provenance"]
+        if item["designation"] == "default"
+    ]
+    assert 2 == len(cut)
+    assert cut <= {
+        cover_source_reference(report.report_id, source.source_id)
+        for source in sources
+        if source.provenance is not None
+        and source.provenance.designation is CoverDesignation.LISTED_EDITION
+    }
 
 
 def test_changed_preview_and_overbound_incumbent_fail_closed() -> None:
