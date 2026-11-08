@@ -2501,6 +2501,7 @@ describe('Library route', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
@@ -2661,6 +2662,7 @@ describe('Library route', () => {
         providerSources: [
           {
             companionIsbn: false,
+            coverOnly: false,
             providerRequests: 1,
             laneKind: 'asin' as const,
             provider: 'Audnexus',
@@ -7701,6 +7703,7 @@ describe('Library route', () => {
           preparationOutcomes: [
             {
               companionIsbn: false,
+              coverOnly: false,
               providerRequests: 1,
               laneKind: 'work' as const,
               provider: 'synthetic-catalogue',
@@ -10147,6 +10150,7 @@ describe('Library route', () => {
                   preparationOutcomes: [
                     {
                       companionIsbn: false,
+                      coverOnly: false,
                       providerRequests: 1,
                       laneKind: 'work' as const,
                       provider: 'catalogue',
@@ -11264,6 +11268,7 @@ describe('Library route', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
@@ -12695,6 +12700,7 @@ describe('Provider evidence rail', () => {
               status: 'no_match' as const,
               reason: 'No match',
               companionIsbn: false,
+              coverOnly: false,
               providerRequests: 1,
             },
           ],
@@ -12711,6 +12717,7 @@ describe('Provider evidence rail', () => {
               status: 'unavailable' as const,
               reason: 'Unavailable',
               companionIsbn: false,
+              coverOnly: false,
               providerRequests: 1,
             },
           ],
@@ -12779,6 +12786,7 @@ describe('Provider evidence rail', () => {
                   status,
                   reason: 'Bounded status',
                   companionIsbn: false,
+                  coverOnly: false,
                   providerRequests: 0,
                 },
               ],
@@ -12798,6 +12806,104 @@ describe('Provider evidence rail', () => {
       ).toBeVisible()
     },
   )
+
+  // iTunes is asked for an audiobook's cover alone, so its lane neither limits
+  // nor matches the work (#1779).
+  const coverOnlyLane = (status: 'candidates' | 'unavailable') => ({
+    provider: 'iTunes',
+    laneKind: 'work' as const,
+    status,
+    reason:
+      status === 'candidates'
+        ? 'Searched for a cover only. Nothing else it returns is compared.'
+        : 'Searched for a cover only. No cover came back, and it is not retried.',
+    companionIsbn: false,
+    coverOnly: true,
+    providerRequests: 1,
+  })
+  const audibleMiss = {
+    provider: 'Audible',
+    laneKind: 'work' as const,
+    status: 'no_match' as const,
+    reason: 'Returned no matching metadata.',
+    companionIsbn: false,
+    coverOnly: false,
+    providerRequests: 1,
+  }
+
+  it('keeps an audiobook whose only failure is iTunes out of the limited group', async () => {
+    const works = [
+      {
+        ...providerRailWork,
+        id: 'store-down',
+        reviewCaseId: 'case-1',
+        title: 'Alpha store down',
+        preparationOutcomes: [audibleMiss, coverOnlyLane('unavailable')],
+      },
+      {
+        ...providerRailWork,
+        id: 'limited',
+        reviewCaseId: 'case-2',
+        title: 'Zulu limited',
+        preparationOutcomes: [{ ...audibleMiss, status: 'unavailable' as const }],
+      },
+    ]
+    const http = Object.assign(createHttp(), {
+      getLibrary: vi.fn(async () => ({ ...library, works })),
+    })
+    renderRoute('/library?lens=needs_attention', http)
+    const complete = await screen.findByRole('heading', { name: 'Every lookup finished' })
+    // One limited heading, after the complete block: the store's outage never
+    // splits the list.
+    const [limited, ...more] = screen.getAllByRole('heading', {
+      name: 'Some lookups gave no usable answer',
+    })
+    expect(more).toHaveLength(0)
+    expect(
+      complete.compareDocumentPosition(limited as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    const row = screen.getByRole('button', { name: /Alpha store down/ })
+    expect(row).toHaveAccessibleDescription('No match')
+    expect(row).not.toHaveTextContent('Unavailable')
+    expect(
+      row.compareDocumentPosition(limited as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('never says an audiobook only iTunes found has matches', async () => {
+    const baseWork = { ...providerRailWork }
+    delete baseWork.reviewCaseId
+    const work = {
+      ...baseWork,
+      id: 'library_work_store_only',
+      workId: 'library_work_store_only',
+      title: 'Store only',
+      attentionCount: 0,
+      attention: 'not_matched' as const,
+      detailUrl: '/api/v1/library/report?connection=primary&library=audio&item=store-only',
+      detailKind: 'report' as const,
+      preparation: null,
+      preparationOutcomes: [audibleMiss, coverOnlyLane('candidates')],
+      summary: {
+        fields: [],
+        reason: 'No review decision is recorded for this work.',
+        state: 'not_matched_no_match' as const,
+      },
+    }
+    const http = Object.assign(createHttp(), {
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 1, failed: 0 },
+        works: [work],
+      })),
+    })
+    renderRoute('/library?lens=all', http)
+    const row = await screen.findByRole('button', { name: /^Store only\./u })
+    expect(row).toHaveTextContent('No source matched')
+    expect(row).toHaveAccessibleDescription('No match')
+    expect(row).not.toHaveTextContent('Matches found')
+    expect(row).not.toHaveTextContent('Cover found')
+  })
 
   it('shows a recorded refusal for an actionless contextual field', async () => {
     const reason = 'No source offered a value that can be used here.'
@@ -12848,6 +12954,7 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
           status: 'no_match' as const,
           reason: 'No match',
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 1,
         })),
       },

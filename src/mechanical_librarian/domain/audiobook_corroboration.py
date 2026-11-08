@@ -38,6 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_ISBN_WORK_BASIS,
     COMPANION_WORK_BASIS,
+    COVER_ONLY_AUDIOBOOK_AUTHORITIES,
     TARGET_ADMISSION_BASIS,
     AudioFacts,
     ClaimKind,
@@ -69,6 +70,7 @@ from mechanical_librarian.domain.metadata_report import (
     discovery_lane_identity,
     duration_milliseconds,
     echoed_target_values,
+    field_evidence_providers,
     local_identifier_asins,
     plan_alternative_discovery_title,
     provider_candidate_exact_work_identity_admission,
@@ -1177,7 +1179,7 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
     which is how it reached this path.
     """
     return stated_runtime_admission(
-        report.providers,
+        field_evidence_providers(report),
         report.local_claims,
         report.target.current_title or "",
         report.library_languages,
@@ -1247,7 +1249,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
         return None
     support: list[tuple[str, str, str]] = []
     vetoed: set[str] = set()
-    for observation in report.providers:
+    for observation in field_evidence_providers(report):
         if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
             continue
         for candidate in (
@@ -1372,15 +1374,28 @@ def admitted_audiobook_identity(report: MetadataReport) -> bool:
 
 
 def candidate_narrator_disjoint(
-    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...],
+    echoed_narrators: tuple[str, ...] = (),
 ) -> bool:
     """Whether a product credits only narrators the recording's own credits lack.
 
     An unknown cast on either side is never disjoint, so a recording without
     local narrator credits, or a product stating none, passes (#1252, #1316).
+    `echoed_narrators` are the target's narrators an `.opf` or `.nfo` stated
+    and echo withholding took out of the local claims (#1481): this only
+    refuses, so they stand in for the withheld credits exactly as those did,
+    and no reader that counts support reads them.
     """
     return narrator_cast_disjoint(
-        _recording_narrators(local_claims), _candidate_narrators(candidate)
+        (*_recording_narrators(local_claims), *echoed_narrators),
+        _candidate_narrators(candidate),
+    )
+
+
+def _echoed_narrators(report: MetadataReport) -> tuple[str, ...]:
+    return echoed_target_values(
+        report.audio, report.target.fields, AudioInspectionField.CONTRIBUTOR
     )
 
 
@@ -1837,7 +1852,7 @@ def _carried_lanes(
     asin = cast("str", claim.canonical)
     return tuple(
         (observation, lane)
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         for lane in observation.lanes
         if claim.reference in lane.input_references
@@ -1864,7 +1879,9 @@ def _verified_carried_candidates(
                 candidate is not None
                 and asin in _edition_asins(candidate)
                 and _tight_recording(candidate, report.local_claims)
-                and not candidate_narrator_disjoint(candidate, report.local_claims)
+                and not candidate_narrator_disjoint(
+                    candidate, report.local_claims, _echoed_narrators(report)
+                )
             ):
                 verified.append(candidate)
     return tuple(verified)
@@ -1890,12 +1907,14 @@ def _admitted_candidates(
     """The tight, narrator-compatible recordings audiobook authorities admitted."""
     return tuple(
         (observation, candidate)
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
         if _tight_recording(candidate, report.local_claims)
-        and not candidate_narrator_disjoint(candidate, report.local_claims)
+        and not candidate_narrator_disjoint(
+            candidate, report.local_claims, _echoed_narrators(report)
+        )
     )
 
 
@@ -1989,11 +2008,16 @@ def _counted_editions(
 def _accepted_recordings(
     observations: tuple[ProviderObservation, ...],
 ) -> tuple[ProviderCandidate, ...]:
-    """Every product an audiobook authority put forward for this item."""
+    """Every product an audiobook authority put forward for this item.
+
+    A cover-only authority's listing is no recording (#1779): its missing
+    runtime would otherwise agree with any edition.
+    """
     return tuple(
         candidate
         for observation in observations
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and observation.authority not in COVER_ONLY_AUDIOBOOK_AUTHORITIES
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
         if candidate.identity != candidate.work_identity
@@ -2102,7 +2126,9 @@ def unconfirmed_audio_editions(
         for observation in report.providers
         for edition in observation.audio_editions
         if id(edition) in counted
-        and not candidate_narrator_disjoint(edition, report.local_claims)
+        and not candidate_narrator_disjoint(
+            edition, report.local_claims, _echoed_narrators(report)
+        )
         and all(unconfirmed(asin) for asin in _edition_asins(edition))
     )
 
@@ -2306,7 +2332,7 @@ def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]
     )
     products = tuple(
         (observation, candidate)
-        for observation in report.providers
+        for observation in field_evidence_providers(report)
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         for candidate in observation.candidates
         if current not in _edition_asins(candidate)
@@ -2425,7 +2451,11 @@ def asin_lane_admission_basis_replays(
         return False
     linked = queried in companion_linked_asins(
         local_claims, audio, providers, companion
-    ) and not candidate_narrator_disjoint(candidate, local_claims)
+    ) and not candidate_narrator_disjoint(
+        candidate,
+        local_claims,
+        echoed_target_values(audio, target.fields, AudioInspectionField.CONTRIBUTOR),
+    )
     if value == COMPANION_ISBN_WORK_BASIS or linked:
         return value == COMPANION_ISBN_WORK_BASIS and linked
     identity = alternative_lane_identity(

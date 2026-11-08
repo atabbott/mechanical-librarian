@@ -1246,6 +1246,7 @@ describe('ReviewApiClient', () => {
       source_ledger: [
         {
           companion_isbn: false,
+          cover_only: false,
           provider_requests: 1,
           lane_kind: 'work',
           provider: 'Hardcover',
@@ -1274,6 +1275,7 @@ describe('ReviewApiClient', () => {
       sourceLedger: [
         {
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 1,
           laneKind: 'work',
           provider: 'Hardcover',
@@ -1732,6 +1734,7 @@ describe('ReviewApiClient', () => {
               preparation_outcomes: [
                 {
                   companion_isbn: false,
+                  cover_only: false,
                   provider_requests: 2,
                   lane_kind: 'isbn',
                   provider: 'google-books',
@@ -1792,6 +1795,7 @@ describe('ReviewApiClient', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          coverOnly: false,
           providerRequests: 2,
           laneKind: 'isbn',
           provider: 'google-books',

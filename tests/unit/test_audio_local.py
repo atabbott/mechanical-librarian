@@ -541,9 +541,10 @@ def test_a_libation_export_is_read_for_what_it_carries(document: object) -> None
             "observed": "Example Series",
         },
     ]
+    # A narrator is association text as well as a claim (#1481).
     assert (reading.title, reading.creators) == (
         "Synthetic Example Title",
-        ("Example Author",),
+        ("Example Author", "Example Narrator"),
     )
 
 

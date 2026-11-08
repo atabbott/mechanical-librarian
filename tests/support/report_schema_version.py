@@ -7,5 +7,5 @@ version collision at merge changes this pin and the product constant.
 
 from __future__ import annotations
 
-CURRENT_REPORT_SCHEMA = "metadata-report-v75"
-PREVIOUS_REPORT_SCHEMA = "metadata-report-v74"
+CURRENT_REPORT_SCHEMA = "metadata-report-v76"
+PREVIOUS_REPORT_SCHEMA = "metadata-report-v75"

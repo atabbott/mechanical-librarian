@@ -60,8 +60,8 @@ provider. Audiobook evidence remains read-side only.
    carries no narrator or duration fields). AudiobookDB is not admitted in
    this release; it becomes a candidate community tier only after maintainer
    contact establishes an integration key under its published integration
-   terms, which also require crediting AudiobookDB. iTunes Search stays
-   admitted but is not dispatched for audiobooks (amended below, #1254).
+   terms, which also require crediting AudiobookDB. iTunes Search is asked
+   an audiobook's cover alone (amended below, #1254 and #1779).
 3. **Pure-API v1.** No provider dataset is bundled with or downloaded by the
    application in this release. The AudioSilo identity-core artifact is a
    deferred tier with exactly three activation triggers: anonymous catalog
@@ -179,14 +179,15 @@ fingerprint lookup.
 - The stability record and the coverage measurement are attached to #925 as
   its evidence comments.
 
-## Audiobook dispatch set (#1247, #1254)
+## Audiobook dispatch set (#1247, #1254, #1779)
 
 Audiobook preparation dispatches only to the connected providers named in
 `AUDIOBOOK_DISPATCH_ADAPTERS` (`application/configuration.py`): the Audible
-catalog, Audnexus, AudioSilo, Hardcover and Open Library. A library's
-`provider_connections` narrow this set and can never widen it, and a binding
-with no authority is not dispatched. Google Books, Inventaire and iTunes Search
-are excluded on audiobooks: they get no client construction, request,
+catalog, Audnexus, AudioSilo, Hardcover, iTunes Search (for a cover alone,
+amended below) and Open Library. A library's `provider_connections` narrow
+this set and can never widen it, and a binding with no authority is not
+dispatched. Google Books and Inventaire are excluded on audiobooks: they get
+no client construction, request,
 observation, cover fetch, recovery job or retry, and an audiobook report gives
 them no failure evidence, even an older observation a retry successor carried
 forward. A recovery job already queued for one of them closes as `stale`,
@@ -196,8 +197,9 @@ existing success path. `config-v9`, the configuration schema and
 `metadata-report-v53` are unchanged, so no clean rebuild is needed; a v53
 report that holds an excluded observation stays valid.
 
-**Clause 2 (#1254).** iTunes Search remains an admitted, configurable adapter,
-but it leaves the default audiobook dispatch set, saving 181 dispatches over
+**Clause 2 (#1254, superseded for covers by #1779 below).** iTunes Search
+remains an admitted, configurable adapter, but it leaves the default audiobook
+dispatch set, saving 181 dispatches over
 #1086's retained items. #1254's measurement: 177 narrowed requests produced 0
 new admissions; the 2 selected alternatives iTunes backed today were both also
 backed by other providers, and under narrowing both overflow, leaving 0. #1246's
@@ -206,15 +208,16 @@ measurement: 234 requests, all to Audible, with iTunes at 0 while held for
 lane. Where a library connects iTunes, it still searches ebook work lanes:
 iTunes is in the ebook dispatch set below.
 
-**Clause 9 (#1247).** The set is the five named above. Open Library and
-Hardcover stay, so F46a's and F54's work facts keep their sources (#962).
+**Clause 9 (#1247).** The set is the six named above, iTunes for its cover
+alone (#1779). Open Library and Hardcover stay, so F46a's and F54's work facts
+keep their sources (#962).
 Google Books and Inventaire leave: across #1086's retained audiobooks they
 took 843 dispatches (31.6%), backed only 2 selected alternatives (both series,
 from Inventaire) and no description or genre alternative, resolved none of the
 297 unresolved choices, and left 189 recovery jobs queued; Inventaire was
-unavailable on 80 of 238 items. Excluding all three also removes the
-second audiobook cover authority; [ADR-0064](0064-audiobook-provider-evidence-vocabularies.md)
-records that consequence.
+unavailable on 80 of 238 items. Excluding iTunes as well (#1254) removed the
+second audiobook cover authority until #1779 asked it again for its cover;
+[ADR-0064](0064-audiobook-provider-evidence-vocabularies.md) records both.
 
 **Clause 9 amendment (#1309).** Two members of the set send only what can carry
 data. Open Library asks an audiobook work lane one rung, the first of
@@ -260,6 +263,28 @@ through the companion ISBN instead. Widening the fallback to them is a change
 to `identifier_suppresses_discovery` and needs its own decision. None of it is a local
 claim or a proposed value. This is `metadata-report-v69`, a clean rebuild
 under ADR-0013.
+
+**Clause 9 amendment (#1779).** iTunes Search returns to the set as a cover
+source only (`COVER_ONLY_AUDIOBOOK_AUTHORITIES`). It asks one search per
+audiobook: the asserted lane's first rung of `work_query_ladder(...,
+audiobook=True)`, with no later rung and no narrowing retry, as Open Library
+does under #1309. Its 600×600 artwork rendition and artwork host set are
+unchanged. One domain predicate, `provider_supplies_field_evidence`, keeps its
+observation out of every reader that turns a candidate into a field value,
+backing, field result, recording fact or running time; the cover observer and
+cover identity still read it, so its cover binds to its candidate. That cover
+is `unknown` until ADR-0096's title and creator match admits it, and, like
+every audiobook cover, is selectable only beside an admitted recording. Its
+failures record no provider health and queue no recovery job
+(`recovery_adapters`); a queued job closes as `stale`; a failed search yields
+no cover. A bounded probe found an agreeing result for 50 of 51 audiobooks, 41
+of them the Audible art at a higher resolution, which is why it is asked
+again. It removes no Audible banner: every probed iTunes copy of a bannered
+cover carried it too. It is searched for an audiobook only while its
+`cover_enabled` is true, so the title and author are never sent for an answer
+that would be discarded. `metadata-report-v74` marks the change, and the report
+browse facts ignore its lanes on an audio report, so it never limits or matches
+an audiobook (ADR-0013 clean rebuild). The configuration schema is unchanged.
 
 **Clause 9 amendment (#1724).** Replay requires the companion ISBN lane
 wherever the plan carried it: every Hardcover observation in a report whose
@@ -380,7 +405,7 @@ with track-bound documents now going to their track.
    re-derives kind, binding and the parent-side refusals from the listing and
    the re-read file list.
 
-This is `metadata-report-v74` and `audio-inspection-v5`, a clean rebuild under
+This is `metadata-report-v75` and `audio-inspection-v5`, a clean rebuild under
 [ADR-0013](0013-pre-release-clean-schema.md).
 
 ## Byte-order marks in sidecars (#1796)
