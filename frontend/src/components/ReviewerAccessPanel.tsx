@@ -10,6 +10,7 @@ import type {
   ReviewerAccessView,
   ReviewerReason,
 } from '../api/http'
+import { retryInPlace } from '../focusAfterRetry'
 import { failureCopy, useReviewerAccess } from '../reviewerAccess'
 import type { ReviewerAccessController } from '../reviewerAccess'
 import { useRef, useState } from 'react'
@@ -174,7 +175,7 @@ function CodexSignIn({
   return (
     <div className="settings-field-row">
       <div>
-        <h3>Shared Codex sign-in</h3>
+        <h3 tabIndex={-1}>Shared Codex sign-in</h3>
         <p>
           One sign-in serves cover observations and description advice. Select each task separately
           below.
@@ -512,16 +513,38 @@ function OpenRouterReviewer({
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const access = useReviewerAccess(http)
   const { query, deviceQuery, mutation, mutationFailure, waiting, accessRetryTrigger } = access
-  if (query.isPending) return <p aria-busy="true">Reading reviewer access…</p>
-  if (query.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Reviewer access was not loaded." />
-  if (query.isError)
+  // Until access is read, its loading line, failure and Reload share one
+  // region, which holds focus while a Try again reads. Its key keeps React
+  // from reusing it as the panel's own div once access is read.
+  const accessStatus = useRef<HTMLDivElement>(null)
+  if (!query.isSuccess)
     return (
-      <div role="alert" className="settings-reviewer-unavailable">
-        <p>Reviewer access is unavailable.</p>
-        <button ref={accessRetryTrigger} type="button" onClick={() => void query.refetch()}>
-          Try again
-        </button>
+      <div key="access-status" ref={accessStatus} tabIndex={-1}>
+        {query.isPending ? (
+          <p aria-busy="true">Reading reviewer access…</p>
+        ) : query.error instanceof BuildMismatchError ? (
+          <StaleBuildRead lead="Reviewer access was not loaded." ref={accessRetryTrigger} />
+        ) : (
+          <div role="alert" className="settings-reviewer-unavailable">
+            <p>Reviewer access is unavailable.</p>
+            <button
+              ref={accessRetryTrigger}
+              type="button"
+              onClick={() =>
+                retryInPlace(
+                  () => accessStatus.current,
+                  () => query.refetch(),
+                  (result) =>
+                    result.isSuccess
+                      ? document.querySelector<HTMLElement>('.settings-reviewer h3')
+                      : accessRetryTrigger.current,
+                )
+              }
+            >
+              Try again
+            </button>
+          </div>
+        )}
       </div>
     )
   const view = query.data
