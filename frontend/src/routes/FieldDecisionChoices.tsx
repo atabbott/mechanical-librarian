@@ -37,7 +37,7 @@ export function ChoiceEvidencePanel({
       {corroboratingSources ? (
         <p>
           {corroboratingSources}{' '}
-          {corroboratingSources === 1 ? 'source corroborates' : 'sources corroborate'} this choice.
+          {corroboratingSources === 1 ? 'source confirms' : 'sources confirm'} this choice.
         </p>
       ) : null}
       {context?.evidence.length ? (
@@ -51,7 +51,7 @@ export function ChoiceEvidencePanel({
           ))}
         </ul>
       ) : (
-        <p>No owner-readable source observation is retained for this choice.</p>
+        <p>No source is recorded for this value.</p>
       )}
       {context?.limitations.length ? (
         <aside>
@@ -111,8 +111,8 @@ export function RecordedFieldObservations({
   // may be loaded, or they could not be read (#1519).
   if (!observations.length && !evidence.isError && !evidence.hasNextPage && !missing) return null
   return (
-    <section className="recorded-field-observations" aria-label="Recorded observations">
-      <h3>Recorded observations</h3>
+    <section className="recorded-field-observations" aria-label="Other source values">
+      <h3>Other source values</h3>
       {observations.length ? (
         <ul className="evidence-values">
           {observations.map((item, index) => (
@@ -125,31 +125,30 @@ export function RecordedFieldObservations({
           ))}
         </ul>
       ) : null}
-      {missing ? <p>Some referenced observations are unavailable.</p> : null}
+      {missing ? <p>Some source values could not be shown.</p> : null}
       {evidence.error instanceof BuildMismatchError ? (
-        <StaleBuildRead lead="The observations were not loaded." />
+        <StaleBuildRead lead="Source values were not loaded." />
       ) : evidence.isError ? (
         <p role="alert">
-          The observations could not be loaded.{' '}
+          Source values could not be loaded.{' '}
           <button
             type="button"
             onClick={() =>
               void (evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch())
             }
           >
-            Retry observations
+            Try again
           </button>
         </p>
       ) : null}
       {evidence.hasNextPage ? (
         <p>
-          More observations remain.{' '}
           <button
             type="button"
             disabled={evidence.isFetchingNextPage}
             onClick={() => void evidence.fetchNextPage()}
           >
-            {evidence.isFetchingNextPage ? 'Loading observations…' : 'Load more observations'}
+            {evidence.isFetchingNextPage ? 'Loading more…' : 'Show more source values'}
           </button>
         </p>
       ) : null}
@@ -158,6 +157,7 @@ export function RecordedFieldObservations({
 }
 export function MetadataChoice({
   advice,
+  automatic = false,
   retainedAdvice = false,
   context,
   current,
@@ -174,6 +174,8 @@ export function MetadataChoice({
   value,
 }: {
   advice?: ReviewField['descriptionAdvice']
+  // The selected badge names Automatic when the pick is Automatic's (#1765).
+  automatic?: boolean
   retainedAdvice?: boolean
   context: ChoiceContextView | undefined
   current: boolean
@@ -228,7 +230,9 @@ export function MetadataChoice({
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
-          {selected ? <b className="choice-chosen">Your choice</b> : null}
+          {selected ? (
+            <b className="choice-chosen">{automatic ? 'Automatic’s choice' : 'Your choice'}</b>
+          ) : null}
         </small>
         <strong>
           {longDescription
