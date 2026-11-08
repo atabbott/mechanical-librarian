@@ -109,9 +109,11 @@ export const writesOffSentence = (
   const held = others.filter((library) => libraryWritesHeld(destinations(library)))
   if (!on.length)
     return holding.length && held.length
-      ? `Writes are off; writes to ${libraryList(held.map(libraryName))} are held.`
+      ? `Writes are off. Writes to ${libraryList(held.map(libraryName))} are held.`
       : 'Writes are off.'
-  if (!others.length) return 'Writes are off.'
+  // Every library writes; a field still waiting on permission is said by the
+  // line under this sentence, not by calling writes off (#1765).
+  if (!others.length) return `Writes are on for ${libraryList(on.map(libraryName))}.`
   const waiting = others.filter((library) => !held.includes(library))
   return [
     `Writes are on for ${libraryList(on.map(libraryName))}`,
@@ -120,9 +122,9 @@ export const writesOffSentence = (
           `${libraryList(waiting.map(libraryName))} ${waiting.length === 1 ? 'needs' : 'need'} permission`,
         ]
       : []),
-    ...(held.length ? [`writes to ${libraryList(held.map(libraryName))} are held`] : []),
+    ...(held.length ? [`Writes to ${libraryList(held.map(libraryName))} are held`] : []),
   ]
-    .join('; ')
+    .join('. ')
     .concat('.')
 }
 
@@ -169,7 +171,7 @@ const lapsedSentence = (
 export const destinationReason = (state: Exclude<DestinationState, 'allowed'>, lapsed = false) =>
   state === 'not_ready'
     ? lapsed
-      ? 'nothing is prepared for it yet; you can give permission again once a change is prepared'
+      ? 'nothing is prepared for it yet, and you can give permission again once a change is prepared'
       : 'it is not ready yet'
     : writeHoldReasons[state]
 
@@ -226,17 +228,17 @@ export const readWriteConsent = (
             : 'complete'
   const excluded = scopes[0]?.excluded[0]
   // Unchecked readiness blocks nothing yet: each surface's own one sentence
-  // sends the owner to the review that checks it (#1286).
+  // sends the owner to the review that checks it (#1286). A failed backup check
+  // is said by the review's own status line, the one place it can show, so it
+  // adds no second sentence here (#1765).
   const blocked =
-    data.backup_ready === null
+    data.backup_ready !== true
       ? null
-      : !data.backup_ready
-        ? 'Backup readiness has not been confirmed, so writes cannot be enabled yet.'
-        : grants.length === 0
-          ? scopes.length === 0
-            ? 'No selected destination is eligible for writes right now.'
-            : `No destination is eligible yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
-          : null
+      : grants.length === 0
+        ? scopes.length === 0
+          ? 'No field can be given permission yet.'
+          : `No field can be written yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
+        : null
   return {
     state,
     scopes,
