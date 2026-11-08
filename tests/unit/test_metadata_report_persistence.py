@@ -465,7 +465,14 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v75",
+            "previous v75",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v75",
+            ),
+        ),
+        (
+            "immediate previous v76",
             lambda connection: create_prior_schema(
                 connection,
                 PREVIOUS_REPORT_SCHEMA,

@@ -202,6 +202,9 @@ brackets are GitHub issues.
   or narrator. Collection sidecars and CUE sheets naming other audio are too.
   One whose ASIN differs from the file's keeps only series and description.
   Sidecars that disagree drop that field (#1481).
+- **Clean rebuild required.** An audiobook sidecar whose author differs only
+  in how initials are written, such as "R.F." for "R. F.", is still set aside,
+  and its report now gives that as the reason (#1780).
 - **Clean rebuild required.** An audiobook sidecar file that starts with a
   byte-order mark is now also read without the mark. What that adds is recorded
   in the report and not used until a run measures how often such files occur

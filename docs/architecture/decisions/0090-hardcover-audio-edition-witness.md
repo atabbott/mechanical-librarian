@@ -123,7 +123,7 @@ side, in one of the library's languages and on `assets.hardcover.app` offers
 that cover as a `listed_edition` source, as an ebook's edition covers do
 ([ADR-0056](0056-edition-overflow-work-witness.md)). A portrait cover is
 never offered for an audiobook. A refused fan-out keeps no edition and offers
-no cover. This is `metadata-report-v77`, a clean rebuild under ADR-0013.
+no cover. This is `metadata-report-v78`, a clean rebuild under ADR-0013.
 
 ### The companion EPUB's book (#1468)
 

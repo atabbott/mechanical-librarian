@@ -204,11 +204,11 @@
       "category": "automatic",
       "change": "Kept Existing description.",
       "change_detail": "Kept Description as Existing description.",
-      "change_id": "automatic_decision_6d83c899a9a43e9adf6567afc29e24cbcc1b3875f5c3197964dff4d3c7379fc0",
-      "check_group": "report_9fd0a3ab861b4a3c757b9cb8b5fb99c7e88cbd431dfa7352a1a5c35870e30b98",
+      "change_id": "automatic_decision_8c7dc8cb9444d7a82435f9adf1178a7d9a72003fffcd7cf04214fb02cb324f5f",
+      "check_group": "report_e3f629da6ce053c337a9c5f0a0ec73da8f48d2f3e184a9fd2e83c4a49420c3fa",
       "destination": "description",
       "diagnostic": null,
-      "event_id": "automatic_decision_6d83c899a9a43e9adf6567afc29e24cbcc1b3875f5c3197964dff4d3c7379fc0",
+      "event_id": "automatic_decision_8c7dc8cb9444d7a82435f9adf1178a7d9a72003fffcd7cf04214fb02cb324f5f",
       "event_type": "metadata",
       "evidence": [
         {

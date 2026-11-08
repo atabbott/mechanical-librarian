@@ -15,6 +15,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.validation import exact_type, nonempty_text
+from mechanical_librarian.domain.validation import text as exact_text
 
 
 class WorkDispatchRung(StrEnum):
@@ -2322,6 +2323,35 @@ def _initials_fold(value: str) -> str:
     )
 
 
+def initials_folded_name(value: str) -> str | None:
+    """Return a name with its dotted initials folded, if it carries any (#1780).
+
+    The fold of #1260: "R. F. Example", "R.F. Example" and "R F Example" all
+    give "r f example".  A name with no token of dotted single letters gives
+    None, so whitespace or Unicode differences alone never make two names
+    agree.  So does a name whose dotted token holds a character that is not a
+    letter ("2.", a superscript, a Roman numeral), and a name that keeps no
+    token of two or more letters (initials only, or initials beside digits or
+    punctuation).
+    """
+    if not exact_text(value):
+        raise ValueError("initials fold input is invalid")
+    dotted = [
+        token
+        for token in _comparison_text(value).split()
+        if _DOTTED_INITIALS.fullmatch(token)
+    ]
+    if not dotted or not all(token[::2].isalpha() for token in dotted):
+        return None
+    folded = _initials_fold(value)
+    if not any(
+        sum(character.isalpha() for character in token) > 1
+        for token in folded.split(" ")
+    ):
+        return None
+    return folded
+
+
 def _initials_fold_lineage(
     local_authors: tuple[str, ...], provider_authors: tuple[str, ...]
 ) -> WorkTitleTransformationLineage | None:
@@ -2436,6 +2466,7 @@ __all__ = [
     "discovery_title_candidate",
     "fold_lone_apostrophes",
     "hardcover_query_spellings",
+    "initials_folded_name",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
     "series_label_segment",
