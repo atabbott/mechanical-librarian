@@ -384,10 +384,14 @@ assert (
 )
 
 
-# Every producer before #1451 kept no re-search mark on a preparation work.
+# Every producer before #1451 kept no re-search mark on a preparation work,
+# and every one before #1363 no refresh request.
 PRIOR_REVIEW_WORK_SQL = persistence_schema._REVIEW_WORK_SQL.replace(
     "research_not_before INTEGER CHECK(research_not_before IS NULL OR "
     "research_not_before>=0), ",
+    "",
+).replace(
+    "refresh_requested INTEGER NOT NULL DEFAULT 0 CHECK(refresh_requested IN (0,1)), ",
     "",
 )
 assert PRIOR_REVIEW_WORK_SQL != persistence_schema._REVIEW_WORK_SQL

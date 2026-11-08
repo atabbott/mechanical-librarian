@@ -193,6 +193,52 @@ def test_a_verified_switch_prepares_its_work_afresh_on_the_next_scan(
     )
 
 
+def _refresh_requested(effects: _EffectEnvironment) -> int:
+    connection = sqlite3.connect(effects.database_path)
+    try:
+        (value,) = connection.execute(
+            "SELECT refresh_requested FROM review_preparation_work"
+        ).fetchone()
+        return int(value)
+    finally:
+        connection.close()
+
+
+def test_a_switch_that_verifies_during_a_run_prepares_its_work_afresh_after_it(
+    effects: _EffectEnvironment,
+) -> None:
+    """The run under way observed the cover before the write and completes
+    with that report. The next scan, finding the catalogue unchanged, still
+    extracts again rather than carry that report forward, and the request is
+    spent once that extraction is claimed (#1363, Q17)."""
+    repository = effects.repository
+    repository.request_review_scan("primary", "books", "lib-1", "f" * 64, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None and discovery.stage == "discovery"
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (ENTRY,), 12)
+    running = repository.claim_review_pipeline_action(13)
+    assert running is not None and running.stage == "extraction"
+    application = _application(effects, [])
+    planned = _switch(effects, application)
+
+    assert application.apply(planned.plan.plan_id).state == "verified"
+    repository.publish(
+        _for(_audiobook("x"), "books", "book-1"),
+        lambda: True,
+        None,
+        _completes_without_identity(running, 14),
+    )
+    assert _drain(repository, 15) == []
+    assert _refresh_requested(effects) == 1
+
+    repository.request_review_scan("primary", "books", "lib-1", "f" * 64, 100)
+    assert _drain(repository, 101) == ["discovery", "extraction"]
+    assert _refresh_requested(effects) == 0
+    # Spent: the scan after that carries the fresh report forward.
+    repository.request_review_scan("primary", "books", "lib-1", "f" * 64, 200)
+    assert _drain(repository, 201) == ["discovery"]
+
+
 def test_the_original_reaches_a_report_only_once_its_switch_verifies(
     effects: _EffectEnvironment,
 ) -> None:

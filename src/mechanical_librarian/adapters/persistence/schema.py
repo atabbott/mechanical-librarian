@@ -692,6 +692,10 @@ _REVIEW_WORK_SQL = (
     # #1451: when an audiobook whose report admitted no recording is searched
     # again; NULL for every other item.
     "research_not_before INTEGER CHECK(research_not_before IS NULL OR research_not_before>=0), "
+    # #1363: a verified cover write asks for the next discovery to prepare the
+    # work afresh. It outlives a run already under way, which observed the
+    # cover before the write, and is cleared when an extraction is claimed.
+    "refresh_requested INTEGER NOT NULL DEFAULT 0 CHECK(refresh_requested IN (0,1)), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "CHECK((presentation_recovery_cycle_id IS NULL AND presentation_recovery_stage IS NULL AND presentation_recovery_outcome IS NULL) OR (presentation_recovery_cycle_id IS NOT NULL AND presentation_recovery_stage IS NOT NULL)), "
     "CHECK((state='complete')=(outcome IS NOT NULL)), "
