@@ -563,7 +563,7 @@ def test_a_policy_row_carries_its_own_exact_from_and_to() -> None:
     changes = [
         {
             "field": "Title layout",
-            "setting": "Review mode",
+            "setting": "Setting",
             "previous": "Ask me",
             "next": "Automatic",
         }
