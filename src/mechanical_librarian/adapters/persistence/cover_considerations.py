@@ -22,6 +22,9 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
     expand_cover_consideration,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.retained_covers import (
+    release_kept_retained_covers,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -909,6 +912,14 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             decision.occurred_at,
             decision.decision_id,
         )
+        if decision.outcome == "keep_current":
+            release_kept_retained_covers(
+                self._connection,
+                cast(str, connection_name),
+                cast(str, library_name),
+                cast(str, item_id),
+                decision.occurred_at,
+            )
 
 
 __all__ = ["SQLiteCoverConsiderationRepository"]
