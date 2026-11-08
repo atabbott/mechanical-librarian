@@ -42,19 +42,13 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 
-# The surfaces a folder carries rather than a file.  They are interpreted once
-# for the whole item -- the parent hands them to the first track's child only --
-# so they belong to no track and carry no track provenance.
-_FOLDER_SURFACES = frozenset(
-    {
-        AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
-        AudioEvidenceSurface.SIDECAR_LIBATION,
-        AudioEvidenceSurface.SIDECAR_OPF,
-        AudioEvidenceSurface.SIDECAR_NFO,
-        AudioEvidenceSurface.SIDECAR_CUE,
-        AudioEvidenceSurface.PATH_FOLDER,
-    }
-)
+# The surface a folder carries rather than a file.  It is interpreted once for
+# the whole item -- the parent hands it to the first track's child only -- so it
+# belongs to no track and carries no track provenance.  A folder-level
+# sidecar's facts are the same kind of evidence, and reach composition as an
+# `InspectedTrack`'s `folder_facts`; a sidecar named for a track is that
+# track's own and carries its provenance (#1481).
+_FOLDER_SURFACES = frozenset({AudioEvidenceSurface.PATH_FOLDER})
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +66,8 @@ class InspectedTrack:
     # string: a filesystem may state ``track-1`` or a literal U+FFFD itself.
     name_synthesized: bool = False
     name_repaired: bool = False
+    # Associated folder-level sidecar facts, carried by the first track only.
+    folder_facts: tuple[AudioInspectionFact, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +130,22 @@ def compose_audio_inspections(tracks: tuple[InspectedTrack, ...]) -> ComposedAud
     )
 
 
+def claim_reference_index(
+    composed: ComposedAudio, references: tuple[str, ...]
+) -> dict[tuple[str, str, str, str | None, str, str | None], str]:
+    """Map each composed fact's value key to the claim created from it.
+
+    A sidecar's kept facts are matched back to their claims through this, so
+    a manifest entry can name the claims its document contributed (#1481).
+    """
+    if len(references) != len(composed.facts):
+        raise ValueError("audio claim references do not match the composed facts")
+    return {
+        fact_value_key(fact): reference
+        for fact, reference in zip(composed.facts, references, strict=True)
+    }
+
+
 def attach_claim_references(
     composed: ComposedAudio, references: tuple[str, ...]
 ) -> tuple[AudioTrackDigest, ...]:
@@ -180,9 +192,10 @@ def _track_duration(inspection: AudioInspection) -> int | None:
     return None
 
 
-def _value_key(
+def fact_value_key(
     fact: AudioInspectionFact,
 ) -> tuple[str, str, str, str | None, str, str | None]:
+    """The key composition collapses identical evidence under."""
     return (
         fact.field.value,
         fact.surface.value,
@@ -208,22 +221,26 @@ def _compose_facts(
     positions: dict[tuple[str, str, str, str | None, str, str | None], int] = {}
     carried: list[list[int]] = []
     for track in tracks:
-        for fact in track.inspection.facts:
+        for fact, folder in (
+            *(
+                (value, value.surface in _FOLDER_SURFACES)
+                for value in track.inspection.facts
+            ),
+            *((value, True) for value in track.folder_facts),
+        ):
             if fact.field is AudioInspectionField.DURATION:
                 # Per-track running times are recorded on the manifest, never
                 # as claims: one item states one duration.
                 continue
-            key = _value_key(fact)
+            key = fact_value_key(fact)
             position = positions.get(key)
             if position is None:
                 positions[key] = len(order)
                 order.append(fact)
-                carried.append(
-                    [] if fact.surface in _FOLDER_SURFACES else [track.ordinal]
-                )
+                carried.append([] if folder else [track.ordinal])
                 continue
             ordinals = carried[position]
-            if fact.surface not in _FOLDER_SURFACES and track.ordinal not in ordinals:
+            if not folder and track.ordinal not in ordinals:
                 ordinals.append(track.ordinal)
     composed = _composed_duration(tracks, durations)
     facts = tuple(order) if composed is None else (composed, *order)
@@ -590,6 +607,10 @@ def _disagreement_observations(
         dict[int, set[tuple[str, str | None, str, str | None]]],
     ] = {}
     for fact, ordinals in zip(facts, provenance, strict=True):
+        if fact.basis == "sidecar":
+            # A sidecar named for a track is a document beside it, not a tag
+            # of it, so it states no cross-track tag disagreement.
+            continue
         for ordinal in ordinals:
             spoken.setdefault((fact.field, fact.surface), {}).setdefault(
                 ordinal, set()
@@ -615,7 +636,11 @@ def _disagreement_observations(
             )
     asins: dict[int, set[str]] = {}
     for fact, ordinals in zip(facts, provenance, strict=True):
-        if fact.field is not AudioInspectionField.ASIN or fact.canonical_value is None:
+        if (
+            fact.field is not AudioInspectionField.ASIN
+            or fact.canonical_value is None
+            or fact.basis == "sidecar"
+        ):
             continue
         for ordinal in ordinals:
             asins.setdefault(ordinal, set()).add(fact.canonical_value)
@@ -641,5 +666,7 @@ __all__ = [
     "ComposedAudio",
     "InspectedTrack",
     "attach_claim_references",
+    "claim_reference_index",
+    "fact_value_key",
     "compose_audio_inspections",
 ]

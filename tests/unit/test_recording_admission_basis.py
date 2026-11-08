@@ -1178,6 +1178,62 @@ def test_a_discovery_title_replays_only_on_the_carried_lane() -> None:
     assert not replays(asserted)
 
 
+def test_a_linked_route_replays_the_echoed_narrator_refusal() -> None:
+    """The linked route's narrator refusal reads an echoed narrator (#1481).
+
+    The file's only narrator credit was an `.opf` that repeated the target's,
+    so association withheld it. A linked product crediting somebody else
+    still names another recording, so `companion_isbn_work` does not replay.
+    """
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        asin_lane_admission_basis_replays,
+    )
+    from tests.unit.test_carried_recording_admission import _narrator_echo_audio
+
+    report = _companion_report()
+    lane, product = next(
+        (lane, candidate)
+        for observation in report.providers
+        if observation.provider == "enrichment"
+        for lane in observation.lanes
+        if lane.kind is ProviderQueryKind.ASIN
+        for candidate in observation.candidates
+    )
+    target = replace(
+        report.target,
+        fields=_fields(_C_TITLE, (_C_AUTHOR,), narrators=(_C_NARRATOR,)),
+    )
+    unvoiced = tuple(
+        claim
+        for claim in report.local_claims
+        if claim.kind is not ClaimKind.CONTRIBUTOR
+    )
+
+    def replays(candidate: ProviderCandidate) -> bool:
+        return asin_lane_admission_basis_replays(
+            "companion_isbn_work",
+            lane,
+            candidate,
+            target=target,
+            local_claims=unvoiced,
+            audio=_narrator_echo_audio(),
+            providers=report.providers,
+            companion=report.companion,
+            library_languages=report.library_languages,
+        )
+
+    assert replays(product)
+    other = _candidate(
+        "enrichment",
+        (_LINKED,),
+        title="A Mangled Folder Title",
+        author="Zed Stranger",
+        narrator="Someone Else",
+        duration=f"{_C_SECONDS}.000",
+    )
+    assert not replays(other)
+
+
 def test_a_companion_isbn_value_for_an_asin_it_did_not_link_is_refused() -> None:
     """The carried `_REGION` lane asked for an ASIN the book does not list."""
     _refused(
@@ -1194,7 +1250,7 @@ def test_a_companion_isbn_value_for_an_asin_it_did_not_link_is_refused() -> None
 def test_a_current_round_trip_keeps_every_lane_value() -> None:
     for report in (_carried_leaf(), _regional_report(), _companion_report()):
         data = json.loads(report.to_json())
-        assert "metadata-report-v74" == data["schema_version"]
+        assert "metadata-report-v75" == data["schema_version"]
         stated = {
             member["admission_basis"]
             for observation in data["providers"]

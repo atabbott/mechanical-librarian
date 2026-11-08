@@ -284,7 +284,6 @@ export const audioSurfaceLabels = {
   mp4_freeform_tone: 'MP4 custom tags',
   id3_frame: 'ID3 tags',
   id3_user_text: 'ID3 custom tags',
-  sidecar_audiobookshelf: 'Audiobookshelf sidecar file',
   sidecar_libation: 'Libation sidecar file',
   sidecar_opf: 'OPF sidecar file',
   sidecar_nfo: 'NFO sidecar file',

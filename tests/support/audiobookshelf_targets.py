@@ -178,6 +178,7 @@ def synthetic_audio_file(
     return {
         "ino": inode,
         "metadata": {
+            "filename": name.rsplit("/", 1)[-1],
             "relPath": name,
             "path": f"/library/{name}",
             "size": 1,

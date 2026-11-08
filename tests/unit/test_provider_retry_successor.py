@@ -143,7 +143,7 @@ class _Inspector:
     def __init__(self, current=True):
         self.current = current
 
-    def unchanged(self, *_args):
+    def unchanged(self, *_args, **_keywords):
         return self.current
 
 
@@ -2012,7 +2012,7 @@ def test_an_excluded_audiobook_retry_closes_stale_before_any_egress() -> None:
         def read(self, *_args: object) -> object:
             pytest.fail("the target was read")
 
-        def unchanged(self, *_args: object) -> bool:
+        def unchanged(self, *_args: object, **_keywords: object) -> bool:
             pytest.fail("the media was inspected")
 
     def resolver(*_args: object) -> ConfiguredProviderRetry:

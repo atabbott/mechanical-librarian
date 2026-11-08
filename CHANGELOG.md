@@ -184,6 +184,12 @@ brackets are GitHub issues.
 - Tooling: a read-only workbench script lists Library links to the ebook
   series fields where only Hardcover names a series and it differs from yours,
   so you can label them in the qualification run (#1811).
+- **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
+  `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
+  another audio or ebook file, or it lacks the audiobook's title and an author
+  or narrator. Collection sidecars and CUE sheets naming other audio are too.
+  One whose ASIN differs from the file's keeps only series and description.
+  Sidecars that disagree drop that field (#1481).
 - A paused field's reason is no longer repeated beside it as a comparison
   condition (#1802).
 

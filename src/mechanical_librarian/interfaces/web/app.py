@@ -1256,7 +1256,6 @@ class _ReportEmbeddedCover(_ClosedModel):
             "mp4_freeform_tone",
             "id3_frame",
             "id3_user_text",
-            "sidecar_audiobookshelf",
             "sidecar_libation",
             "sidecar_opf",
             "sidecar_nfo",

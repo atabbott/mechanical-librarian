@@ -156,6 +156,24 @@ def bounded_integer(minimum: int, maximum: int | None = None) -> FieldCheck:
     return check
 
 
+def tuple_of(member: FieldCheck, maximum: int | None = None) -> FieldCheck:
+    """Accept an exact ``tuple`` of at most ``maximum`` members, each valid."""
+
+    def check(value: object) -> bool:
+        if type(value) is not tuple:
+            return False
+        return (maximum is None or len(value) <= maximum) and all(
+            member(item) for item in value
+        )
+
+    return check
+
+
+def optional(check: FieldCheck) -> FieldCheck:
+    """Accept ``None``, or a value the given check accepts."""
+    return lambda value: value is None or check(value)
+
+
 non_negative_integer = bounded_integer(0)
 owner_session_lifetime = bounded_integer(
     OWNER_SESSION_LIFETIME_MINIMUM, OWNER_SESSION_LIFETIME_MAXIMUM
