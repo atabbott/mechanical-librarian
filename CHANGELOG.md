@@ -177,6 +177,10 @@ brackets are GitHub issues.
   what to check, the writing box says whether a change was written, and a
   cover comparison that could not be loaded names the button that tries again
   (#1765, #1791).
+- Description work saved while preparation is paused now starts as soon as
+  preparation resumes. Before, it waited for the next library poll, and a
+  library whose last scan had failures was not polled at all. Resuming also
+  retries that library's failed items (#1785).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
