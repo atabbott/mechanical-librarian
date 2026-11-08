@@ -13,7 +13,10 @@ value and reference of each ISBN, title and creator claim, the persisted
 Hardcover observation (its status, lanes, lane candidates and the scopes of
 its candidates' claims, its request accounting and overflow witness), and
 which Hardcover candidates identifier evidence names. A report missing any of
-them counts as ``unreadable``; nothing is converted.
+them counts as ``unreadable`` and adds nothing to any other figure; nothing is
+converted. An ebook whose Hardcover binding was disabled was never asked and
+would not be asked now, so it is counted in ``ebooks_with_hardcover_disabled``
+and left out of every dispatch figure.
 
 The document reports:
 
@@ -62,7 +65,7 @@ import json
 import sqlite3
 import sys
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TextIO, cast
 from urllib.parse import quote
@@ -77,6 +80,7 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
     ProviderQueryKind,
+    ProviderStatus,
     ReportValueError,
     TargetDestination,
     TargetField,
@@ -123,6 +127,7 @@ class EbookTally:
     persisted_witnesses: int = 0
     losing_edition_claim: int = 0
     q5: int = 0
+    disabled: int = 0
 
 
 @dataclass
@@ -130,6 +135,15 @@ class AudiobookTally:
     reports: int = 0
     work_lanes: int = 0
     candidate_limit_work_lanes: int = 0
+
+
+def _merge(
+    total: EbookTally | AudiobookTally, part: EbookTally | AudiobookTally
+) -> None:
+    """Add one report's tally to the running total once the report is readable."""
+    for member in fields(total):
+        name = member.name
+        setattr(total, name, getattr(total, name) + getattr(part, name))
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
@@ -300,9 +314,13 @@ def _candidate_identity(candidate: dict[str, object]) -> str:
 
 
 def _replay_ebook(document: object, tally: EbookTally) -> None:
-    title, fields = _target_fields(document)
+    title, target = _target_fields(document)
     claims = _local_claims(document)
     observation = _hardcover(document)
+    if ProviderStatus(_text(_at(observation, "status"))) is ProviderStatus.DISABLED:
+        # A disabled binding is never asked, before or after this change.
+        tally.disabled += 1
+        return
     accounting = _at(observation, "request_accounting")
     recorded_initial = _count(accounting, "initial_dispatches")
     recorded_undispatched = _count(accounting, "undispatched_incomplete")
@@ -322,7 +340,7 @@ def _replay_ebook(document: object, tally: EbookTally) -> None:
 
     try:
         plan = metadata_discovery_plan(
-            TargetSnapshot("ebook", title or None, (), fields=fields), claims
+            TargetSnapshot("ebook", title or None, (), fields=target), claims
         )
     except (MetadataReportError, ReportValueError, ValueError) as error:
         raise Unreadable from error
@@ -428,9 +446,13 @@ def replay(connection: sqlite3.Connection) -> dict[str, object]:
             document = json.loads(raw)
             media = _text(_at(document, "file", "format"))
             if media == "epub":
-                _replay_ebook(document, ebook)
+                ebook_part = EbookTally()
+                _replay_ebook(document, ebook_part)
+                _merge(ebook, ebook_part)
             else:
-                _replay_audiobook(document, audiobook)
+                audiobook_part = AudiobookTally()
+                _replay_audiobook(document, audiobook_part)
+                _merge(audiobook, audiobook_part)
         except (Unreadable, ValueError, TypeError):
             unreadable += 1
     planned_total = sum(key * count for key, count in ebook.planned.items())
@@ -442,6 +464,7 @@ def replay(connection: sqlite3.Connection) -> dict[str, object]:
             "read": read,
             "unreadable": unreadable,
             "ebooks": sum(ebook.planned.values()),
+            "ebooks_with_hardcover_disabled": ebook.disabled,
             "audiobooks": audiobook.reports,
         },
         "ebook": {

@@ -52,6 +52,7 @@ def _document(
     candidates: list[dict[str, object]] | None = None,
     evidence: list[dict[str, object]] | None = None,
     media: str = "epub",
+    status: str = "candidates",
 ) -> dict[str, object]:
     return {
         "file": {"format": media},
@@ -75,7 +76,7 @@ def _document(
             {
                 "authority": "hardcover",
                 "provider": "hardcover-main",
-                "status": "candidates",
+                "status": status,
                 "edition_enrichment_overflow": None,
                 "request_accounting": {
                     "initial_dispatches": initial,
@@ -134,9 +135,13 @@ def test_the_output_is_aggregate_only() -> None:
     text = json.dumps(result)
 
     assert SCHEMA == result["schema"]
-    assert {"read": 1, "unreadable": 0, "ebooks": 1, "audiobooks": 0} == result[
-        "reports"
-    ]
+    assert {
+        "read": 1,
+        "unreadable": 0,
+        "ebooks": 1,
+        "ebooks_with_hardcover_disabled": 0,
+        "audiobooks": 0,
+    } == result["reports"]
     assert {"total": 2, "distribution": {"2": 1}} == _ebook(result)[
         "planned_initial_dispatches"
     ]
@@ -150,9 +155,44 @@ def test_a_report_missing_a_key_path_is_unreadable_not_converted() -> None:
 
     result = replay(_store(broken, _document(authors=["Ada Example"])))
 
-    assert {"read": 2, "unreadable": 1, "ebooks": 1, "audiobooks": 0} == result[
-        "reports"
+    assert {
+        "read": 2,
+        "unreadable": 1,
+        "ebooks": 1,
+        "ebooks_with_hardcover_disabled": 0,
+        "audiobooks": 0,
+    } == result["reports"]
+
+
+def test_a_report_rejected_late_adds_nothing_to_any_figure() -> None:
+    # The WORK lane names a candidate the observation does not list, which is
+    # found only after the dispatch figures are worked out.
+    orphan = _document(
+        authors=["Ada Example"],
+        lanes=[_lane("work", "candidate_limit_exceeded", "hardcover-edition-9")],
+        initial=0,
+    )
+
+    with_orphan = replay(_store(orphan, _document(authors=["Bea"], initial=1)))
+    alone = replay(_store(_document(authors=["Bea"], initial=1)))
+
+    assert 1 == cast("dict[str, int]", with_orphan["reports"])["unreadable"]
+    assert _ebook(alone) == _ebook(with_orphan)
+    assert True is _ebook(with_orphan)["within_bound"]
+
+
+def test_a_disabled_binding_counts_no_dispatch_on_either_side(tmp_path: Path) -> None:
+    disabled = _document(authors=["Ada Example"], initial=0, status="disabled")
+
+    status, result = _exit(tmp_path, disabled)
+
+    assert 0 == status
+    assert 1 == result["reports"]["ebooks_with_hardcover_disabled"]
+    assert 0 == result["reports"]["ebooks"]
+    assert {"total": 0, "distribution": {}} == _ebook(result)[
+        "planned_initial_dispatches"
     ]
+    assert True is _ebook(result)["within_bound"]
 
 
 def test_a_recorded_work_lane_removed_counts_differently() -> None:
