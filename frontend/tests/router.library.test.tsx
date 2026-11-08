@@ -279,6 +279,46 @@ it('retries unavailable Works while the Library shell remains usable', async () 
   )
 })
 
+it.each(['mismatch', 'success', 'held read'] as const)(
+  'moves focus to what replaces the Works Try again after a %s (#1742)',
+  async (outcome) => {
+    const user = userEvent.setup()
+    let pressed = false
+    let release: () => void = () => undefined
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => {
+      if (!pressed) throw new ApiError(503, 'unavailable')
+      if (outcome === 'mismatch') throw new BuildMismatchError()
+      if (outcome === 'held read')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return library
+    })
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    const list = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('.library-work-list')
+      if (!found) throw new Error('the works list is required')
+      return found
+    })
+    await within(list).findByText(/^Works could not be loaded\./u)
+    pressed = true
+    await user.click(within(list).getByRole('button', { name: 'Try again' }))
+    if (outcome === 'held read') {
+      // A first-read retry renders the loading line in place of Try again.
+      const loading = await within(list).findByText('Loading works…')
+      expect(document.body).not.toHaveFocus()
+      expect(document.activeElement).toContainElement(loading)
+      release()
+    }
+    const target =
+      outcome === 'mismatch'
+        ? await within(list).findByRole('button', { name: 'Reload' })
+        : await screen.findByRole('heading', { name: 'Works', level: 2 })
+    await waitFor(() => expect(target).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  },
+)
+
 it.each(['/library?lens=all', '/library?lens=all&q=needle'])(
   'offers a reload, not another try, when Works meet a newer build at %s',
   async (path) => {
@@ -448,6 +488,9 @@ it('moves focus to Reload when both selected-work reads meet a newer build, the 
   await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(http.getAttention).toHaveBeenCalledTimes(2))
   await screen.findByText('Loading selected work…')
+  // The workspace holds focus while the reads are pending (#1742).
+  expect(document.body).not.toHaveFocus()
+  expect(document.querySelector('#main-content .workspace-detail')).toHaveFocus()
   releaseWorks()
   await screen.findByText('Selected work was not loaded.', {
     exact: false,
@@ -482,6 +525,132 @@ it('moves focus to Reload when a selected detail retry meets a newer build (#128
   await waitFor(() =>
     expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
   )
+  expect(document.body).not.toHaveFocus()
+})
+
+it('holds focus in the workspace while a selected detail retry reads (#1742)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  let release: () => void = () => undefined
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      if (!retried) throw new ApiError(503, 'unavailable')
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      throw new BuildMismatchError()
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  await screen.findByText('Loading selected work…')
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  expect(document.body).not.toHaveFocus()
+  expect(workspace).toHaveFocus()
+  release()
+  await waitFor(() =>
+    expect(within(workspace).getByRole('button', { name: 'Reload' })).toHaveFocus(),
+  )
+})
+
+it('keeps focus on a selected detail Try again that stays mounted while it reads and fails again (#1742)', async () => {
+  const user = userEvent.setup()
+  const base = createHttp()
+  const updates = createLiveStream()
+  let failing = false
+  let release: () => void = () => undefined
+  let held = false
+  const http: ReviewHttp = {
+    ...base,
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (...args) => {
+      if (!failing) return base.getCaseDetail(...args)
+      if (held)
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      throw new ApiError(503, 'unavailable')
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+  expect(
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
+  ).toBeVisible()
+  // A background read of the loaded case fails: the case keeps its data, so its
+  // retry stays in error, and Try again stays mounted, while it reads.
+  failing = true
+  await act(async () => {
+    updates.announce({ sequence: 1, subject: 'case-1', topic: 'case' })
+  })
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  const retry = within(failure).getByRole('button', { name: 'Try again' })
+  held = true
+  retry.focus()
+  await user.click(retry)
+  await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(3))
+  expect(retry).toBeInTheDocument()
+  expect(retry).toHaveFocus()
+  await act(async () => {
+    release()
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(within(failure).getByRole('button', { name: 'Try again' })).toHaveFocus()
+  expect(document.body).not.toHaveFocus()
+})
+
+it('moves focus to Reload when a lineage check outlasts a selected-work retry (#1742)', async () => {
+  const user = userEvent.setup()
+  let retried = false
+  let released = false
+  const heldWorks: (() => void)[] = []
+  let releaseSuccessor: (successor: string | null) => void = () => undefined
+  const updates = createLiveStream()
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getLibrary: vi.fn(async () => {
+      if (!retried) throw new ApiError(503, 'unavailable')
+      if (!released) await new Promise<void>((resolve) => heldWorks.push(resolve))
+      throw new BuildMismatchError()
+    }),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      if (retried) throw new BuildMismatchError()
+      throw new ApiError(503, 'unavailable')
+    }),
+    getCaseSuccessor: vi.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          releaseSuccessor = resolve
+        }),
+    ),
+  }
+  renderRoute('/library?lens=all&preview=case-1', http, updates)
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  retried = true
+  await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByText('Loading selected work…')).toBeVisible()
+  // A Library update with no subject starts a lineage check while the retry reads.
+  await act(async () => {
+    updates.announce({ sequence: 1, subject: null, topic: 'library' })
+  })
+  await waitFor(() => expect(http.getCaseSuccessor).toHaveBeenCalled())
+  await act(async () => {
+    released = true
+    for (const release of heldWorks) release()
+  })
+  // Every read has failed, but the check still shows the work as loading.
+  expect(screen.getByText('Loading selected work…')).toBeVisible()
+  await act(async () => {
+    releaseSuccessor(null)
+  })
+  const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
+  if (!workspace) throw new Error('the selected work workspace is required')
+  const reload = await within(workspace).findByRole('button', {
+    name: 'Reload',
+  })
+  await waitFor(() => expect(reload).toHaveFocus())
   expect(document.body).not.toHaveFocus()
 })
 
@@ -2682,6 +2851,82 @@ describe('Library route', () => {
     expect(whole).not.toHaveTextContent('Only the beginning is shown')
     vi.stubGlobal('matchMedia', previousMatchMedia)
   })
+
+  it.each(['mismatch', 'success', 'held read'] as const)(
+    'moves focus to what replaces the recorded evidence Try again after a %s (#1742)',
+    async (outcome) => {
+      const user = userEvent.setup()
+      let release: () => void = () => undefined
+      const firstWork = library.works[0]
+      if (!firstWork) throw new Error('library fixture requires one work')
+      const baseWork = { ...firstWork }
+      delete baseWork.reviewCaseId
+      const recorded = {
+        ...baseWork,
+        id: 'library_work_retry',
+        workId: 'library_work_retry',
+        title: 'Retried evidence work',
+        attentionCount: 0,
+        attention: 'no_attention_needed' as const,
+        detailUrl: '/api/v1/library/report?connection=primary&library=ebooks&item=item-6',
+        detailKind: 'report' as const,
+        summary: {
+          state: 'no_decision_recorded' as const,
+          reason: 'No review decision is recorded.',
+          fields: [],
+        },
+      }
+      let reads = 0
+      renderRoute('/library?lens=all&work=library_work_retry', {
+        ...createHttp(),
+        getReportDetail: vi.fn<ReviewHttp['getReportDetail']>(async () => {
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          if (outcome === 'held read')
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+          return {
+            chapters: [],
+            chaptersTruncated: false,
+            coverPresent: false,
+            coverSurface: null,
+            evidence: [],
+            evidenceTruncated: false,
+            item: 'item-6',
+            library: 'ebooks',
+            mediaHealth: [],
+            mediaKind: 'epub' as const,
+            providerSources: [],
+            providerEvidence: [],
+            providerEvidenceTruncated: false,
+            audiobookReviewScope: null,
+            recordingIdentityBasis: null,
+            recordingAdmissionBasis: null,
+            reportId: 'report_' + 'c'.repeat(64),
+            title: 'Retried evidence work',
+          }
+        }),
+        getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, recorded] })),
+      })
+      const failure = await screen.findByText(/Recorded evidence could not be loaded\./u)
+      await user.click(within(failure).getByRole('button', { name: 'Try again' }))
+      if (outcome === 'held read') {
+        // A first-read retry renders the loading line in place of Try again.
+        const loading = await screen.findByText('Loading recorded evidence…')
+        expect(document.body).not.toHaveFocus()
+        expect(document.activeElement).toContainElement(loading)
+        release()
+      }
+      const target =
+        outcome === 'mismatch'
+          ? await screen.findByRole('button', { name: 'Reload' })
+          : await screen.findByRole('heading', { name: 'Recorded evidence' })
+      await waitFor(() => expect(target).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    },
+  )
 
   it('does not let a retained report hide the latest real preparation failure', async () => {
     const firstWork = library.works[0]
@@ -8265,6 +8510,137 @@ describe('Library route', () => {
     expect(recordDecision).toHaveBeenCalledOnce()
   })
 
+  describe('a stale cover choice on an earlier build (#1742)', () => {
+    const staleCover = (getCaseSuccessor: ReviewHttp['getCaseSuccessor']) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('cover stale fixture requires a field')
+      const candidate = (suffix: string, incumbent: boolean) => ({
+        artifactId: `cover_${suffix.repeat(64)}`,
+        deterministicCitations: [`citation-${suffix}`],
+        deterministicRank: incumbent ? null : 0,
+        deterministicRankKey: [1, 0, -960000, -800, -1200, incumbent ? 0 : 1, suffix],
+        height: 1200,
+        identity: { outcome: 'verified_work_match' as const },
+        incumbent,
+        matchState: 'same_book' as const,
+        observation: null,
+        originalSha256: suffix.repeat(64),
+        ordinal: incumbent ? 0 : 1,
+        previewSha256: suffix.repeat(64),
+        reference: `cover_transport_ref_${suffix.repeat(64)}`,
+        selectable: !incumbent,
+        manualEligible: !incumbent,
+        sourceKinds: [incumbent ? ('epub' as const) : ('open_library' as const)],
+        state: incumbent ? ('excluded' as const) : ('acceptable' as const),
+        width: 800,
+      })
+      const cover: CaseDetailView = {
+        ...detail,
+        id: 'case-1',
+        fields: [
+          {
+            ...base,
+            destination: 'cover' as const,
+            currentValue: `cover_${'1'.repeat(64)}`,
+            currentRaw: `cover_${'1'.repeat(64)}`,
+            proposedValues: [{ kind: 'cover', value: `cover_${'2'.repeat(64)}` }],
+            proposalId: 'proposal-case-1',
+            targetFingerprint: 'fingerprint-case-1',
+            coverConsideration: {
+              id: `cover_consideration_${'2'.repeat(64)}`,
+              choiceContexts: [],
+              current: true,
+              candidates: [candidate('1', true), candidate('2', false)],
+              incumbent: { reference: `cover_transport_ref_${'1'.repeat(64)}`, state: 'available' },
+              omissions: [],
+              policy: {
+                recommended_candidate_reference: `cover_transport_ref_${'2'.repeat(64)}`,
+                acceptable_candidate_references: [`cover_transport_ref_${'2'.repeat(64)}`],
+                status: 'recommended',
+                reasons: [],
+              },
+              policyPreferences: {
+                avoidPromotionalText: false,
+                avoidTieInBranding: false,
+                preferMinimalComposition: false,
+              },
+              policyReference: `cover_policy_${'3'.repeat(64)}`,
+              providerFetching: false,
+              ready: true,
+              reviewerAccessRevision: null,
+              reviewerEngine: null,
+              reviewerModel: null,
+              reviewerStatus: 'unavailable',
+              reviewerUnavailableReason: null,
+              targetFingerprint: 'fingerprint-case-1',
+            },
+          },
+        ],
+      }
+      const http: ReviewHttp = {
+        ...createHttp(),
+        recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
+          throw new ApiError(409, 'stale')
+        }),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => cover),
+        getCaseSuccessor,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      return http
+    }
+    const openNotice = async () => {
+      const user = userEvent.setup()
+      const proposed = await screen.findByRole('radio', { name: /Open Library cover/u })
+      await routeSettled()
+      await user.click(proposed)
+      const review = await screen.findByRole('button', { name: 'Review current comparison' })
+      return { user, review }
+    }
+
+    it('offers the reload when the current comparison meets a newer build', async () => {
+      staleCover(
+        vi.fn<ReviewHttp['getCaseSuccessor']>(async () => {
+          throw new BuildMismatchError()
+        }),
+      )
+      const { user, review } = await openNotice()
+      await user.click(review)
+      const reload = await screen.findByRole('button', { name: 'Reload' })
+      const lead = screen.getByText('The current comparison was not loaded.', { exact: false })
+      expect(lead).not.toHaveAttribute('role')
+      expect(lead.closest('[role="alert"]')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Review current comparison' })).toBeNull()
+      expect(screen.queryByText(/The current comparison could not be loaded\./u)).toBeNull()
+      expect(
+        screen.getByText(
+          'This cover comparison changed before your choice was recorded. No cover was changed.',
+        ),
+      ).toBeVisible()
+      await waitFor(() => expect(reload).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    })
+
+    it('keeps Review current comparison focusable while it reads', async () => {
+      let release: (successor: string | null) => void = () => undefined
+      staleCover(
+        vi.fn<ReviewHttp['getCaseSuccessor']>(
+          () =>
+            new Promise((resolve) => {
+              release = resolve
+            }),
+        ),
+      )
+      const { user, review } = await openNotice()
+      await user.click(review)
+      const loading = await screen.findByRole('button', { name: 'Loading current comparison…' })
+      expect(loading).toBe(review)
+      expect(loading).not.toBeDisabled()
+      expect(loading).toHaveAttribute('aria-disabled', 'true')
+      expect(loading).toHaveFocus()
+      await act(async () => release(null))
+    })
+  })
+
   it.each(['pointer', 'keyboard'])(
     'does not carry failed same-field advancement into a manual field change via %s',
     async (input) => {
@@ -8496,7 +8872,8 @@ describe('Library route', () => {
     expect(retry).toHaveFocus()
     await user.click(retry)
     expect(await screen.findByText('Loading selected work…')).toBeVisible()
-    expect(document.body).toHaveFocus()
+    // The workspace holds focus while the retry reads, not the page (#1742).
+    expect(document.querySelector('#main-content .workspace-detail')).toHaveFocus()
     await act(async () => {
       release?.(detail)
     })
@@ -8527,7 +8904,8 @@ describe('Library route', () => {
     retry.focus()
     await user.click(retry)
     expect(await screen.findByText('Loading selected work…')).toBeVisible()
-    expect(document.body).toHaveFocus()
+    // The workspace holds focus while the retry reads, not the page (#1742).
+    expect(document.querySelector('#main-content .workspace-detail')).toHaveFocus()
     await act(async () => {
       rejectRetry?.(new Error('retry selected detail failure'))
     })
@@ -9195,6 +9573,57 @@ describe('Library route', () => {
     expect(within(rail).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
+  it.each(['success', 'mismatch'] as const)(
+    'moves focus to what replaces a load-more Try again after a %s (#1742)',
+    async (outcome) => {
+      const user = userEvent.setup()
+      const row = (id: string, title: string) => ({
+        id,
+        destination: 'title' as const,
+        title,
+        authors: [],
+        library: 'Books',
+        mediaKind: 'epub' as const,
+        classificationReason: 'Canonical library attention reason',
+        notices: [],
+        provenance: [],
+        workAttentionCount: 1,
+      })
+      let more = 0
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getAttention: vi.fn(async (search: AttentionSearch) => {
+          if (!search.cursor)
+            return { total: 2, nextCursor: 'next', items: [row('case-1', 'A Book')] }
+          more += 1
+          if (more === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { total: 2, items: [row('case-2', 'Second queued work')] }
+        }),
+      }
+      renderRoute('/library?lens=all&attention=open', http)
+      const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+      await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
+      const alert = await within(rail).findByRole('alert')
+      await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+      if (outcome === 'success') {
+        // The retry runs as a Load more press, so the first row it adds takes focus (#1284).
+        await waitFor(() =>
+          expect(within(rail).getByRole('button', { name: /Second queued work$/u })).toHaveFocus(),
+        )
+      } else {
+        const reload = await within(rail).findByRole('button', {
+          name: 'Reload',
+        })
+        await waitFor(() => expect(reload).toHaveFocus())
+        const lead = within(rail).getByText('More attention was not loaded.', { exact: false })
+        expect(lead).not.toHaveAttribute('role')
+        expect(lead.closest('[role="alert"]')).toBeNull()
+      }
+      expect(document.body).not.toHaveFocus()
+    },
+  )
+
   it.each(['Close', 'toggle', 'Escape'] as const)(
     'cancels the opening reveal when %s closes the rail before it runs (#1563)',
     async (closer) => {
@@ -9266,6 +9695,42 @@ describe('Library route', () => {
       expect(scrollsOf(heading)).toBe(0)
     },
   )
+
+  it('leaves focus where the owner moved it in the rail when the opening reveal runs late (#1742)', async () => {
+    const user = userEvent.setup()
+    renderRoute('/library?lens=all', createHttp())
+    const toggle = await screen.findByRole('button', { name: /Attention/ })
+    await routeSettled()
+    // A slow page can run the reveal's two frames after the owner has already
+    // moved into the rail, as a Load more whose page lands first does.
+    const queued = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      queued.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      queued.delete(id)
+    })
+    const runFrames = () => {
+      // The reveal queues its second frame from its first.
+      while (queued.size) {
+        const callbacks = [...queued.values()]
+        queued.clear()
+        for (const callback of callbacks) callback(0)
+      }
+    }
+    await user.click(toggle)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    const heading = within(rail).getByRole('heading', { name: 'Attention' })
+    // Tab from the toggle reaches the rail's first control, its Close.
+    const close = within(rail).getByRole('button', { name: 'Close' })
+    act(() => close.focus())
+    expect(queued.size).toBeGreaterThan(0)
+    act(runFrames)
+    expect(close).toHaveFocus()
+    expect(heading).not.toHaveFocus()
+  })
 
   it.each([
     ['wide, with no selection', '/library?lens=all', false],
@@ -14677,7 +15142,10 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const completeUnderSearch = async (
     entry: string,
     summary: (decided: boolean) => Promise<LibraryView>,
-    attention?: (decided: boolean) => ReturnType<ReviewHttp['getAttention']>,
+    attention?: (
+      decided: boolean,
+      search: AttentionSearch,
+    ) => ReturnType<ReviewHttp['getAttention']>,
   ) => {
     const user = userEvent.setup()
     let decided = false
@@ -14689,9 +15157,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       getLibrary: vi.fn(async (search: LibrarySearch) =>
         search.q ? counted(decided ? 0 : 1, 1) : summary(decided),
       ),
-      getAttention: vi.fn(async () =>
+      getAttention: vi.fn(async (search: AttentionSearch) =>
         attention
-          ? attention(decided)
+          ? attention(decided, search)
           : decided
             ? { total: 0, items: [] }
             : { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] },
@@ -14816,6 +15284,43 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(within(footer).getByRole('button', { name: 'Try again' })).toBeVisible()
     expect(within(footer).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
+
+  it.each([
+    ['first page', 'mismatch'],
+    ['first page', 'next work'],
+    ['next page', 'mismatch'],
+    ['next page', 'next work'],
+  ] as const)(
+    'V4: the %s next work retry hands focus to what replaced it after a %s (#1742)',
+    async (path, outcome) => {
+      let reads = 0
+      const footer = await completeUnderSearch(
+        '/library?lens=all&q=needle&preview=case-1&field=title',
+        async (decided) => counted(decided ? 0 : 1, 4),
+        async (decided, search) => {
+          const decidedItem = railItem('case-1', 'title', 'A Book', 1)
+          if (!decided) return { total: 1, items: [decidedItem] }
+          // The next-page path reads the first page, then fails on the next.
+          if (path === 'next page' && !search.cursor)
+            return { total: 2, nextCursor: 'next', items: [decidedItem] }
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          return { total: 1, items: [railItem('case-2', 'title', 'Another Book', 1)] }
+        },
+      )
+      if (!footer) throw new Error('completion footer is required')
+      await userEvent
+        .setup()
+        .click(await within(footer).findByRole('button', { name: 'Try again' }))
+      const target =
+        outcome === 'mismatch'
+          ? await within(footer).findByRole('button', { name: 'Reload' })
+          : await within(footer).findByRole('button', { name: 'Review next work →' })
+      await waitFor(() => expect(target).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    },
+  )
 
   it('V5: the default landing and the summary share one request', async () => {
     const user = userEvent.setup()
@@ -15076,6 +15581,126 @@ describe('a focused field decision (#1519)', () => {
     expect(within(region).getByRole('button', { name: 'Reload' })).toBeVisible()
     expect(within(region).queryByText(/Source values could not be loaded\./u)).toBeNull()
     expect(within(region).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it.each(['mismatch', 'success', 'held read'] as const)(
+    'moves focus to what replaces the source values Try again after a %s (#1742)',
+    async (outcome) => {
+      const user = userEvent.setup()
+      let reads = 0
+      let release: () => void = () => undefined
+      open(focused(), {
+        getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+          reads += 1
+          if (reads === 1) throw new ApiError(503, 'unavailable')
+          if (outcome === 'mismatch') throw new BuildMismatchError()
+          if (outcome === 'held read')
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+          return {
+            items: [
+              {
+                destinations: ['title'],
+                observation: 'Title: Another title',
+                role: 'external_observation',
+                source: 'Open Library',
+              },
+            ],
+            missingLineageCount: 0,
+            sourceLedger: [],
+          }
+        }),
+      })
+      const region = await screen.findByRole('region', { name: 'Other source values' })
+      await user.click(await within(region).findByRole('button', { name: 'Try again' }))
+      if (outcome === 'held read') {
+        // A first-page retry keeps the section, and its heading, while it reads.
+        await within(region).findByText('Loading source values…')
+        expect(region).toBeInTheDocument()
+        expect(within(region).getByRole('heading', { name: 'Other source values' })).toHaveFocus()
+        expect(document.body).not.toHaveFocus()
+        release()
+        await within(region).findByText('Title: Another title')
+      }
+      const target =
+        outcome === 'mismatch'
+          ? await within(region).findByRole('button', { name: 'Reload' })
+          : await within(region).findByRole('heading', { name: 'Other source values' })
+      await waitFor(() => expect(target).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
+    },
+  )
+
+  it('moves focus to the field question when a successful source values Try again leaves none to show (#1742)', async () => {
+    const user = userEvent.setup()
+    let reads = 0
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+        reads += 1
+        if (reads === 1) throw new ApiError(503, 'unavailable')
+        // Every observation belongs to another field, so the section goes (#1519).
+        return {
+          items: [
+            {
+              destinations: ['cover'],
+              observation: 'Cover: front',
+              role: 'external_observation',
+              source: 'Open Library',
+            },
+          ],
+          missingLineageCount: 0,
+          sourceLedger: [],
+        }
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Other source values' })
+    await user.click(await within(region).findByRole('button', { name: 'Try again' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Other source values' })).toBeNull(),
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.decision-canvas .decision-question')).toHaveFocus(),
+    )
+    expect(document.body).not.toHaveFocus()
+  })
+
+  it('keeps Show more source values focusable while it reads (#1742)', async () => {
+    const user = userEvent.setup()
+    let release: () => void = () => undefined
+    const item = (observation: string) => ({
+      destinations: ['title' as const],
+      observation,
+      role: 'external_observation' as const,
+      source: 'Open Library',
+    })
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async (_caseId, cursor) => {
+        if (!cursor)
+          return {
+            items: [item('Title: Another title')],
+            missingLineageCount: 0,
+            sourceLedger: [],
+            nextCursor: 'page-two',
+          }
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return { items: [item('Title: A later title')], missingLineageCount: 0, sourceLedger: [] }
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Other source values' })
+    const more = await within(region).findByRole('button', { name: 'Show more source values' })
+    await user.click(more)
+    const loading = await within(region).findByRole('button', { name: 'Loading more…' })
+    expect(loading).toBe(more)
+    expect(loading).not.toBeDisabled()
+    expect(loading).toHaveAttribute('aria-disabled', 'true')
+    expect(loading).toHaveFocus()
+    await act(async () => release())
+    // The last page removes Load more; focus moves to the first observation it added.
+    const added = await within(region).findByText('Title: A later title')
+    await waitFor(() => expect(added.closest('li')).toHaveFocus())
   })
 
   it('shows the external-library card only for a recorded change', async () => {
