@@ -71,6 +71,7 @@ from mechanical_librarian.domain.proposal_set import audiobook_review_scope
 from mechanical_librarian.domain.work_identity import work_query_ladder
 from tests.support.audiobook_reports import recorded_dispatch
 from tests.support.metadata_report_doubles import single_track_audio_facts
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 from tests.unit import test_companion_epub_matching as companion_fixture
 
 _TITLE = "Ember Tide Protocol"
@@ -1250,7 +1251,7 @@ def test_a_companion_isbn_value_for_an_asin_it_did_not_link_is_refused() -> None
 def test_a_current_round_trip_keeps_every_lane_value() -> None:
     for report in (_carried_leaf(), _regional_report(), _companion_report()):
         data = json.loads(report.to_json())
-        assert "metadata-report-v76" == data["schema_version"]
+        assert CURRENT_REPORT_SCHEMA == data["schema_version"]
         stated = {
             member["admission_basis"]
             for observation in data["providers"]

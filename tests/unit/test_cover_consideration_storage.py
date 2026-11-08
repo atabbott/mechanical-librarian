@@ -30,6 +30,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
     PRIOR_REVIEW_WORK_SQL,
 )
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 
 def test_real_producer_roundtrip_replay_history_and_restart(tmp_path: Path) -> None:
@@ -187,7 +188,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema,
             "_REPORTS_SQL",
             schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v76'", "= 'metadata-report-v49'"
+                f"= '{CURRENT_REPORT_SCHEMA}'", "= 'metadata-report-v49'"
             ),
         ),
         patch.object(

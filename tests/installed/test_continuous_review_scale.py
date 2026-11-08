@@ -12,6 +12,7 @@ from tests.support.continuous_review_scale import (
     qualify_installed_decision_activity_http,
 )
 from tests.support.inventaire_preparation import InventairePreparationFixture
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from mechanical_librarian.domain.metadata_report import (
@@ -315,7 +316,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema,
             "_REPORTS_SQL",
             schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v76'", "= 'metadata-report-v49'"
+                f"= '{CURRENT_REPORT_SCHEMA}'", "= 'metadata-report-v49'"
             ),
         )
         with closing(open_repository(old_path)) as repository:

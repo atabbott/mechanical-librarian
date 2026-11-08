@@ -118,6 +118,7 @@ from tests.support.metadata_report_doubles import (
     FakeReportRepository,
     FakeTarget,
 )
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 
 def test_real_audiobookshelf_currentness_accepts_asymmetric_equivalent_locations() -> (
@@ -3248,7 +3249,7 @@ def test_a_retrieved_open_library_final_host_round_trips_in_the_report() -> None
     serialized = report.to_json()
     assert '"final_host":"us.archive.org"' in serialized
     assert MetadataReport.from_json(serialized) == report
-    assert report.schema_version == "metadata-report-v76"
+    assert report.schema_version == CURRENT_REPORT_SCHEMA
 
 
 _MEASURES = CoverMeasures("0f" * 8, "f0" * 8, (1,) * 64, (128,) * 48)

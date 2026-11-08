@@ -10,6 +10,7 @@ equal to them on well-formed input.  A widening fails the test.
 
 from __future__ import annotations
 
+import dataclasses
 import random
 import re
 
@@ -24,6 +25,7 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
 from mechanical_librarian.domain.audio_inspection import (
     AudioEvidenceSurface,
     AudioInspectionLimits,
+    AudioSidecarReading,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
@@ -167,3 +169,34 @@ def test_the_oracle_is_wider_than_the_scanner_somewhere(
         != _oracle(text, monkeypatch)
     ]
     assert narrower
+
+
+def _reading(text: str) -> AudioSidecarReading | None:
+    sidecars = interpret(
+        _PROBE,
+        (AudioSidecar(AudioEvidenceSurface.SIDECAR_OPF, "book.opf", text),),
+        AudioPathContext("book.m4b"),
+        _SOURCE,
+        AudioInspectionLimits(),
+    ).sidecars
+    return sidecars[0] if sidecars else None
+
+
+@pytest.mark.parametrize("seed", range(200))
+@pytest.mark.parametrize("well_formed", (True, False), ids=("well_formed", "malformed"))
+def test_a_byte_order_mark_never_changes_an_opf_reading(
+    seed: int, well_formed: bool
+) -> None:
+    """T2 (#1796): both scanners start at a `<`, so a leading mark is never read.
+
+    The child records the mark and keeps no second reading.
+    """
+    text = _document(seed, well_formed=well_formed)
+    plain = _reading(text)
+    marked = _reading("﻿" + text)
+
+    assert plain is not None and marked is not None
+    assert marked.byte_order_mark is True
+    assert marked.stripped is None
+    assert marked.stripped_limit is None
+    assert dataclasses.replace(marked, byte_order_mark=False) == plain

@@ -442,12 +442,21 @@ fingerprints are unchanged, so a stored report would keep them. The proposal
 policy is unchanged. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1796 also takes the clean-rebuild branch. `metadata-report-v76` records,
+for each audiobook sidecar that starts with a byte-order mark, what a reading
+without the mark would add and the refusals it would have had. A v75 report
+states none of this, and a report carries forward while its file and
+configuration fingerprints are unchanged, so a stored report would never
+record it. The proposal policy is unchanged. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.
+
 Issue #1778 also takes the clean-rebuild branch, and with it the rest of
-#1380. `metadata-report-v76` adds the `listed_edition` cover designation and
+#1380. `metadata-report-v77` adds the `listed_edition` cover designation and
 the `edition_limit`, `edition_fetch_incomplete` and `same_art` truncation
 reasons to their closed sets. A report may now hold eight Hardcover cover
-sources and twelve provider cover sources in all, where a v75 report held four
-for each provider and eight in all. A v75 report has none of a found book's
+sources and twelve provider cover sources in all, where a v76 report held four
+for each provider and eight in all. A v76 report has none of a found book's
 edition covers, and a report carries forward while its file and configuration
 fingerprints are unchanged, so a stored report would never offer them. The
 proposal policy is unchanged. Every earlier application database is rejected

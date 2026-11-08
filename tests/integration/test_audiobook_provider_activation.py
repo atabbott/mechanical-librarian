@@ -83,6 +83,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 _ITEM = "item-audio"
 _FILE_IDENTITY = f"{10:064x}"
@@ -586,7 +587,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v76" == published.schema_version
+        assert CURRENT_REPORT_SCHEMA == published.schema_version
         # Two authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).

@@ -51,4 +51,4 @@ activation. The reviewer packet shows it as a related edition. Decision 3 of
 edition request, is about the audio-edition document only. The edition-covers
 document is a separate read with its own bounds.
 
-That change is `metadata-report-v76` under ADR-0013.
+That change is `metadata-report-v77` under ADR-0013.
