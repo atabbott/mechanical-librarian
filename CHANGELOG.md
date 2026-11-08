@@ -121,6 +121,11 @@ brackets are GitHub issues.
   comparison, write permission readiness or saved settings fail to load or
   save, and focus moves to Reload, Try again or what loaded after every retry
   instead of falling to the page (#1742).
+- Library's work list, work summary, preview and Attention queue read plainly.
+  A failed book says what to do next, source rows drop internal words, empty
+  sections no longer show, and a failed load says to try again or restart the
+  service. An empty Library with no library connected links to Settings to add
+  one. The Sources heading wraps on a phone with large text (#1765).
 - The masthead's status notices, the newer-build notice and the page-failure
   states say what happened in plain words. The library connection notice names
   Audiobookshelf and what it refused, paused work is "Paused" rather than

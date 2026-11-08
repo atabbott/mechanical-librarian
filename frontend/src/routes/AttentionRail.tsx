@@ -30,6 +30,7 @@ export const AttentionRail = ({
   selected,
   closeAttention,
   selectFromQueue,
+  restartSentence,
 }: {
   search: LibrarySearch
   /** The rail's count line, from the Library summary and the works read. */
@@ -46,6 +47,11 @@ export const AttentionRail = ({
     field: string,
     attentionCursor: string | undefined,
   ) => void
+  /**
+   * The restart sentence, with its leading space, or empty when the Works
+   * failure beside the rail already says it on the same screen (#1765).
+   */
+  restartSentence: string
 }) => {
   const attentionRetry = useRef<HTMLButtonElement>(null)
   const loadMoreButton = useRef<HTMLButtonElement>(null)
@@ -154,7 +160,7 @@ export const AttentionRail = ({
         <p role={attention.isError ? 'alert' : 'status'}>
           {attention.isError ? (
             <>
-              Attention could not be loaded.{' '}
+              {`Attention could not be loaded.${restartSentence}`}{' '}
               <button
                 ref={attentionRetry}
                 type="button"
@@ -202,7 +208,7 @@ export const AttentionRail = ({
                 </div>
                 <ul className="attention-field-rows">
                   {group.map((item) => {
-                    const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs your decision'}`
+                    const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs you'}`
                     return (
                       <li key={item.destination}>
                         <button
@@ -245,7 +251,7 @@ export const AttentionRail = ({
             <StaleBuildRead lead="More attention was not loaded." ref={moreRetry} />
           ) : attention.isFetchNextPageError ? (
             <p role="alert">
-              More attention could not be loaded.{' '}
+              {`More attention could not be loaded.${restartSentence}`}{' '}
               <button
                 ref={moreRetry}
                 type="button"

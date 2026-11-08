@@ -25,6 +25,7 @@ export const ReviewCompletion = ({
   outsideSearch,
   inspect,
   reviewNextWork,
+  restartSentence,
 }: {
   /** The recorded field outcomes. */
   fields: readonly ReviewField[]
@@ -38,6 +39,8 @@ export const ReviewCompletion = ({
   outsideSearch: number | undefined
   inspect: (destination: string) => void
   reviewNextWork: () => void
+  /** " If trying again does not help, restart…", or empty where the works column says it. */
+  restartSentence: string
 }) => {
   // Try finding next work again, or Reload once the tab is on an earlier build.
   const nextWorkRetry = useRef<HTMLButtonElement>(null)
@@ -62,9 +65,7 @@ export const ReviewCompletion = ({
       <div>
         <h3>Review complete</h3>
         <span>
-          {String(fields.length)} recorded field outcome
-          {fields.length === 1 ? '' : 's'}
-          {writesActive ? ' — each began applying the moment you decided it.' : '.'}
+          {`${String(fields.length)} ${fields.length === 1 ? 'field' : 'fields'} recorded.${writesActive ? ' Each started applying when you chose it.' : ''}`}
         </span>
       </div>
       <ol>
@@ -94,31 +95,31 @@ export const ReviewCompletion = ({
             Review next work →
           </Button>
         ) : attention.isPending || attention.isPlaceholderData || attention.isFetchingNextPage ? (
-          <span>Looking for the next visible work…</span>
+          <span>Finding the next work…</span>
         ) : attention.isError && attention.error instanceof BuildMismatchError ? (
-          <StaleBuildRead lead="The next attention work was not loaded." ref={nextWorkRetry} />
+          <StaleBuildRead lead="The next work was not loaded." ref={nextWorkRetry} />
         ) : attention.isError ? (
           <>
-            <span>The next attention work could not be loaded.</span>
+            <span>{`The next work could not be loaded.${restartSentence}`}</span>
             <button
               ref={nextWorkRetry}
               className="button-primary"
               type="button"
               onClick={retryNextWork}
             >
-              Try finding next work again
+              Try again
             </button>
           </>
         ) : !searching ? (
-          <span>All visible review work is complete.</span>
+          <span>No other work needs a decision.</span>
         ) : (
           <span>
-            All review work matching this search is complete.
-            {outsideSearch === undefined
+            {outsideSearch === 0
+              ? 'No other work needs a decision.'
+              : 'No other work matching this search needs a decision.'}
+            {outsideSearch === undefined || outsideSearch === 0
               ? null
-              : outsideSearch > 0
-                ? ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} a decision outside this search.`
-                : ' No other work needs a decision.'}
+              : ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} one outside this search.`}
           </span>
         )}
       </footer>

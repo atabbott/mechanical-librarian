@@ -172,6 +172,80 @@ it('keeps resync debt with its exact collection while search and cursor replace 
   expect(http.getLibrary).toHaveBeenCalledTimes(6)
 })
 
+// One connected library, so the list fills from its first scan by itself.
+const connectedPreparation: PreparationView = {
+  ...idlePreparation,
+  libraries: [
+    {
+      blocked: 0,
+      recorded: 0,
+      not_matched: 0,
+      checked: 0,
+      connection: 'primary',
+      library: 'books',
+      library_id: 'books',
+      ready: 0,
+      rescan_requested: false,
+      scan_id: null,
+      state: 'idle' as const,
+      total: 0,
+      stages: [],
+    },
+  ],
+}
+
+it.each([
+  ['/library?lens=all', true, 'No works yet.', false],
+  ['/library?lens=not_matched', true, 'No works here.', false],
+  ['/library?lens=not_matched', false, 'No works here.', false],
+  ['/library?lens=all&q=needle', true, 'No works match this search.', true],
+  ['/library?lens=all&q=needle', false, 'No works match this search.', true],
+] as const)(
+  'says an empty Works list at %s (library connected: %s) in one line (#1765)',
+  async (path, connected, line, clear) => {
+    const { queryClient } = renderRoute(path, {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => (connected ? connectedPreparation : idlePreparation)),
+      getLibrary: vi.fn(async (search: LibrarySearch) => ({
+        ...library,
+        lens: search.lens,
+        counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+        works: [],
+      })),
+    })
+    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBeDefined())
+    const empty = (await screen.findByText(line)).closest('.empty-copy')
+    if (!(empty instanceof HTMLElement)) throw new Error('the empty Works line is required')
+    expect(empty.textContent).toBe(clear ? `${line}Clear search` : line)
+    expect(Boolean(within(empty).queryByRole('button', { name: 'Clear search' }))).toBe(clear)
+    expect(within(empty).queryByRole('link')).toBeNull()
+  },
+)
+
+it('names Settings as the way to fill Works when no library is connected (#1765)', async () => {
+  const { queryClient } = renderRoute('/library?lens=all', {
+    ...createHttp(),
+    getPreparation: vi.fn(async () => idlePreparation),
+    getLibrary: vi.fn(async (search: LibrarySearch) => ({
+      ...library,
+      lens: search.lens,
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+      works: [],
+    })),
+  })
+  await waitFor(() =>
+    expect(queryClient.getQueryData(['review-preparation'])).toEqual(idlePreparation),
+  )
+  const empty = (await screen.findByText(/^No works yet\. Add a library in/u)).closest(
+    '.empty-copy',
+  )
+  if (!(empty instanceof HTMLElement)) throw new Error('the empty Works line is required')
+  expect(empty.textContent).toBe('No works yet. Add a library in Settings.')
+  const settings = within(empty).getByRole('link', { name: 'Settings' })
+  expect(settings).toHaveAttribute('href', '/settings?group=libraries')
+  expect(within(empty).queryByRole('button', { name: 'Clear search' })).toBeNull()
+})
+
 it('retries unavailable Works while the Library shell remains usable', async () => {
   const user = userEvent.setup()
   // Library opens once the handoff's read settles, and opening retries a read
@@ -182,12 +256,22 @@ it('retries unavailable Works while the Library shell remains usable', async () 
     .mockRejectedValueOnce(new Error('temporary Library failure'))
     .mockResolvedValue(library)
   renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
-  expect(await screen.findByText('Works are unavailable.')).toBeVisible()
+  expect(
+    await screen.findByText(
+      'Works could not be loaded. If trying again does not help, restart the Mechanical Librarian service.',
+    ),
+  ).toBeVisible()
   const failedReads = getLibrary.mock.calls.length
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
   expect(getLibrary.mock.calls.length).toBeGreaterThan(failedReads)
-  await waitFor(() => expect(screen.queryByText('Works are unavailable.')).toBeNull())
+  await waitFor(() =>
+    expect(
+      screen.queryByText(
+        'Works could not be loaded. If trying again does not help, restart the Mechanical Librarian service.',
+      ),
+    ).toBeNull(),
+  )
 })
 
 it.each(['mismatch', 'success', 'held read'] as const)(
@@ -211,7 +295,7 @@ it.each(['mismatch', 'success', 'held read'] as const)(
       if (!found) throw new Error('the works list is required')
       return found
     })
-    await within(list).findByText('Works are unavailable.')
+    await within(list).findByText(/^Works could not be loaded\./u)
     pressed = true
     await user.click(within(list).getByRole('button', { name: 'Try again' }))
     if (outcome === 'held read') {
@@ -243,7 +327,11 @@ it.each(['/library?lens=all', '/library?lens=all&q=needle'])(
     const list = document.querySelector<HTMLElement>('.library-work-list')
     if (!list) throw new Error('the works list is required')
     expect(within(list).getByRole('button', { name: 'Reload' })).toBeVisible()
-    expect(screen.queryByText('Works are unavailable.')).toBeNull()
+    expect(
+      screen.queryByText(
+        'Works could not be loaded. If trying again does not help, restart the Mechanical Librarian service.',
+      ),
+    ).toBeNull()
     expect(within(list).queryByRole('button', { name: 'Try again' })).toBeNull()
   },
 )
@@ -264,6 +352,75 @@ it('offers a reload for the selected work when only the Works read met a newer b
   expect(lead).not.toHaveAttribute('role')
   expect(screen.queryByText(/Selected work could not be loaded\./u)).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+const restartSentence = 'If trying again does not help, restart the Mechanical Librarian service.'
+const restartCount = () => document.body.textContent.split(restartSentence).length - 1
+
+it('says to restart the service once when Works, the selected work and Attention all fail (#1765)', async () => {
+  const unavailable = async () => {
+    throw new ApiError(503, 'unavailable')
+  }
+  renderRoute('/library?lens=all&preview=case-1&attention=open', {
+    ...createHttp(),
+    getLibrary: vi.fn(unavailable),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(unavailable),
+    getAttention: vi.fn(unavailable),
+  })
+  const works = await screen.findByText(`Works could not be loaded. ${restartSentence}`)
+  const selected = await screen.findByText(/Selected work could not be loaded\./u)
+  const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+  const attention = await within(rail).findByText(/Attention could not be loaded\./u)
+  expect(works).toBeVisible()
+  // Each failure keeps its own Try again; only the Works failure says to restart.
+  expect(selected.textContent.trim()).toBe('Selected work could not be loaded. Try again')
+  expect(attention.textContent).toBe('Attention could not be loaded. Try again')
+  expect(restartCount()).toBe(1)
+})
+
+it('keeps the restart sentence where a narrow layout hides the Works failure (#1765)', async () => {
+  // Every width query matches: the selected work replaces the list, and the
+  // Attention rail covers the workspace.
+  const previousMatchMedia = window.matchMedia
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+  )
+  onTestFinished(() => {
+    vi.stubGlobal('matchMedia', previousMatchMedia)
+  })
+  const unavailable = async () => {
+    throw new ApiError(503, 'unavailable')
+  }
+  renderRoute('/library?lens=all&preview=case-1&attention=open', {
+    ...createHttp(),
+    getLibrary: vi.fn(unavailable),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(unavailable),
+    getAttention: vi.fn(unavailable),
+  })
+  await screen.findByText(`Works could not be loaded. ${restartSentence}`)
+  const selected = await screen.findByText(/Selected work could not be loaded\./u)
+  const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+  const attention = await within(rail).findByText(/Attention could not be loaded\./u)
+  expect(selected.textContent.trim()).toBe(
+    `Selected work could not be loaded. ${restartSentence} Try again`,
+  )
+  expect(attention.textContent).toBe(`Attention could not be loaded. ${restartSentence} Try again`)
+})
+
+it('says to restart the service on the selected work when only it fails (#1765)', async () => {
+  renderRoute('/library?lens=all&preview=case-1', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+      throw new ApiError(503, 'unavailable')
+    }),
+  })
+  const selected = await screen.findByText(/Selected work could not be loaded\./u)
+  expect(selected.textContent.trim()).toBe(
+    `Selected work could not be loaded. ${restartSentence} Try again`,
+  )
+  expect(screen.queryByText(/Works could not be loaded\./u)).toBeNull()
+  expect(restartCount()).toBe(1)
 })
 
 it('moves focus to Reload when a selected-work retry meets a newer build (#1288)', async () => {
@@ -2313,8 +2470,8 @@ describe('Library route', () => {
         diagnosticReference: 'prep-0123456789abcdef',
         mediaHealth: [],
         provider: 'hardcover-main',
-        reason: 'Provider credentials need owner attention.',
-        recovery: 'Update the configured provider credentials, then scan this library again.',
+        reason: 'A source refused its credentials.',
+        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -2325,13 +2482,14 @@ describe('Library route', () => {
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
-          reason: 'Refused the credentials it was given; nothing was retained.',
+          reason:
+            'Nothing was recorded from it. Check its credentials in Settings → Metadata sources.',
           status: 'authentication' as const,
         },
       ],
       summary: {
         state: 'preparation_failed' as const,
-        reason: 'Provider credentials need owner attention.',
+        reason: 'A source refused its credentials.',
         fields: [],
       },
     }
@@ -2346,7 +2504,7 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all', http)
 
-    expect(await screen.findByText('Preparation failed safely')).toBeVisible()
+    expect(await screen.findByText('Could not finish', { selector: '.status-pill' })).toBeVisible()
     // Counted as failed beside the Works count, never as needing no attention,
     // under its own heading in All (#1413).
     expect(await screen.findByText('1 work · 1 could not finish')).toBeVisible()
@@ -2354,11 +2512,11 @@ describe('Library route', () => {
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     const terminal = document.querySelector('.library-work-row.is-terminal')
     expect(terminal?.tagName).toBe('ARTICLE')
-    expect(terminal).toHaveAttribute('aria-label', 'Terminal preparation failure')
+    expect(terminal).toHaveAttribute('aria-label', 'Could not finish')
     expect(terminal?.querySelector('button, a, details, [tabindex]')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
     expect(terminal).toHaveTextContent(
-      'Update the configured provider credentials, then scan this library again.',
+      'Replace them in Settings → Metadata sources, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
 
@@ -2376,7 +2534,7 @@ describe('Library route', () => {
       'true',
     )
     expect(screen.queryByRole('heading', { name: 'Could not finish' })).toBeNull()
-    expect(screen.getByText('Preparation failed safely')).toBeVisible()
+    expect(screen.getByText('Could not finish', { selector: '.status-pill' })).toBeVisible()
   })
 
   it.each([
@@ -2406,7 +2564,7 @@ describe('Library route', () => {
         detailKind: 'report' as const,
         summary: {
           state: 'no_decision_recorded' as const,
-          reason: 'No review decision is recorded.',
+          reason: 'Nothing to decide for this work.',
           fields: [],
         },
         // An audiobook whose providers admitted no work identity completes on
@@ -2469,7 +2627,7 @@ describe('Library route', () => {
         mediaHealth: [
           {
             bound:
-              "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+              'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
             cited: ['local_abc123', 'audible-product-B0SYNE7P1K'],
             expected: '20 h stated by the matched edition',
             kind: 'runtime_short_of_provider' as const,
@@ -2555,7 +2713,7 @@ describe('Library route', () => {
         expect(
           within(evidence).getByRole('region', { name: 'How this recording was matched' }),
         ).toHaveTextContent(
-          'Complete chapter timing and structure corroborate this recording where overall runtime is unavailable.',
+          'Its chapter timings and structure confirm this recording, since no total running time is available.',
         )
       } else {
         expect(
@@ -2587,7 +2745,7 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(
         within(health).getByText(
-          "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+          'A complete recording runs within 1 min 30 s of the edition’s stated running time.',
         ),
       ).toBeVisible()
       expect(
@@ -2619,7 +2777,7 @@ describe('Library route', () => {
       detailKind: 'report' as const,
       summary: {
         state: 'no_decision_recorded' as const,
-        reason: 'No review decision is recorded.',
+        reason: 'Nothing to decide for this work.',
         fields: [],
       },
     }
@@ -2769,8 +2927,8 @@ describe('Library route', () => {
         diagnosticReference: 'prep-masked-0123456789',
         mediaHealth: [],
         provider: 'hardcover-main',
-        reason: 'Provider credentials need owner attention.',
-        recovery: 'Update the configured provider credentials, then scan this library again.',
+        reason: 'A source refused its credentials.',
+        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -2778,7 +2936,7 @@ describe('Library route', () => {
       // The retained report matched nothing, which the failure still outranks.
       summary: {
         fields: [],
-        reason: 'No review decision is recorded for this work.',
+        reason: 'Nothing to decide for this work.',
         state: 'not_matched_no_match' as const,
       },
     }
@@ -2795,11 +2953,11 @@ describe('Library route', () => {
 
     const row = await screen.findByRole('button', { name: /^Retained work\./u })
     // Openable, because the evidence is real -- but not reported as a success.
-    expect(row).toHaveTextContent('Preparation failed safely')
+    expect(row).toHaveTextContent('Could not finish')
     expect(row).not.toHaveTextContent('Recorded evidence available')
-    expect(row).not.toHaveTextContent('No provider matched')
-    expect(row).toHaveAccessibleName(/Preparation failed safely/u)
-    expect(row).not.toHaveAccessibleName(/No provider matched/u)
+    expect(row).not.toHaveTextContent('No source matched')
+    expect(row).toHaveAccessibleName(/Could not finish/u)
+    expect(row).not.toHaveAccessibleName(/No source matched/u)
     expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.status-pill.is-notice')).not.toBeNull()
@@ -2830,7 +2988,7 @@ describe('Library route', () => {
       detailKind: 'report' as const,
       preparation: null,
       preparationOutcomes: [],
-      summary: { fields: [], reason: 'No review decision is recorded for this work.', state },
+      summary: { fields: [], reason: 'Nothing to decide for this work.', state },
     })
     const works = [
       unmatched('refused', 'not_matched_refused'),
@@ -2856,10 +3014,10 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { name: 'Not matched' })).toBeVisible()
     for (const [key, reason] of [
       ['refused', 'Found, but not this work'],
-      ['scheduled', 'Providers unavailable; will be checked again'],
-      ['unavailable', 'Providers unavailable'],
+      ['scheduled', 'Sources unavailable, retry scheduled'],
+      ['unavailable', 'Sources unavailable'],
       ['fault', 'Failed in Mechanical Librarian'],
-      ['nothing', 'No provider matched'],
+      ['nothing', 'No source matched'],
     ] as const) {
       const row = screen.getByRole('button', { name: new RegExp(`^Unmatched ${key}\\.`, 'u') })
       const status = row.querySelector('.library-work-status > span')
@@ -2891,7 +3049,9 @@ describe('Library route', () => {
         throw new ApiError(503, 'unavailable')
       }),
     })
-    expect(await screen.findByRole('alert')).toHaveTextContent('Works are unavailable.')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Works could not be loaded. If trying again does not help, restart the Mechanical Librarian service.',
+    )
     expect(screen.getByRole('link', { name: 'Not matched' })).toBeVisible()
   })
 
@@ -3000,7 +3160,7 @@ describe('Library route', () => {
     // observation the failure produced travels with it instead of being
     // dropped with the terminal panel it used to live in.
     const row = await screen.findByRole('button', { name: /^Retained audiobook\./u })
-    expect(row).toHaveTextContent('Preparation failed safely')
+    expect(row).toHaveTextContent('Could not finish')
     const health = screen.getByRole('region', { name: 'Media health' })
     expect(within(health).getByText('Audio could not be read')).toBeVisible()
     expect(within(health).getByText('Read from track_4')).toBeVisible()
@@ -3040,8 +3200,10 @@ describe('Library route', () => {
     expect(card).not.toHaveClass('is-terminal')
     expect(card).toHaveTextContent('A <script> hostile diagnostic remains safe.')
     expect(card).toHaveAccessibleDescription(
-      /provider: A <script> hostile diagnostic remains safe\. Scan again only after the source condition is corrected\. Reference: prep-safe-0123456789abcdef/u,
+      /A <script> hostile diagnostic remains safe\. Scan again only after the source condition is corrected\. Reference: prep-safe-0123456789abcdef/u,
     )
+    // The server's reason already names the step; the raw stage code is not shown.
+    expect(card).not.toHaveTextContent(/provider:/u)
     expect(screen.getByText('prep-safe-0123456789abcdef')).toBeVisible()
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     card.focus()
@@ -3064,7 +3226,7 @@ describe('Library route', () => {
       attentionCount: 0,
       summary: {
         state: 'no_decision_recorded' as const,
-        reason: 'No review decision is recorded for this work.',
+        reason: 'Nothing to decide for this work.',
         fields: [
           { destination: 'title' as const, state: 'value' as const, value: 'Unfiled observation' },
         ],
@@ -3090,7 +3252,7 @@ describe('Library route', () => {
     )
 
     // The card is gone from the narrowed result, but the open work stays open.
-    await screen.findByText('No exact-current works match this search and lens.')
+    await screen.findByText('No works match this search.')
     expect(screen.getByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Back to works' }))
     expect(screen.queryByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeNull()
@@ -3111,7 +3273,7 @@ describe('Library route', () => {
         attentionCount: 0,
         summary: {
           state: 'no_decision_recorded' as const,
-          reason: 'No review decision is recorded for this work.',
+          reason: 'Nothing to decide for this work.',
           fields: [{ destination: 'title' as const, state: 'value' as const, value: title }],
         },
       }
@@ -3157,7 +3319,7 @@ describe('Library route', () => {
       screen.getByLabelText('Search title, author, identifier, library, or format'),
       'hide both',
     )
-    await screen.findByText('No exact-current works match this search and lens.')
+    await screen.findByText('No works match this search.')
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Second observation' }),
     ).toBeVisible()
@@ -3452,7 +3614,7 @@ describe('Library route', () => {
       const groups = () =>
         [...document.querySelectorAll('.library-provider-group h3')].map((h) => h.textContent)
       const shown = groups()
-      expect(shown).toEqual(['Provider evidence complete'])
+      expect(shown).toEqual(['Every lookup finished'])
       await act(async () =>
         router.navigate({ to: '/library', search: { lens: 'no_attention_needed' } }),
       )
@@ -4679,7 +4841,7 @@ describe('Library route', () => {
       expect(recorded.querySelector('dd')).toHaveTextContent(currentValue)
       expect(recorded).not.toHaveTextContent('New title')
       expect(recorded).not.toHaveTextContent('Resolved automatically')
-      const automaticCount = screen.getByText('Resolved automatically').closest('div')
+      const automaticCount = screen.getByText('Automatic', { selector: 'dt' }).closest('div')
       expect(automaticCount).toHaveTextContent('0')
     },
   )
@@ -6792,7 +6954,7 @@ describe('Library route', () => {
     await screen.findByRole('heading', { name: 'Review complete' })
     // The preserved title is inspectable, but no decision was recorded for it.
     expect(screen.getByText('1 recorded · work complete')).toBeVisible()
-    expect(screen.getByText('1 recorded field outcome.')).toBeVisible()
+    expect(screen.getByText('1 field recorded.')).toBeVisible()
     expect(screen.queryByText(/No library data changed/u)).toBeNull()
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
     await user.click(within(rail).getByRole('button', { name: /^Title/u }))
@@ -6898,7 +7060,9 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('radio', { name: 'Choose proposed value: Mistborn' }))
 
     expect(await screen.findByRole('heading', { name: 'Review complete' })).toBeVisible()
-    expect(screen.getByText('Needs review').nextElementSibling).toHaveTextContent('0')
+    expect(screen.getByText('Needs you', { selector: 'dt' }).nextElementSibling).toHaveTextContent(
+      '0',
+    )
     expect(screen.getByRole('button', { name: 'Attention 1 work' })).toBeVisible()
     await waitFor(() => expect(http.getLibrary).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(getAttention).toHaveBeenCalledTimes(2))
@@ -7458,7 +7622,7 @@ describe('Library route', () => {
       ),
     ).toBeNull()
     expect(screen.getByText('Sources')).toBeVisible()
-    expect(screen.getByText('1 lookup recorded for this work')).toBeVisible()
+    expect(screen.getByText('1 lookup')).toBeVisible()
     expect(screen.getByText('No change: Authors')).toBeVisible()
     expect(screen.queryByText(/fields? ha(?:s|ve) context/u)).toBeNull()
     await user.click(screen.getByRole('button', { name: /Subtitle.*No change/u }))
@@ -7759,7 +7923,9 @@ describe('Library route', () => {
       expect(
         await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
       ).toBeVisible()
-      expect(screen.getByText('Needs review').nextElementSibling).toHaveTextContent('1')
+      expect(
+        screen.getByText('Needs you', { selector: 'dt' }).nextElementSibling,
+      ).toHaveTextContent('1')
       expect(screen.getByText('1 remaining · field 1 of 2')).toBeVisible()
       const rail = screen.getByRole('button', { name: /^ASIN/u })
       expect(rail).toHaveAccessibleName('ASIN Optional')
@@ -8147,9 +8313,7 @@ describe('Library route', () => {
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
     expect(
-      await screen.findByText(
-        'The current comparison could not be loaded. Your prior choice remains unrecorded.',
-      ),
+      await screen.findByText('The current comparison could not be loaded. Try again.'),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
 
@@ -8696,7 +8860,7 @@ describe('Library route', () => {
 
     expect(
       await screen.findByText(
-        'This review case is no longer current. Reopen its current replacement from Library.',
+        'This review case is out of date. Choose the work again in Works to open the current one.',
       ),
     ).toHaveAttribute('role', 'alert')
     expect(screen.queryByRole('button', { name: /Current value/ })).toBeNull()
@@ -8836,9 +9000,7 @@ describe('Library route', () => {
       expect(
         await screen.findByRole('radio', { name: 'Choose current value: Later author' }),
       ).toBeVisible()
-      expect(
-        screen.queryByText('This work is not available in the current Library result.'),
-      ).toBeNull()
+      expect(screen.queryByText('This work is not in the current list of works.')).toBeNull()
     },
   )
 
@@ -8963,9 +9125,7 @@ describe('Library route', () => {
       })
       // Until the case read settles, the work is loading, never absent (#1365).
       expect(screen.getByText('Loading selected work…')).toBeVisible()
-      expect(
-        screen.queryByText('This work is not available in the current Library result.'),
-      ).toBeNull()
+      expect(screen.queryByText('This work is not in the current list of works.')).toBeNull()
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
       expect(
         screen.queryByRole('radio', { name: 'Choose current value: Anchored choice' }),
@@ -9062,13 +9222,13 @@ describe('Library route', () => {
         // The Library result has settled without it, but its own read has not (#1365).
         expect(await screen.findByRole('button', { name: /^A Book\./u })).toBeVisible()
         expect(await screen.findByText('Loading selected work…')).toBeVisible()
-        expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+        expect(screen.queryByText(/not in the current list of works/u)).toBeNull()
       } else
         expect(
-          await screen.findByText('This work is not available in the current Library result.'),
+          await screen.findByText('This work is not in the current list of works.'),
         ).toBeVisible()
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
-      expect(screen.queryByText('Case superseded')).toBeNull()
+      expect(screen.queryByText(/This review case is out of date/u)).toBeNull()
       expect(http.getCaseDetail).toHaveBeenCalledWith(
         'missing-case',
         expect.any(AbortSignal),
@@ -9280,7 +9440,9 @@ describe('Library route', () => {
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
     await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
     const alert = await within(rail).findByRole('alert')
-    expect(alert).toHaveTextContent(/^More attention could not be loaded\. Try again$/u)
+    expect(alert).toHaveTextContent(
+      /^More attention could not be loaded\. If trying again does not help, restart the Mechanical Librarian service\. Try again$/u,
+    )
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
@@ -9706,9 +9868,7 @@ describe('Library route', () => {
     // The stream echo is still settled on exit after the immediate aggregate
     // refresh, and the completed work is gone from the lens.
     await user.click(screen.getByRole('button', { name: 'Back to works' }))
-    expect(
-      await screen.findByText('No exact-current works match this search and lens.'),
-    ).toBeVisible()
+    expect(await screen.findByText('No works here.')).toBeVisible()
     await waitFor(() => expect([libraryReads, summaryReads, attentionReads]).toEqual([3, 3, 3]))
   })
 
@@ -10891,7 +11051,7 @@ describe('Library route', () => {
     })
     // Without consent nothing reminds the owner that nothing was written (#1519).
     for (const [writesConsented, expected] of [
-      [false, '1 recorded field outcome.'],
+      [false, '1 field recorded.'],
       [true, 'Every write is logged in Activity.'],
     ] as const) {
       const user = userEvent.setup()
@@ -10957,7 +11117,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
     // The protected footer: one line, no subtitle, and it says what it is
     // evidence for. The work summary is not a comparison and keeps its own.
-    expect(await screen.findByText('1 lookup recorded for this work')).toBeVisible()
+    expect(await screen.findByText('1 source lookup')).toBeVisible()
     expect(screen.queryByText(/consulted for this work$/u)).toBeNull()
   })
 
@@ -11126,17 +11286,17 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1', http)
     const note =
-      'Book-level evidence supports title, description, and genre choices. The exact recording remains unresolved.'
-    const context = await screen.findByRole('region', { name: 'Whole-work context' })
+      'Book-level evidence supports title, description, and genre choices. The exact recording is not known.'
+    const context = await screen.findByRole('region', { name: 'Recording match' })
     expect(within(context).getByText(note)).toBeVisible()
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
     await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 1 more field' }))
     expect(within(rail).getByRole('button', { name: /^Series/u })).toBeVisible()
     expect(
-      within(screen.getByRole('region', { name: 'Whole-work context' })).getByText(note),
+      within(screen.getByRole('region', { name: 'Recording match' })).getByText(note),
     ).toBeVisible()
     expect(
-      within(screen.getByRole('region', { name: 'Whole-work context' })).queryByText(/series/u),
+      within(screen.getByRole('region', { name: 'Recording match' })).queryByText(/series/u),
     ).toBeNull()
   })
 
@@ -11419,9 +11579,7 @@ describe('Library route', () => {
 
     it('says a waiting field is waiting, apart from the unchanged ones', async () => {
       const details = await open([context('publisher', waiting)])
-      expect(details.querySelector('summary')).toHaveTextContent(
-        /^1 field waiting for a recoveryShow why$/u,
-      )
+      expect(details.querySelector('summary')).toHaveTextContent(/^1 field waitingShow why$/u)
       await userEvent.setup().click(within(details).getByText('Show why'))
       const row = rowOf(details, 'Publisher')
       expect(row).toHaveClass('is-waiting')
@@ -11436,7 +11594,7 @@ describe('Library route', () => {
         context('language', unchanged),
       ])
       expect(details.querySelector('summary')).toHaveTextContent(
-        /^No change: Subtitle, Language1 field waiting for a recoveryShow why$/u,
+        /^No change: Subtitle, Language1 field waitingShow why$/u,
       )
       expect(
         [...details.querySelectorAll('.automatic-resolution-row strong')].map(
@@ -11745,8 +11903,8 @@ describe('Library route', () => {
       // Search scopes the result list; the case read keeps the selection (#1365).
       await waitFor(() => expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull())
       expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
-      expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
-      expect(screen.queryByText('Selected work could not be loaded.')).toBeNull()
+      expect(screen.queryByText(/not in the current list of works/u)).toBeNull()
+      expect(screen.queryByText(/Selected work could not be loaded\./u)).toBeNull()
       expect(list).not.toHaveAttribute('aria-busy')
       await act(async () => {
         await router.navigate({
@@ -11996,9 +12154,7 @@ describe('Library route', () => {
     // The case read carries the same readable title, authors, library and
     // format a Library row does (#1365).
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
-    expect(
-      screen.queryByText('Readable work identity is not available on this Library page.'),
-    ).toBeNull()
+    expect(screen.queryByText('This work is not in the current list of works.')).toBeNull()
     expect(screen.queryByText('internal identity')).toBeNull()
     expect(screen.queryByRole('link', { name: /Open full review|Open all evidence/u })).toBeNull()
   })
@@ -12339,7 +12495,7 @@ describe('Provider evidence rail', () => {
         diagnosticReference: 'prep-transient',
         mediaHealth: [],
         provider: null,
-        reason: 'Bounded automatic recovery attempts were exhausted.',
+        reason: 'The automatic retries are used up.',
         recovery:
           'When this library finishes with failures, open Background activity and choose Retry.',
         recoveryAttempt: 0,
@@ -12353,7 +12509,7 @@ describe('Provider evidence rail', () => {
     renderRoute('/library?lens=all', http)
     expect(await screen.findByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
-    expect(screen.getByRole('article', { name: 'Terminal preparation failure' })).toHaveTextContent(
+    expect(screen.getByRole('article', { name: 'Could not finish' })).toHaveTextContent(
       'open Background activity and choose Retry',
     )
   })
@@ -12410,8 +12566,8 @@ describe('Provider evidence rail', () => {
         getLibrary: vi.fn(async () => ({ ...library, works })),
       })
       renderRoute(`/library?lens=${lens}`, http)
-      const complete = await screen.findByRole('heading', { name: 'Provider evidence complete' })
-      const limited = screen.getByRole('heading', { name: 'Provider evidence limited' })
+      const complete = await screen.findByRole('heading', { name: 'Every lookup finished' })
+      const limited = screen.getByRole('heading', { name: 'Some lookups gave no usable answer' })
       expect(
         complete.compareDocumentPosition(limited) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy()
@@ -12469,7 +12625,12 @@ describe('Provider evidence rail', () => {
       const row = await screen.findByRole('button', { name: /A Book\./ })
       expect(row).toHaveAccessibleDescription(label)
       expect(within(row).getByText(label)).toBeVisible()
-      expect(screen.getByRole('heading', { name: `Provider evidence ${group}` })).toBeVisible()
+      expect(
+        screen.getByRole('heading', {
+          name:
+            group === 'complete' ? 'Every lookup finished' : 'Some lookups gave no usable answer',
+        }),
+      ).toBeVisible()
     },
   )
 
@@ -12581,7 +12742,7 @@ it.each(['Evidence', 'History'] as const)(
 it.each([
   [
     new ApiError(500, 'invalid_error_response'),
-    'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    'No answer came back. Check whether new advice was requested before retrying.',
   ],
   [
     new UncertainMutationError({
@@ -12590,12 +12751,9 @@ it.each([
       reason: 'const',
       at: '/queued',
     }),
-    'Description preparation could not be confirmed. It may have been requested; the current case was reloaded. Check it before retrying.',
+    'No answer came back. Check whether new advice was requested before retrying.',
   ],
-  [
-    new ApiError(409, 'stale'),
-    'Description preparation could not be requested. Reload the current case and retry.',
-  ],
+  [new ApiError(409, 'stale'), 'New advice could not be requested. Reload the page, then retry.'],
 ])('reports a description advice retry failing with %s', async (failure, copy) => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const http = createHttp()
@@ -12636,9 +12794,7 @@ it('keeps a requested description advice retry focused and ignores another press
   const user = userEvent.setup()
   const retry = await screen.findByRole('button', { name: 'Retry description advice' })
   await user.click(retry)
-  expect(
-    await screen.findByText('Description preparation requested. Paused preparation stays paused.'),
-  ).toBeVisible()
+  expect(await screen.findByText('New advice requested.')).toBeVisible()
   expect(retry).not.toBeDisabled()
   expect(retry).toHaveAttribute('aria-disabled', 'true')
   expect(retry).toHaveFocus()
@@ -12733,7 +12889,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
   const option = await screen.findByRole('radio', {
     name: 'Choose advised value: Authored synthetic description.',
   })
-  expect(option).toHaveTextContent('Advised · Authored content')
+  expect(option).toHaveTextContent('Description adviser')
   expect(option).toHaveTextContent('codex · gpt-5.6-sol')
   const chooser = option.closest('section.direct-choice')
   if (!(chooser instanceof HTMLElement)) throw new Error('description choice area is missing')
@@ -12808,7 +12964,7 @@ it('renders hostile multiline advice as text and refuses stale selection while o
   })
   expect(option.querySelector('img')).toBeNull()
   expect(option).toBeDisabled()
-  expect(option).toHaveTextContent('Stale advice')
+  expect(option).toHaveTextContent('This advice is out of date.')
   expect(
     screen.getByRole('radio', { name: 'Choose current value: Existing description.' }),
   ).toBeEnabled()
@@ -12994,7 +13150,7 @@ it.each(['verified', 'no_change_required'] as const)(
     expect(option).toHaveTextContent(
       outcome === 'verified' ? 'Applied and verified' : 'No change needed',
     )
-    expect(option).not.toHaveTextContent('Stale advice')
+    expect(option).not.toHaveTextContent('This advice is out of date.')
     if (outcome === 'verified') expect(option).toBeDisabled()
     expect(
       screen.getByRole('radio', { name: 'Choose current value: Existing description.' }),
@@ -13213,7 +13369,9 @@ it.each([true, false])(
     expect(choices).toHaveLength(1)
     expect(choice).toHaveAttribute('aria-checked', String(!held))
     expect(choice?.closest('article')?.classList.contains('is-selected')).toBe(!held)
-    expect(Boolean(screen.queryByText(/^Selected\. Activity shows/))).toBe(!held)
+    expect(Boolean(screen.queryByText(/^Activity shows whether the library was changed\./))).toBe(
+      !held,
+    )
     expect(Boolean(panel?.textContent.includes('Choice recorded'))).toBe(!held)
     if (held) expect(panel).toBeNull()
     expect(Boolean(screen.queryByRole('button', { name: 'Resume automatic handling' }))).toBe(held)
@@ -13304,7 +13462,7 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
       if (state === 'requested' || state === 'running')
         expect(screen.getByText(/Preparing description advice/)).toBeVisible()
       if (state === 'failed')
-        expect(screen.getByText(/Description adviser unavailable/)).toBeVisible()
+        expect(screen.getByText(/The description adviser is unavailable/)).toBeVisible()
       if (state === 'succeeded') {
         expect(choices[1]).toBeEnabled()
         expect(choices[1]).toHaveAttribute('aria-checked', 'false')
@@ -13341,7 +13499,7 @@ it('shows retained automatic advice during preservation-only retry without addin
   })
   expect(retained).toBeDisabled()
   expect(retained).toHaveAttribute('aria-checked', 'true')
-  expect(retained).toHaveTextContent('Advised · Authored content · Recorded choice')
+  expect(retained).toHaveTextContent('Description adviser · Earlier choice')
   expect(screen.getByText(/Preparing description advice/)).toBeVisible()
   expect(screen.queryByText('Choice recorded.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Description Decided' })).toBeNull()
@@ -14331,22 +14489,22 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     ).toEqual(['2 fields', '2 fields'])
     const rows = within(groups[0] ?? rail).getAllByRole('button')
     expect(rows.map((row) => row.querySelector('.attention-queue-copy b')?.textContent)).toEqual([
-      'Title · Needs your decision',
-      'Description · Needs your decision',
+      'Title · Needs you',
+      'Description · Needs you',
     ])
     // Each row's name says which work it belongs to, so the same field in two
     // works is told apart in a screen reader's list of buttons (#1361).
     expect(rows.map((row) => row.getAttribute('aria-describedby'))).toEqual([null, null])
     expect(rows).toHaveLength(2)
-    expect(rows[0]).toHaveAccessibleName('Title · Needs your decision, Work A')
-    expect(rows[1]).toHaveAccessibleName('Description · Needs your decision, Work A')
+    expect(rows[0]).toHaveAccessibleName('Title · Needs you, Work A')
+    expect(rows[1]).toHaveAccessibleName('Description · Needs you, Work A')
 
     await user.click(screen.getByRole('button', { name: 'Load more attention' }))
     await waitFor(() => expect(rail.querySelectorAll('.attention-work-group')).toHaveLength(3))
     const workB = within(rail).getAllByRole('button', { name: /, Work B$/u })
     expect(workB.map((row) => row.querySelector('b')?.textContent)).toEqual([
-      'Title · Needs your decision',
-      'Authors · Needs your decision',
+      'Title · Needs you',
+      'Authors · Needs you',
     ])
     expect(workB[0]?.closest('.attention-work-group')).toBe(
       workB[1]?.closest('.attention-work-group'),
@@ -14397,7 +14555,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     release()
     const added = await within(rail).findByRole('button', { name: /^Authors/u })
     await waitFor(() => expect(added).toHaveFocus())
-    expect(added).toHaveAccessibleName('Authors · Needs your decision, Work B')
+    expect(added).toHaveAccessibleName('Authors · Needs you, Work B')
     expect(
       vi
         .mocked(http.getAttention)
@@ -14406,7 +14564,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await user.tab()
     expect(document.activeElement).not.toBe(document.body)
     expect(document.activeElement).toBe(
-      within(rail).getByRole('button', { name: 'Title · Needs your decision, Work C' }),
+      within(rail).getByRole('button', { name: 'Title · Needs you, Work C' }),
     )
   })
 
@@ -14433,9 +14591,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
     )
     await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
-    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work B' })
+    await within(rail).findByRole('button', { name: 'Title · Needs you, Work B' })
     await user.click(within(rail).getByRole('button', { name: 'Load more attention' }))
-    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work C' })
+    await within(rail).findByRole('button', { name: 'Title · Needs you, Work C' })
     expect(vi.mocked(http.getAttention).mock.calls.map(([read]) => read.cursor)).toEqual([
       undefined,
       'attention-page-2',
@@ -14470,7 +14628,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await queryClient.invalidateQueries({ queryKey: ['attention'] })
     await waitFor(() => expect(more).not.toHaveAttribute('aria-disabled'))
     await user.click(more)
-    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work B' })
+    await within(rail).findByRole('button', { name: 'Title · Needs you, Work B' })
     expect(secondPages).toBe(2)
   })
 
@@ -14501,7 +14659,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await user.click(search)
     await user.keyboard('Work')
     release()
-    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work B' })
+    await within(rail).findByRole('button', { name: 'Title · Needs you, Work B' })
     expect(search).toHaveFocus()
   })
 
@@ -14525,9 +14683,10 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       'aria-current',
       'true',
     )
-    expect(
-      screen.getByRole('button', { name: 'Title · Needs your decision, Work B' }),
-    ).toHaveAttribute('aria-current', 'false')
+    expect(screen.getByRole('button', { name: 'Title · Needs you, Work B' })).toHaveAttribute(
+      'aria-current',
+      'false',
+    )
   })
 
   it('V3: no count reads zero before its source resolves', async () => {
@@ -14865,13 +15024,13 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
   it.each([
     [
       3,
-      'All review work matching this search is complete. 2 more works need a decision outside this search.',
+      'No other work matching this search needs a decision. 2 more works need one outside this search.',
     ],
     [
       2,
-      'All review work matching this search is complete. 1 more work needs a decision outside this search.',
+      'No other work matching this search needs a decision. 1 more work needs one outside this search.',
     ],
-    [1, 'All review work matching this search is complete. No other work needs a decision.'],
+    [1, 'No other work needs a decision.'],
   ] as const)(
     'V4: completing a search with %i library-wide works states what remains outside it',
     async (before, copy) => {
@@ -14888,11 +15047,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       '/library?lens=all&q=needle&preview=case-1&field=title',
       async () => counted(0, 4),
     )
-    await waitFor(() =>
-      expect(footer).toHaveTextContent(
-        /^All review work matching this search is complete\. No other work needs a decision\.$/u,
-      ),
-    )
+    await waitFor(() => expect(footer).toHaveTextContent(/^No other work needs a decision\.$/u))
   })
 
   it('V4: a pending summary leaves the remainder unstated', async () => {
@@ -14901,7 +15056,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       () => new Promise<LibraryView>(() => undefined),
     )
     await waitFor(() =>
-      expect(footer).toHaveTextContent(/^All review work matching this search is complete\.$/u),
+      expect(footer).toHaveTextContent(/^No other work matching this search needs a decision\.$/u),
     )
   })
 
@@ -14910,9 +15065,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       '/library?lens=needs_attention&preview=case-1&field=title',
       async (decided) => counted(decided ? 2 : 3, 4),
     )
-    await waitFor(() =>
-      expect(footer).toHaveTextContent(/^All visible review work is complete\.$/u),
-    )
+    await waitFor(() => expect(footer).toHaveTextContent(/^No other work needs a decision\.$/u))
   })
 
   it('V4: the next work offers a reload, not another try, when it meets a newer build', async () => {
@@ -14925,14 +15078,18 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       },
     )
     if (!footer) throw new Error('completion footer is required')
-    const lead = await within(footer).findByText('The next attention work was not loaded.', {
+    const lead = await within(footer).findByText('The next work was not loaded.', {
       exact: false,
     })
     expect(lead).toBeVisible()
     expect(lead).not.toHaveAttribute('role')
     expect(within(footer).getByRole('button', { name: 'Reload' })).toBeVisible()
-    expect(within(footer).queryByText('The next attention work could not be loaded.')).toBeNull()
-    expect(within(footer).queryByRole('button', { name: 'Try finding next work again' })).toBeNull()
+    expect(
+      within(footer).queryByText(
+        'The next work could not be loaded. If trying again does not help, restart the Mechanical Librarian service.',
+      ),
+    ).toBeNull()
+    expect(within(footer).queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
   it('V4: the next work keeps its retry when it fails for another reason', async () => {
@@ -14946,11 +15103,11 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     )
     if (!footer) throw new Error('completion footer is required')
     expect(
-      await within(footer).findByText('The next attention work could not be loaded.'),
+      await within(footer).findByText(
+        'The next work could not be loaded. If trying again does not help, restart the Mechanical Librarian service.',
+      ),
     ).toBeVisible()
-    expect(
-      within(footer).getByRole('button', { name: 'Try finding next work again' }),
-    ).toBeVisible()
+    expect(within(footer).getByRole('button', { name: 'Try again' })).toBeVisible()
     expect(within(footer).queryByRole('button', { name: 'Reload' })).toBeNull()
   })
 
@@ -14981,7 +15138,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       if (!footer) throw new Error('completion footer is required')
       await userEvent
         .setup()
-        .click(await within(footer).findByRole('button', { name: 'Try finding next work again' }))
+        .click(await within(footer).findByRole('button', { name: 'Try again' }))
       const target =
         outcome === 'mismatch'
           ? await within(footer).findByRole('button', { name: 'Reload' })
