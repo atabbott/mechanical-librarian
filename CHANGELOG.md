@@ -140,6 +140,9 @@ brackets are GitHub issues.
   words: a paused run reads "Preparation paused" whatever paused it, books
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
+- Retrying description advice while preparation is paused is now confirmed
+  instead of reported as failed. The retry was already saved and runs at the
+  first library scan after preparation resumes (#1784).
 - Library's field decisions read plainly. Evidence, automatic statements,
   cover checks and decision failures drop internal words, a lost answer says
   what to check, and the writing box says whether a change was written
