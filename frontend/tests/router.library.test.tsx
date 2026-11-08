@@ -22,6 +22,7 @@ import type {
   AttentionSearch,
   CaseDetailView,
   DecisionCommand,
+  FieldCause,
   LibrarySearch,
   LibraryView,
   PreparationView,
@@ -4063,6 +4064,7 @@ describe('Library route', () => {
         target_fingerprint: titleField.targetFingerprint,
       },
       classification: 'automatic_recorded' as const,
+      classificationCause: 'automatic_decided' as const,
       decisionActions: [],
       editable: false,
       needsAttention: false,
@@ -4107,6 +4109,7 @@ describe('Library route', () => {
         target_fingerprint: titleField.targetFingerprint,
       },
       classification: 'automatic_recorded' as const,
+      classificationCause: 'automatic_decided' as const,
       decisionActions: [],
       editable: false,
       needsAttention: false,
@@ -4146,6 +4149,7 @@ describe('Library route', () => {
         target_fingerprint: titleField.targetFingerprint,
       },
       classification: 'automatic_recorded' as const,
+      classificationCause: 'automatic_decided' as const,
       decisionActions: [],
       editable: false,
       needsAttention: false,
@@ -4702,6 +4706,7 @@ describe('Library route', () => {
       proposedValues: [candidate],
       decisionActions: ['keep_current' as const, 'accept' as const],
       classification: 'automatic_recorded' as const,
+      classificationCause: 'automatic_decided' as const,
       needsAttention: false,
       navigationRole: 'resolved' as const,
       editable: true,
@@ -6046,6 +6051,7 @@ describe('Library route', () => {
       proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
       coverConsideration: null,
       classification: 'owner_choosable',
+      classificationCause: 'owner_choosable',
       classificationReason:
         'Your current cover is kept, so no review is needed. You can still choose another cover.',
       needsAttention: false,
@@ -7439,6 +7445,7 @@ describe('Library route', () => {
     const contextualField = {
       ...contextOnly,
       classification: 'unsupported' as const,
+      classificationCause: 'nothing_to_decide' as const,
       classificationReason: 'Nothing to decide for this field.',
       destination: 'authors' as const,
       inventoryRole: 'contextual' as const,
@@ -7679,6 +7686,7 @@ describe('Library route', () => {
       ...title,
       destination: 'asin' as const,
       classification: 'owner_choosable' as const,
+      classificationCause: 'owner_choosable' as const,
       classificationReason:
         'No review is needed. You can still keep the current value or choose a proposed one.',
       needsAttention: false,
@@ -7711,6 +7719,7 @@ describe('Library route', () => {
             ? {
                 ...value,
                 classification: 'human_recorded' as const,
+                classificationCause: 'human_decided' as const,
                 needsAttention: false,
                 navigationRole: 'inspect' as const,
                 humanDecision: decision,
@@ -7729,6 +7738,7 @@ describe('Library route', () => {
           ...title,
           destination: 'authors' as const,
           classification: 'human_recorded' as const,
+          classificationCause: 'human_decided' as const,
           needsAttention: false,
           navigationRole: 'inspect' as const,
           humanDecision: { ...decided, destination: 'authors' as const },
@@ -7737,6 +7747,7 @@ describe('Library route', () => {
           ...title,
           destination: 'series' as const,
           classification: 'automatic_recorded' as const,
+          classificationCause: 'automatic_decided' as const,
           decisionActions: [],
           editable: false,
           needsAttention: false,
@@ -10857,6 +10868,7 @@ describe('Library route', () => {
     const emptySubtitle = {
       ...titleField,
       classification: 'unsupported',
+      classificationCause: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'Unavailable',
       destination: 'subtitle' as const,
@@ -10880,6 +10892,7 @@ describe('Library route', () => {
     const currentOnly = {
       ...titleField,
       classification: 'unsupported',
+      classificationCause: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'An Author',
       destination: 'authors' as const,
@@ -10925,6 +10938,7 @@ describe('Library route', () => {
     const emptyTitle = {
       ...titleField,
       classification: 'unsupported',
+      classificationCause: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'Unavailable',
       decisionActions: [],
@@ -11003,6 +11017,7 @@ describe('Library route', () => {
     const emptySubtitle = {
       ...titleField,
       classification: 'unsupported',
+      classificationCause: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'Unavailable',
       destination: 'subtitle' as const,
@@ -11037,6 +11052,7 @@ describe('Library route', () => {
     const emptyTitle = {
       ...titleField,
       classification: 'unsupported',
+      classificationCause: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'Unavailable',
       decisionActions: [],
@@ -11092,6 +11108,7 @@ describe('Library route', () => {
     const unavailableField = {
       ...titleField,
       classification: 'unsupported' as const,
+      classificationCause: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
       destination: 'subtitle' as const,
       editable: false,
@@ -11133,6 +11150,7 @@ describe('Library route', () => {
     ) => ({
       ...titleField,
       classification: 'unsupported' as const,
+      classificationCause: 'nothing_to_decide' as const,
       classificationReason: 'Nothing to decide for this field.',
       decisionActions: [],
       destination,
@@ -11220,9 +11238,15 @@ describe('Library route', () => {
   describe('the fields with nothing to decide (#1514)', () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
-    const context = (destination: 'subtitle' | 'publisher' | 'language', reason: string) => ({
+    // The server's cause code decides each row; the reason is only printed (#1791).
+    const context = (
+      destination: 'subtitle' | 'publisher' | 'language',
+      cause: FieldCause,
+      reason: string,
+    ) => ({
       ...titleField,
       classification: 'unsupported' as const,
+      classificationCause: cause,
       classificationReason: reason,
       destination,
       editable: false,
@@ -11255,7 +11279,7 @@ describe('Library route', () => {
     }
 
     it('names one unchanged field and why nothing changed', async () => {
-      const details = await open([context('subtitle', unchanged)])
+      const details = await open([context('subtitle', 'nothing_to_decide', unchanged)])
       expect(details.querySelector('summary')).toHaveTextContent(/^No change: SubtitleShow why$/u)
       await userEvent.setup().click(within(details).getByText('Show why'))
       const row = rowOf(details, 'Subtitle')
@@ -11266,8 +11290,12 @@ describe('Library route', () => {
 
     it('names every unchanged field in their order', async () => {
       const details = await open([
-        context('subtitle', unchanged),
-        context('publisher', 'No source offered a different value. You can enter your own.'),
+        context('subtitle', 'nothing_to_decide', unchanged),
+        context(
+          'publisher',
+          'nothing_to_decide',
+          'No source offered a different value. You can enter your own.',
+        ),
       ])
       expect(details.querySelector('summary')).toHaveTextContent(
         /^No change: Subtitle, PublisherShow why$/u,
@@ -11275,7 +11303,7 @@ describe('Library route', () => {
     })
 
     it('says a waiting field is waiting, apart from the unchanged ones', async () => {
-      const details = await open([context('publisher', waiting)])
+      const details = await open([context('publisher', 'external_field_failure', waiting)])
       expect(details.querySelector('summary')).toHaveTextContent(/^1 field waitingShow why$/u)
       await userEvent.setup().click(within(details).getByText('Show why'))
       const row = rowOf(details, 'Publisher')
@@ -11286,9 +11314,9 @@ describe('Library route', () => {
 
     it('names both kinds when the list holds both, keeping the field order', async () => {
       const details = await open([
-        context('subtitle', unchanged),
-        context('publisher', waiting),
-        context('language', unchanged),
+        context('subtitle', 'nothing_to_decide', unchanged),
+        context('publisher', 'external_field_failure', waiting),
+        context('language', 'nothing_to_decide', unchanged),
       ])
       expect(details.querySelector('summary')).toHaveTextContent(
         /^No change: Subtitle, Language1 field waitingShow why$/u,
@@ -11300,6 +11328,61 @@ describe('Library route', () => {
       ).toEqual(['Subtitle', 'Publisher', 'Language'])
       expect(rowOf(details, 'Subtitle')).toHaveClass('is-unchanged')
       expect(rowOf(details, 'Publisher')).toHaveClass('is-waiting')
+    })
+
+    // Rewording the server's reason moves no row: the code decides it (#1791).
+    const shown = async (cause: FieldCause, reason: string) => {
+      const details = await open([context('publisher', cause, reason)])
+      await userEvent.setup().click(within(details).getByText('Show why'))
+      return { details, row: rowOf(details, 'Publisher') }
+    }
+
+    it('reads a reworded unchanged reason as No change', async () => {
+      const { details, row } = await shown('nothing_to_decide', 'Reworded: nothing differs here.')
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: PublisherShow why$/u)
+      expect(row).toHaveClass('is-unchanged')
+      expect(row).toHaveTextContent('No source offered a different value.')
+      expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
+    })
+
+    it('reads a waiting code as Waiting whatever its reason says', async () => {
+      const reason = 'The library connection is down.'
+      const { details, row } = await shown('external_connection_failure', reason)
+      expect(details.querySelector('summary')).toHaveTextContent(/^1 field waitingShow why$/u)
+      expect(row).toHaveClass('is-waiting')
+      expect(within(row).getByText('Waiting')).toBeVisible()
+      expect(row).toHaveTextContent(reason)
+    })
+
+    it('reads an unavailable code as Unavailable though its reason says waiting', async () => {
+      const reason = 'This field is waiting for the library connection to recover.'
+      const { details, row } = await shown('unsupported', reason)
+      expect(details.querySelector('summary')).toHaveTextContent(/^1 field unavailableShow why$/u)
+      expect(row).toHaveClass('is-unavailable')
+      expect(within(row).getByText('Unavailable')).toBeVisible()
+      expect(row).toHaveTextContent(reason)
+    })
+
+    it('reads an unchanged code as No change though its reason says waiting', async () => {
+      const { details, row } = await shown('nothing_to_decide', waiting)
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: PublisherShow why$/u)
+      expect(row).toHaveClass('is-unchanged')
+      expect(row).not.toHaveTextContent(waiting)
+      expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
+    })
+
+    it('hides a reworded review reason on a field with nothing to decide', async () => {
+      const { row } = await shown('review_needed', 'Reworded attention line.')
+      expect(row).toHaveClass('is-unavailable')
+      expect(row).toHaveTextContent('Nothing to decide for this field.')
+      expect(row).not.toHaveTextContent('Reworded attention line.')
+    })
+
+    it('shows a review-worded reason when the code is not a review', async () => {
+      const { row } = await shown('unsupported', 'This field needs your review.')
+      expect(row).toHaveClass('is-unavailable')
+      expect(row).toHaveTextContent('This field needs your review.')
+      expect(row).not.toHaveTextContent('Nothing to decide for this field.')
     })
   })
 
@@ -14972,6 +15055,7 @@ describe('a focused field decision (#1519)', () => {
     open(
       focused({
         classification: 'manual_fallback',
+        classificationCause: 'automatic_abstained',
         classificationReason: 'This field needs your review.',
         automaticWithheldReason: 'The sources disagree about the series.',
       }),
@@ -15085,6 +15169,7 @@ describe('a focused field decision (#1519)', () => {
     cleanup()
     const decided = focused({
       classification: 'human_recorded',
+      classificationCause: 'human_decided',
       classificationReason: 'You decided this field. You can change it here.',
       effectCapability: 'allowed',
       needsAttention: false,

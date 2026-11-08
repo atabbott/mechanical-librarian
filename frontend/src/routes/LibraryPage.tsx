@@ -104,6 +104,7 @@ import {
   choiceContext,
   combinedAutomaticTags,
   comparisonNotices,
+  contextKind,
   fieldReason,
   noticeText,
   questionReason,
@@ -156,21 +157,6 @@ const fieldStatus = (field: ReviewField) =>
         : optionalChoice(field)
           ? (['optional', 'Optional'] as const)
           : (['unchanged', 'No change'] as const)
-// A field with nothing to decide is either unchanged, because no source
-// offered a different value, or held: unavailable to this service, or waiting
-// on a recovery. The server's reason is the only thing that tells them apart,
-// so the two reasons for an unchanged field are named here (#1514).
-const unchangedReasons = new Set([
-  '',
-  'Nothing to decide for this field.',
-  'No source offered a different value. You can enter your own.',
-])
-const contextKind = (field: ReviewField) =>
-  field.manualHold || !unchangedReasons.has(field.classificationReason)
-    ? /waiting for|pending a/u.test(field.classificationReason)
-      ? ('waiting' as const)
-      : ('unavailable' as const)
-    : ('unchanged' as const)
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
   `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
