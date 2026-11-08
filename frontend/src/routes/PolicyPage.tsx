@@ -93,7 +93,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const [status, setStatus] = useState<{
     tone: 'neutral' | 'success' | 'error' | 'warning'
     message: string
-  }>({ tone: 'neutral', message: 'Draft matches active policy.' })
+  }>({ tone: 'neutral', message: 'Draft matches the active policy.' })
   // The completion acknowledgement belongs to the activation this page
   // performed. Anything the owner still has to act on -- work in flight, or a
   // failure to retry -- is shown whoever is looking.
@@ -163,7 +163,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     setStage('editing')
     setStatus({
       tone: 'neutral',
-      message: changed ? 'Draft has unreviewed changes.' : 'Draft matches active policy.',
+      message: changed ? 'Draft has unreviewed changes.' : 'Draft matches the active policy.',
     })
   }
   const safetySummaryRef = useRef<HTMLElement>(null)
@@ -178,8 +178,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         tone: 'success',
         message:
           action === 'automatic-safety/recover'
-            ? 'Suspension recovered. Title work resumes when its category suspension, automatic pause and global suspension are all cleared.'
-            : 'Policy state updated from the authoritative server.',
+            ? 'Suspension recovered. Automatic decisions resume once they are not paused or suspended.'
+            : 'Policy state updated.',
       })
       if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()
       // The dismissed update took its focused button with it, and a retry that
@@ -191,15 +191,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         uncertainWriteOutcome(error)
           ? {
               tone: 'warning',
-              message:
-                'The policy change could not be confirmed. It may have been saved; the current policy state is shown. Check it before pressing again.',
+              message: 'No answer came back. Check whether the policy changed before trying again.',
             }
           : {
               tone: 'error',
-              message: refusalCopy(
-                error,
-                'Nothing changed. Review the current server state and try again.',
-              ),
+              message: refusalCopy(error, 'Nothing was changed. Try again.'),
             },
       )
     }
@@ -209,18 +205,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     setSnapshotId(undefined)
     setPreviewActivePolicyId(undefined)
     setPreview(undefined)
-    setStatus({ tone: 'neutral', message: 'Validating the complete draft…' })
+    setStatus({ tone: 'neutral', message: 'Validating the draft…' })
     let phase: 'validate' | 'drafts' | 'preview' = 'validate'
     try {
       await command.mutateAsync({ action: 'validate', body: draft })
       phase = 'drafts'
-      setStatus({ tone: 'neutral', message: 'Validation passed. Saving the immutable snapshot…' })
+      setStatus({ tone: 'neutral', message: 'Validation passed. Saving the draft…' })
       const saved = (await command.mutateAsync({ action: 'drafts', body: draft })) as {
         policy_id: string
       }
       setSnapshotId(saved.policy_id)
       phase = 'preview'
-      setStatus({ tone: 'neutral', message: 'Snapshot saved. Inspecting current unapplied work…' })
+      setStatus({ tone: 'neutral', message: 'Draft saved. Previewing undecided works…' })
       const result = (await command.mutateAsync({
         action: 'preview',
         body: draft,
@@ -233,7 +229,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       setStage('preview')
       setStatus({
         tone: 'success',
-        message: 'Impact preview is current. The active policy is unchanged.',
+        message: 'Impact preview ready. The active policy is unchanged.',
       })
     } catch (error) {
       setStage('editing')
@@ -244,14 +240,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'warning',
           message:
-            'The snapshot could not be confirmed. It may have been saved; the current policy state was reloaded. Validating again is safe and reuses the same snapshot.',
+            'No answer came back while saving the draft. Choose Validate and preview to try again.',
         })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })
       else if (error instanceof ApiError && error.status === 422)
         setStatus({
           tone: 'error',
-          message: 'The draft is not valid. Review its field choices and try again.',
+          message: 'The draft was not accepted. Check each field, then try again.',
         })
       else if (phase === 'preview')
         setStatus({
@@ -262,8 +258,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       else if (phase === 'drafts')
         setStatus({
           tone: 'error',
-          message:
-            'Validation passed, but the immutable snapshot was not saved. Nothing became active; try again.',
+          message: 'Validation passed, but the draft was not saved. Try again.',
         })
       else
         setStatus({
@@ -301,7 +296,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'warning',
           message:
-            'The activation result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
+            'No answer came back. Check whether the policy was activated before activating it again.',
         })
       } else if (
         error instanceof ApiError &&
@@ -315,7 +310,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'warning',
           message:
-            'The active policy changed before activation. Review the refreshed policy and create a new draft.',
+            'The active policy changed before activation. Check your changes against it, then validate again.',
         })
       } else if (
         error instanceof ApiError &&
@@ -325,16 +320,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStage('preview')
         setStatus({
           tone: 'warning',
-          message:
-            'The previous policy update is still processing. This reviewed snapshot remains available; retry after the transition is resolved.',
+          message: 'The previous policy update is still running. Try again once it finishes.',
         })
       } else {
         setStatus({
           tone: 'error',
-          message: refusalCopy(
-            error,
-            'Activation failed safely. The reviewed snapshot remains available to retry.',
-          ),
+          message: refusalCopy(error, 'The policy was not activated. Try again.'),
         })
       }
     }
@@ -361,7 +352,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const currentChapter = chapters.find((chapter) => chapter.key === activeChapter) ?? {
     key: 'identity' as const,
     label: 'Identity',
-    description: 'How a work names itself and its contributors.',
   }
   const visibleFields = fields.filter((field) => field.chapter === activeChapter)
   const changedChapterLabels = chapters
@@ -503,7 +493,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         ? 'Ignored. This field is left alone.'
         : destination === 'ask'
           ? 'Ask me. Your choice.'
-          : 'Unavailable. This field is left alone.'
+          : 'Not supported. This field is left alone.'
     return `${selected} If set to Automatic: ${eligibility}`
   }
 
@@ -643,9 +633,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             ? `${String(impactTotals.changedWorks)} sampled ${impactTotals.changedWorks === 1 ? 'work' : 'works'} with changes`
             : 'Impact preview ready'
           : stage === 'validating'
-            ? 'Validating the working draft…'
+            ? 'Validating the draft…'
             : draftDisplay.changed
-              ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change is' : 'changes are'} ready to validate`
+              ? `${String(changedFields.length)} ${changedFields.length === 1 ? 'change' : 'changes'} ready to validate`
               : 'Draft matches the active policy'
   // Once this activation's transition is read, its progress section (or its
   // dismissal) owns reconciliation, so the tray no longer states it.
@@ -655,15 +645,17 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         (activatedTransitionId !== undefined &&
           transition.data?.transition_id === activatedTransitionId)
         ? ''
-        : `${impactTotals?.currentWorks ? 'Current unapplied work is being reconciled.' : 'No current unapplied work needed reconciliation.'} Applied history is untouched.`
+        : impactTotals?.currentWorks
+          ? 'Undecided works are being checked against the new policy.'
+          : 'No undecided works needed checking.'
       : stage === 'activation'
-        ? 'Review the unchanged preview before making this draft active.'
+        ? 'Check the preview before activating.'
         : stage === 'preview'
-          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved. Activate to keep it. Reloading starts from the active policy.`
+          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'changed field' : 'changed fields'} in the sample` : ''}${changedChapterLabels.length ? ` · you changed ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
           : stage === 'validating'
-            ? 'Checking every chapter, where Automatic may decide, and which libraries the policy covers.'
+            ? ''
             : draftDisplay.changed
-              ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.`
+              ? `Changes in ${changedChapterLabels.join(', ')}.`
               : 'Change any field to create a new draft.'
 
   return (
@@ -677,26 +669,24 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         <aside className="cm-policy-sidebar">
           <header>
             <strong>{data.state.profile.name}</strong>
-            <small>{baselinePolicy ? 'Active baseline' : 'Active policy'}</small>
+            <small>Active policy</small>
           </header>
           <nav aria-label="Policy chapters">
             {chapters.map((chapter) => {
               const chapterFields = fields.filter((field) => field.chapter === chapter.key)
               const changes = chapterFields.filter(fieldChanged).length
               const labelId = `policy-${chapter.key}-label`
-              const descriptionId = `policy-${chapter.key}-description`
               return (
                 <button
                   key={chapter.key}
                   type="button"
                   aria-current={activeChapter === chapter.key ? 'page' : undefined}
-                  aria-labelledby={`${labelId} ${descriptionId}`}
+                  aria-labelledby={labelId}
                   aria-describedby={changes ? `policy-${chapter.key}-changes` : undefined}
                   onClick={() => void openChapter(chapter.key)}
                 >
                   <span>
                     <strong id={labelId}>{chapter.label}</strong>
-                    <small id={descriptionId}>{chapter.description}</small>
                   </span>
                   {changes ? (
                     <ChangeCount id={`policy-${chapter.key}-changes`} count={changes} />
@@ -718,7 +708,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           <header>
             <div>
               <h2>{currentChapter.label}</h2>
-              <p>{currentChapter.description}</p>
             </div>
           </header>
           <div className="cm-policy-field-list">
@@ -758,8 +747,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                                 {destinationLabel(entry.destination)}:{' '}
                                 {audiobookOperationLabels[entry.operation]}.{' '}
                                 {entry.automatic_available
-                                  ? 'Automatic available.'
-                                  : 'Review required.'}
+                                  ? 'Automatic offered.'
+                                  : 'Automatic not offered.'}
                               </li>
                             ))}
                         </ul>
@@ -768,16 +757,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     <Disclosure summary="What this changes">
                       {field.key === 'series' ? (
                         <p>
-                          One provider can supply enough backing; corroboration strengthens the
-                          evidence. These rules are measured against checked books before Automatic
-                          is offered. Numbering is supplied by the provider and is not independently
-                          verified for each book.
+                          One source can be enough for a series. Its number comes from that source
+                          and is not checked for each book.
                         </p>
                       ) : null}
                       <ul>
                         {field.options.map((value) => (
                           <li key={value}>
-                            <strong>{field.optionLabels[value] ?? value}:</strong>{' '}
+                            {field.optionLabels[value] ?? value}:{' '}
                             <span>
                               {representationConsequence(
                                 policyRepresentationGuidance[`${field.key}:${value}`],
@@ -790,32 +777,22 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   </header>
                   {field.unsupported ? (
                     <div className="cm-policy-unavailable">
-                      <strong>Unsupported destination</strong>
-                      <span>
-                        This field is shown for context only. It has no review mode or
-                        representation choice, so it cannot be changed in this draft.
-                      </span>
+                      <strong>Not supported</strong>
+                      <span>This field is shown but cannot be changed.</span>
                     </div>
                   ) : (
                     <>
                       <div className="cm-policy-mode-control">
                         <span className="cm-policy-control-heading">
-                          <strong>Review mode</strong>
-                          {destination === 'unsupported' || !automaticAvailable ? (
-                            <small>
-                              {[
-                                destination === 'unsupported'
-                                  ? 'Off until you choose a review mode'
-                                  : null,
-                                automaticAvailable ? null : 'Automatic not supported',
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </small>
+                          <strong>Setting</strong>
+                          {/* The mode is said once, by the Mode disclosure; the note
+                              under the option says it while Automatic is chosen. */}
+                          {!qualified && destination !== 'automatic' ? (
+                            <small>Automatic not offered</small>
                           ) : null}
                         </span>
                         <SegmentedControl
-                          label={`${field.label} review mode`}
+                          label={`${field.label} setting`}
                           value={destination}
                           disabled={command.isPending}
                           options={[
@@ -836,9 +813,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                         />
                       </div>
                       <label className="cm-policy-representation">
-                        <span>Representation</span>
+                        <span>Option</span>
                         <Dropdown
-                          ariaLabel={`${field.label} representation`}
+                          ariaLabel={`${field.label} option`}
                           value={option}
                           options={field.options.map((value) => ({
                             value,
@@ -860,14 +837,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                             if (movesToAsk)
                               setStatus({
                                 tone: 'warning',
-                                message: `${field.label} now uses a Manual review only representation, so review mode changed from Automatic to Ask me.`,
+                                message: `${field.label} changed from Automatic to Ask me, because Automatic is not offered for this option.`,
                               })
                           }}
                         />
                         {destination === 'automatic' && !qualified ? (
                           <small className="cm-policy-representation-consequence">
-                            This representation is Manual review only. Selecting it changes review
-                            mode from Automatic to Ask me.
+                            Automatic is not offered for this option. Choose Ask me, Ignore or
+                            another option.
                           </small>
                         ) : null}
                       </label>
@@ -887,7 +864,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               <header>
                 <div>
                   <strong>Impact preview</strong>
-                  <small>Current unapplied work only · no metadata writes</small>
                 </div>
                 {impactTotals?.changedWorks ? (
                   <b aria-label={`${String(impactTotals.changedWorks)} sampled works with changes`}>
@@ -898,13 +874,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               <p>
                 {sampledWorks ? (
                   <>
-                    {sampledWorks} sampled works
-                    {' · '}
-                    {impactTotals?.currentWorks} total current unapplied works
-                    {' · '}up to 20 works across all libraries
+                    {sampledWorks} of {impactTotals?.currentWorks} undecided works sampled
+                    {' · '}up to 20 across all libraries
                   </>
                 ) : (
-                  'No current unapplied work to sample'
+                  'No undecided works to sample'
                 )}
                 {preview.libraries.some((library) => library.cases_truncated)
                   ? ' · Additional works were not previewed'
@@ -959,12 +933,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                             <small>{library.previewed.map(readableCategory).join(', ')}</small>
                           </span>
                           <span className="cm-policy-impact">
-                            <b>No policy-caused changes in this sample</b>
+                            <b>No changes from the draft in this sample</b>
                             <small>
                               ·{' '}
                               {library.current_unapplied_count === 0
-                                ? 'No current unapplied work remains to inspect'
-                                : `${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'}; unchanged outcomes are separate context`}
+                                ? 'No undecided works left'
+                                : `${String(library.current_unapplied_count)} undecided ${library.current_unapplied_count === 1 ? 'work' : 'works'}`}
                             </small>
                           </span>
                         </div>
@@ -1002,28 +976,21 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       : `Show ${String(changedRows.length - 6)} more ${changedRows.length === 7 ? 'outcome' : 'outcomes'}`}
                   </button>
                 </footer>
-              ) : preview.libraries.some((library) => library.cases_truncated) ? (
-                <footer>
-                  Sample limited to 20 works across all libraries; additional current works were not
-                  previewed.
-                </footer>
               ) : null}
             </div>
             {unchangedRows.length ? (
               <details className="cm-policy-projected-context">
-                <summary>
-                  Unchanged outcomes and current library context ({unchangedRows.length})
-                </summary>
+                <summary>Unchanged outcomes ({unchangedRows.length})</summary>
                 <p>
-                  These compare the draft with retained library values. They do not count as effects
-                  of editing the policy.
+                  These compare the draft with the library's current values. The draft does not
+                  cause them.
                 </p>
                 {unchangedRows.map((row) => (
                   <p key={row.id}>
                     <strong>
-                      {row.work} · {row.media} · {row.field}:
+                      {row.work} · {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} · {row.field}:
                     </strong>{' '}
-                    {row.impact.title}. {row.projected.detail}
+                    {row.impact.title} · {row.projected.detail}
                   </p>
                 ))}
               </details>
@@ -1039,8 +1006,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               >
                 <strong>Activate this reviewed draft?</strong>
                 <span id={activationDescriptionId}>
-                  The active policy changes only after this guarded command succeeds. Applied
-                  history remains untouched.{' '}
+                  Changes already written stay as they are.{' '}
                   {keptPermission === undefined
                     ? consent.isError
                       ? 'Write permission is unchanged: each library keeps what it has.'
@@ -1066,7 +1032,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           </section>
         ) : null}
         <FinishTray
-          label="Whole policy draft impact and activation"
+          label="Policy draft and activation"
           className={`stage-${stage}`}
           ref={trayRef}
           summary={
@@ -1167,30 +1133,29 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               <header>
                 <span className="cm-policy-validation-spinner" />
                 <div>
-                  <strong>Checking this draft</strong>
-                  <small>The snapshot is saved only if every check passes.</small>
+                  <small>The draft is saved only if every check passes.</small>
                 </div>
               </header>
               <ul>
                 <li>
                   <span />
                   <div>
-                    <strong>Document structure</strong>
-                    <small>14 supported field definitions</small>
+                    <strong>Fields</strong>
+                    <small>All 14 have a setting and an option</small>
                   </div>
                 </li>
                 <li>
                   <span />
                   <div>
-                    <strong>Automatic checks</strong>
-                    <small>Every Automatic choice has passed its checks</small>
+                    <strong>Automatic</strong>
+                    <small>Offered for every field set to Automatic</small>
                   </div>
                 </li>
                 <li>
                   <span />
                   <div>
-                    <strong>Library scope</strong>
-                    <small>Exact current scope</small>
+                    <strong>Libraries</strong>
+                    <small>Which libraries the policy covers</small>
                   </div>
                 </li>
               </ul>
@@ -1219,9 +1184,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </h2>
               <p>
                 {activationNotice.total
-                  ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} current unapplied items reconciled.`
-                  : 'No current unapplied items needed reconciliation.'}{' '}
-                Applied history is untouched.
+                  ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} undecided works checked.`
+                  : 'No undecided works needed checking.'}
               </p>
             </>
           ) : null}
@@ -1238,7 +1202,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     )
                 }}
               >
-                Retry failed reconciliation
+                Retry failed works
               </button>
             ) : null}
             {activationNotice.state !== 'processing' ? (
