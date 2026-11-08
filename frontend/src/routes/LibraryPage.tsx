@@ -2380,7 +2380,7 @@ export default function LibraryPage({
                       <span>
                         <small>Writing to the library</small>
                         <strong>{effect.state}</strong>
-                        <em>{effect.detail}</em>
+                        {effect.detail ? <em>{effect.detail}</em> : null}
                       </span>
                     </aside>
                   ) : null}

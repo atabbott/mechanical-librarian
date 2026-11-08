@@ -68,11 +68,10 @@ export const effectSummary = (field: ReviewField) => {
         state: 'Earlier choice',
         detail: 'Activity shows whether it was written.',
       }
+    // The advice card already says Activity shows whether the library was
+    // changed, so the box adds nothing while writing is on (L5).
     return field.effectCapability === 'allowed'
-      ? {
-          state: 'Choice recorded',
-          detail: "Activity shows this change's progress.",
-        }
+      ? { state: 'Choice recorded', detail: null }
       : field.effectCapability === 'unavailable'
         ? {
             state: 'Choice recorded · Not written',

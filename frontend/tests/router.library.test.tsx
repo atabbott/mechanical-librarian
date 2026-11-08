@@ -12911,7 +12911,7 @@ it.each(['human', 'automatic_policy'] as const)(
         outcome: null,
         capability: 'allowed',
         heading: 'Choice recorded',
-        detail: "Activity shows this change's progress.",
+        detail: null,
       },
       {
         current: true,
@@ -12989,7 +12989,13 @@ it.each(['human', 'automatic_policy'] as const)(
       })
       const panel = await screen.findByLabelText('Writing to the library')
       expect(panel).toHaveTextContent(scenario.heading)
-      expect(panel).toHaveTextContent(scenario.detail)
+      if (scenario.detail === null) {
+        // The advice card says where progress shows; the box says it once (L5).
+        expect(panel).toHaveTextContent(/^Writing to the libraryChoice recorded$/u)
+        expect(panel.querySelector('em')).toBeNull()
+      } else {
+        expect(panel).toHaveTextContent(scenario.detail)
+      }
       expect(panel).not.toHaveTextContent('queues nothing')
       cleanup()
     }
