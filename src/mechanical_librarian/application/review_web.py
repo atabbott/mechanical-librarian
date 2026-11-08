@@ -2307,7 +2307,7 @@ def _report_detail(
     if type(chapters) is not list or (cover is not None and type(cover) is not dict):
         raise ReviewWebError("unavailable")
     recorded_claims = [value for value in claims if type(value) is dict]
-    provider_claims = _report_detail_provider_claims(report)
+    provider_claims = _report_detail_provider_claims(report, recorded)
     return {
         "chapters": [
             {
@@ -2376,7 +2376,7 @@ def _report_detail(
 
 
 def _report_detail_provider_claims(
-    report: dict[str, object],
+    report: dict[str, object], recorded: MetadataReport
 ) -> list[dict[str, object]]:
     """Project every admitted candidate's stated claims, authority-labelled.
 
@@ -2384,14 +2384,17 @@ def _report_detail_provider_claims(
     so the authority is what an owner-facing surface names. Candidate identity
     travels with each claim because one observation may admit more than one
     candidate and a merged list would attribute one product's claims to
-    another.
+    another. An audiobook's iTunes listing is its cover alone, so nothing it
+    states is evidence here (#1779).
     """
     values: list[dict[str, object]] = []
     providers = report.get("providers")
     if type(providers) is not list:
         return values
+    # One report states one observation per provider name.
+    evidence = {value.provider for value in field_evidence_providers(recorded)}
     for provider in cast("list[object]", providers):
-        if type(provider) is not dict:
+        if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
         label = _provider_label(authority if type(authority) is str else None)

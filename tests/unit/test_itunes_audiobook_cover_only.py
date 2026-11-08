@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from mechanical_librarian.application.cover_identity import _classify_sources
+from mechanical_librarian.application.review_web import _report_detail
 from mechanical_librarian.domain.audio_health import derive_audio_health
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
@@ -282,3 +283,18 @@ def test_the_store_cover_binds_and_is_offered_beside_the_recording() -> None:
         for alternative in cover.alternatives
         for reference in alternative.evidence_references
     }
+
+
+def test_the_report_detail_projects_no_store_claim() -> None:
+    """The audiobook's report detail lists no iTunes statement as evidence."""
+
+    def stated(authority: str) -> set[object]:
+        report = _report(authority)
+        return {
+            value["candidate"]
+            for value in _report_detail(report.to_data(), report)["provider_evidence"]
+        }
+
+    assert _IDENTITY not in stated("itunes_search")
+    # The control: the same statements from an evidence authority are listed.
+    assert _IDENTITY in stated("hardcover")
