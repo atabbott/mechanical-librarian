@@ -113,7 +113,9 @@ The product sends no telemetry. It contacts only:
   email. When Audiobookshelf names no author for an ebook, its EPUB's own
   creators are sent instead. Hardcover also receives case forms of the title
   and inverted or initials forms of an author's name, derived only from values
-  already sent. iTunes Search receives an audiobook's title and author once, to
+  already sent. For a book it found, Hardcover also receives that book's own
+  id, to list its editions' covers, and cover images are fetched from its
+  asset host. No item value is sent with either. iTunes Search receives an audiobook's title and author once, to
   find its cover, and only while its cover switch is on;
 - **an AI reviewer**, only if the owner selected one
   ([AI trust boundary](ai-boundary.md)). Cover review sends opaque candidate

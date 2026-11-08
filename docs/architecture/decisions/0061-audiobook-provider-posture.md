@@ -297,6 +297,15 @@ new schema, and needs no clean rebuild: the lane and v69 landed together, and
 every v69 producer (the adapter, a fault, a disabled binding and a retry
 merge) records it.
 
+**Clause 9 amendment (#1380).** Hardcover also offers covers for an
+audiobook: the square covers of the audio editions it already reads for a
+kept book ([ADR-0090](0090-hardcover-audio-edition-witness.md), decision 4
+amendment). Each is a `listed_edition` source bound by the book's work
+identity, `unknown` until ADR-0096's title and creator match admits it, and,
+like every audiobook cover, selectable only beside an admitted recording. It
+adds no request, provider or network destination beyond Hardcover's asset
+host. This is `metadata-report-v76` (ADR-0013 clean rebuild).
+
 ## Ebook dispatch set (#1486)
 
 Ebook preparation dispatches only to the connected providers named in

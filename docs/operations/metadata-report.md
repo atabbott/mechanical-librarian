@@ -373,6 +373,9 @@ Further audiobook records grant nothing by themselves:
   narrator tags rule out. Only their narrators may be offered, for an empty
   narrator field
   ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
+  The audio-edition read also states each edition's image and language. They
+  feed only the square covers Hardcover offers for the audiobook, never a
+  kept edition or a witness outcome.
 - **`dispatch`**: each lane's `outcome` (`admitted`, `empty`, `refused`,
   `overflow`, `unavailable`, `starved`, `not_dispatched` or
   `empty_or_refused`), `rungs` walked, and on Audible's asserted lane
@@ -392,7 +395,7 @@ and rate-limit holds are in
 | --- | --- |
 | Audible catalog | 6 results per search; 25 when the item states one composed runtime, under a 262,144-byte bound, keeping products in the loose band or stating no runtime (more than five is `candidate_limit_exceeded`); 1 MiB aggregate |
 | Google Books | requests 6 rows, keeps 5; 5 transport retries per query; 54 attempts |
-| Hardcover | 27 attempts; three relationship levels; a work lane asks for 11 books, keeps at most 5 after folding, sends at most 4 title and 16 author spellings and no body over 16 KiB; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
+| Hardcover | 27 attempts; three relationship levels; a work lane asks for 11 books, keeps at most 5 after folding, sends at most 4 title and 16 author spellings and no body over 16 KiB; on an audiobook, 2 books and 2 pages of 100 audio editions per book; on an ebook ISBN or work lane, only when the library lists languages, 2 books and 2 pages of 100 editions per book for covers |
 | Inventaire | 3-row search, 2 candidates; 3 attempts per request, 27 per observation; at most 2 MiB |
 | Open Library | 1 transport retry per request, 4 per observation; 49 attempts |
 | iTunes Search | work lanes; on an audiobook, the asserted lane's first rung only; 5 rows; 6 distinct candidates overflow |

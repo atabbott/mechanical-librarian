@@ -250,15 +250,17 @@ same language and script. `und`, `mul`, `mis` and `zxx` are refused.
 
 A store-managed library declares its languages on Settings, under Libraries;
 there the picker offers ISO 639 languages without a script or region. It is a
-matching prior, never written into an item, and only audiobook matching reads
-it
-([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md)):
+matching prior, never written into an item. Audiobook matching
+([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md))
+and Hardcover edition covers read it:
 
 - Audible marketplaces are reordered by language, first language first. None
   is added or removed. English keeps the default order.
 - A recording that states no language must be in one of the listed
   languages: an edition in any other language is not matched as its
   recording. A language the recording states itself always wins.
+- Hardcover offers an edition's cover only when the edition states one of the
+  listed languages. A library with no languages gets no edition covers.
 
 Changing the list prepares the library's items again.
 
@@ -375,8 +377,11 @@ and Inventaire receive no audiobook requests.
 ### Covers
 
 `cover_enabled` makes a provider a cover source. A report admits at most four
-provider cover sources per named connection and eight overall; extra sources
-are recorded as truncated.
+provider cover sources per named connection, eight for Hardcover, and twelve in
+all. Extra sources are recorded as truncated. Hardcover covers come only from
+`assets.hardcover.app`. An edition's cover is fetched only when the edition
+states one of the library's languages and at least 300 px on its short side.
+Ebooks take portrait covers and audiobooks square ones.
 
 Settings shows a **Cover evidence** switch only for `audible_catalog` (its art
 becomes an audiobook cover source) and `itunes_search` (a matching audiobook

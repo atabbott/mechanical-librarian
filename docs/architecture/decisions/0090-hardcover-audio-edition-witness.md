@@ -112,6 +112,19 @@ from Audible.
    An edition ASIN may be ISBN-shaped, as some Audible productions are; the
    work-level Hardcover ASIN rule is unchanged.
 
+### Decision 4 amendment: audio-edition covers (#1380)
+
+The audio-edition document's projection gains each edition's image (URL,
+width and height) and language (`code2` and `code3`), and nothing else. Those
+members feed only cover descriptors. Decisions 5 to 8 never read them, so a
+witness outcome is the same with or without images. A row of a kept book
+whose stated cover is square within 5 percent, at least 300 px on its short
+side, in one of the library's languages and on `assets.hardcover.app` offers
+that cover as a `listed_edition` source, as an ebook's edition covers do
+([ADR-0056](0056-edition-overflow-work-witness.md)). A portrait cover is
+never offered for an audiobook. A refused fan-out keeps no edition and offers
+no cover. This is `metadata-report-v76`, a clean rebuild under ADR-0013.
+
 ### The companion EPUB's book (#1468)
 
 An audiobook item may hold an EPUB beside its tracks. Hardcover is also asked

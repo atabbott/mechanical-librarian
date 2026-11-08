@@ -36,3 +36,19 @@ witnesses. The replay found none, so neither that fetch nor a re-check of a
 stored witness is built. No witness identifier is sent to Hardcover.
 
 The report advances to `metadata-report-v72` under ADR-0013.
+
+A book an ebook ISBN or WORK lane accepts now offers its editions' covers
+(#1778). Hardcover reads the book's edition list by its integer book id, at
+most 2 pages of 100 rows for at most 2 books an observation, and only when the
+library lists languages. A compilation's editions are never read. An edition
+row feeds a cover descriptor only, never a candidate, an identifier or a
+field. Its cover is a `listed_edition` source, bound by the book's work
+identity alone because an edition list says nothing that would bind it to the
+item's edition. Cover identity keeps it `unknown` and records the work
+identity level ADR-0096 would admit it at, until that record's activation. The
+reviewer packet shows it as a related edition. Decision 3 of
+[ADR-0090](0090-hardcover-audio-edition-witness.md), that an ebook sends no
+edition request, is about the audio-edition document only. The edition-covers
+document is a separate read with its own bounds.
+
+That change is `metadata-report-v76` under ADR-0013.
