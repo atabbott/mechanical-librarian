@@ -391,7 +391,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-disclosure[open] > summary::after { content:'\25BE'; }
 .cm-disclosure > ul, .cm-disclosure > p { display:grid; max-width:46ch; gap:.32rem; margin:.4rem 0 0; padding:.48rem .55rem; border-left:1px solid var(--line-strong); color:var(--soft); background:color-mix(in srgb,var(--surface-strong) 65%,transparent); list-style:none; }
 .cm-disclosure li, .cm-disclosure > p { min-width:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.4; }
-.cm-disclosure li strong { color:var(--ink); font-family:inherit; font-size:inherit; }
 .cm-policy-representation-consequence { color:var(--notice); }
 .cm-dropdown { min-width:0; color:var(--ink); font-size:.78rem; }
 .cm-dropdown-trigger { display:grid; width:100%; min-width:0; min-height:50px; grid-template-columns:minmax(0,1fr) 18px; align-items:center; gap:.55rem; padding:.5rem .7rem .5rem .8rem; border:1px solid var(--field-line); border-radius:.65rem; color:var(--ink); background:var(--page); font-family:inherit; font-size:inherit; font-weight:650; line-height:1.2; text-align:left; cursor:pointer; }

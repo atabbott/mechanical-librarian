@@ -86,9 +86,9 @@ export const PolicySafety = ({
         </div>
         {safety.category_suspensions.title_layout ? (
           <p>
-            Once Title is not paused or suspended, Automatic decides titles again for prepared
-            works, from what the sources already said. Recovering writes nothing to your library.
-            Other suspensions stay in place.
+            Automatic decides Title and subtitle again once this suspension, the pause and any
+            global suspension are all cleared. It uses what the sources already said for prepared
+            works. Recovering writes nothing to your library. Other suspensions stay in place.
           </p>
         ) : null}
         {Object.keys(safety.category_suspensions).map((category) => (

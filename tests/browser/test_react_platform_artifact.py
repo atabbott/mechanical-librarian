@@ -752,9 +752,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     # option past its card's clipped edge (#1013).
                     flag = page.get_by_role("region", name="Explicit-content flag")
                     note = flag.locator(".cm-policy-control-heading small")
-                    expect(note).to_have_text(
-                        "Not supported until you choose a setting · Automatic not offered"
-                    )
+                    expect(note).to_have_text("Automatic not offered")
                     options = flag.get_by_role(
                         "group", name="Explicit-content flag setting"
                     ).get_by_role("button")
@@ -763,7 +761,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         page.set_viewport_size({"width": width, "height": 844})
                         assert note.evaluate(
                             "node => node.scrollWidth <= node.clientWidth"
-                        ), f"review-mode note truncated at {width}px"
+                        ), f"setting note truncated at {width}px"
                         _fits_its_container(
                             page,
                             ".cm-policy-field:has(.cm-policy-control-heading small)",

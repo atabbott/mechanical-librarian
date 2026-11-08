@@ -161,7 +161,8 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'tags',
     label: 'Tags',
-    meaning: 'Tags start off. When on, they come from sources.',
+    meaning:
+      'Tags start Off and are never asked about while Off. The other options take them from sources.',
     options: ['off', 'fill_empty', 'add', 'replace'],
     optionLabels: {
       off: 'Off',

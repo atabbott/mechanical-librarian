@@ -310,7 +310,7 @@ describe('Policy route', () => {
 
         expect(
           await screen.findByText(
-            'No answer came back while the draft was saved. Choose Validate and preview to try again.',
+            'No answer came back while saving the draft. Choose Validate and preview to try again.',
           ),
         ).toBeVisible()
         expect(screen.queryByText(/the draft was not saved/u)).toBeNull()
@@ -390,7 +390,7 @@ describe('Policy route', () => {
       const { http, policyCommand, readsBefore } = await run('drafts')
       expect(
         await screen.findByText(
-          'No answer came back while the draft was saved. Choose Validate and preview to try again.',
+          'No answer came back while saving the draft. Choose Validate and preview to try again.',
         ),
       ).toBeVisible()
       await waitFor(() =>
@@ -456,7 +456,7 @@ describe('Policy route', () => {
       const { policyCommand } = await run('drafts', 'lost')
       expect(
         await screen.findByText(
-          'No answer came back while the draft was saved. Choose Validate and preview to try again.',
+          'No answer came back while saving the draft. Choose Validate and preview to try again.',
         ),
       ).toBeVisible()
       expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts'])
@@ -466,7 +466,7 @@ describe('Policy route', () => {
       await run('drafts', 'text')
       expect(
         await screen.findByText(
-          'No answer came back while the draft was saved. Choose Validate and preview to try again.',
+          'No answer came back while saving the draft. Choose Validate and preview to try again.',
         ),
       ).toBeVisible()
     })
@@ -953,7 +953,11 @@ describe('Policy route', () => {
     )
     const isbn = screen.getByRole('region', { name: 'ISBN' })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(within(isbn).getByText('Automatic not offered')).toBeVisible()
+    // Human review mode disables Automatic on every card, but ISBN's option is
+    // offered, so the card does not say otherwise; the Mode disclosure says
+    // the mode once (#1765 A1).
+    expect(within(isbn).queryByText('Automatic not offered')).toBeNull()
+    expect(isbn.querySelector('.cm-policy-control-heading small')).toBeNull()
     await user.click(within(isbn).getByRole('button', { name: 'Ignore' }))
     expect(screen.getByRole('button', { name: /^Publication/ })).toHaveAccessibleDescription(
       '1 changed field',
@@ -965,7 +969,9 @@ describe('Policy route', () => {
     )
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     const tags = screen.getByRole('region', { name: 'Tags' })
-    expect(tags).toHaveTextContent('Tags start off. When on, they come from sources.')
+    expect(tags).toHaveTextContent(
+      'Tags start Off and are never asked about while Off. The other options take them from sources.',
+    )
     expect(within(tags).getByText('Automatic not offered')).toBeVisible()
     expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(tags).getByRole('button', { name: 'Ignore' })).toBeEnabled()
@@ -1023,11 +1029,10 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     await user.click(screen.getByRole('button', { name: /Additional fields/ }))
     const explicit = screen.getByRole('region', { name: 'Explicit-content flag' })
-    expect(
-      within(explicit).getByText(
-        'Not supported until you choose a setting · Automatic not offered',
-      ),
-    ).toBeVisible()
+    expect(explicit.querySelector('.cm-policy-control-heading small')).toHaveTextContent(
+      /^Automatic not offered$/u,
+    )
+    expect(within(explicit).queryByText(/until you choose a setting/u)).toBeNull()
     expect(
       within(explicit).getByRole('combobox', { name: 'Explicit-content flag option' }),
     ).toBeEnabled()
@@ -1060,6 +1065,9 @@ describe('Policy route', () => {
     ])
     expect(screen.queryByText('No changes from the draft in this sample')).toBeNull()
     expect(screen.getByText('Impact preview ready')).toBeVisible()
+    // #1765 A1: the panel title has no caption; the sample line says it.
+    expect(screen.queryByText(/Undecided works only/u)).toBeNull()
+    expect(document.querySelector('.cm-policy-preview > header small')).toBeNull()
     expect(screen.queryByLabelText(/sampled works with changes/u)).toBeNull()
     const stateCallsBeforeChange = vi.mocked(http.getPolicyState).mock.calls.length
     // Simulate A → B during preview, then B → A before activation. The
@@ -1093,7 +1101,7 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText(
-        'No answer came back while the draft was saved. Choose Validate and preview to try again.',
+        'No answer came back while saving the draft. Choose Validate and preview to try again.',
       ),
     ).toBeVisible()
     expect(policyCommand.mock.calls.map(([path]) => path)).toEqual([
@@ -1184,7 +1192,7 @@ describe('Policy route', () => {
     expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
     expect(
       screen.getByText(
-        /\. Activate to make it the active policy\. Reloading the page starts again from the active policy\.$/u,
+        /^Validated · \d+ field changes? in the sample · you changed Identity\. Activate to make it the active policy\. Reloading the page starts again from the active policy\.$/u,
       ),
     ).toBeVisible()
     expect(screen.queryByText(/snapshot saved automatically/u)).toBeNull()
@@ -1392,7 +1400,7 @@ describe('Policy route', () => {
     expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
-    expect(screen.getByText(/16 changes in the sample/)).toBeVisible()
+    expect(screen.getByText(/ · 16 field changes in the sample · /u)).toBeVisible()
     // No design-document term reaches the owner on Policy (#1286 X5); only
     // the Technical detail disclosure quotes the server's own codes.
     const owner = document.body.cloneNode(true) as HTMLElement
@@ -1508,7 +1516,7 @@ describe('Policy route', () => {
     const message = screen.getByText('Policy activated').parentElement
     await waitFor(() => expect(message).toHaveFocus())
     expect(message).toHaveAttribute('tabindex', '-1')
-    expect(message).toHaveTextContent('Policy activatedNo undecided works needed checking.')
+    expect(message).toHaveTextContent(/^Policy activatedNo undecided works needed checking\.$/u)
     expect(
       screen.getAllByText(/Policy activated|is now active|Active policy updated/u),
     ).toHaveLength(2)
@@ -1687,9 +1695,11 @@ describe('Policy route', () => {
         /^Not previewed\.This rule takes effect on the next preparation\.$/u,
       )
     expect(screen.getByText(example.title)).toBeVisible()
-    const material = screen.queryByText(/\d+ changes? in the sample/u)
+    const material = screen.queryByText(/\d+ field changes? in the sample/u)
     if (example.rows.some((row) => row.endsWith('Policy change')))
-      expect(material).toHaveTextContent(`${String(example.cases.length)} change`)
+      expect(material).toHaveTextContent(
+        ` · ${String(example.cases.length)} ${example.cases.length === 1 ? 'field change' : 'field changes'} in the sample · `,
+      )
     else expect(material).toBeNull()
     const preview = document.querySelector<HTMLElement>('.cm-policy-preview')
     if (!preview) throw new Error('preview not shown')
@@ -2321,13 +2331,18 @@ it('keeps explicit off until the owner chooses its representation and review mod
   })
   const user = userEvent.setup()
   const flag = await screen.findByRole('region', { name: 'Explicit-content flag' })
-  expect(
-    within(flag).getByText('Not supported until you choose a setting · Automatic not offered'),
-  ).toBeVisible()
+  // Not supported is said by the setting and the media lines; the note says
+  // only that the option is not offered (#1765 A1).
+  expect(flag.querySelector('.cm-policy-control-heading small')).toHaveTextContent(
+    /^Automatic not offered$/u,
+  )
+  expect(within(flag).queryByText(/until you choose a setting/u)).toBeNull()
   expect(within(flag).getByRole('button', { name: 'Automatic' })).toBeDisabled()
   await user.click(within(flag).getByRole('combobox', { name: 'Explicit-content flag option' }))
   await user.click(screen.getByRole('option', { name: 'Set from adult-product evidence' }))
-  expect(within(flag).getByText('Not supported until you choose a setting')).toBeVisible()
+  // The chosen option is offered, so no note remains.
+  expect(flag.querySelector('.cm-policy-control-heading small')).toBeNull()
+  expect(within(flag).queryByText('Automatic not offered')).toBeNull()
   const automatic = within(flag).getByRole('button', { name: 'Automatic' })
   expect(automatic).toBeEnabled()
   expect(automatic).toHaveAttribute('aria-pressed', 'false')
@@ -2344,6 +2359,43 @@ it('keeps explicit off until the owner chooses its representation and review mod
       selector: 'span',
     }),
   ).toBeInTheDocument()
+})
+
+it('says once that Automatic is not offered for an option the active policy holds on Automatic', async () => {
+  renderRoute('/policy?section=publication', {
+    ...createHttp(),
+    getPreviewPosture: vi.fn(async (): Promise<PreviewPostureView> => ({
+      schema_version: 'preview-posture-v1',
+      posture: 'preview',
+      authority: 'none',
+      can_leave_preview: false,
+    })),
+    getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+      schema_version: 'metadata-policy-notebook-v1',
+      policy_id: 'policy-imprint',
+      profile: {
+        schema_version: 'metadata-policy-profile-v3',
+        name: 'Default',
+        options: { publisher_preference: 'imprint' },
+        destinations: { publisher_preference: 'automatic' },
+      },
+      rich_qualification: [],
+      audiobook_qualification: [],
+    })),
+  })
+  const publisher = await screen.findByRole('region', { name: 'Publisher' })
+  expect(within(publisher).getByRole('button', { name: 'Automatic' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  // The note under the option says it and names the way out; the Setting
+  // heading does not say it a second time (#1765 A1).
+  expect(publisher.querySelector('.cm-policy-representation-consequence')).toHaveTextContent(
+    /^Automatic is not offered for this option\. Choose Ask me, Ignore or another option\.$/u,
+  )
+  expect(publisher.querySelector('.cm-policy-control-heading small')).toBeNull()
+  expect(within(publisher).queryByText('Automatic not offered')).toBeNull()
+  expect(within(publisher).queryByText(/Choosing it changes Automatic/u)).toBeNull()
 })
 
 it.each([
@@ -2416,7 +2468,7 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   await user.click(summary)
   expect(
     screen.getByText(
-      /^Once Title is not paused or suspended, Automatic decides titles again for prepared works, from what the sources already said\. Recovering writes nothing to your library\. Other suspensions stay in place\.$/u,
+      /^Automatic decides Title and subtitle again once this suspension, the pause and any global suspension are all cleared\. It uses what the sources already said for prepared works\. Recovering writes nothing to your library\. Other suspensions stay in place\.$/u,
     ),
   ).toBeVisible()
   await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))

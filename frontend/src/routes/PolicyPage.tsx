@@ -240,7 +240,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         setStatus({
           tone: 'warning',
           message:
-            'No answer came back while the draft was saved. Choose Validate and preview to try again.',
+            'No answer came back while saving the draft. Choose Validate and preview to try again.',
         })
       else if (error instanceof CsrfRenewedError)
         setStatus({ tone: 'error', message: sessionRefreshedCopy })
@@ -651,7 +651,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Check the preview before activating.'
         : stage === 'preview'
-          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · changes in ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
+          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'field change' : 'field changes'} in the sample` : ''}${changedChapterLabels.length ? ` · you changed ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
           : stage === 'validating'
             ? ''
             : draftDisplay.changed
@@ -785,17 +785,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       <div className="cm-policy-mode-control">
                         <span className="cm-policy-control-heading">
                           <strong>Setting</strong>
-                          {destination === 'unsupported' || !automaticAvailable ? (
-                            <small>
-                              {[
-                                destination === 'unsupported'
-                                  ? 'Not supported until you choose a setting'
-                                  : null,
-                                automaticAvailable ? null : 'Automatic not offered',
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </small>
+                          {/* The mode is said once, by the Mode disclosure; the note
+                              under the option says it while Automatic is chosen. */}
+                          {!qualified && destination !== 'automatic' ? (
+                            <small>Automatic not offered</small>
                           ) : null}
                         </span>
                         <SegmentedControl
@@ -850,8 +843,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                         />
                         {destination === 'automatic' && !qualified ? (
                           <small className="cm-policy-representation-consequence">
-                            Automatic is not offered for this option. Choosing it changes Automatic
-                            to Ask me.
+                            Automatic is not offered for this option. Choose Ask me, Ignore or
+                            another option.
                           </small>
                         ) : null}
                       </label>
@@ -871,7 +864,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               <header>
                 <div>
                   <strong>Impact preview</strong>
-                  <small>Undecided works only · nothing is written</small>
                 </div>
                 {impactTotals?.changedWorks ? (
                   <b aria-label={`${String(impactTotals.changedWorks)} sampled works with changes`}>
