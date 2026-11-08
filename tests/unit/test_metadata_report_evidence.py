@@ -3248,7 +3248,7 @@ def test_a_retrieved_open_library_final_host_round_trips_in_the_report() -> None
     serialized = report.to_json()
     assert '"final_host":"us.archive.org"' in serialized
     assert MetadataReport.from_json(serialized) == report
-    assert report.schema_version == "metadata-report-v75"
+    assert report.schema_version == "metadata-report-v76"
 
 
 _MEASURES = CoverMeasures("0f" * 8, "f0" * 8, (1,) * 64, (128,) * 48)
