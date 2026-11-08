@@ -122,20 +122,12 @@ brackets are GitHub issues.
   "Safely paused", waiting source lookups are "waiting" rather than
   "deferred", and a page that failed to load no longer shows the raw request
   error (#1765).
-- **Clean rebuild required.** An audiobook's sidecar files now count only when
-  they belong to it. Audiobookshelf's own `metadata.json` or `metadata.abs` is a
-  copy of its record, so nothing is taken from it, and its ASIN no longer
-  identifies the recording. A sidecar file is set aside when its folder also
-  holds audio or ebook files that are not part of the audiobook. It is also set
-  aside when it does not give the audiobook's title with one of its authors or
-  narrators. A sidecar describing a collection the audiobook is part of is set
-  aside too. So is a CUE sheet that names another audio file. When a sidecar's
-  ASIN differs from the audio file's own, its ASIN, narrator, abridgement and
-  language are set aside, and the rest still counts. When two sidecars give
-  different values for a field, neither is used for it. An `.opf` or `.nfo`
-  value that matches Audiobookshelf's record no longer counts as a second
-  source, because Audiobookshelf reads those files itself. A per-track
-  `metadata.json` is now read only for what Libation writes (#1481).
+- **Clean rebuild required.** An audiobook's sidecar files count only when they
+  belong to it. Audiobookshelf's own `metadata.json` or `metadata.abs` gives
+  nothing. A sidecar is set aside when its folder holds another item's files, it
+  names another book, a collection or another audio file, or another sidecar
+  disagrees. One with another ASIN keeps only its series and description. An
+  `.opf` or `.nfo` repeating Audiobookshelf's record counts once (#1481).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
