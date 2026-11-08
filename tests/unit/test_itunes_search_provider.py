@@ -38,9 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
-    work_ladder_diagnostics,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -53,11 +51,6 @@ from tests.support.audiobook_providers import (
     payload,
     target_title_claim,
     work_plan,
-)
-from tests.support.audiobook_reports import (
-    admitted_audiobook_report,
-    audio_local_claims,
-    manual_audiobook_observation,
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -295,23 +288,6 @@ def test_the_stores_html_description_becomes_visible_plain_text() -> None:
             candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
         )
     )
-    local = audio_local_claims()
-    report = admitted_audiobook_report(
-        local,
-        additional_providers=(
-            manual_audiobook_observation("itunes", "itunes_search", candidate),
-        ),
-    )
-    result = next(
-        value
-        for value in evaluate_report(report).results
-        if value.destination is TargetDestination.DESCRIPTION
-    )
-    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
-    assert [description.value] == [value.value.value for value in result.alternatives]
-    assert [(description.reference,)] == [
-        value.evidence_references for value in result.alternatives
-    ]
 
 
 def test_a_plan_with_no_work_lane_is_insufficient_input() -> None:
@@ -737,8 +713,8 @@ def test_itunes_narrowing_flag_does_not_change_wire_term() -> None:
     assert _search_term(narrowing_work_query(query)) == _search_term(query)
 
 
-# The #1245 ladder: on an audiobook plan a rung whose results work-identity
-# admission refuses no longer ends the walk.
+# An audiobook asks the store once, for its cover (#1779): the first rung of
+# the audiobook ladder, with no later rung and no narrowing retry.
 _SUBTITLED = "Ember Tide Protocol: A Novel"
 
 
@@ -781,44 +757,58 @@ def _categories(observation: Any) -> tuple[tuple[FailureCategory, int], ...]:
     return tuple((value.category, value.count) for value in observation.diagnostics)
 
 
-def test_a_refused_store_rung_continues_to_the_rung_that_admits() -> None:
+def test_an_audiobook_asks_the_store_its_first_rung_only() -> None:
     seen, handle = _pages(_page(_refused()), _page(_work(_SUBTITLED)))
     result = observe_provider(
         "itunes", "itunes_search", _provider(handle), _audiobook_work_plan()
     )
     observation = result.observation
 
-    assert 2 == len(seen)
-    assert ProviderStatus.CANDIDATES is observation.status
-    lane = observation.lanes[0]
-    assert lane.dispatch_lineage is not None
-    assert lane.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
-    assert () == lane.exhausted_dispatch and () == lane.diagnostics
-    assert FailureCategory.WORK_IDENTITY_REFUSED not in {
-        category for category, _ in _categories(observation)
-    }
+    first = work_query_ladder(_SUBTITLED, ("Corin Halloway",), audiobook=True)[0]
+    assert [" ".join((first.title, *first.authors))] == [
+        url.params["term"] for url in seen
+    ]
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert () == observation.lanes[0].exhausted_dispatch
+    assert () == result.cover_descriptors
 
 
-def test_a_store_ladder_refused_on_every_rung_records_each_dispatch() -> None:
-    ladder = tuple(
-        WorkDispatchLineage.from_query(query)
-        for query in work_query_ladder(_SUBTITLED, ("Corin Halloway",))
-    )
-    seen, handle = _pages(*(_page(_refused()) for _ in ladder))
+def test_an_empty_first_audiobook_rung_ends_the_search() -> None:
+    seen, handle = _pages(_page(), _page(_work(_SUBTITLED)))
+    observation = observe_provider(
+        "itunes", "itunes_search", _provider(handle), _audiobook_work_plan()
+    ).observation
+
+    assert 1 == len(seen)
+    assert ProviderStatus.NO_MATCH is observation.status
+
+
+def test_an_audiobook_overflow_sends_no_narrowing_retry() -> None:
+    results = [_work(_SUBTITLED) for _ in range(6)]
+    for index, result in enumerate(results):
+        result["collectionId"] = 1_000 + index
+    seen, handle = _pages(_page(*results), _page(_work(_SUBTITLED)))
+    observation = observe_provider(
+        "itunes", "itunes_search", _provider(handle), _audiobook_work_plan()
+    ).observation
+
+    assert 1 == len(seen)
+    assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED is observation.status
+
+
+def test_an_admitted_audiobook_rung_states_its_cover() -> None:
+    seen, handle = _pages(_page(_work(_SUBTITLED)))
     result = observe_provider(
         "itunes", "itunes_search", _provider(handle), _audiobook_work_plan()
     )
-    observation = result.observation
 
-    assert len(ladder) == len(seen) <= 12
-    assert ProviderStatus.NO_MATCH is observation.status
-    lane = observation.lanes[0]
-    assert ladder == lane.exhausted_dispatch
-    assert work_ladder_diagnostics(0, len(ladder)) == lane.diagnostics
-    assert ((FailureCategory.WORK_IDENTITY_REFUSED, len(ladder)),) == _categories(
-        observation
-    )
-    assert () == result.cover_descriptors
+    assert 1 == len(seen)
+    assert ProviderStatus.CANDIDATES is result.observation.status
+    (candidate,) = result.observation.candidates
+    (descriptor,) = result.cover_descriptors
+    assert descriptor.provenance is not None
+    assert candidate.identity == descriptor.provenance.edition_identity
+    assert descriptor.url is not None and descriptor.url.endswith("/600x600bb.jpg")
 
 
 def test_an_ebook_plan_still_stops_at_the_first_store_rung_with_results() -> None:

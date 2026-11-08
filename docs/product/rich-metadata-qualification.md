@@ -1,92 +1,103 @@
 # Qualification records
 
-A qualification record is the only source of Automatic authority. It names the
-exact policy options and operations that may be decided without the owner. It
-grants no write permission, builds no target write and changes no provider
-selection; every write still passes the guarded-effect checks in
-[ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md).
-How each field uses that authority is in the
+An option can be Automatic only when a qualification record names it. The
+record lists the exact options and operations that Mechanical Librarian can
+decide without you. It grants no write permission and prepares no write to your
+library. It also leaves the choice of sources unchanged. Mechanical Librarian
+still checks every write as
+[ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)
+requires. How each field uses Automatic is in the
 [automation policy](automation-policy.md).
 
 ## Current compact authority
 
-Three current records each bind one `authority` object:
+Each of the three current records holds one `authority` object:
 
-| Record | Media | Authority holds |
+| Record | Media | What it holds |
 | --- | --- | --- |
 | [Ebook core fields (F19a)](../reference/f19a-qualification-current.json) | Ebook | Permitted operations for title, contributors, date, language and publisher |
-| [Ebook rich metadata (F20)](../reference/f20-rich-metadata-qualification-current.json) | Ebook | Permitted rich-metadata options and a disposition for every rich option |
-| [Audiobook (F46)](../reference/f46-audiobook-qualification-current.json) | Audiobook | Named audiobook operations, each as `category:option:audiobook_<field>_<operation>` (for example `genres:add:audiobook_genres_fill`), plus the title/subtitle pair; any other audiobook operation is owner-only |
+| [Ebook rich metadata (F20)](../reference/f20-rich-metadata-qualification-current.json) | Ebook | The rich-metadata options it permits, and a qualification result for every rich-metadata option |
+| [Audiobook (F46)](../reference/f46-audiobook-qualification-current.json) | Audiobook | Named audiobook operations, each written as `category:option:audiobook_<field>_<operation>` (for example `genres:add:audiobook_genres_fill`), and the title/subtitle pair. Every other audiobook operation is your choice |
 
-The object holds the family, media and permitted operations, plus the ebook
-rich-metadata dispositions and the audiobook paired operations. Its canonical
-JSON SHA-256 is the runtime constant for that family, and every automatic
-decision carries it. The compiled runtime reads no JSON record, Git history or
-network archive; the record exists so the constant can be checked.
+Each `authority` object holds the family, the media and the permitted
+operations. The F20 object also holds the rich-metadata results, and the F46
+object holds the paired operations. The code holds each object's SHA-256 digest,
+taken over its canonical JSON. Every automatic decision carries the digest of
+the record that names its option. Mechanical Librarian reads no JSON record, Git
+history or network archive while it runs. Each record is there for the check
+that compares it with the digest in the code.
 
-Only the current digest decodes. A decision minted under any other digest is
-invalid, and upgrading across an authority change needs a clean rebuild
-([upgrades](../operations/upgrades.md)).
+Mechanical Librarian rejects a stored decision that carries any digest other
+than the current one. Upgrading across a change to a record's digest needs a
+clean rebuild ([upgrades](../operations/upgrades.md)).
 
-### Ebook rich-metadata dispositions
+### Ebook rich-metadata results
 
-| Disposition | Meaning | Options |
+| Result | Meaning | Options |
 | --- | --- | --- |
-| `passing_automatic` | May be Automatic | `subtitle:fill_empty`; all three ebook `series` fill options; `genres` fill, add and replace; `tags` fill, add and replace; `description_fill:safe_plain_text`; both `isbn_form` options |
-| `not_qualified` | Owner only | `subtitle:corroborated_split`, `description_fill:google_visible_text` |
-| `insufficient_coverage` | Owner only | both `asin` options |
-| `policy_only` | Not a write; stays the default | `tags:off` |
-| `passing_human_only` | Owner only | `explicit:unsupported` |
+| `passing_automatic` | Can be Automatic | `subtitle:fill_empty`, all three ebook `series` fill options, the fill, add and replace options of `genres` and of `tags`, `description_fill:safe_plain_text` and both `isbn_form` options |
+| `not_qualified` | Never Automatic on an ebook | `subtitle:corroborated_split`, `description_fill:google_visible_text` |
+| `insufficient_coverage` | Never Automatic on an ebook | both `asin` options |
+| `policy_only` | Writes nothing. It is the default | `tags:off` |
+| `passing_human_only` | Never Automatic on an ebook | `explicit:unsupported` |
 
-Owners keep Ask me or Ignore for every option that is not Automatic.
+You keep Ask me or Ignore for every option except `explicit:unsupported`,
+which is always Not supported.
 
 ### Separate records
 
-These are pinned by their own constants in `src/` and are not part of the three
-records above:
+These have their own digests in `src/` and are not part of the three records
+above:
 
 - The [contributor-display record (F38)](../reference/f38-contributor-display-qualification-manifest-v1.json)
   grants only `contributor_names:canonical:provider_consensus_display`.
 - The cover election qualification grants ebook
   `cover_order:fixed_source_order`.
 
-No record crosses media or family: the two ebook records, the
-contributor-display record and the cover digest admit no audiobook identity,
-and the audiobook record admits no ebook option
+No record grants an option or operation outside its own family and media. The
+two ebook records, the contributor-display record and the cover election
+qualification grant no audiobook operation. The audiobook record grants no ebook
+option
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
 
-## When authority changes
+## When a record changes
 
-Under [ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)
-authority is the permission set, not the source code.
+Under [ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md),
+a record's digest is taken over what it permits, not over the code.
 
-- **Rotates:** adding, removing or changing a permitted operation, disposition
-  or pair, or changing which target write a permitted operation may perform.
-- **Needs new measurement:** widening (a new operation, or a broader write
-  under an existing one). Add fresh aggregate evidence to the provenance record.
-  Narrowing rotates the digest without new measurement.
-- **Does not rotate:** every other source change, including evidence, preview,
-  copy, persistence, scheduling and provider code. Such a change needs the same
-  behaviour, security and build proof as any other change.
+- The digest changes when a change adds, removes or alters a permitted
+  operation, result or pair. It also changes when a permitted operation can
+  make a different kind of write to your library.
+- Widening needs new measurement too. Widening means a new operation, or a
+  broader write under an existing one. Add fresh aggregate evidence to the
+  provenance record. Narrowing changes the digest without new measurement.
+- No other code change alters the digest. That includes changes to evidence,
+  preview, wording, storage, scheduling and source lookups. Such a change needs
+  the same proof of behaviour, security and build as any other change.
 
-When authority rotates, update the record and its runtime constant together,
-then run:
+When the digest must change, update the record and its digest in the code
+together, then run:
 
 ```sh
 uv run python scripts/verify_qualification_records.py
 ```
 
-It checks that each record's shape is closed and that each runtime constant,
-found as its top-level literal assignment, equals the digest of its record's
-authority.
+It checks that each record has exactly the fields it should. It also checks
+that each digest in the code equals the digest of its record's `authority`
+object. It reads that digest from the one top-level assignment that sets it.
 
-## Provenance
+## Evidence for the grants
 
 The shared [provenance record](../reference/qualification-provenance-current.json)
-holds the measurements behind the current grants: the audiobook measurement,
-the shared ebook measurement, the ISBN measurement, the measurement artifacts
-and their immutable origins. Existing measurements are frozen and never
-regenerated; a widening adds new evidence beside them. It claims no fresh
-holdout, no rescored historical quality and no production write. Its stated
-limitations apply: the retained development sources show that current consumers
-match the measured results, not library-wide accuracy or coverage.
+holds the measurements behind the current grants. They are the audiobook
+measurement, the shared ebook measurement and the ISBN measurement. The record
+never holds the measurement files themselves. For each set of files, it holds
+only a digest and a file count. For each of the three records, it also names the
+earlier record its measurement came from, by path, digest and commit. Neither
+the digests nor these references ever change. Existing measurements are frozen
+and never run again. A widening adds new evidence beside them. The record does
+not claim a test on fresh held-out cases or new quality scores for earlier
+measurements. No measurement wrote to a live library. The limits the record
+states also apply. For example, the record's development data shows that the
+parts of the product that use these grants match the measurements. It does not
+show accuracy or coverage across a whole library.
