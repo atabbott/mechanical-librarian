@@ -26,8 +26,10 @@ from mechanical_librarian.application.metadata_report import (
     CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
+    ProviderBinding,
     ProviderCoverDescriptor,
     ProviderResult,
+    binding_dispatch_plan,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -681,3 +683,47 @@ def test_an_edition_request_carries_the_token_only_to_the_api() -> None:
 
     assert {("POST", HARDCOVER_URL, "Bearer synthetic-token")} == set(seen)
     assert 2 == len(seen)
+
+
+@pytest.mark.parametrize(
+    "authority,cover_enabled,languages",
+    (
+        ("hardcover", True, ("en",)),
+        ("hardcover", False, ()),
+        ("google_books", False, ("en",)),
+    ),
+)
+def test_hardcover_with_its_covers_off_is_handed_no_library_languages(
+    authority: str, cover_enabled: bool, languages: tuple[str, ...]
+) -> None:
+    # Library languages only filter Hardcover's edition covers, so with its
+    # covers off it is handed none and asks for no edition cover (#1778).
+    binding = ProviderBinding(
+        authority,
+        True,
+        lambda: pytest.fail("built"),
+        authority=authority,
+        cover_enabled=cover_enabled,
+    )
+    handed = binding_dispatch_plan(binding, _plan(), None)
+    assert languages == handed.library_languages
+    assert _plan().lanes == handed.lanes
+
+
+def test_hardcover_with_its_covers_off_sends_no_edition_request() -> None:
+    plan = binding_dispatch_plan(
+        ProviderBinding(
+            "hardcover",
+            True,
+            lambda: pytest.fail("built"),
+            authority="hardcover",
+            cover_enabled=False,
+        ),
+        _plan(),
+        None,
+    )
+    _result, sent = _observe(plan=plan)
+    assert sent
+    # The same plan with its languages does ask, so this cannot pass vacuously.
+    assert any(body["operationName"] == "EditionCovers" for body in _observe()[1])
+    assert all(body["operationName"] != "EditionCovers" for body in sent)

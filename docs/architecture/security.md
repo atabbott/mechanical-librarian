@@ -260,7 +260,8 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   ([ADR-0090](decisions/0090-hardcover-audio-edition-witness.md)). Its rows
   also state each edition's image and language, which feed only the square
   audiobook covers of the pre-filter below. An ebook ISBN or WORK lane that
-  accepts a book, when the library lists languages, sends one constant
+  accepts a book, when the library lists languages and the connection's
+  covers are on, sends one constant
   edition-covers document per page, keyed by the integer book id and page
   offset: 100 rows a page, at most 2 pages per book and 2 books per
   observation, never for a compilation. Its rows feed cover descriptors only.

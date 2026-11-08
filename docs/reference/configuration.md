@@ -260,7 +260,8 @@ and Hardcover edition covers read it:
   languages: an edition in any other language is not matched as its
   recording. A language the recording states itself always wins.
 - Hardcover offers an edition's cover only when the edition states one of the
-  listed languages. A library with no languages gets no edition covers.
+  listed languages. A library with no languages gets no edition covers, and
+  neither does a Hardcover connection whose covers are off.
 
 Changing the list prepares the library's items again.
 
