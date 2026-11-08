@@ -1133,3 +1133,55 @@ def test_the_child_bound_is_written_through_the_protocol_helper() -> None:
     assert "report.to_json_within(_STDOUT_LIMIT - 1)" in source
     assert ".stripped" not in source
     assert os.path.basename(audio_child.__file__) == "audio_child.py"
+
+
+def test_a_mark_never_turns_an_item_without_evidence_into_a_success() -> None:
+    """T5's outcome clause at the child: only plain readings make a success."""
+    probe = json.dumps(
+        {
+            "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"},
+            "streams": [{"codec_type": "audio", "codec_name": "aac"}],
+            "chapters": [],
+        }
+    )
+
+    def outcome(text: str) -> AudioInspectionOutcome:
+        return interpret(
+            probe,
+            (AudioSidecar(_LIBATION, "book.metadata.json", text),),
+            AudioPathContext(_TRACK),
+            _SOURCE,
+            AudioInspectionLimits(),
+        ).outcome
+
+    assert outcome(_libation()) is AudioInspectionOutcome.SUCCESS
+    assert outcome(_BOM + _libation()) is AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE
+
+
+def test_a_record_holds_only_what_the_plain_reading_did_not_keep(
+    tmp_path: Path, child: _BoundedChild
+) -> None:
+    """S5: the narrator is claimed already, so only the hidden ASIN is recorded."""
+    result = _inspect(
+        tmp_path,
+        {
+            "folder.nfo": _BOM
+            + _nfo(
+                f"ASIN: {_ASIN}",
+                f"Title: {_TITLE}",
+                f"Author: {_AUTHOR}",
+                "Narrator: Second Narrator",
+            )
+        },
+    )
+
+    [entry] = result.audio.sidecars
+    assert entry.refusals == ()
+    assert [
+        (claim.kind.value, claim.canonical)
+        for claim in result.claims
+        if claim.basis == "sidecar"
+    ] == [("contributor", "Second Narrator")]
+    assert entry.byte_order_mark == AudioSidecarByteOrderMark(
+        facts=(AudioSidecarByteOrderMarkFact(_F.ASIN, _ASIN, _ASIN),)
+    )
