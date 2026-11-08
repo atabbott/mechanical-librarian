@@ -209,7 +209,7 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
   reviewer_model: null,
   reviewer_status: 'unavailable',
   reviewer_unavailable_reason: null,
-  schema_version: 'cover-consideration-v4',
+  schema_version: 'cover-consideration-v5',
   supersedes_id: null,
   target_fingerprint: 'fingerprint-1',
   ...overrides,

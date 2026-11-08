@@ -802,7 +802,7 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
                 "report_id": report.report_id,
                 "report_document": report.to_json(),
                 "review_case_id": case_id,
-                "schema_version": "cover-consideration-v4",
+                "schema_version": "cover-consideration-v5",
                 "supersedes_id": None,
             },
             separators=(",", ":"),

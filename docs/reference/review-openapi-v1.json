@@ -4395,7 +4395,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v4",
+            "const": "cover-consideration-v5",
             "title": "Schema Version",
             "type": "string"
           },

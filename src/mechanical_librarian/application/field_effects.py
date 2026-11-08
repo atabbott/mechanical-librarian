@@ -8,6 +8,10 @@ import threading
 from dataclasses import dataclass, replace
 from typing import Callable, Literal, Protocol, cast
 
+from mechanical_librarian.application.cover_retention import (
+    CoverRetention,
+    retention_required,
+)
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
@@ -358,6 +362,7 @@ class GuardedFieldApplication:
         claim_hook: Callable[[FieldEffectPlan], None] | None = None,
         recovery_hook: Callable[[FieldEffectPlan], None] | None = None,
         timing: StageTimer | None = None,
+        cover_retention: CoverRetention | None = None,
     ) -> None:
         self._repository = repository
         self._target = target
@@ -373,6 +378,9 @@ class GuardedFieldApplication:
         self._claim_hook = claim_hook or (lambda _: None)
         self._recovery_hook = recovery_hook or (lambda _: None)
         self._timing = timing or StageTimer(None)
+        # Composition always supplies retention; only a harness that never
+        # replaces a populated cover automatically may leave it out (#1363).
+        self._cover_retention = cover_retention
         self._draining = threading.Event()
         self._admission_lock = threading.Lock()
 
@@ -676,6 +684,18 @@ class GuardedFieldApplication:
                 # the refusal is durable: the plan is staled with this failure
                 # before returning, so nothing reaches the target unrecorded.
                 return self._stale(operation, "cover_recovery")
+            if self._cover_retention is not None and retention_required(plan):
+                try:
+                    self._cover_retention.retain(plan)
+                except Exception:
+                    # A cover that changed since planning no longer hashes to
+                    # the pre-value; the refreshed guards name that first.
+                    guarded = self._preclaim(operation, affected_review_case_ids)
+                    if guarded is not None:
+                        return guarded
+                    # An automatic switch that could not be put back never
+                    # writes: the plan is staled before the claim, durably.
+                    return self._stale(operation, "cover_retention")
         # Refresh every guard at the last feasible point before the repository's
         # atomic pause/state claim. Target behavior is adapter-specific.
         self._preclaim_hook(plan)
@@ -1200,7 +1220,12 @@ class GuardedFieldApplication:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise GuardedApplicationError("invalid_limit")
         plan_ids = self._repository.pending_field_effect_cleanups(limit)
-        return sum(self._recover_cleanup(self.status(plan_id)) for plan_id in plan_ids)
+        completed = sum(
+            self._recover_cleanup(self.status(plan_id)) for plan_id in plan_ids
+        )
+        if self._cover_retention is not None:
+            completed += self._cover_retention.run_removals(limit=limit)
+        return completed
 
     def recover_pending(self, *, limit: int = 100) -> tuple[int, int]:
         """Bounded restart entrypoint for the two closed recovery obligations."""
