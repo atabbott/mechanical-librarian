@@ -8,14 +8,12 @@ import {
   ApiError,
   BuildMismatchError,
   CsrfRenewedError,
-  displayValue,
   sessionRefreshedCopy,
 } from '../api/http'
 import type {
   ActivityCommandPath,
   ActivityEventView,
   ActivityLibraryView,
-  ActivityPermissionReadinessView,
   ActivitySearch,
   ActivityView,
   CapabilityState,
@@ -46,6 +44,9 @@ import {
 import { categoryLabel, dayHeading, stateLabel } from '../activityLabels'
 import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
 import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
+import { focusAfterRetry } from '../focusAfterRetry'
+import { ActivityPermissionCheck, readinessUnavailableCopy } from './ActivityPermissionCheck'
+import type { PermissionCheck } from './ActivityPermissionCheck'
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
 // rather than re-deriving `unknown` shapes a second time (#636).
@@ -60,18 +61,10 @@ const capabilityLabel = (state: CapabilityState, consented: boolean) =>
         connection_unavailable: 'Connection needs checking',
         not_ready: 'Not ready yet',
       }[state]
-// A permission draft is the readiness check and the ticked libraries, kept
-// against the consent basis it was checked on (#1279).
-interface PermissionCheck extends ActivityPermissionReadinessView {
-  readonly policyId: string
-  readonly basis: string
-}
 // Raised by the verification read made on Confirm, before any grant is sent.
 class ConsentBasisChanged extends Error {}
 class ConsentBasisUnavailable extends Error {}
-const basisChangedCopy = 'Your library settings changed. Review the permissions again.'
-const readinessUnavailableCopy =
-  'Permission readiness is unavailable. No permission was granted. Try again.'
+class ConsentBasisStale extends Error {}
 const typeOptions = [
   { id: 'all', label: 'All' },
   { id: 'review', label: 'Owner choices' },
@@ -327,7 +320,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     setPermissionRequest(null)
     setDraft(null)
   }
+  // The check button, or Reload once the tab is on an earlier build.
   const checkButton = useRef<HTMLButtonElement>(null)
+  const [basisStale, setBasisStale] = useState(false)
+  // A check the owner pressed hands focus, once it settles, to the control
+  // that replaced the button if it went (Reload on an earlier build).
+  const checkPressed = useRef(false)
+  useEffect(() => {
+    if (!checkPressed.current || permissions.isFetching) return
+    checkPressed.current = false
+    focusAfterRetry(() => checkButton.current)
+  }, [permissions.isFetching])
   const discardChangedDraft = () => {
     discardPermissions()
     setDiscarded({})
@@ -385,6 +388,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     openingPermissionCheck.current = false
     setConsentOpen(false)
     setDiscarded(null)
+    setBasisStale(false)
     discardPermissions()
     // A hash handoff has no trigger of its own; the page's entry stands in.
     const trigger =
@@ -448,8 +452,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             http.getPolicyState(),
           ])
           current = consentBasis(state, policy.policy_id)
-        } catch {
-          throw new ConsentBasisUnavailable()
+        } catch (error) {
+          throw error instanceof BuildMismatchError
+            ? new ConsentBasisStale()
+            : new ConsentBasisUnavailable()
         }
         if (current !== basis) throw new ConsentBasisChanged()
       }
@@ -472,6 +478,16 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       }
       if (error instanceof ConsentBasisUnavailable) {
         setStatus(readinessUnavailableCopy)
+        return
+      }
+      if (error instanceof ConsentBasisStale) {
+        // Confirm can no longer act, so focus moves to the reload that replaces the check.
+        setBasisStale(true)
+        setStatus('')
+        focusAfterRetry(
+          () => checkButton.current,
+          () => document.getElementById('activity-consent'),
+        )
         return
       }
       if (error instanceof ConsentBasisChanged) {
@@ -1211,41 +1227,20 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               Each write is checked before it starts, verified afterwards, and recorded durably.
             </p>
           </div>
-          <p role="status">
-            {discarded
-              ? basisChangedCopy
-              : permissionRequest === null
-                ? 'Permission readiness has not been checked, or the library changed. Check again before selecting destinations.'
-                : permissions.isFetching
-                  ? 'Checking backup readiness and write permissions…'
-                  : permissions.isError
-                    ? readinessUnavailableCopy
-                    : permission?.backup_ready === null
-                      ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
-                      : permission?.backup_ready === false
-                        ? 'The backup check did not pass. Check again before enabling writes.'
-                        : 'Backup readiness checked. Review the included and excluded destinations.'}
-          </p>
-          {/* Busy, not disabled: a disabled button would drop a keyboard owner's focus to <body>. */}
-          <button
-            ref={checkButton}
-            type="button"
-            onClick={checking ? undefined : checkPermissions}
-            aria-disabled={checking || undefined}
-          >
-            {permissionRequest === null
-              ? 'Check write permissions'
-              : permissions.isError || permission?.backup_ready === null
-                ? 'Retry permission check'
-                : 'Check again'}
-          </button>
-          {permission?.example ? (
-            <p>
-              Example: {destinationLabel(permission.example.destination)} for{' '}
-              {names.name(permission.example.library)} — {displayValue(permission.example.before)} →{' '}
-              {displayValue(permission.example.after)}
-            </p>
-          ) : null}
+          <ActivityPermissionCheck
+            discarded={Boolean(discarded)}
+            requested={permissionRequest !== null}
+            permissions={permissions}
+            permission={permission}
+            checking={checking}
+            basisStale={basisStale}
+            checkButton={checkButton}
+            check={() => {
+              checkPressed.current = true
+              checkPermissions()
+            }}
+            libraryName={names.name}
+          />
           {configured.map((library) => {
             const name = library.library
             const state = capability(name)?.state ?? 'not_ready'
@@ -1324,12 +1319,14 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               aria-describedby="activity-consent-requirement"
               // Busy, not disabled, so focus stays here; the ref refuses a
               // second press that lands before the pending state renders.
-              aria-disabled={confirmBusy || undefined}
+              aria-disabled={confirmBusy || basisStale || undefined}
               disabled={
-                !confirmBusy && (permission?.backup_ready !== true || selectedGrants.length === 0)
+                !confirmBusy &&
+                !basisStale &&
+                (permission?.backup_ready !== true || selectedGrants.length === 0)
               }
               onClick={() => {
-                if (confirmBusy || confirming.current || !draft) return
+                if (confirmBusy || basisStale || confirming.current || !draft) return
                 confirming.current = true
                 mutation.mutate(
                   {

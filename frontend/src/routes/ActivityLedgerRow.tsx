@@ -6,6 +6,7 @@ import { categoryLabel, noteLabel, noteSentence, stateLabel } from '../activityL
 import { RecordedTime } from '../components/RecordedTime'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { languageName } from '../labels'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useReviewContext } from '../router'
@@ -87,9 +88,12 @@ export function PageJump({
 function ActivityTransitions({
   eventId,
   advice,
+  details,
 }: {
   eventId: string
   advice: 'description' | 'cover' | undefined
+  /** The row's Details button, where focus goes when a retry finds no transitions. */
+  details: () => HTMLElement | null
 }) {
   const { http } = useReviewContext()
   const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
@@ -112,26 +116,79 @@ function ActivityTransitions({
       setHasMore(page.has_more)
     },
   })
-  if (query.isLoading) return <p>Loading recorded transitions…</p>
-  if (query.error instanceof BuildMismatchError)
-    return <StaleBuildRead lead="Recorded transitions were not loaded." />
-  if (query.isError)
+  // Each retry's Try again, or Reload once the tab is on an earlier build.
+  const transitionsRetry = useRef<HTMLButtonElement>(null)
+  const moreRetry = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLOListElement>(null)
+  const loadMoreButton = useRef<HTMLButtonElement>(null)
+  const transitionsStatus = useRef<HTMLDivElement>(null)
+  // Until the transitions are read, their loading line, failure and Reload
+  // share one region, which holds focus while a Try again reads.
+  if (query.isLoading || query.isError)
     return (
-      <p role="alert">
-        Recorded transitions could not be loaded.{' '}
-        <button type="button" onClick={() => void query.refetch()}>
-          Try again
-        </button>
-      </p>
+      <div ref={transitionsStatus} tabIndex={-1}>
+        {query.isLoading ? (
+          <p>Loading recorded transitions…</p>
+        ) : query.error instanceof BuildMismatchError ? (
+          <StaleBuildRead lead="Recorded transitions were not loaded." ref={transitionsRetry} />
+        ) : (
+          <p role="alert">
+            Recorded transitions could not be loaded.{' '}
+            <button
+              ref={transitionsRetry}
+              type="button"
+              onClick={() =>
+                retryInPlace(
+                  () => transitionsStatus.current,
+                  () => query.refetch(),
+                  (result) =>
+                    result.isSuccess ? (list.current ?? details()) : transitionsRetry.current,
+                )
+              }
+            >
+              Try again
+            </button>
+          </p>
+        )}
+      </div>
     )
   const events = [...(query.data?.events ?? []), ...extraPages.flat()]
   const moreAvailable = extraPages.length ? hasMore : Boolean(query.data?.has_more)
+  // Load more stays mounted and busy while it reads, so focus stays on it. A
+  // last page removes it, and focus moves to the first transition it added. A
+  // retry that fails again hands focus to the control that replaced Try again;
+  // a plain Load more failure leaves focus on Load more.
+  const loadMore = (retry: boolean) => {
+    if (more.isPending) return
+    const from = events.length
+    if (retry) loadMoreButton.current?.focus({ preventScroll: true })
+    more.mutate(events[events.length - 1]?.sequence ?? 1, {
+      onSettled: (page, error) => {
+        if (error) {
+          if (retry)
+            focusAfterRetry(
+              () => moreRetry.current,
+              () => loadMoreButton.current,
+            )
+        } else if (!page?.has_more)
+          focusAfterRetry(
+            () => list.current?.querySelectorAll<HTMLElement>(':scope > li')[from],
+            () => list.current,
+          )
+      },
+    })
+  }
   if (!events.length) return null
   return (
-    <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
+    <ol
+      className="cm-activity-transitions"
+      aria-label="Recorded lifecycle transitions"
+      tabIndex={-1}
+      ref={list}
+    >
       {events.map((transition) => (
         // One flow; the no-break space keeps each separator off a line start.
-        <li key={transition.event_id}>
+        <li key={transition.event_id} tabIndex={-1}>
           <time>
             <RecordedTime seconds={transition.occurred_at} />
           </time>
@@ -141,21 +198,19 @@ function ActivityTransitions({
       {moreAvailable ? (
         <li>
           <button
+            ref={loadMoreButton}
             type="button"
-            onClick={() => more.mutate(events[events.length - 1]?.sequence ?? 1)}
-            disabled={more.isPending}
+            onClick={() => loadMore(false)}
+            aria-disabled={more.isPending || undefined}
           >
             {more.isPending ? 'Loading transitions…' : 'Load more transitions'}
           </button>
           {more.error instanceof BuildMismatchError ? (
-            <StaleBuildRead lead="More recorded transitions were not loaded." />
+            <StaleBuildRead lead="More recorded transitions were not loaded." ref={moreRetry} />
           ) : more.isError ? (
             <p role="alert">
               More recorded transitions could not be loaded.{' '}
-              <button
-                type="button"
-                onClick={() => more.mutate(events[events.length - 1]?.sequence ?? 1)}
-              >
+              <button ref={moreRetry} type="button" onClick={() => loadMore(true)}>
                 Try again
               </button>
             </p>
@@ -324,7 +379,14 @@ export function ActivityEventRow({
             ))}
           </dl>
           {event.transition_id ? (
-            <ActivityTransitions key={changeId} eventId={event.transition_id} advice={advice} />
+            <ActivityTransitions
+              key={changeId}
+              eventId={event.transition_id}
+              advice={advice}
+              details={() =>
+                document.querySelector<HTMLElement>(`[data-activity-focus="details-${changeId}"]`)
+              }
+            />
           ) : null}
           {children}
         </div>
