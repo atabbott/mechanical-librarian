@@ -127,6 +127,7 @@ from tests.support.audiobook_providers import (
     target_title_claim,
 )
 from tests.support.audiobook_reports import recorded_dispatch
+from tests.support.hardcover_evidence import hardcover_envelope
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.metadata_report_schemas import synthetic_latin_work_report
 
@@ -422,6 +423,85 @@ def test_a_retry_successor_carries_the_cover_recovery_unchanged(
     assert successor.report_id != retry.report.report_id
     assert successor.cover_recovery == recovery
     assert successor.cover_sources == (absent,)
+
+
+def test_an_ebook_retry_sends_no_hardcover_edition_request(retry: _Retry) -> None:
+    """An ebook retry's plan carries no library languages (#1778, B10).
+
+    An ebook report holds none, so the plan a retry hands its provider has
+    none either, and Hardcover's edition fan-out ("no languages, no fetch")
+    sends nothing: the successor keeps the report's own cover sources, so an
+    edition request on a retry would only spend the provider's budget. The
+    same plan with a language does send one, so the handler would see it.
+    """
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append(body["operationName"])
+        if body["operationName"] == "EditionCovers":
+            return httpx.Response(200, json={"data": {"editions": []}})
+        book = {
+            "id": 10,
+            "title": "Current title",
+            "compilation": False,
+            "image": None,
+            "contributions": [],
+        }
+        return httpx.Response(
+            200,
+            json=hardcover_envelope(
+                [{"id": 1, "book_id": 10, "isbn_13": "9780306406157"}], [book]
+            ),
+        )
+
+    def hardcover_observe(plan: MetadataDiscoveryPlan) -> list[str]:
+        sent.clear()
+        hardcover_metadata.HardcoverMetadataProvider(
+            "hardcover",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            262_144,
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+            sleep=lambda _seconds: None,
+            jitter=lambda: 0.0,
+        ).observe(plan)
+        return list(sent)
+
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                retry.failed,
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("new", "work", ()),),
+            ),
+        ),
+        authority="open_library",
+    )
+    provider = _Provider(replacement)
+    retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library",
+            2,
+        )
+    ).run(
+        retry.report.report_id,
+        (retry.failed.identity,),
+        provider_name="catalogue",
+        adapter="open_library",
+        generation=2,
+    )
+    (plan,) = provider.plans
+
+    assert () == retry.report.library_languages
+    assert () == plan.library_languages
+    assert ProviderQueryKind.ISBN is plan.lanes[0].kind
+    assert "EditionCovers" not in hardcover_observe(plan)
+    assert "EditionCovers" in hardcover_observe(
+        replace(plan, library_languages=("en",))
+    )
 
 
 def test_mixed_identifier_recovery_keeps_work_for_retry_successor(
