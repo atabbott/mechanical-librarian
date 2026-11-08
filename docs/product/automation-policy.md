@@ -12,7 +12,7 @@ How you see and change these decisions is in the
   rejects a whole item.
 - Embedded file and audio evidence is first-class evidence.
 - Reasonable evidence is enough when credible sources agree and no material
-  conflict remains. Bibliographic perfection is not required.
+  conflict remains.
 - No-ops, clearly worse values and inapplicable fields are rejected
   automatically.
 - Only choices the evidence cannot settle reach Attention.
@@ -24,8 +24,8 @@ How you see and change these decisions is in the
   source or a failed step leaves the item available with its earlier metadata.
 
 The tolerance covers uncertainty about the book only. Checks on credentials,
-write permission, current values, backups, read-back and recovery still apply,
-as do your decisions and your Ask me and Ignore settings
+write permission, current values, supported writes, backups, read-back and
+recovery still apply, as do your decisions and your Ask me and Ignore settings
 ([PRODUCT.md](../../PRODUCT.md#decision-quality-and-human-attention)).
 
 ## Automatic, Ask me and Ignore
@@ -35,13 +35,14 @@ chosen, and one of these settings:
 
 - Automatic records a decision without you, but only when that exact option is
   qualified for that kind of media (see [Qualification](#qualification)).
-  Otherwise Policy will not activate it, and the Policy page shows no automatic
-  effect.
+  Otherwise Policy will not turn Automatic on for that option, and the Policy
+  page shows no automatic effect.
 - Ask me offers you every eligible choice. The field joins Attention only when
   a real choice remains.
 - Ignore leaves the field unchanged. Its proposals are marked
   `policy_ignored`, with no Attention row and no automatic decision.
-- Not supported is fixed for Explicit under its `unsupported` option.
+- Not supported leaves the explicit-content flag unchanged. It is fixed while
+  the flag's option is `unsupported`.
 
 An Automatic decision only records a choice
 ([ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md)).
@@ -79,11 +80,12 @@ itself ([review case operation](../operations/review-case.md)).
 
 ### Policy preview
 
-Previewing a draft compares the active and draft policies on at most 20 current
-works, read at one moment. It changes nothing and does not read Audiobookshelf
-again. Title, authors, narrators, date, publisher, language and cover are not
-previewed. Activating still checks that the active policy has not changed
-since. Neither step grants write permission. How you read a preview is in the
+The impact preview compares the active and draft policies on at most 20
+current works, read at one moment. It changes nothing and does not read
+Audiobookshelf again. Title, authors, narrators, date, publisher, language and
+cover are not previewed. Activating still checks that the active policy has not
+changed, or been reactivated, since. Neither step grants write permission.
+How you read a preview is in the
 [review experience](review-experience.md#policy). Activation is in
 [review cases](../operations/review-case.md#policy-activation).
 
@@ -94,7 +96,7 @@ exact operations ([qualification records](rich-metadata-qualification.md)). An
 ebook record never qualifies an audiobook option, or the reverse
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
 On an audiobook, Automatic is withdrawn from every field the audiobook record
-does not name. That field is your choice and never causes a suspension. A
+does not name. Those fields are your choice and never cause a suspension. A
 proposed value stays available to you whether or not it is automatic.
 
 ### Options and defaults by media
@@ -142,12 +144,13 @@ audiobook "none" never takes the ebook entry.
 ## Evidence
 
 Fixed rules decide. An AI reviewer only recommends among the proposals it is
-given ([ADR-0004](../architecture/decisions/0004-ai-is-untrusted.md)). The
-library's current values decide no-ops, changes made meanwhile, planning and
-the read-back, but as evidence they are one source among others. Local evidence
-can settle a field without a metadata source when policy allows it. A field
-that needs independent source evidence goes to you when that evidence is
-missing. Everything else works with every metadata source turned off.
+given ([ADR-0004](../architecture/decisions/0004-ai-is-untrusted.md)).
+Mechanical Librarian checks the library's current values to spot no-ops and
+changes made in the meantime, to plan a write and to check the read-back. As
+evidence, they are one source among others. Local evidence can settle a field
+without a metadata source when policy allows it. A field that needs independent
+source evidence goes to you when that evidence is missing. Everything else works
+with every metadata source turned off.
 
 Evidence is judged on whether it applies, is independent and is contradicted,
 not by one confidence score. It includes the EPUB package metadata, opening
@@ -194,9 +197,9 @@ unproved link to this work, no evidence for this edition, an unusable current
 value and an unreadable source. For ISBN the order is unreadable or incomplete
 evidence, conflicting ISBNs, a weak link to the recording, an unreadable
 source, then no ISBN. Library and Evidence show this recorded reason without
-working it out again. A missing or general reason says only that, and never
-means evidence is missing or the sources conflict. A current suspension is said
-first, in its own sentence.
+working it out again. When no specific reason was recorded, Library and
+Evidence say so. That never means evidence is missing or the sources conflict.
+A current suspension is said first, in its own sentence.
 
 ## Title
 
@@ -448,8 +451,9 @@ How a recording is matched is in the
 - Work facts need an applicable work relationship. Recording facts, such as
   narrators and identifiers, keep their own association requirements.
 - One applicable source can suffice. A complete title and author match in a
-  canonical ASIN lookup, or a bound local ASIN, supports work facts even when
-  the recording is unresolved. Running time alone and a lookup hint never
+  canonical ASIN lookup supports work facts even when the recording is
+  unresolved. So does an ASIN read from the recording's own tag, sidecar or
+  file path. Running time alone and a lookup hint never
   establish which work it is.
 - One terminal ` (Unabridged)` may be ignored in matching when the rest of the
   title and the complete authors agree. When the source's running time is
