@@ -182,15 +182,12 @@ describe('owner labels (#1286)', () => {
     ['Language: pt-BR', 'Language: Brazilian Portuguese (pt-BR)'],
     ['Language: en-GB', 'Language: British English (en-GB)'],
     ['Language: zh-Hant', 'Language: Traditional Chinese (zh-Hant)'],
-    [
-      'Language: fr. Retained for review only; not an eligible choice.',
-      'Language: French (fr). Retained for review only; not an eligible choice.',
-    ],
+    ['Language: fr. Not offered as a choice.', 'Language: French (fr). Not offered as a choice.'],
     // Undetermined keeps its tag; the observation already says so.
     ['Language: und', 'Language: und'],
     [
-      'Language: UND. Undetermined language; not an eligible choice.',
-      'Language: UND. Undetermined language; not an eligible choice.',
+      'Language: UND. Not offered as a choice. The language is not known.',
+      'Language: UND. Not offered as a choice. The language is not known.',
     ],
     // Not a tag, or not a language observation: shown as it is.
     ['Language: English', 'Language: English'],

@@ -45,7 +45,7 @@ const entry = control({
 const contextTitle: Field = {
   ...base,
   classification: 'unsupported',
-  classificationReason: 'There is no other value to choose from. You can enter your own.',
+  classificationReason: 'No source offered a different value. You can enter your own.',
   decisionActions: [],
   editable: false,
   needsAttention: false,
@@ -136,12 +136,18 @@ describe('owner-entered values', () => {
     const http = owner(() => [contextTitle])
     const panel = await open(http)
     expect(within(panel).getByRole('button', { name: 'Enter a value' })).toBeVisible()
-    expect(screen.queryByText('There’s no other value to choose from.')).toBeNull()
+    expect(
+      screen.queryByText('No source offered a different value.', { selector: '.decision-context' }),
+    ).toBeNull()
     // A field the owner cannot type into keeps the existing copy.
     const plain = owner(() => [{ ...contextTitle, ownerControl: null }])
     document.body.innerHTML = ''
     renderRoute('/library?lens=all&preview=case-1&field=title', plain)
-    expect(await screen.findByText('There’s no other value to choose from.')).toBeVisible()
+    expect(
+      await screen.findByText('No source offered a different value.', {
+        selector: '.decision-context',
+      }),
+    ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Enter a value' })).toBeNull()
   })
 

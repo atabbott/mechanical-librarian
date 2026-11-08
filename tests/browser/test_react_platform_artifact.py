@@ -40,7 +40,7 @@ from tests.support.cover_images import synthetic_image
 # The outcome the review controller renders when a decision request is lost
 # before any response, which is the only outcome an aborted request can reach.
 _AMBIGUOUS_NOTICE = (
-    "The response was lost. The current case was reloaded before any retry."
+    "No answer came back. Check whether your choice was recorded before choosing again."
 )
 _ACTIVE_ELEMENT = """() => {
   const node = document.activeElement
@@ -1354,15 +1354,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert documents == (before_entry + (4 if path == "/activity" else 1))
 
         for case_id, label, retry in (
-            ("case-1", "Advisory visual review complete", False),
+            ("case-1", "Visual review complete", False),
             (
                 "case-2",
-                "Visual review is unavailable. Only the eligible choices shown below can be selected.",
+                "Visual review is unavailable.",
                 True,
             ),
             (
                 "case-3",
-                "Visual review is unavailable. Only the eligible choices shown below can be selected.",
+                "Visual review is unavailable.",
                 True,
             ),
         ):
@@ -1374,7 +1374,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             comparison = page.get_by_role("region", name="Choose a cover")
             comparison.get_by_text(label, exact=True).wait_for()
             comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
-            assert "best confirmed match is ready" in comparison.inner_text()
+            # The recommended card carries its reason, so the header has no
+            # caption (#1765).
+            expect(comparison.locator(":scope > header > small")).to_have_count(0)
             for choice in comparison.locator("[role=radio]").all():
                 expect(choice).to_be_enabled()
                 expect(choice).to_have_attribute("aria-checked", "false")
@@ -1384,7 +1386,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(evidence).to_be_enabled()
                 expect(evidence).to_have_attribute("aria-expanded", "false")
             assert (1 if retry else 0) == comparison.get_by_role(
-                "button", name="Retry advisory review"
+                "button", name="Retry visual review"
             ).count()
             if case_id in {"case-1", "case-2"}:
                 capture_visual_proof(
@@ -1413,10 +1415,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 unconfirmed = comparison.locator(".cover-choice.is-unconfirmed")
                 expect(unconfirmed).to_have_count(1)
                 unconfirmed.get_by_text("Match not confirmed", exact=True).wait_for()
-                assert (
-                    "couldn't confirm that this cover belongs"
-                    in unconfirmed.inner_text()
-                )
+                # The title says it, so no reason line repeats it (#1765).
+                expect(unconfirmed.locator(".choice-recommendation")).to_have_count(0)
                 unconfirmed_choice = unconfirmed.get_by_role(
                     "radio", name="Choose Open Library cover", exact=True
                 )
@@ -1474,7 +1474,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(unavailable_evidence).to_have_text("Hide evidence")
                 comparison.get_by_text("Already in the library", exact=True).wait_for()
                 comparison.get_by_text(
-                    "Preview unavailable for this retained cover.", exact=True
+                    "Its image could not be previewed.", exact=True
                 ).wait_for()
 
         stage[0] = "library:automatic-isbn-identity-evidence"
@@ -1483,7 +1483,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         recorded_isbn = page.get_by_role("region", name="ISBN recorded choices")
         recorded_isbn.get_by_text(
-            "Deterministic identity evidence bound this ISBN to this file's work.",
+            "This file’s own identifiers confirm this ISBN.",
             exact=True,
         ).wait_for()
         evidence = recorded_isbn.get_by_role(

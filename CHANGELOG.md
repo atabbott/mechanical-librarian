@@ -152,6 +152,10 @@ brackets are GitHub issues.
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).
+- Library's field decisions read plainly. Evidence, automatic statements,
+  cover checks and decision failures drop internal words, a lost answer says
+  what to check, and the writing box says whether a change was written
+  (#1765).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
