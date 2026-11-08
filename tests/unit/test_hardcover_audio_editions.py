@@ -14,6 +14,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
+import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
@@ -414,7 +415,6 @@ def _audio_covers(
 
 
 def test_the_audio_edition_document_also_reads_the_cover_and_language() -> None:
-    from mechanical_librarian.adapters.providers import hardcover_metadata
 
     assert _AUDIO_DOCUMENT == hardcover_metadata._AUDIO_EDITIONS_QUERY
 
