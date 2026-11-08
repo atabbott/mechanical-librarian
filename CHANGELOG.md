@@ -149,6 +149,9 @@ brackets are GitHub issues.
 - The sign-in page has one heading, "Sign in to review your library", without
   the eyebrow, tagline and paragraph about write permission around it, and the
   forgotten-password steps say what to do in short sentences (#1765).
+- Retrying description advice while preparation is paused is now confirmed
+  instead of reported as failed. The retry was already saved and runs at the
+  first library scan after preparation resumes (#1784).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
