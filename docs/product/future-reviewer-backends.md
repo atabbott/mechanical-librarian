@@ -1,17 +1,18 @@
 # Future reviewer backends
 
-Nothing on this page exists yet. It is a direction for later, and none of it
-is scheduled or approved for work.
+The backends on this page do not exist yet. They are a direction for later,
+and neither is scheduled or approved for work.
 
 ## What exists today
 
-A reviewer does two jobs today, `cover_observation` and `description_rewrite`,
-and both only give advice. For each, you can choose Codex or one OpenRouter
-model, and no other job uses a reviewer
+Today a reviewer gives advice on two jobs only. The cover reviewer looks at
+covers (`cover_observation`), and the description adviser suggests a
+rewritten description (`description_rewrite`). For each, you can choose Codex
+or one OpenRouter model
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 The installed Codex reviewer runs inside the contained-reviewer kernel, an
-isolated sandbox. The kernel's general-purpose use stays in the source code
-and is not installed
+isolated sandbox. Every other use of the kernel stays in the source code and
+is not installed
 ([ADR-0041](../architecture/decisions/0041-contract-contained-reviewer-kernel.md),
 [ADR-0050](../architecture/decisions/0050-bound-installed-owner-assistance.md)).
 None of this is a general reviewer backend or settles the interface a future
@@ -48,7 +49,7 @@ defines, and stays inside the
 - It cannot choose the values it judges, the evidence, the policy, its
   prompts, the fields to change or what is written.
 - Before it is given any work, it declares what it supports: text, images,
-  context length, schema, authentication and model identity.
+  the longest input it accepts, schema, authentication and model identity.
 - It reports the model, endpoint and model provider that answered. Mechanical
   Librarian keeps them in a record that never changes, with the versions of
   the prompt, evidence, schema, policy and configuration.
@@ -62,14 +63,15 @@ defines, and stays inside the
 
 A change of endpoint, provider, model, free or paid status, or privacy policy
 is a configuration change you make, and the audit record shows it. A backend
-never falls back from one of these to another by itself.
+never changes any of these by itself.
 
-Qualification never carries over. A change to the model's identity, or to
-anything material in its configuration, starts a new evaluation. Shadow review
-records a backend's answers without using them. In manual review, you decide.
-Only one exact combination of backend, model, provider, route, prompt, schema
-and policy can qualify for more than that. A vendor, or free models in
-general, never qualify.
+Qualification never carries over. A change to the identity a backend reports,
+or to anything material in its configuration, starts a new evaluation. That
+identity is the model, endpoint and model provider that answered, plus the
+server version for a model server. Shadow review records a backend's answers
+without using them. In manual review, you decide. Only one exact combination
+of backend, model, provider, route, prompt, schema and policy can qualify for
+more than that. A vendor, or free models in general, never qualify.
 
 Mechanical Librarian checks every answer itself, whatever the provider claims.
 It rejects unknown fields, trailing content, partial or duplicate decisions,
@@ -85,9 +87,9 @@ your library and unrelated evidence are never sent. After a material change,
 you accept again.
 
 You control the credentials. Each is a write-only reference to a secret that
-only the reviewer can use. Credentials never appear in exports, the browser,
-logs, the audit record or support bundles. The image ships with no shared
-credential.
+only the reviewer can use. The browser never shows a saved credential.
+Credentials never appear in exports, logs, the audit record or support bundles.
+The image ships with no shared credential.
 
 Each backend has its own network client, limited to its configured origin. It
 checks TLS certificates as normal and never follows a redirect that would
@@ -95,8 +97,8 @@ carry a credential. It shares no state with the clients for your library
 service or sources.
 
 Inventory, local evidence, rule-based proposals and policy, and your own
-review keep working when no reviewer is set up or working. A reviewer failure
-never makes the container unhealthy.
+review keep working when no reviewer is set up or every reviewer is failing.
+A reviewer failure never makes the container unhealthy.
 
 The [data-privacy contract](../architecture/data-privacy.md) applies to any
 processing outside Mechanical Librarian.
@@ -116,13 +118,14 @@ Librarian never discovers, starts or upgrades the server. Its configuration
 names one exact `http` or `https` origin, compatibility profile, model ID and
 privacy setting, and an optional secret for the reviewer. Mechanical Librarian
 refuses a URL with a credential, a fragment, an ambiguous host, another scheme
-or an open path. The reviewer signs in only with a bearer token or a secret
-file, never with custom headers or cookies.
+or an unrestricted path. The reviewer signs in only with a bearer token or a
+secret file, never with custom headers or cookies.
 
-A handshake with fixed limits proves the server is compatible. An
-"OpenAI-compatible" label is not taken as proof. Plain HTTP, loopback or a
-private network needs a visible local-endpoint setting that you turn on, limited
-to that origin. DNS rebinding, redirects, and file, socket, link-local,
-metadata-service or undeclared destinations are blocked. No setting turns TLS
-checking off globally. A custom model starts in shadow or manual review only. A
-text-only configuration leaves any work that needs images to manual review.
+A handshake with fixed limits proves the server is compatible. Mechanical
+Librarian does not take an "OpenAI-compatible" label as proof. Plain HTTP,
+loopback or a private network needs a visible local-endpoint setting that you
+turn on, limited to that origin. Mechanical Librarian blocks DNS rebinding,
+redirects, and file, socket, link-local, metadata-service or undeclared
+destinations. No setting turns TLS checking off globally. A custom model starts
+in shadow or manual review only. A text-only configuration leaves any work
+that needs images to manual review.
