@@ -820,6 +820,125 @@ def work_query_ladder(
     return tuple(distinct)
 
 
+# Hardcover's books search sends a rung's spellings as `_in` lists (#1380): at
+# most four titles of at most 512 characters, and 16 author strings with at most
+# three forms of each name. The forms only find a book; admission still
+# compares the stored values.
+HARDCOVER_TITLE_SPELLINGS = 4
+HARDCOVER_AUTHOR_STRINGS = 16
+_HARDCOVER_SPELLING_CHARACTERS = 512
+_HARDCOVER_NAME_VARIANTS = 2
+_WHITESPACE_RUN = re.compile(r"(\s+)")
+_INITIAL_TOKEN = re.compile(r"(?:[^\W\d_]\.)+|[^\W\d_]")
+
+
+def hardcover_query_spellings(
+    query: WorkQuery,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the title and author spellings one Hardcover rung asks with.
+
+    Titles are the rung's title, then three closed case forms of it, in order:
+    each word's first cased character upper-cased, the same with the rest of
+    each word lower-cased, and all lower-case. Authors are every stored name
+    first. Unless those alone pass the 16-string bound, each name then adds up
+    to two forms: "Given Family" for a name with one comma between two sides
+    of one to four words, and the spaced, unspaced and undotted forms of the
+    initials in its display order. Forms repeat no earlier string, and a form
+    over 512 characters is dropped, never cut.
+    """
+    if type(query) is not WorkQuery:
+        raise ValueError("work query is invalid")
+    titles: list[str] = []
+    for value in (
+        query.title,
+        _word_case(query.title, rest_lower=False),
+        _word_case(query.title, rest_lower=True),
+        query.title.lower(),
+    ):
+        if value not in titles and len(value) <= _HARDCOVER_SPELLING_CHARACTERS:
+            titles.append(value)
+    authors = list(query.authors)
+    if len(authors) > HARDCOVER_AUTHOR_STRINGS:
+        return tuple(titles), tuple(authors)
+    seen = {value.casefold() for value in authors}
+    for name in query.authors:
+        added = 0
+        display = _inverted_name(name)
+        for form in (display, *_initials_forms(display or name)):
+            if (
+                added == _HARDCOVER_NAME_VARIANTS
+                or len(authors) == HARDCOVER_AUTHOR_STRINGS
+            ):
+                break
+            if (
+                form is None
+                or form.casefold() in seen
+                or len(form) > _HARDCOVER_SPELLING_CHARACTERS
+            ):
+                continue
+            seen.add(form.casefold())
+            authors.append(form)
+            added += 1
+    return tuple(titles), tuple(authors)
+
+
+def _word_case(value: str, *, rest_lower: bool) -> str:
+    words: list[str] = []
+    for part in _WHITESPACE_RUN.split(value):
+        index = next(
+            (
+                i
+                for i, character in enumerate(part)
+                if character.lower() != character.upper()
+            ),
+            None,
+        )
+        if part.isspace() or index is None:
+            words.append(part)
+            continue
+        rest = part[index + 1 :]
+        words.append(
+            part[:index] + part[index].upper() + (rest.lower() if rest_lower else rest)
+        )
+    return "".join(words)
+
+
+def _inverted_name(value: str) -> str | None:
+    if value.count(",") != 1:
+        return None
+    family, given = (side.split() for side in value.split(","))
+    if not 1 <= len(family) <= 4 or not 1 <= len(given) <= 4:
+        return None
+    return " ".join((*given, *family))
+
+
+def _initials_forms(value: str) -> tuple[str, ...]:
+    """Spell a name's initials spaced, unspaced and undotted, if it has any."""
+    runs: list[tuple[str, ...] | str] = []
+    for token in value.split():
+        if _INITIAL_TOKEN.fullmatch(token) is None:
+            runs.append(token)
+            continue
+        letters = tuple(character for character in token if character != ".")
+        previous = runs[-1] if runs else None
+        if isinstance(previous, tuple):
+            runs[-1] = (*previous, *letters)
+        else:
+            runs.append(letters)
+    if not any(isinstance(run, tuple) for run in runs):
+        return ()
+
+    def spell(joiner: str, dot: str) -> str:
+        return " ".join(
+            run
+            if isinstance(run, str)
+            else joiner.join(f"{letter}{dot}" for letter in run)
+            for run in runs
+        )
+
+    return spell(" ", "."), spell("", "."), spell(" ", "")
+
+
 def _dispatch_transformations_are_canonical(
     rung: WorkDispatchRung,
     transformations: tuple[WorkTitleTransformationFamily, ...],
@@ -2292,6 +2411,8 @@ def _year(value: str) -> bool:
 
 __all__ = [
     "BAND_TITLE_PRODUCTIONS",
+    "HARDCOVER_AUTHOR_STRINGS",
+    "HARDCOVER_TITLE_SPELLINGS",
     "CORROBORATED_TITLE_APPLICATION",
     "CORROBORATED_TITLE_PRODUCTION",
     "WORK_TITLE_COMPOUND_PRODUCTIONS",
@@ -2314,6 +2435,7 @@ __all__ = [
     "direct_work_title_election_matches",
     "discovery_title_candidate",
     "fold_lone_apostrophes",
+    "hardcover_query_spellings",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
     "series_label_segment",

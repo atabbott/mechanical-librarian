@@ -57,6 +57,7 @@ from tests.support.audiobook_providers import (
     with_asin_lane,
 )
 from tests.support.hardcover_evidence import (
+    hardcover_answer,
     hardcover_envelope,
     isbn_claim,
     isbn_lookup,
@@ -95,7 +96,8 @@ def test_identifier_candidate_without_creator_preserves_hardcover_discovery() ->
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [{"id": 1, "book_id": 10, "isbn_13": "9780306406157"}],
                 [{"id": 10, "title": "Current title"}],
             ),
@@ -109,7 +111,7 @@ def test_identifier_candidate_without_creator_preserves_hardcover_discovery() ->
         .observation
     )
 
-    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
+    assert ["MetadataEvidenceByIsbn", "BooksByTitleAuthor"] == operations
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
         lane.kind for lane in observation.lanes
     }
@@ -124,7 +126,7 @@ def test_identifier_no_match_falls_back_to_hardcover_discovery() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope([], []),
+            json=hardcover_answer(request, [], []),
         )
 
     observation = (
@@ -135,7 +137,7 @@ def test_identifier_no_match_falls_back_to_hardcover_discovery() -> None:
         .observation
     )
 
-    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
+    assert ["MetadataEvidenceByIsbn", "BooksByTitleAuthor"] == operations
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
         lane.kind for lane in observation.lanes
     }
@@ -151,7 +153,7 @@ def test_malformed_identifier_falls_back_to_hardcover_discovery() -> None:
         if len(operations) == 1:
             value = {"data": {"editions": "invalid", "books": [], "tags": []}}
         else:
-            value = hardcover_envelope([], [])
+            value = hardcover_answer(request, [], [])
         return httpx.Response(
             200, headers={"content-type": "application/json"}, json=value
         )
@@ -164,7 +166,7 @@ def test_malformed_identifier_falls_back_to_hardcover_discovery() -> None:
         .observation
     )
 
-    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
+    assert ["MetadataEvidenceByIsbn", "BooksByTitleAuthor"] == operations
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
         lane.kind for lane in observation.lanes
     }
@@ -178,7 +180,8 @@ def test_one_request_retains_all_candidates_in_identity_order() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [
                     {
                         "id": 2,
@@ -343,7 +346,7 @@ def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retr
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope([], []),
+            json=hardcover_answer(request, [], []),
         )
 
     observation = (
@@ -402,7 +405,7 @@ def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> Non
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope([], []),
+            json=hardcover_answer(request, [], []),
         )
 
     observation = (
@@ -415,9 +418,9 @@ def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> Non
         .observation
     )
     assert [
+        "BooksByTitleAuthor",
         "MetadataEvidenceByIsbn",
         "MetadataEvidenceByIsbn",
-        "MetadataEvidenceByWork",
     ] == sorted(operations)
     assert 3 == len(observation.lanes)
     assert {ProviderStatus.NO_MATCH} == {lane.status for lane in observation.lanes}
@@ -1293,7 +1296,8 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
         )
         return httpx.Response(
             200,
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [
                     {
                         "id": calls,
@@ -1347,7 +1351,7 @@ def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope([], []),
+            json=hardcover_answer(request, [], []),
         )
 
     observation = (
@@ -1379,7 +1383,8 @@ def _recorded_observation(
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [{"id": 1, "book_id": 10, "isbn_13": "9780306406157"}],
                 [{"id": 10, "title": "Current title"}],
             ),
@@ -1421,5 +1426,5 @@ def test_an_asin_lane_beside_served_lanes_leaves_their_answer_unchanged() -> Non
     assert len(served.lanes) + 1 == len(mixed.lanes)
     expected = _recorded_observation(served)
 
-    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == expected[1]
+    assert ["MetadataEvidenceByIsbn", "BooksByTitleAuthor"] == expected[1]
     assert expected == _recorded_observation(mixed)
