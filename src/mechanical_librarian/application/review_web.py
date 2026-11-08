@@ -111,7 +111,10 @@ from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldClassification,
     classify_review_field,
 )
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.shadow_outcome import (
+    ShadowFieldOutcome,
+    ShadowOutcomeSet,
+)
 
 # A degraded value with nothing proposed beside it is the current one (#1283).
 _CURRENT_VALUE_REFUSAL_TEXT = {
@@ -1264,6 +1267,7 @@ class InspectCurrentReviewCase:
             ),
             "automatic_decision": automatic_decision,
             "automatic_withheld_reason": None,
+            "automatic_withheld_condition": None,
             # Shown only on a field that reads No change with no decision of
             # its own; the earlier choice decides nothing now (#1575).
             "earlier_automatic_value": (
@@ -1401,52 +1405,23 @@ class InspectCurrentReviewCase:
                     and advice["selected_advice"].get("current") is True
                 ):
                     continue
-                if outcome is None:
-                    message = (
-                        "No recorded automatic evaluation is available for this field."
-                    )
-                elif outcome.disposition in {
+                if outcome is not None and outcome.disposition not in {
                     "abstention",
                     "conflict",
                     "manual",
                     "unsupported",
                 }:
-                    message = (
-                        (
-                            _AUDIOBOOK_LANGUAGE_REGION_TEXT
-                            if destination == "language"
-                            and "language_display_name" in field.get("notices", ())
-                            and (outcome.policy_option or "").endswith(
-                                "audiobook_language_replace"
-                            )
-                            else None
-                        )
-                        or (
-                            None
-                            if field["proposed_values"]
-                            else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
-                        )
-                        or (
-                            _UNOFFERED_DISSENT_TEXT
-                            if outcome.reason_code == "ambiguous_evidence"
-                            and _lone_candidate_for_empty(field)
-                            else None
-                        )
-                        or _AUTOMATIC_REFUSAL_TEXT.get(
-                            outcome.reason_code,
-                            "No value was chosen for you, and no more specific reason is known.",
-                        )
-                    )
-                else:
                     continue
-                if destination in (
-                    *snapshot.automatic_safety_suspended_destinations,
-                    *snapshot.suspended_destinations,
-                ):
-                    message = (
-                        "Changes made for you are paused for this field. " + message
-                    )
-                field["automatic_withheld_reason"] = message
+                (
+                    field["automatic_withheld_reason"],
+                    field["automatic_withheld_condition"],
+                ) = _automatic_withheld(
+                    field,
+                    outcome,
+                    destination,
+                    destination in snapshot.automatic_safety_suspended_destinations
+                    or destination in snapshot.suspended_destinations,
+                )
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return detail
@@ -2477,6 +2452,55 @@ def _lone_candidate_for_empty(field: Mapping[str, Any]) -> bool:
     )
 
 
+# The comparison condition a withheld reason already states. Library leaves out
+# the notice with that code rather than comparing the two sentences, so either
+# can be reworded alone (#1519, #1802).
+AutomaticWithheldCondition = Literal[
+    "isbn_title_material_conflict", "competing_evidence"
+]
+
+
+def _automatic_withheld(
+    field: Mapping[str, Any],
+    outcome: ShadowFieldOutcome | None,
+    destination: str,
+    paused: bool,
+) -> tuple[str, AutomaticWithheldCondition | None]:
+    """Say why a field was not changed for you, and which condition that states.
+
+    A paused field still states the condition after its prefix, so its notice
+    is not repeated either (#1802).
+    """
+    condition: AutomaticWithheldCondition | None = None
+    if outcome is None:
+        message = "No recorded automatic evaluation is available for this field."
+    elif (
+        destination == "language"
+        and "language_display_name" in field.get("notices", ())
+        and (outcome.policy_option or "").endswith("audiobook_language_replace")
+    ):
+        message = _AUDIOBOOK_LANGUAGE_REGION_TEXT
+    elif (
+        not field["proposed_values"]
+        and outcome.reason_code in _CURRENT_VALUE_REFUSAL_TEXT
+    ):
+        message = _CURRENT_VALUE_REFUSAL_TEXT[outcome.reason_code]
+    elif outcome.reason_code == "ambiguous_evidence" and _lone_candidate_for_empty(
+        field
+    ):
+        message, condition = _UNOFFERED_DISSENT_TEXT, "competing_evidence"
+    else:
+        message = _AUTOMATIC_REFUSAL_TEXT.get(
+            outcome.reason_code,
+            "No value was chosen for you, and no more specific reason is known.",
+        )
+        if outcome.reason_code == "isbn_title_material_conflict":
+            condition = "isbn_title_material_conflict"
+    if paused:
+        message = "Changes made for you are paused for this field. " + message
+    return message, condition
+
+
 def _presented_field(field: TargetField) -> dict[str, object]:
     """One current field as review shows it, without the store's restore flag.
 
@@ -2668,6 +2692,7 @@ def _choice_contexts(
             "evidence": (
                 [
                     {
+                        "language": None,
                         "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
@@ -2780,9 +2805,11 @@ def _choice_rationale(rows: list[dict[str, object]]) -> str:
 def _choice_evidence(
     evidence: dict[str, str | None], destinations: list[str] | None = None
 ) -> dict[str, object]:
+    observation, language = _choice_observation(evidence)
     return {
         **({"destinations": sorted(destinations)} if destinations is not None else {}),
-        "observation": _choice_observation(evidence)
+        "language": language,
+        "observation": observation
         + (f" ({evidence['edition']})" if evidence.get("edition") else ""),
         "role": "local_presence"
         if _choice_is_local(evidence)
@@ -2877,15 +2904,20 @@ _OBSERVATION_KINDS: Mapping[str, str] = MappingProxyType(
 )
 
 
-def _choice_observation(evidence: dict[str, str | None]) -> str:
+def _choice_observation(evidence: dict[str, str | None]) -> tuple[str, str | None]:
+    """One evidence sentence, and the language value it states, if any.
+
+    Library names that value where it stands in the sentence, so the sentence
+    can be reworded without the browser reading its words (#1802).
+    """
     try:
         fact = json.loads(evidence["fact"] or "{}")
     except (TypeError, ValueError):
-        return "This source\u2019s value could not be read."
+        return "This source\u2019s value could not be read.", None
     if type(fact) is not dict:
-        return "This source\u2019s value could not be read."
+        return "This source\u2019s value could not be read.", None
     if evidence["source"] == "identifier" and "relation" in fact:
-        return "Checks an ISBN against this book. It gives no value of its own."
+        return "Checks an ISBN against this book. It gives no value of its own.", None
     # Every claim kind is named as the Library's recorded evidence names it
     # (#1286); a narrator's credit keeps its own name.
     claim_kind = fact.get("kind")
@@ -2907,15 +2939,15 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         and (seconds := _duration_seconds(value)) is not None
     ):
         # A running time reads in hours and minutes, never as raw seconds (#1286).
-        return f"{kind}: {hours_minutes(seconds)}"
+        return f"{kind}: {hours_minutes(seconds)}", None
     if type(value) in {str, int, float}:
         text = _choice_text(cast("str | int | float", value))
         # A local record can carry its own label ("ISBN: 978…"); it is named
         # once (#1286).
         if text.casefold().startswith(kind.casefold() + ":"):
             text = text[len(kind) + 1 :].strip() or text
-        return f"{kind}: {text}"
-    return f"{kind}: the value cannot be shown."
+        return f"{kind}: {text}", text if claim_kind == "language" else None
+    return f"{kind}: the value cannot be shown.", None
 
 
 def _duration_seconds(value: object) -> int | None:
@@ -2958,12 +2990,14 @@ def _review_unselectable_evidence(
         ):
             continue
         unknown = language_is_unknown(local_claim.canonical or local_claim.observed)
+        stated = _choice_text(local_claim.observed)
         observations[local_claim.reference] = {
             "destinations": ["language"],
+            "language": stated,
             "role": "local_presence",
             "source": "Local metadata",
             "observation": (
-                f"Language: {_choice_text(local_claim.observed)}. "
+                f"Language: {stated}. "
                 + "Not offered as a choice."
                 + (" The language is not known." if unknown else "")
             ),
@@ -3057,6 +3091,7 @@ def _review_unselectable_evidence(
                     claim.reference,
                     {
                         "destinations": [destination],
+                        "language": value if language else None,
                         "role": "external_observation",
                         "source": _provider_label(provider.authority),
                         "observation": (

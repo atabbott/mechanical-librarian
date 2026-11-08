@@ -397,9 +397,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   projected,
                   impact: {
                     changed: field.changed,
-                    title: field.changed
-                      ? ('Policy change' as const)
-                      : ('No policy change' as const),
                     detail: field.changed
                       ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail.replace(/[^.]$/u, '$&.')}`
                       : projected.detail,
@@ -912,7 +909,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           </small>
                         </span>
                         <span className="cm-policy-impact">
-                          <b>{row.impact.title}</b>
+                          {/* Only changed rows are listed here (#1765). */}
+                          <b>Policy change</b>
                           <small>· {row.impact.detail}</small>
                           <details>
                             <summary>Technical detail</summary>
@@ -987,10 +985,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 </p>
                 {unchangedRows.map((row) => (
                   <p key={row.id}>
-                    <strong>
-                      {row.work} · {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} · {row.field}:
-                    </strong>{' '}
-                    {row.impact.title} · {row.projected.detail}
+                    <strong>{row.work}</strong> · {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} ·{' '}
+                    {row.field}: {row.projected.detail}
                   </p>
                 ))}
               </details>
@@ -1141,14 +1137,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   <span />
                   <div>
                     <strong>Fields</strong>
-                    <small>All 14 have a setting and an option</small>
+                    <small>A setting and an option for each of the 14</small>
                   </div>
                 </li>
                 <li>
                   <span />
                   <div>
                     <strong>Automatic</strong>
-                    <small>Offered for every field set to Automatic</small>
+                    <small>Offered for each field set to Automatic</small>
                   </div>
                 </li>
                 <li>

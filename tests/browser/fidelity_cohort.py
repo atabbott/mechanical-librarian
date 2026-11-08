@@ -515,6 +515,7 @@ def _field(
                 "alternative_id": None,
                 "evidence": [
                     {
+                        "language": None,
                         "observation": "Your current value.",
                         "role": "local_presence",
                         "source": "Local library record",
@@ -531,6 +532,7 @@ def _field(
                     "alternative_id": f"alternative-{destination}-{index}",
                     "evidence": [
                         {
+                            "language": None,
                             "observation": "A synthetic catalogue observation supports this choice.",
                             "role": "external_corroboration",
                             "source": "Open Library",
@@ -553,6 +555,7 @@ def _field(
         "human_decision": human_decision,
         "automatic_decision": automatic_decision,
         "automatic_withheld_reason": None,
+        "automatic_withheld_condition": None,
         "earlier_automatic_value": None,
         "automatic_selection_sources": [],
         "notices": notices or [],
@@ -981,6 +984,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Local library record",
                                     "role": "local_presence",
+                                    "language": None,
                                     "observation": "Your current cover.",
                                 }
                             ],
@@ -1001,6 +1005,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "source": "Open Library",
                                     "role": "external_corroboration",
+                                    "language": None,
                                     "observation": "Has this cover in its catalogue.",
                                 }
                             ],
@@ -1266,15 +1271,15 @@ def _cohort_change(work: str, destination: str) -> tuple[str, str, str]:
 
 _COHORT_POLICY_CHANGES = [
     {
-        "field": "Title layout",
+        "field": "Title and subtitle",
         "setting": "Setting",
         "previous": "Ask me",
         "next": "Automatic",
     },
     {
-        "field": "Description fill",
+        "field": "Description",
         "setting": "Option",
-        "previous": "Safe plain text",
+        "previous": "Fill empty with safe plain text",
         "next": "Visible Google text",
     },
     {
@@ -1563,7 +1568,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                         "label": "Chosen by",
                         "value": "Automatic policy"
                         if origin == "automatic_policy"
-                        else "Library owner",
+                        else "You",
                     },
                 ],
                 "work_id": f"book-{index}",
@@ -1874,6 +1879,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "items": [
                     {
                         "destinations": [kind],
+                        "language": None,
                         "observation": f"{kind.title()}: {fact}",
                         "role": (
                             "local_presence"

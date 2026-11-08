@@ -3044,8 +3044,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # intervention needed" directly above its own
                 # `3 Awaiting permission`, which is the claim #639 forbids.
                 page.get_by_role(
-                    "heading",
-                    name="Writes are off. Review permissions when you are ready.",
+                    "heading", name="Writes are off.", exact=True
                 ).wait_for()
                 expect(
                     page.get_by_text("Ready for permission", exact=True)
@@ -3056,7 +3055,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 expect(page.locator(".activity-consent-library")).to_have_count(0)
                 page.get_by_role("button", name="Review write permissions").click()
                 page.get_by_text(
-                    "Backup readiness checked. Review the included and excluded destinations.",
+                    "Backup checked.",
                     exact=True,
                 ).wait_for()
                 page.get_by_role(
@@ -3075,18 +3074,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # Cancel, rather than reading as a second Cancel (#1289).
                 _assert_primary_fill(
                     page.get_by_role("button", name="Confirm write permissions"),
-                    page.get_by_role("button", name="Cancel permission review"),
+                    page.get_by_role("button", name="Cancel", exact=True),
                 )
                 expect(
                     page.get_by_role(
                         "heading", name="Prepared work needs your permission"
                     )
                 ).to_have_count(0)
-                for calm in (
-                    "No intervention needed",
-                    "No action required",
-                    "No action is required.",
-                ):
+                for calm in ("No action needed", "No action is required."):
                     expect(page.get_by_text(calm, exact=True)).to_have_count(0)
                 assert activity_requests >= 1
                 activity_search = page.get_by_role("searchbox", name="Search activity")
@@ -3206,11 +3201,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert recorded_title.count() == 1
                 expect(recorded_title).to_have_attribute("aria-checked", "true")
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role("heading", name="Activity and recovery").wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 page.go_back()
                 page.get_by_role("heading", name="Title").wait_for()
                 page.go_forward()
-                page.get_by_role("heading", name="Activity and recovery").wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 assert documents == (initial_documents + 2)
                 assert errors == []
             browser.close()
@@ -3321,6 +3316,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                             if context["selection"] == "proposed"
                                             else "Automatic current source"
                                         ),
+                                        "language": None,
                                         "observation": "Synthetic automatic evidence.",
                                         "role": "external_corroboration",
                                     }
@@ -4035,7 +4031,7 @@ def test_activity_checks_open_onto_one_row_per_field() -> None:
                 page.keyboard.press("Enter")
                 expect(decision).to_have_attribute("aria-expanded", "true")
                 expect(paired.locator(".cm-activity-evidence")).to_contain_text(
-                    "Policy setting"
+                    "Policy option"
                 )
                 page.keyboard.press("Enter")
                 expect(paired.locator(".cm-activity-evidence")).to_have_count(0)
@@ -9807,6 +9803,14 @@ def test_isbn_title_reaches_real_library_with_retained_sources(mode):
                         )
                     ).first
                 ).to_be_visible()
+                if mode == "conflict":
+                    # The server names the condition the reason states, so the
+                    # Comparison condition box does not repeat it (#1802).
+                    expect(
+                        page.get_by_text(
+                            "The sources disagree about the work or title. Choose the title yourself"
+                        )
+                    ).to_have_count(1)
                 for width in (1280, 390, 320):
                     page.set_viewport_size({"width": width, "height": 844})
                     assert page.evaluate(
@@ -10867,9 +10871,7 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text(f"To {expected}", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
-            page.get_by_role(
-                "heading", name="Activity and recovery", exact=True
-            ).wait_for()
+            page.get_by_role("heading", name="Activity", exact=True).wait_for()
             row = page.get_by_role("article").filter(has_text="Automatic choice")
             row.get_by_role("button", name="Details").click()
             # Activity names the language as Library does, in the row's change,
@@ -10929,10 +10931,8 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text("To English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
-            page.get_by_role(
-                "heading", name="Activity and recovery", exact=True
-            ).wait_for()
-            owner = page.get_by_role("article").filter(has_text="Owner choice")
+            page.get_by_role("heading", name="Activity", exact=True).wait_for()
+            owner = page.get_by_role("article").filter(has_text="Your choice")
             owner.get_by_role("button", name="Details").click()
             expect(owner.get_by_text("English", exact=True)).to_be_visible()
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=language")
@@ -11028,11 +11028,9 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text("To Fantasy", exact=True)).to_be_visible()
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role(
-                    "heading", name="Activity and recovery", exact=True
-                ).wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 event = page.get_by_role("article").filter(
-                    has_text="Owner choice"
+                    has_text="Your choice"
                     if destination == "ask"
                     else "Automatic choice"
                 )
@@ -11639,9 +11637,7 @@ def test_same_name_series_owner_journey(media, destination):
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text("To " + title, exact=False)).to_be_visible()
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role(
-                    "heading", name="Activity and recovery", exact=True
-                ).wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 expect(
                     page.get_by_role("article").filter(has_text=title).first
                 ).to_be_visible()
@@ -11793,12 +11789,10 @@ def test_audiobook_work_owner_journey():
                 page.get_by_text("To A voyage reveals a hidden city.", exact=True)
             ).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
-            page.get_by_role(
-                "heading", name="Activity and recovery", exact=True
-            ).wait_for()
+            page.get_by_role("heading", name="Activity", exact=True).wait_for()
             expect(
                 page.get_by_role("article")
-                .filter(has_text="Owner choice")
+                .filter(has_text="Your choice")
                 .filter(has_text="Description")
             ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -11915,13 +11909,11 @@ def test_audiobook_work_series_title_owner_journey():
             expect(page.get_by_text("To Example Saga", exact=False)).to_be_visible()
             expect(page.get_by_text("To Synthetic Journey", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
-            page.get_by_role(
-                "heading", name="Activity and recovery", exact=True
-            ).wait_for()
+            page.get_by_role("heading", name="Activity", exact=True).wait_for()
             for field in ("Series", "Title"):
                 expect(
                     page.get_by_role("article")
-                    .filter(has_text="Owner choice")
+                    .filter(has_text="Your choice")
                     .filter(has_text=field)
                     .first
                 ).to_be_visible()
@@ -12012,13 +12004,11 @@ def test_audiobook_synopsis_owner_journey(destination):
                     page.get_by_text("To A voyage reveals a hidden city.", exact=True)
                 ).to_be_visible()
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role(
-                    "heading", name="Activity and recovery", exact=True
-                ).wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 event = (
                     page.get_by_role("article")
                     .filter(
-                        has_text="Owner choice"
+                        has_text="Your choice"
                         if destination == "ask"
                         else "Automatic choice"
                     )
@@ -12101,13 +12091,11 @@ def test_ebook_synopsis_owner_journey(destination):
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role(
-                    "heading", name="Activity and recovery", exact=True
-                ).wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 event = (
                     page.get_by_role("article")
                     .filter(
-                        has_text="Owner choice"
+                        has_text="Your choice"
                         if destination == "ask"
                         else "Automatic choice"
                     )
@@ -12302,13 +12290,11 @@ def test_ebook_isbn_owner_journey(destination):
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role(
-                    "heading", name="Activity and recovery", exact=True
-                ).wait_for()
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
                 event = (
                     page.get_by_role("article")
                     .filter(
-                        has_text="Owner choice"
+                        has_text="Your choice"
                         if destination == "ask"
                         else "Automatic choice"
                     )
@@ -12954,11 +12940,11 @@ def test_completed_work_remains_browsable_during_explained_provider_waits(
                     "Prepared synthetic work 0000"
                 )
                 page.goto(origin + "/activity")
-                recovery = page.get_by_role("region", name="Provider recovery")
+                recovery = page.get_by_role("region", name="Source recovery")
                 expect(recovery).to_contain_text(
-                    "Provider burst limit; Provider quota exhausted; Provider temporarily unavailable"
+                    "Too many requests at once; Request quota used up; Did not answer"
                 )
-                expect(recovery).to_contain_text("next eligible")
+                expect(recovery).to_contain_text("next retry")
                 expect(
                     recovery.get_by_role("button", name=re.compile("retry", re.I))
                 ).to_have_count(0)
@@ -12972,7 +12958,7 @@ def test_completed_work_remains_browsable_during_explained_provider_waits(
                         token=token, recovery=claimed, now=8000
                     )
                 page.reload()
-                expect(recovery).not_to_contain_text("Provider burst limit")
+                expect(recovery).not_to_contain_text("Too many requests at once")
                 page.goto(origin + "/library")
                 expect(
                     page.get_by_text("Synthetic title", exact=True).first
@@ -13443,8 +13429,7 @@ _NAMED_LIBRARIES = OwnerSettingsDocument.model_validate(
     }
 )
 _CALM = (
-    "No intervention needed",
-    "No action required",
+    "No action needed",
     "Guarded work continues automatically",
 )
 _DIFFERENT_FIELDS = (
@@ -13609,9 +13594,20 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
             page.get_by_text("Some writes are off", exact=True).wait_for()
             page.get_by_text("Action needed", exact=True).first.wait_for()
         else:
-            page.get_by_text(
-                "Nothing is written to your libraries until you give permission again."
-            ).wait_for()
+            # With nothing waiting, the write card states the lapse and the
+            # status copy is hidden rather than restating it (#1765).
+            card = page.locator(".cm-write-consent")
+            expect(card).to_contain_text(sentence)
+            expect(
+                card.get_by_text(
+                    re.compile(r"Nothing is written until you give permission\.$")
+                )
+            ).to_be_visible()
+            expect(main).not_to_contain_text(
+                "Nothing is written until you give permission again."
+            )
+            expect(page.locator(".cm-activity-status h2")).to_have_count(0)
+            expect(page.locator(".cm-activity-status p")).to_have_count(0)
 
 
 def test_works_no_provider_matched_have_their_own_lens_and_reasons(

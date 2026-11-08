@@ -1800,7 +1800,7 @@ describe('Library route', () => {
       to: '/activity',
       search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
     })
-    expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Activity' })).toBeVisible()
     await act(async () => releaseDismissal(dismissed))
     await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
     expect(router.state.location.pathname).toBe('/activity')
@@ -3916,6 +3916,7 @@ describe('Library route', () => {
                 evidence: [
                   {
                     source: 'Local library record',
+                    language: null,
                     observation: 'Title: Old title',
                     role: 'local_presence',
                   },
@@ -3931,6 +3932,7 @@ describe('Library route', () => {
                 evidence: [
                   {
                     source: 'Open Library',
+                    language: null,
                     observation: 'Title: New title',
                     role: 'external_corroboration',
                   },
@@ -3946,6 +3948,7 @@ describe('Library route', () => {
                 evidence: [
                   {
                     source: 'Preserved catalogue record',
+                    language: null,
                     observation: 'Title: Old title',
                     role: 'external_corroboration',
                   },
@@ -4037,7 +4040,12 @@ describe('Library route', () => {
             recommendationReason: 'Current series evidence.',
             limitations: [],
             evidence: [
-              { source: 'Current source', observation: 'Old series', role: 'local_presence' },
+              {
+                source: 'Current source',
+                language: null,
+                observation: 'Old series',
+                role: 'local_presence',
+              },
             ],
           },
           {
@@ -4050,6 +4058,7 @@ describe('Library route', () => {
             evidence: [
               {
                 source: 'Candidate source',
+                language: null,
                 observation: 'New series',
                 role: 'external_corroboration',
               },
@@ -4218,11 +4227,13 @@ describe('Library route', () => {
           evidence: [
             {
               source: 'Hardcover',
+              language: null,
               observation: candidate.value,
               role: 'external_corroboration' as const,
             },
             {
               source: 'Google Books',
+              language: null,
               observation: 'Retained but not decisive evidence.',
               role: 'external_corroboration' as const,
             },
@@ -4568,6 +4579,7 @@ describe('Library route', () => {
         choiceContexts: sourceLists.map((value, index) => ({
           alternativeId: `source-tags-${String(index)}`,
           evidence: value.map((tag) => ({
+            language: null,
             observation: `Metadata: ${tag}`,
             role: 'external_corroboration' as const,
             source: `Source record ${String(index + 1)}`,
@@ -4618,14 +4630,16 @@ describe('Library route', () => {
   )
 
   it.each([
-    { automaticWithheldReason: null },
+    { automaticWithheldReason: null, automaticWithheldCondition: null },
     {
       automaticWithheldReason:
         'Another source gave a value that isn’t offered here. Choose whether to use this one.',
+      // The server names the condition its reason states (#1802).
+      automaticWithheldCondition: 'competing_evidence' as const,
     },
   ])(
     'names an unoffered dissent once when one candidate fills an empty field ($automaticWithheldReason)',
-    async ({ automaticWithheldReason }) => {
+    async ({ automaticWithheldReason, automaticWithheldCondition }) => {
       const base = detail.fields[0]
       if (!base) throw new Error('workspace fixture requires a field')
       const field = {
@@ -4636,6 +4650,7 @@ describe('Library route', () => {
         currentRaw: null,
         automaticDecision: null,
         automaticWithheldReason,
+        automaticWithheldCondition,
         humanDecision: null,
         decisionActions: ['keep_current', 'accept'] as const,
         editable: true,
@@ -4647,6 +4662,7 @@ describe('Library route', () => {
             alternativeId: 'source-description',
             evidence: [
               {
+                language: null,
                 observation: 'Description: A voyage reveals a hidden city.',
                 role: 'external_corroboration' as const,
                 source: 'Source record 1',
@@ -5119,6 +5135,7 @@ describe('Library route', () => {
             {
               source: 'Bound provider candidate',
               role: 'external_corroboration',
+              language: null,
               observation: 'Confirmed selectable cover evidence.',
             },
           ],
@@ -5152,6 +5169,7 @@ describe('Library route', () => {
             {
               source: 'Unconfirmed provider candidate',
               role: 'external_corroboration',
+              language: null,
               observation: 'Retained evidence without a confirmed target match.',
             },
           ],
@@ -5808,6 +5826,7 @@ describe('Library route', () => {
               {
                 source: 'Local library record',
                 role: 'local_presence',
+                language: null,
                 observation: 'Your current cover.',
               },
             ],
@@ -6135,6 +6154,7 @@ describe('Library route', () => {
                   {
                     source: 'Local library record',
                     role: 'local_presence',
+                    language: null,
                     observation: 'Local cover retained.',
                   },
                 ],
@@ -6921,6 +6941,7 @@ describe('Library route', () => {
                 evidence: [
                   {
                     source: 'Local library record',
+                    language: null,
                     observation: 'Title: retained current value',
                     role: 'local_presence',
                   },
@@ -6936,6 +6957,7 @@ describe('Library route', () => {
                 evidence: [
                   {
                     source: 'Open Library',
+                    language: null,
                     observation: 'Title: New title',
                     role: 'external_corroboration',
                   },
@@ -7523,6 +7545,7 @@ describe('Library route', () => {
       evidence: [
         {
           source: 'Hardcover',
+          language: null,
           observation: `Observed ${alternativeId}.`,
           role: 'external_corroboration' as const,
         },
@@ -8199,6 +8222,7 @@ describe('Library route', () => {
             evidence: [
               {
                 source: 'Open Library',
+                language: null,
                 observation: 'Description: A voyage reveals a hidden city.',
                 role: 'external_observation' as const,
               },
@@ -12407,7 +12431,7 @@ describe('Library route', () => {
       to: '/activity',
       search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
     })
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await originalNavigate({ to: '/policy', search: { section: 'identity' } })
     await screen.findByRole('heading', { name: 'Library policy' })
     await act(async () => {
@@ -12554,7 +12578,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', http)
 
     const heading = await screen.findByRole('heading', {
-      name: '5 works are in Library. Writes are on for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
+      name: '5 works are in Library. Writes are enabled for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
     })
     const notice = heading.closest('section')
     if (!notice) throw new Error('the handoff notice is a section')
@@ -12662,7 +12686,7 @@ describe('Library route', () => {
     expect(controls?.firstElementChild).toBe(screen.getByRole('button', { name: /^Attention/u }))
     expect(controls?.lastElementChild).toBe(notices[0])
     await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
-    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Write permissions' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(await screen.findByRole('checkbox', { name: /fiction/u }))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -14183,6 +14207,7 @@ it('pages selected-field observations and retries without creating a choice', as
       items: [
         {
           destinations: ['isbn'],
+          language: null,
           observation: 'ISBN: 9780000000002',
           role: 'external_observation',
           source: 'Open Library',
@@ -14197,6 +14222,7 @@ it('pages selected-field observations and retries without creating a choice', as
       items: [
         {
           destinations: ['title'],
+          language: null,
           observation: 'Title: contradicted retained fact',
           role: 'external_observation',
           source: 'Open Library',
@@ -14245,21 +14271,25 @@ it('counts linked corroborating authorities once and keeps observations separate
             evidence: [
               {
                 source: 'Open Library',
+                language: null,
                 observation: 'Title: Old title',
                 role: 'external_corroboration',
               },
               {
                 source: 'Open Library',
+                language: null,
                 observation: 'Edition title: Old title',
                 role: 'external_corroboration',
               },
               {
                 source: 'Unnamed source',
+                language: null,
                 observation: 'Title: Other title',
                 role: 'external_observation',
               },
               {
                 source: 'Local library record',
+                language: null,
                 observation: 'Title: Old title',
                 role: 'local_presence',
               },
@@ -14299,6 +14329,7 @@ it('names a language observation as Detail does, in choice evidence and recorded
             evidence: [
               {
                 source: 'Local library record',
+                language: 'pt-BR',
                 observation: 'Language: pt-BR',
                 role: 'local_presence',
               },
@@ -14312,12 +14343,14 @@ it('names a language observation as Detail does, in choice evidence and recorded
     items: [
       {
         destinations: ['language'],
+        language: 'zh-Hant',
         observation: 'Language: zh-Hant. Not offered as a choice.',
         role: 'external_observation',
         source: 'Open Library',
       },
       {
         destinations: ['language'],
+        language: 'UND',
         observation: 'Language: UND. Not offered as a choice. The language is not known.',
         role: 'local_presence',
         source: 'Local metadata',
@@ -15622,6 +15655,7 @@ describe('a focused field decision (#1519)', () => {
   if (!base) throw new Error('workspace fixture requires a title field')
   const local = {
     source: 'Local library record',
+    language: null,
     observation: 'Title: Old title',
     role: 'local_presence',
   } as const
@@ -15649,9 +15683,15 @@ describe('a focused field decision (#1519)', () => {
         recommendationReason: 'Your settings choose this value.',
         limitations: [],
         evidence: [
-          { source: 'Hardcover', observation: 'Title: New title', role: 'external_corroboration' },
+          {
+            source: 'Hardcover',
+            language: null,
+            observation: 'Title: New title',
+            role: 'external_corroboration',
+          },
           {
             source: 'Open Library',
+            language: null,
             observation: 'Title: New title',
             role: 'external_corroboration',
           },
@@ -15678,7 +15718,7 @@ describe('a focused field decision (#1519)', () => {
       })),
       ...http,
     }
-    renderRoute('/library?lens=all&preview=case-1&field=title', routeHttp)
+    renderRoute(`/library?lens=all&preview=case-1&field=${field.destination}`, routeHttp)
     return routeHttp
   }
 
@@ -15754,6 +15794,119 @@ describe('a focused field decision (#1519)', () => {
     )
   })
 
+  // The server names the condition its reason states, so a reworded sentence
+  // on either side neither repeats nor drops a condition (#1802).
+  const headerLines = async (name: string) => {
+    const heading = await screen.findByRole('heading', { name })
+    const header = heading.closest('header')
+    if (!header) throw new Error('the decision header is missing')
+    return header.querySelectorAll('p')
+  }
+
+  it('leaves out the condition a reworded reason states, by its code', async () => {
+    open(
+      focused({
+        notices: ['isbn_title_material_conflict'],
+        automaticWithheldReason: 'Reworded: the work and title sources conflict.',
+        automaticWithheldCondition: 'isbn_title_material_conflict',
+      }),
+    )
+    const lines = await headerLines('Which title should this work use?')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toHaveTextContent('Reworded: the work and title sources conflict.')
+    expect(screen.queryByRole('complementary', { name: 'Comparison condition' })).toBeNull()
+    expect(screen.queryByText(/The sources disagree about the work or title/u)).toBeNull()
+  })
+
+  it('keeps a condition the reason does not state, even in the same words', async () => {
+    // Negative control: the sentence matches the label, but the server names
+    // no condition, so the box keeps it.
+    open(
+      focused({
+        notices: ['isbn_title_material_conflict'],
+        automaticWithheldReason:
+          'The sources disagree about the work or title. Choose the title yourself.',
+        automaticWithheldCondition: null,
+      }),
+    )
+    await headerLines('Which title should this work use?')
+    expect(screen.getByRole('complementary', { name: 'Comparison condition' })).toHaveTextContent(
+      'The sources disagree about the work or title. Choose the title yourself',
+    )
+  })
+
+  it('names a reworded unoffered dissent once', async () => {
+    open(
+      focused({
+        destination: 'description',
+        notices: ['competing_evidence'],
+        currentValue: 'Not set in Audiobookshelf',
+        currentRaw: null,
+        proposedValues: [{ kind: 'text', value: 'A voyage reveals a hidden city.' }],
+        choiceContexts: [
+          {
+            alternativeId: null,
+            selection: 'current',
+            rationale: '',
+            recommendation: 'no_recommendation',
+            recommendationReason: '',
+            limitations: [],
+            evidence: [],
+          },
+          {
+            alternativeId: 'alternative-description',
+            selection: 'proposed',
+            rationale: 'Source description.',
+            recommendation: 'no_recommendation',
+            recommendationReason: '',
+            limitations: [],
+            evidence: [],
+          },
+        ],
+        automaticWithheldReason: 'Reworded unoffered line.',
+        automaticWithheldCondition: 'competing_evidence',
+      }),
+    )
+    expect(await screen.findByText('Reworded unoffered line.')).toBeVisible()
+    expect(screen.queryByText(/Another source gave a value that isn’t offered here/u)).toBeNull()
+    expect(screen.queryByRole('complementary', { name: 'Comparison condition' })).toBeNull()
+  })
+
+  it('keeps a subtitle condition beside its own reason', async () => {
+    // Negative control: the subtitle reason and notice are different
+    // conditions in different words, and the server names neither as stated.
+    open(
+      focused({
+        destination: 'subtitle',
+        notices: ['subtitle_segment_provider_dissent'],
+        automaticWithheldReason: 'The sources disagree with splitting the title this way.',
+        automaticWithheldCondition: null,
+      }),
+    )
+    expect(
+      await screen.findByText('The sources disagree with splitting the title this way.'),
+    ).toBeVisible()
+    expect(screen.getByRole('complementary', { name: 'Comparison condition' })).toHaveTextContent(
+      'Another source gives a different subtitle. Choose the subtitle yourself',
+    )
+  })
+
+  it('does not repeat a paused reason as a comparison condition', async () => {
+    const reason =
+      'Changes made for you are paused for this field. The sources disagree about the work or title. Choose the title yourself.'
+    open(
+      focused({
+        notices: ['isbn_title_material_conflict'],
+        automaticWithheldReason: reason,
+        automaticWithheldCondition: 'isbn_title_material_conflict',
+      }),
+    )
+    const lines = await headerLines('Which title should this work use?')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toHaveTextContent(reason)
+    expect(screen.queryByRole('complementary', { name: 'Comparison condition' })).toBeNull()
+  })
+
   it('leaves out Other source values when the field has none', async () => {
     const http = open(focused())
     await screen.findByRole('radio', { name: 'Choose current value: Old title' })
@@ -15769,6 +15922,7 @@ describe('a focused field decision (#1519)', () => {
         items: [
           {
             destinations: ['title'],
+            language: null,
             observation: 'Title: Another title',
             role: 'external_observation',
             source: 'Open Library',
@@ -15829,6 +15983,7 @@ describe('a focused field decision (#1519)', () => {
             items: [
               {
                 destinations: ['title'],
+                language: null,
                 observation: 'Title: Another title',
                 role: 'external_observation',
                 source: 'Open Library',
@@ -15871,6 +16026,7 @@ describe('a focused field decision (#1519)', () => {
           items: [
             {
               destinations: ['cover'],
+              language: null,
               observation: 'Cover: front',
               role: 'external_observation',
               source: 'Open Library',
@@ -15897,6 +16053,7 @@ describe('a focused field decision (#1519)', () => {
     let release: () => void = () => undefined
     const item = (observation: string) => ({
       destinations: ['title' as const],
+      language: null,
       observation,
       role: 'external_observation' as const,
       source: 'Open Library',

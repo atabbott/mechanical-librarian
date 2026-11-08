@@ -440,7 +440,7 @@ describe('consent outlives a suspension (#1286 B1)', () => {
     ).toBe(false)
   })
 
-  it('never says writes are on for a library whose consented writes are all held', () => {
+  it('never says writes are enabled for a library whose consented writes are all held', () => {
     const fiction = library('fiction', [
       destination('title', 'allowed', true),
       destination('genres', 'unexpected_effect_behavior', true),
@@ -454,7 +454,7 @@ describe('consent outlives a suspension (#1286 B1)', () => {
     }
     // Both fiction and research hold permission; only fiction still writes.
     expect(writesOffSentence(data, ['fiction', 'research'], (name) => name)).toBe(
-      'Writes are on for fiction. history needs permission. Writes to research are held.',
+      'Writes are enabled for fiction. history needs permission. Writes to research are held.',
     )
     // With no library writing, writes are off and the held one is named (#1286 L2).
     expect(writesOffSentence(data, ['research'], (name) => name)).toBe(
@@ -462,7 +462,7 @@ describe('consent outlives a suspension (#1286 B1)', () => {
     )
   })
 
-  it('says writes are on when every library writes, even with a field still waiting', () => {
+  it('says writes are enabled when every library writes, even with a field still waiting', () => {
     const fiction = library('fiction', [
       destination('title', 'allowed', true),
       destination('genres', 'allowed', false),
@@ -472,6 +472,8 @@ describe('consent outlives a suspension (#1286 B1)', () => {
       configured_libraries: [fiction.configured],
     }
     // The waiting field is said by the line under this sentence (#1765).
-    expect(writesOffSentence(data, ['fiction'], (name) => name)).toBe('Writes are on for fiction.')
+    expect(writesOffSentence(data, ['fiction'], (name) => name)).toBe(
+      'Writes are enabled for fiction.',
+    )
   })
 })

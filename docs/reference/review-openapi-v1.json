@@ -3769,6 +3769,17 @@
       "_ChoiceEvidence": {
         "additionalProperties": false,
         "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "observation": {
             "title": "Observation",
             "type": "string"
@@ -3788,6 +3799,7 @@
           }
         },
         "required": [
+          "language",
           "observation",
           "role",
           "source"
@@ -5872,6 +5884,18 @@
             "type": "array",
             "uniqueItems": true
           },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "observation": {
             "maxLength": 1024,
             "title": "Observation",
@@ -5894,6 +5918,7 @@
         },
         "required": [
           "destinations",
+          "language",
           "observation",
           "role",
           "source"
@@ -10240,6 +10265,21 @@
             "title": "Automatic Selection Sources",
             "type": "array"
           },
+          "automatic_withheld_condition": {
+            "anyOf": [
+              {
+                "enum": [
+                  "isbn_title_material_conflict",
+                  "competing_evidence"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Automatic Withheld Condition"
+          },
           "automatic_withheld_reason": {
             "anyOf": [
               {
@@ -10540,6 +10580,7 @@
           "human_decision",
           "inventory_role",
           "automatic_decision",
+          "automatic_withheld_condition",
           "automatic_selection_sources",
           "manual_hold",
           "manual_return_requested",

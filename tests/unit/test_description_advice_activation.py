@@ -1410,12 +1410,13 @@ def test_parked_and_failed_preparation_are_authored_activity_without_authority(
     assert event["state"] == ("failed" if failed else "succeeded")
     assert event["record"]["advised"] is True
     readable_activity_event(event, None)
-    assert any(
-        fact["value"] == "Advised · Authored content" for fact in event["evidence"]
+    facts = {fact["label"]: fact["value"] for fact in event["evidence"]}
+    assert facts["Written by"] == "Description adviser"
+    assert facts["What happens next"] == (
+        "Nothing is written until you choose a description in Library."
     )
-    assert any(
-        "grants no write authority" in fact["value"] for fact in event["evidence"]
-    )
+    assert "Authored content" not in str(event["evidence"])
+    assert "write authority" not in str(event["evidence"])
     assert (
         "could not be prepared" in event["change"]
         if failed

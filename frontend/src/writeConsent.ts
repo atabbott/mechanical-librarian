@@ -113,10 +113,10 @@ export const writesOffSentence = (
       : 'Writes are off.'
   // Every library writes; a field still waiting on permission is said by the
   // line under this sentence, not by calling writes off (#1765).
-  if (!others.length) return `Writes are on for ${libraryList(on.map(libraryName))}.`
+  if (!others.length) return `Writes are enabled for ${libraryList(on.map(libraryName))}.`
   const waiting = others.filter((library) => !held.includes(library))
   return [
-    `Writes are on for ${libraryList(on.map(libraryName))}`,
+    `Writes are enabled for ${libraryList(on.map(libraryName))}`,
     ...(waiting.length
       ? [
           `${libraryList(waiting.map(libraryName))} ${waiting.length === 1 ? 'needs' : 'need'} permission`,

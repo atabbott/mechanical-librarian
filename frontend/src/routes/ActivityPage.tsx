@@ -56,8 +56,8 @@ const capabilityLabel = (state: CapabilityState, consented: boolean) =>
   consented
     ? 'Writes enabled'
     : {
-        allowed: 'Ready for consent',
-        partially_allowed: 'Some destinations are ready',
+        allowed: 'Ready',
+        partially_allowed: 'Some fields are ready',
         connection_unavailable: 'Connection needs checking',
         not_ready: 'Not ready yet',
       }[state]
@@ -67,7 +67,7 @@ class ConsentBasisUnavailable extends Error {}
 class ConsentBasisStale extends Error {}
 const typeOptions = [
   { id: 'all', label: 'All' },
-  { id: 'review', label: 'Owner choices' },
+  { id: 'review', label: 'Your choices' },
   { id: 'metadata', label: 'Automatic choices' },
   { id: 'policy', label: 'Policy changes' },
   { id: 'safety', label: 'Recovery' },
@@ -466,7 +466,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     onMutate: () => setStatus(''),
     onSuccess: async () => {
       closeConsentReview(true)
-      setStatus('Activity state refreshed from the authoritative server.')
+      setStatus('The change was made.')
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
     onError: async (error, command) => {
@@ -506,11 +506,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           const outcome = refreshed.isError ? 'unknown' : activityOutcome(refreshed.data, command)
           setStatus(
             outcome === 'applied'
-              ? 'The requested activity change was applied, confirmed by the authoritative server.'
-              : 'The activity outcome could not be confirmed. No command was resent.',
+              ? 'The change was made.'
+              : 'No answer came back. Check whether the change was made before trying again.',
           )
         } catch {
-          setStatus('The activity outcome could not be confirmed. No command was resent.')
+          setStatus('No answer came back. Check whether the change was made before trying again.')
         }
         return
       }
@@ -518,12 +518,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         error instanceof ApiError &&
           command.path === 'activity/consent' &&
           error.code === 'capability'
-          ? 'The destinations changed since you reviewed them. No permission was granted. Check write permissions again, then confirm.'
+          ? 'The fields that can be written changed after your check, so no permission was granted. Check write permissions again.'
           : error instanceof ApiError &&
               command.path === 'activity/consent' &&
               error.code === 'backup'
-            ? 'Backup readiness changed. No permission was granted. Restore backup readiness before confirming again.'
-            : 'The requested activity change failed safely. Try again.',
+            ? 'The backup check no longer passes, so no permission was granted. Check write permissions again.'
+            : 'The change was not made. Try again.',
       )
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
@@ -692,6 +692,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     enabled.map((item) => item.library),
     names.name,
   )
+  // A library that already writes makes the off line say "Nothing else", as
+  // Library's write notice does.
+  const writing = (permission ?? data).capabilities.some((item) =>
+    item.destinations.some(writesEnabled),
+  )
   const offeredChanges = consent.changes
   const consentState = consent.state
   const consentBlocked = consent.blocked
@@ -717,13 +722,18 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const hasAuthority = enabled.length > 0 || suspensions.length > 0
   const cardOffers = consentActionable && (consentState === 'off' || consentState === 'enabling')
   const statusEntry = needsConsent && !cardOffers
+  // The write card states waiting changes and a lapse itself, so the status
+  // repeats neither (#639, #1765).
   const showOperationalSummary =
-    !permissionNeeded ||
+    !(permissionNeeded || cardLapse) ||
     Boolean(connection) ||
     recoveryCount > 0 ||
     ownerAction > 0 ||
     throttled ||
     data.paused
+  // A checking or failed connection is said by the shell's connection notice
+  // directly above, so the status panel adds no heading of its own (#1765).
+  const statusCopy = showOperationalSummary && !connection
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
   // Pause, resume and revoke report beside the controls that issued them. The
   // authority and page lines both stay mounted, so a live region is never
@@ -766,19 +776,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     >
       <header className="cm-page-heading" tabIndex={-1} data-route-focus>
         <div>
-          <h1>Activity and recovery</h1>
-          <p>
-            See what needs attention now and inspect the durable record of reviews, policy changes,
-            safeguards, and verified updates.
-          </p>
+          <h1>Activity</h1>
         </div>
         <StatusPill className="cm-activity-calm">
           {connection?.state === 'checking'
-            ? 'Connection checking'
+            ? 'Checking connection'
             : connection?.state === 'paused'
-              ? 'Connection paused'
+              ? 'Connection failed'
               : recoveryCount
-                ? 'Recovery available'
+                ? 'Recovery needed'
                 : ownerAction
                   ? 'Action needed'
                   : throttleRemedy
@@ -792,23 +798,20 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                           : consentState === 'enabled' || consentState === 'applying'
                             ? 'Writes enabled'
                             : data.paused
-                              ? 'New work paused'
+                              ? 'Writes paused'
                               : !writesHeld
                                 ? 'Writes are off'
                                 : consent.lapsed
                                   ? 'Action needed'
-                                  : 'No action required'}
+                                  : 'No action needed'}
         </StatusPill>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
         <header className="cm-activity-ledger-heading">
           <div>
             <h2 id="activity-ledger-title" tabIndex={-1}>
-              Activity ledger
+              Ledger
             </h2>
-            <p>
-              One record for review decisions, policy changes, safeguards, writes, and verification.
-            </p>
           </div>
           <label className="cm-activity-range">
             <span>Date range</span>
@@ -839,7 +842,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               aria-label="Search activity"
               type="search"
               value={queryText}
-              placeholder="Work, outcome, or status"
+              placeholder="Work, field or result"
               onChange={(event) => changeQuery(event.target.value)}
             />
           </label>
@@ -991,7 +994,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                                 // The decision this check confirmed reads as
                                 // that decision, not as a second record (#1368).
                                 <p className="cm-activity-pair-note">
-                                  This check confirmed the automatic decision below; nothing was
+                                  This check confirmed the automatic decision below. Nothing was
                                   written.
                                 </p>
                               ) : null}
@@ -1031,7 +1034,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           ) : (
             <div className="cm-activity-empty">
               <strong>No activity matches these filters</strong>
-              <span>Try another term or activity type.</span>
               <button data-activity-focus="clear-filters" onClick={clearFilters}>
                 Clear filters
               </button>
@@ -1120,7 +1122,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {consentState === 'off'
                   ? permission?.backup_ready === true && offeredChanges > 0
                     ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. ${writesOff}`
-                    : `${writesOff} Review permissions when you are ready.`
+                    : writesOff
                   : consentState === 'enabling'
                     ? 'Enabling writes…'
                     : consentState === 'enabled'
@@ -1129,11 +1131,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </h2>
               <p>
                 {consentState === 'off'
-                  ? `${consent.lapsed ? `${consent.lapsed} ` : ''}Open permission review to check backup readiness and the destinations available for writes.`
+                  ? `${consent.lapsed ? `${consent.lapsed} ` : ''}${writing ? 'Nothing else' : 'Nothing'} is written until you give permission.`
                   : consentState === 'enabling'
                     ? 'Confirming permission…'
                     : consentState === 'enabled'
-                      ? 'Permission is confirmed. Mechanical Librarian is starting the prepared changes.'
+                      ? 'Mechanical Librarian is starting the prepared changes.'
                       : `Writing ${String(reasons.applying)} ${reasons.applying === 1 ? 'change' : 'changes'}. ${String(reasons.scheduled)} more ${reasons.scheduled === 1 ? 'is' : 'are'} ready.`}
               </p>
             </div>
@@ -1171,7 +1173,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                           (entry) =>
                             `${String(entry.prepared)} ${destinationPhrase(entry.destination)} ${entry.prepared === 1 ? 'change' : 'changes'}`,
                         )
-                        .join(' · ') || 'No eligible destination'}
+                        .join(' · ') || 'No field can be written yet'}
                     </span>
                   </div>
                   <dl>
@@ -1183,7 +1185,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                             ? consentState === 'off' || consentState === 'enabling'
                               ? 'Writes off'
                               : 'Writes enabled'
-                            : `Excluded — ${destinationReason(entry.state, consent.lapsed !== null)}`}
+                            : `Excluded: ${destinationReason(entry.state, consent.lapsed !== null)}`}
                         </dd>
                       </div>
                     ))}
@@ -1221,11 +1223,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           aria-labelledby="activity-consent-title"
         >
           <div>
-            <p className="eyebrow">Prepared, read-only work</p>
-            <h2 id="activity-consent-title">Enable guarded writes</h2>
-            <p>
-              Each write is checked before it starts, verified afterwards, and recorded durably.
-            </p>
+            <h2 id="activity-consent-title">Write permissions</h2>
           </div>
           <ActivityPermissionCheck
             discarded={Boolean(discarded)}
@@ -1271,13 +1269,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   <small>
                     {preparedCount(library)} prepared ·{' '}
                     {permission?.backup_ready !== true
-                      ? 'Readiness unconfirmed'
+                      ? 'Backup not confirmed'
                       : libraryWritesHeld(destinations)
                         ? 'Writes held'
                         : capabilityLabel(state, consented)}
                   </small>
                 </label>
-                <ul aria-label={`${displayName} included and excluded destinations`}>
+                <ul aria-label={`${displayName} fields`}>
                   {capability(name)?.destinations.map((entry) => (
                     <li key={entry.destination}>
                       <span>{destinationLabel(entry.destination)}</span>
@@ -1286,7 +1284,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                           ? `Writes enabled · ${String(entry.prepared)} prepared`
                           : entry.state === 'allowed'
                             ? `Included · ${String(entry.prepared)} prepared`
-                            : `${entry.consented ? 'Writes held' : 'Excluded'} — ${destinationReason(entry.state, consent.lapsed !== null)}`}
+                            : `${entry.consented ? 'Writes held' : 'Excluded'}: ${destinationReason(entry.state, consent.lapsed !== null)}`}
                       </small>
                     </li>
                   ))}
@@ -1298,8 +1296,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             capability(library.library)?.destinations.some((entry) => entry.state === 'allowed'),
           ) ? (
             <p>
-              Only the included destinations shown above are enabled. Excluded destinations remain
-              off. Backup and service capability are checked again on confirmation.
+              Only included fields are written. The backup and each field are checked again when you
+              confirm.
             </p>
           ) : null}
           {consentFeedback ? commandStatus(true) : null}
@@ -1309,11 +1307,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               onClick={() => closeConsentReview()}
               disabled={mutation.isPending}
             >
-              Cancel permission review
+              Cancel
             </button>
-            <p id="activity-consent-requirement">
-              Select each library you want to include, then confirm.
-            </p>
+            <p id="activity-consent-requirement">Choose the libraries to include, then confirm.</p>
             <Button
               variant="primary"
               aria-describedby="activity-consent-requirement"
@@ -1351,23 +1347,23 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       {commandStatus(!authorityFeedback && !consentFeedback)}
       <section
         className="cm-activity-status"
-        aria-labelledby={showOperationalSummary ? 'activity-status-title' : undefined}
+        aria-labelledby={statusCopy ? 'activity-status-title' : undefined}
       >
-        {showOperationalSummary ? (
+        {statusCopy || (showOperationalSummary && statusEntry) ? (
           <div className="cm-activity-status-copy">
-            <ActivityStatusCopy
-              connection={connection}
-              recoveryCount={recoveryCount}
-              dormantRecovery={dormantRecovery}
-              ownerAction={ownerAction}
-              filtered={Boolean(search.q) || search.eventType !== 'all'}
-              throttled={throttled}
-              throttleRemedy={throttleRemedy}
-              paused={data.paused}
-              writesHeld={writesHeld}
-              lapse={lapse}
-              cardLapse={cardLapse}
-            />
+            {statusCopy ? (
+              <ActivityStatusCopy
+                recoveryCount={recoveryCount}
+                dormantRecovery={dormantRecovery}
+                ownerAction={ownerAction}
+                filtered={Boolean(search.q) || search.eventType !== 'all'}
+                throttled={throttled}
+                throttleRemedy={throttleRemedy}
+                paused={data.paused}
+                writesHeld={writesHeld}
+                lapse={lapse}
+              />
+            ) : null}
             {statusEntry ? (
               <button
                 type="button"
@@ -1392,7 +1388,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               <dd>{reasons.awaiting_permission}</dd>
             </div>
             <div>
-              <dt>Scheduled</dt>
+              <dt>Ready to apply</dt>
               <dd>{reasons.scheduled}</dd>
             </div>
             <div>
@@ -1418,8 +1414,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </strong>
               <span>
                 {data.paused
-                  ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
-                  : 'The library is checked again automatically before anything is written. No action is required.'}
+                  ? 'Nothing is checked or written until you resume writes.'
+                  : 'The current value is checked again before anything is written.'}
               </span>
             </div>
           </div>
@@ -1429,20 +1425,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           <details className="cm-activity-authority">
             <summary>
               <span>
-                <strong>Authority and recovery</strong>
-                <small>
-                  {recoveryCount
-                    ? `${String(recoveryCount)} recovery ${recoveryCount === 1 ? 'item needs' : 'items need'} review`
-                    : data.paused
-                      ? 'New work remains paused until you resume it'
-                      : 'Write permissions and pause controls'}
-                </small>
+                <strong>Writes and recovery</strong>
+                {recoveryCount ? (
+                  <small>
+                    {recoveryCount} {recoveryCount === 1 ? 'item needs' : 'items need'} recovery
+                  </small>
+                ) : null}
               </span>
             </summary>
-            <div
-              className="cm-activity-authority-actions"
-              aria-label="Activity authority and recovery"
-            >
+            <div className="cm-activity-authority-actions" aria-label="Writes and recovery">
               {enabled.length > 0 ? (
                 <button
                   disabled={mutation.isPending}
@@ -1450,7 +1441,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     mutation.mutate({ path: `field-effects/${data.paused ? 'resume' : 'pause'}` })
                   }
                 >
-                  {data.paused ? 'Resume new work' : 'Pause new work'}
+                  {data.paused ? 'Resume writes' : 'Pause writes'}
                 </button>
               ) : null}
               {enabled.map((library) => (
@@ -1469,11 +1460,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ))}
               {commandStatus(authorityFeedback)}
               {suspensions.length ? (
-                <div className="cm-activity-recovery-facts" aria-label="Recovery facts">
+                <div className="cm-activity-recovery-facts" aria-label="Write holds">
                   {suspensions.map((item, index) => (
                     <p key={`${item.connection}:${item.destination ?? ''}:${String(index)}`}>
-                      <strong>Recovery:</strong> Writes are held because{' '}
-                      {writeHoldReasons[item.reason]}. No accepted decision is retried blindly.
+                      Writes are held because {writeHoldReasons[item.reason]}.
                     </p>
                   ))}
                 </div>
