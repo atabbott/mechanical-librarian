@@ -332,9 +332,10 @@ must be square within 5 percent. These acquisition bands are narrower than the
 election bands of
 [ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md).
 The row's stated language (`code2`, else `code3`) must be compatible with one
-of the library's languages, and its URL must be on `assets.hardcover.app`. A
-refused row is counted, never fetched. The stated size only filters and orders
-rows. It never reaches the report.
+of the library's languages, and its URL must be on `assets.hardcover.app`.
+Only a row whose cover is off that host, or whose cover or language is
+malformed, is counted. No refused row is fetched. The stated size only filters
+and orders rows. It never reaches the report.
 
 After retrieval, two listed-edition covers from the same provider whose
 decoded measures are the same art by the measured cover rule
