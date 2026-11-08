@@ -141,10 +141,10 @@ brackets are GitHub issues.
   show the same stage names as the masthead, and the paragraphs explaining how
   the stage counts work are left to the product page (#1765).
 - **Clean rebuild required.** While its Cover evidence switch is on, iTunes is
-  asked for an audiobook's cover again, one search per audiobook, and supplies
-  nothing else about it. An iTunes failure never marks an audiobook's provider
-  evidence limited, and an audiobook that only iTunes found stays in Library's
-  Not matched lens (#1779).
+  asked for an audiobook's cover again, one search per audiobook. It supplies
+  nothing else about the audiobook. An iTunes failure never puts an audiobook
+  under "Some lookups gave no usable answer" in Library. An audiobook that only
+  iTunes found stays in the Not matched lens (#1779).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -369,8 +369,8 @@ An audiobook is sent only to referenced providers in the audiobook set:
 `audible_catalog`, `audnexus`, `audiosilo`, `hardcover`, `itunes_search` and
 `open_library`. A library's references narrow that set and never widen it.
 iTunes gets one title-and-author search per audiobook and supplies only its
-cover, so it is searched only while its `cover_enabled` is on. Google Books and
-Inventaire receive no audiobook requests.
+cover. That search is sent only while its `cover_enabled` is on. Google Books
+and Inventaire receive no audiobook requests.
 
 ### Covers
 
