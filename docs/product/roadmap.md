@@ -3,8 +3,8 @@
 [GitHub milestones](https://github.com/atabbott/mechanical-librarian/milestones)
 hold the plan. Where this page and a milestone differ, the milestone is right.
 Each milestone's description states its outcome, its units in order and what it
-leaves out. This page summarises them. The pull request that opens, closes or
-reorders a milestone also updates this page.
+leaves out. This page summarises them. It changes when a milestone opens or is
+reordered, and in each milestone's last pull request.
 
 Before 1.0.0, each numbered milestone is an internal checkpoint that publishes
 nothing. See
@@ -15,18 +15,18 @@ nothing. See
 Checkpoints 0.1.0 to 0.29.2 built the product up to its current state:
 
 - A read-only Audiobookshelf inventory, EPUB and audio evidence, and catalogue
-  evidence from several sources.
+  evidence from eight sources.
 - Proposals for each field with the reasons behind them, review cases, and your
   decisions.
 - Automatic decisions for the options that a qualification record names.
-- Writes to Audiobookshelf that need your write permission, pass every check
-  and are read back.
+- Writes to Audiobookshelf that need your write permission and pass every
+  check. Mechanical Librarian reads each one back.
 - The workspace you sign in to: Library (with Attention and work detail),
   Policy, Activity and Settings, and a guided first run.
 - Audiobook matching and decisions.
 - An optional AI cover reviewer and description advice.
-- A workspace in plain words, built to WCAG 2.2 AA, that holds still on phones
-  and at 200% text.
+- Plain words throughout the workspace, which is built to WCAG 2.2 AA and holds
+  still on phones and at 200% text.
 
 The [changelog](../../CHANGELOG.md) lists each change you can see.
 
@@ -41,7 +41,7 @@ The [changelog](../../CHANGELOG.md) lists each change you can see.
   choose covers before any AI model helps.
 - 0.36.1 Persistence health. The database stays fast at library scale, and
   its size stops growing with every source lookup. A restored or upgraded
-  install starts, or says why it stopped.
+  install starts safely, or says why it stopped.
 
 ## Next
 
@@ -57,15 +57,16 @@ The [changelog](../../CHANGELOG.md) lists each change you can see.
   unreadable files and files the library never indexed. It changes none of
   them.
 - 0.36.0 Standing owner instructions. You can stop new proposals for one field
-  of one work. You can also keep a genre list for each library, which source
-  genres map into.
+  of one work. You can also keep a genre list for each library, and Mechanical
+  Librarian maps each source's genres onto it.
 - 0.37.0 Provider economy. Mechanical Librarian reuses answers it already has,
   so it asks each source less often for the same evidence.
 - 0.38.0 Owner-directed matching. From a work in Library, you can search one
-  source and choose which of its books the work is. Works that Library lists as
-  Not matched become ordinary review cases.
-- 0.39.0 Owner trust. You can correct what was written straight away. You can
-  also change policy or access knowing what it will do.
+  source and choose which of its books the work is. After one search, a work
+  that Library lists as Not matched becomes an ordinary review case.
+- 0.39.0 Owner trust. You can correct what Mechanical Librarian wrote without
+  waiting. You can also change policy or access and know what the change will
+  do.
 
 ## 1.0.0 first public release
 

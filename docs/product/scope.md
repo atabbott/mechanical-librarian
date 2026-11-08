@@ -7,14 +7,14 @@ non-goals.
 ## First-release scope
 
 - One self-contained Linux container.
-- Audiobookshelf ebook and audiobook libraries, the first library service
+- Ebook and audiobook libraries in Audiobookshelf, the first library service
   Mechanical Librarian supports.
 - Scans of each library on an interval and when you choose Scan now.
-  Mechanical Librarian then prepares each new or changed item on its own.
+  Mechanical Librarian then prepares each new or changed item separately.
 - Metadata and cover changes written through the service's supported APIs.
 - Evidence from an EPUB's package metadata, its opening pages up to a size
   limit, its navigation and its structural marks.
-- An audiobook's tags, chapters and running time, read but never written.
+- Read-only access to an audiobook's tags, chapters and running time.
 - Metadata sources, each behind its own replaceable adapter.
 - SQLite storage for state, job recovery, the audit history and configuration.
 - Readiness and backup checks, a check that the planned change still matches
@@ -59,10 +59,12 @@ things:
 - New items stay available to read or play straight away. Mechanical
   Librarian works on them in the background once their files stop changing.
 - The decisions waiting for you in Attention stay few. Mechanical Librarian
-  records automatic decisions in History, and you do not have to review them.
-- A failure stops the work it affects safely and says how to recover.
+  records automatic decisions in History, and they need no routine review
+  from you.
+- When something fails, Mechanical Librarian safely stops the work it affects
+  and says how to recover.
 - You can back up and restore the configuration and the whole `/data` volume
-  with ordinary tools. Nothing ties you to one vendor.
+  with ordinary tools. Neither step ties you to one vendor.
 
 ## Measures of success
 
@@ -87,15 +89,16 @@ Each service adapter must detect what the service supports and report it. If
 the service has no supported way to write a field, Mechanical Librarian does
 not write it. It never edits the service's database or drives its screens
 instead. If a change to the service breaks a capability, the writes that need
-it must stop until the capability is confirmed again.
+it must stop until the adapter confirms the capability again.
 
 Supporting Audiobookshelf first does not tie the rest of Mechanical Librarian
-to it. Audiobookshelf's payloads, identifiers, API calls, its own metadata
-sources and whether they are available stay inside its adapter. A report-only
-inventory that needs no source stays in scope. So do local evidence,
-rule-based handling of values that need no change or are rejected, proposals
-within fixed limits and your own review.
+to it. Audiobookshelf's identifiers, its API calls and the data they carry stay
+inside its adapter. Its own metadata sources, and whether they are available,
+stay there too. A report-only inventory that needs no source stays in scope. So
+do local evidence, proposals within fixed limits and your own review. So do the
+rules that skip a value needing no change or reject a value.
 
 The planned Calibre-Web/Calibre-compatible adapter must use a supported service
-API and declare each capability. No Calibre adapter, database access, screen
-automation or write path exists today.
+API and declare each capability. No Calibre adapter exists today. Mechanical
+Librarian does not open a Calibre database, drive Calibre's screens or write to
+Calibre.
