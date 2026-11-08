@@ -10,10 +10,13 @@ from mechanical_librarian.domain.metadata_report import (
     _provider_lane_from_data,
 )
 from mechanical_librarian.domain.work_identity import (
+    HARDCOVER_AUTHOR_STRINGS,
+    HARDCOVER_TITLE_SPELLINGS,
     WORK_TITLE_COMPOUND_PRODUCTIONS,
     WORK_TITLE_TRANSFORMATION_RULES,
     WorkDispatchLineage,
     WorkDispatchRung,
+    WorkQuery,
     WorkTitleCompoundProduction,
     WorkTitleTransformationApplication,
     WorkTitleTransformationFamily,
@@ -24,6 +27,7 @@ from mechanical_librarian.domain.work_identity import (
     apply_work_title_transformation,
     closed_creator_display_possibility,
     discovery_title_candidate,
+    hardcover_query_spellings,
     narrowing_work_query,
     replay_provider_work_identity_admission,
     series_label_segment,
@@ -2105,3 +2109,92 @@ def test_dispatch_canonicality_rejects_query_disabled_families(family: str) -> N
                 "transformations": [family],
             }
         )
+
+
+def _spellings(title: str, *authors: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return hardcover_query_spellings(
+        WorkQuery(title, authors, WorkDispatchRung.NORMALIZED)
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "titles"),
+    (
+        (
+            "the tide of the EMBER",
+            (
+                "the tide of the EMBER",
+                "The Tide Of The EMBER",
+                "The Tide Of The Ember",
+                "the tide of the ember",
+            ),
+        ),
+        ("Current Title", ("Current Title", "current title")),
+        ("current title", ("current title", "Current Title")),
+        (
+            "2091: o'example's  \u00e9t\u00e9",
+            (
+                "2091: o'example's  \u00e9t\u00e9",
+                "2091: O'example's  \u00c9t\u00e9",
+            ),
+        ),
+        ("2001", ("2001",)),
+    ),
+)
+def test_hardcover_title_spellings_are_the_closed_case_forms(
+    title: str, titles: tuple[str, ...]
+) -> None:
+    assert titles == _spellings(title, "Ada Example")[0]
+    assert HARDCOVER_TITLE_SPELLINGS >= len(titles)
+
+
+def test_a_title_case_form_over_512_characters_is_dropped_not_cut() -> None:
+    title = "a" + "\u0130" * 511
+    titles = _spellings(title, "Ada Example")[0]
+
+    # Lower-casing the dotted capital I doubles its length, so both forms
+    # that lower the rest of the title pass 512 characters and are left out.
+    assert (title, "A" + "\u0130" * 511) == titles
+
+
+@pytest.mark.parametrize(
+    ("author", "authors"),
+    (
+        ("Ada Example", ("Ada Example",)),
+        ("Example, Ada", ("Example, Ada", "Ada Example")),
+        ("de la Example, Ada Bea", ("de la Example, Ada Bea", "Ada Bea de la Example")),
+        ("Example, Ada, Jr.", ("Example, Ada, Jr.",)),
+        ("A B C D E, Ada", ("A B C D E, Ada", "A. B. C. D. E, Ada", "A.B.C.D. E, Ada")),
+        ("Example,", ("Example,",)),
+        ("Example, A. B.", ("Example, A. B.", "A. B. Example", "A.B. Example")),
+        ("A.B. Example", ("A.B. Example", "A. B. Example", "A B Example")),
+        ("J R R Example", ("J R R Example", "J. R. R. Example", "J.R.R. Example")),
+        ("Ada L. Example", ("Ada L. Example", "Ada L Example")),
+    ),
+)
+def test_hardcover_author_spellings_follow_the_inversion_and_initials_grammar(
+    author: str, authors: tuple[str, ...]
+) -> None:
+    assert authors == _spellings("Current title", author)[1]
+
+
+def test_hardcover_author_spellings_keep_stored_names_first_within_the_bound() -> None:
+    stored = tuple(f"Example{index:02d}, A." for index in range(8))
+    authors = _spellings("Current title", *stored)[1]
+
+    assert stored == authors[:8]
+    assert HARDCOVER_AUTHOR_STRINGS == len(authors)
+    assert ("A. Example00", "A. Example01") == (authors[8], authors[10])
+    assert len(set(value.casefold() for value in authors)) == len(authors)
+
+
+def test_more_than_sixteen_stored_names_are_sent_without_forms() -> None:
+    stored = tuple(f"Example{index:02d}, Ada" for index in range(17))
+
+    assert stored == _spellings("Current title", *stored)[1]
+
+
+def test_a_form_repeating_a_stored_name_is_not_sent_twice() -> None:
+    assert ("Example, Ada", "ada example") == _spellings(
+        "Current title", "Example, Ada", "ada example"
+    )[1]

@@ -106,12 +106,14 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
     normalize_date_value,
     normalize_title,
+    provider_candidate_work_identity_admission,
     validate_observed_title,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkQuery,
+    hardcover_query_spellings,
     narrowing_work_query,
     work_query_ladder,
 )
@@ -134,18 +136,20 @@ _ISBN_QUERY = (
     f"tags:tags(where:{{taggings:{{book:{{editions:{{_or:[{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
 )
-_WORK_QUERY = (
-    "query MetadataEvidenceByWork($title:String!,$authors:[String!]!){"
-    f"editions(where:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
-    "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
-    "books:books(where:{title:{_eq:$title},contributions:{author:{name:{_in:$authors}}}},order_by:{id:asc},limit:6)"
-    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
-    f"tags:tags(where:{{taggings:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
+# The books-first search both media's WORK lanes send (#1380, ADR-0056): one
+# constant document whose only inputs are the rung's spelling lists. It reads
+# the members the edition search read for books, plus `canonical_id` and
+# `compilation`, and asks for ten books and a sentinel.
+_BOOKS_LIMIT = 11
+_MAX_BOOK_TAG_ROWS = _BOOKS_LIMIT * (MAX_TAGS + 1)
+_MAX_REQUEST_BODY_BYTES = 16_384
+_BOOKS_QUERY = (
+    "query BooksByTitleAuthor($titles:[String!]!,$authors:[String!]!){"
+    f"books(where:{{title:{{_in:$titles}},contributions:{{author:{{name:{{_in:$authors}}}}}}}},order_by:{{id:asc}},limit:{_BOOKS_LIMIT})"
+    "{id title canonical_id compilation description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
+    f"tags:tags(where:{{taggings:{{book:{{title:{{_in:$titles}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_BOOK_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
 )
-_WORK_NARROW_QUERY = _WORK_QUERY.replace(
-    "$authors:[String!]!", "$author:String!"
-).replace("_in:$authors", "_eq:$author")
 _QUERY = _ISBN_QUERY
 # One admitted book's audio-format editions (#962, ADR-0089). The projection is
 # closed: edition id, book id, ASIN, audio runtime and the credited people.
@@ -281,7 +285,7 @@ class HardcoverMetadataProvider:
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
             projection = (
-                _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _WORK_QUERY
+                _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _BOOKS_QUERY
             )
             ledger.register(
                 kind=plan.kind.value,
@@ -329,7 +333,7 @@ class HardcoverMetadataProvider:
                 title=lane.title,
                 authors=lane.authors,
                 projection=(
-                    _ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _WORK_QUERY
+                    _ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _BOOKS_QUERY
                 ),
             )
         self._session.ledger = ledger
@@ -342,7 +346,7 @@ class HardcoverMetadataProvider:
                         matched_family=lane.matched_family,
                         title=lane.title,
                         authors=lane.authors,
-                        projection=_WORK_QUERY,
+                        projection=_BOOKS_QUERY,
                     )
                     continue
                 self._cover_descriptors = ()
@@ -368,7 +372,7 @@ class HardcoverMetadataProvider:
                     projection=(
                         _ISBN_QUERY
                         if lookup.kind is ProviderQueryKind.ISBN
-                        else _WORK_QUERY
+                        else _BOOKS_QUERY
                     ),
                     execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
@@ -426,83 +430,11 @@ class HardcoverMetadataProvider:
         _shaped: WorkQuery | None = None,
     ) -> ProviderObservation:
         if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
-            if lookup.title is None or not lookup.authors:
-                return ProviderObservation(
-                    self._name,
-                    ProviderStatus.INSUFFICIENT_INPUT,
-                    query_kind=lookup.kind,
-                )
-            last = ProviderObservation(
-                self._name,
-                ProviderStatus.NO_MATCH,
-                query_kind=lookup.kind,
-            )
-            work_queries = work_query_ladder(
-                lookup.title, lookup.authors, audiobook=lookup.audio is not None
-            )
-            if not work_queries:
-                return ProviderObservation(
-                    self._name,
-                    ProviderStatus.INSUFFICIENT_INPUT,
-                    query_kind=lookup.kind,
-                )
-            for work_query in work_queries:
-                shaped_lookup = replace(
-                    lookup,
-                    title=work_query.title,
-                    authors=work_query.authors,
-                )
-                last = self._observe_lookup(
-                    shaped_lookup,
-                    deadline=deadline,
-                    _shaped=work_query,
-                )
-                if lookup.audio is not None:
-                    # The bounded book set is the complete work-only response;
-                    # neither overflow nor dissent authorizes a narrowing retry.
-                    return last
-                if last.status is ProviderStatus.CANDIDATES:
-                    return last
-                if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
-                    narrowed = narrowing_work_query(work_query)
-                    return self._observe_lookup(
-                        replace(
-                            lookup,
-                            title=narrowed.title,
-                            authors=narrowed.authors,
-                        ),
-                        deadline=deadline,
-                        _shaped=narrowed,
-                    )
-                if last.status is not ProviderStatus.NO_MATCH:
-                    return last
-            return last
+            return self._observe_work_ladder(lookup, deadline=deadline)
         # The companion ISBN lane (#1468) asks with the companion's ISBN; it
         # is read for the query alone and never compared.
         local_claims = lookup.local_claims
-        usable = tuple(
-            sorted(
-                (
-                    claim
-                    for claim in lookup.query_claims
-                    if claim.kind is ClaimKind.ISBN
-                    and claim.canonical is not None
-                    and (
-                        (
-                            lookup.matched_family is None
-                            and claim.applicability in {"ebook", "unknown"}
-                            and claim.basis == "opening_matter"
-                            and claim.rear_provenance is None
-                        )
-                        or (
-                            lookup.matched_family is not None
-                            and isbn_family(claim.canonical) == lookup.matched_family
-                        )
-                    )
-                ),
-                key=lambda claim: (claim.canonical or "", claim.reference),
-            )
-        )
+        usable = _usable_isbn_claims(lookup)
         references: tuple[str, ...] = ()
         if lookup.kind is ProviderQueryKind.ISBN:
             if not usable:
@@ -525,19 +457,17 @@ class HardcoverMetadataProvider:
                     )
                 },
             }
-        elif lookup.kind is ProviderQueryKind.WORK:
-            is_narrowed = (
-                _shaped is not None and _shaped.candidate_limit_narrowing_retry
-            )
+        elif lookup.kind is ProviderQueryKind.WORK and _shaped is not None:
+            titles, authors = hardcover_query_spellings(_shaped)
             body = {
-                "operationName": "MetadataEvidenceByWork",
-                "query": _WORK_NARROW_QUERY if is_narrowed else _WORK_QUERY,
+                "operationName": "BooksByTitleAuthor",
+                "query": _BOOKS_QUERY,
                 "variables": {
-                    "title": lookup.title,
-                    **(
-                        {"author": lookup.authors[0]}
-                        if is_narrowed
-                        else {"authors": list(lookup.authors)}
+                    "titles": list(titles),
+                    "authors": (
+                        [_shaped.authors[0]]
+                        if _shaped.candidate_limit_narrowing_retry
+                        else list(authors)
                     ),
                 },
             }
@@ -574,6 +504,10 @@ class HardcoverMetadataProvider:
                 ),
             )
 
+        # A body over the cap is never sent (#1380): only hostile input reaches
+        # it, and the rung says so rather than claiming no book matched.
+        if len(canonical_json(body).encode()) > _MAX_REQUEST_BODY_BYTES:
+            return result(ProviderStatus.QUERY_LIMIT_EXCEEDED)
         try:
             payload = self._request(
                 body,
@@ -592,14 +526,13 @@ class HardcoverMetadataProvider:
             if _has_graphql_errors(payload):
                 self._session.mark_response_attempt("provider_declared_error")
                 return result(ProviderStatus.UNAVAILABLE)
-            # An audiobook keeps only Hardcover's books, whose audio editions
-            # are read below: on its WORK lanes, and on its companion ISBN
-            # lane, where the ebook edition the ISBN names is never this
-            # recording's (#1468).
-            work_only = lookup.audio is not None and lookup.kind in {
-                ProviderQueryKind.WORK,
-                ProviderQueryKind.ISBN,
-            }
+            # A WORK lane searches books on both media (#1380). An audiobook
+            # also keeps only the books on its companion ISBN lane, where the
+            # ebook edition the ISBN names is never this recording's (#1468).
+            books_query = lookup.kind is ProviderQueryKind.WORK
+            work_only = books_query or (
+                lookup.audio is not None and lookup.kind is ProviderQueryKind.ISBN
+            )
             overflow = (
                 None
                 if work_only
@@ -611,6 +544,7 @@ class HardcoverMetadataProvider:
                     ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
                     edition_enrichment_overflow=overflow,
                 )
+            shaped = _shaped
             candidates = _parse_candidates(
                 payload,
                 self._name,
@@ -622,8 +556,25 @@ class HardcoverMetadataProvider:
                     if work_only and lookup.kind is ProviderQueryKind.ISBN
                     else None
                 ),
+                books_query=books_query,
+                first_publication=lookup.audio is not None,
+                admits=(
+                    None
+                    if shaped is None
+                    else lambda candidate: (
+                        provider_candidate_work_identity_admission(
+                            candidate,
+                            lookup.title or "",
+                            lookup.authors,
+                            WorkDispatchLineage.from_query(shaped),
+                            audiobook=lookup.audio is not None,
+                        ).admitted
+                    )
+                ),
             )
-            self._reject_schema_members(_optional_projection_rejections(payload))
+            self._reject_schema_members(
+                _optional_projection_rejections(payload, books_query=books_query)
+            )
             if (
                 lookup.kind is ProviderQueryKind.ISBN
                 and lookup.matched_family is not None
@@ -653,25 +604,61 @@ class HardcoverMetadataProvider:
         ):
             self._session.mark_response_attempt("response_malformed")
             return result(ProviderStatus.MALFORMED)
-        try:
-            self._cover_descriptors = _parse_cover_descriptors(
-                payload,
-                self._name,
-                lookup.kind,
-            )
-        except (
-            ValueError,
-            TypeError,
-            UnicodeError,
-            RecursionError,
-            json.JSONDecodeError,
-        ):
-            self._cover_descriptors = ()
+        self._cover_descriptors = _kept_cover_descriptors(
+            payload, self._name, lookup.kind, candidates, books_query=books_query
+        )
         observation = result(
             ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
             candidates,
         )
         return observation
+
+    def _observe_work_ladder(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """Walk a WORK lane's rungs until one finds books or fails."""
+        if lookup.title is None or not lookup.authors:
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
+            )
+        last = ProviderObservation(
+            self._name,
+            ProviderStatus.NO_MATCH,
+            query_kind=lookup.kind,
+        )
+        work_queries = work_query_ladder(
+            lookup.title, lookup.authors, audiobook=lookup.audio is not None
+        )
+        if not work_queries:
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
+            )
+        for work_query in work_queries:
+            last = self._observe_lookup(lookup, deadline=deadline, _shaped=work_query)
+            if lookup.audio is not None:
+                # The bounded book set is the complete work-only response;
+                # neither overflow nor dissent authorizes a narrowing retry.
+                return last
+            if last.status is ProviderStatus.CANDIDATES:
+                return last
+            if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
+                # The retry asks for the first stored author alone, so it
+                # is not sent when that is the list the rung just sent
+                # (#1380).
+                if hardcover_query_spellings(work_query)[1] == (work_query.authors[0],):
+                    return last
+                return self._observe_lookup(
+                    lookup,
+                    deadline=deadline,
+                    _shaped=narrowing_work_query(work_query),
+                )
+            if last.status is not ProviderStatus.NO_MATCH:
+                return last
+        return last
 
     def _audio_editions(
         self,
@@ -1158,6 +1145,65 @@ def _companion_isbn_answer(
     return replace(observation, candidates=kept), editions
 
 
+def _kept_cover_descriptors(
+    payload: bytes,
+    provider: str,
+    kind: ProviderQueryKind,
+    candidates: tuple[ProviderCandidate, ...],
+    *,
+    books_query: bool,
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """An answer's cover descriptors; a book the collapse removed brings none."""
+    try:
+        kept = {candidate.work_identity for candidate in candidates}
+        return tuple(
+            descriptor
+            for descriptor in _parse_cover_descriptors(
+                payload, provider, kind, books_query=books_query
+            )
+            if not books_query
+            or (
+                descriptor.provenance is not None
+                and descriptor.provenance.work_identity in kept
+            )
+        )
+    except (
+        ValueError,
+        TypeError,
+        UnicodeError,
+        RecursionError,
+        json.JSONDecodeError,
+    ):
+        return ()
+
+
+def _usable_isbn_claims(lookup: MetadataLookup) -> tuple[LocalClaim, ...]:
+    """The ISBN claims an ISBN lane asks with, in a stable order."""
+    return tuple(
+        sorted(
+            (
+                claim
+                for claim in lookup.query_claims
+                if claim.kind is ClaimKind.ISBN
+                and claim.canonical is not None
+                and (
+                    (
+                        lookup.matched_family is None
+                        and claim.applicability in {"ebook", "unknown"}
+                        and claim.basis == "opening_matter"
+                        and claim.rear_provenance is None
+                    )
+                    or (
+                        lookup.matched_family is not None
+                        and isbn_family(claim.canonical) == lookup.matched_family
+                    )
+                )
+            ),
+            key=lambda claim: (claim.canonical or "", claim.reference),
+        )
+    )
+
+
 def _parse_candidates(
     payload: bytes,
     provider: str,
@@ -1166,7 +1212,18 @@ def _parse_candidates(
     *,
     work_only: bool = False,
     required_family: str | None = None,
+    books_query: bool = False,
+    first_publication: bool = True,
+    admits: Callable[[ProviderCandidate], bool] | None = None,
 ) -> tuple[ProviderCandidate, ...]:
+    """Parse one answer into its candidates.
+
+    `books_query` is the books-first WORK search (#1380): the answer holds
+    books alone, ten and a sentinel at most, and a book whose `canonical_id`
+    names another book of the answer that `admits` accepts is removed before
+    the five-book limit applies. `first_publication` adds a work's first
+    publication date, which only an audiobook's book states (#1642).
+    """
     rejected = rejected or _OptionalRejections()
     source = json.loads(
         payload.decode("utf-8", "strict"),
@@ -1175,107 +1232,29 @@ def _parse_candidates(
         parse_float=Decimal,
     )
     root = _closed(source, {"data"})
-    data = _closed(root["data"], {"editions", "books", "tags"})
-    rows, books, tags = data["editions"], data["books"], data["tags"]
+    if books_query:
+        data = _closed(root["data"], {"books", "tags"})
+        rows, books, tags = [], data["books"], data["tags"]
+    else:
+        data = _closed(root["data"], {"editions", "books", "tags"})
+        rows, books, tags = data["editions"], data["books"], data["tags"]
     if type(rows) is not list or type(books) is not list:
         raise ValueError("provider rows invalid")
-    if len(rows) > MAX_CANDIDATES + int(work_only) or len(books) > MAX_CANDIDATES:
+    if books_query and len(books) > _BOOKS_LIMIT:
+        raise ValueError("provider rows invalid")
+    if len(rows) > MAX_CANDIDATES + int(work_only) or len(books) >= (
+        _BOOKS_LIMIT if books_query else MAX_CANDIDATES + 1
+    ):
         raise _CandidateLimit
-    work_keys = {
-        "id",
-        "title",
-        "description",
-        "release_date",
-        "image",
-        "contributions",
-        "book_series",
-        "taggings",
-    }
-    # Tags are optional enrichment.  A broken taxonomy row or link must not
-    # invalidate the edition/work identity and independently valid fields.
-    taxonomy_unavailable = False
-    taxonomy_oversized = False
-    indexed_tags: dict[int, dict[str, Any]] = {}
-    ambiguous_tag_ids: set[int] = set()
-    if type(tags) is not list:
-        taxonomy_unavailable = True
-        rejected.reject()
-    elif len(tags) > _MAX_TAG_ROWS:
-        taxonomy_oversized = True
-        rejected.reject()
-    else:
-        for raw_tag in tags:
-            try:
-                tag_id = _identifier(
-                    raw_tag.get("id") if type(raw_tag) is dict else None
-                )
-            except (TypeError, ValueError):
-                rejected.reject()
-                continue
-            try:
-                if tag_id in indexed_tags or tag_id in ambiguous_tag_ids:
-                    indexed_tags.pop(tag_id, None)
-                    ambiguous_tag_ids.add(tag_id)
-                    raise ValueError("duplicate tag")
-                tag = _closed(raw_tag, {"id", "tag", "tag_category"})
-                _text(tag["tag"], MAX_SCALAR_CHARACTERS)
-                category = _closed(
-                    tag["tag_category"],
-                    {"id", "category"},
-                )
-                _identifier(category["id"])
-                _text(category["category"], MAX_SCALAR_CHARACTERS)
-            except (TypeError, ValueError):
-                indexed_tags.pop(tag_id, None)
-                ambiguous_tag_ids.add(tag_id)
-                rejected.reject()
-                continue
-            indexed_tags[tag_id] = tag
-    indexed: dict[int, dict[str, Any]] = {}
-    for raw_book in books:
-        # Only the work identity is part of the anchor.  Every other work
-        # member is independently projected below.
-        book = _anchored_projection(raw_book, {"id"}, work_keys)
-        book = {key: book.get(key) for key in work_keys}
-        raw_taggings = book["taggings"]
-        taggings: list[dict[str, Any]] = []
-        book_taxonomy_issue = taxonomy_unavailable
-        book_taxonomy_oversized = taxonomy_oversized
-        if type(raw_taggings) is not list:
-            book_taxonomy_issue = True
-            rejected.reject()
-        elif len(raw_taggings) > MAX_TAGS:
-            book_taxonomy_oversized = True
-            rejected.reject()
-        else:
-            for raw_tagging in raw_taggings:
-                try:
-                    tagging = _closed(raw_tagging, {"id", "tag_id"})
-                    _identifier(tagging["id"])
-                    tag_id = _identifier(tagging["tag_id"])
-                    tag = indexed_tags[tag_id]
-                except (KeyError, TypeError, ValueError):
-                    book_taxonomy_issue = True
-                    rejected.reject()
-                    continue
-                taggings.append({"id": tagging["id"], "tag": tag})
-        book = {
-            **book,
-            "taggings": taggings,
-            "_taxonomy_issue": book_taxonomy_issue,
-            "_taxonomy_oversized": book_taxonomy_oversized,
-        }
-        book_id = _identifier(book["id"])
-        if book_id in indexed:
-            raise ValueError("provider work invalid")
-        # These optional values are otherwise consumed only by neutral
-        # evidence and cover projections. Diagnose them here, once for the
-        # source work, rather than once for every joined edition/projection.
-        _field(ClaimKind.PUBLICATION_DATE, book["release_date"], rejected)
-        _cover_url(book["image"], rejected)
-        indexed[book_id] = book
-    if len(indexed) != len(books):
-        raise ValueError("provider work invalid")
+    indexed = _index_books(
+        books,
+        _index_tags(
+            tags, _MAX_BOOK_TAG_ROWS if books_query else _MAX_TAG_ROWS, rejected
+        ),
+        _book_keys(books_query),
+        rejected,
+        books_query=books_query,
+    )
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
     diagnosed_works: set[int] = set()
@@ -1391,41 +1370,11 @@ def _parse_candidates(
             )
         )
     if work_only:
-        for book_id, book in sorted(indexed.items()):
-            identity = f"hardcover-work-{book_id:010d}"
-            bindings: list[ProviderIdentityBinding] = []
-            claims = _work_claims(
-                provider, identity, book, local_claims, 0, rejected, bindings
+        candidates.extend(
+            _book_candidates(
+                provider, indexed, local_claims, rejected, first_publication
             )
-            first_publication = _work_first_publication_claim(
-                provider, identity, book["release_date"], len(claims)
-            )
-            if first_publication is not None:
-                claims.append(first_publication)
-            candidates.append(
-                finalize_candidate_comparisons(
-                    ProviderCandidate(
-                        identity,
-                        identity,
-                        tuple(claims),
-                        _work_evidence(book),
-                        tuple(
-                            sorted(
-                                bindings,
-                                key=lambda b: (
-                                    b.scope.value,
-                                    b.role or "",
-                                    b.source_ordinal,
-                                    b.identity,
-                                    b.claim_reference,
-                                ),
-                            )
-                        ),
-                    ),
-                    local_claims,
-                    provider,
-                )
-            )
+        )
     # Every book must be joined by an edition row, except an audiobook WORK
     # lane's, which keeps books alone; the companion ISBN lane keeps only
     # books its ISBN's edition rows name (#1468).
@@ -1433,7 +1382,233 @@ def _parse_candidates(
         {candidate.identity for candidate in candidates}
     ) != len(candidates):
         raise ValueError("provider join invalid")
+    if books_query:
+        by_identity = {candidate.identity: candidate for candidate in candidates}
+        candidates = _collapse_canonical_books(
+            {
+                book_id: (
+                    book["canonical_id"],
+                    by_identity[f"hardcover-work-{book_id:010d}"],
+                )
+                for book_id, book in indexed.items()
+            },
+            admits or (lambda _candidate: False),
+        )
+        if len(candidates) > MAX_CANDIDATES:
+            raise _CandidateLimit
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
+
+
+def _index_tags(
+    tags: object, tag_rows: int, rejected: _OptionalRejections
+) -> tuple[dict[int, dict[str, Any]], bool, bool]:
+    """Index an answer's taxonomy rows, with whether it is missing or oversized."""
+    # Tags are optional enrichment.  A broken taxonomy row or link must not
+    # invalidate the edition/work identity and independently valid fields.
+    taxonomy_unavailable = False
+    taxonomy_oversized = False
+    indexed_tags: dict[int, dict[str, Any]] = {}
+    ambiguous_tag_ids: set[int] = set()
+    if type(tags) is not list:
+        taxonomy_unavailable = True
+        rejected.reject()
+    elif len(tags) > tag_rows:
+        taxonomy_oversized = True
+        rejected.reject()
+    else:
+        for raw_tag in tags:
+            try:
+                tag_id = _identifier(
+                    raw_tag.get("id") if type(raw_tag) is dict else None
+                )
+            except (TypeError, ValueError):
+                rejected.reject()
+                continue
+            try:
+                if tag_id in indexed_tags or tag_id in ambiguous_tag_ids:
+                    indexed_tags.pop(tag_id, None)
+                    ambiguous_tag_ids.add(tag_id)
+                    raise ValueError("duplicate tag")
+                tag = _closed(raw_tag, {"id", "tag", "tag_category"})
+                _text(tag["tag"], MAX_SCALAR_CHARACTERS)
+                category = _closed(
+                    tag["tag_category"],
+                    {"id", "category"},
+                )
+                _identifier(category["id"])
+                _text(category["category"], MAX_SCALAR_CHARACTERS)
+            except (TypeError, ValueError):
+                indexed_tags.pop(tag_id, None)
+                ambiguous_tag_ids.add(tag_id)
+                rejected.reject()
+                continue
+            indexed_tags[tag_id] = tag
+    return indexed_tags, taxonomy_unavailable, taxonomy_oversized
+
+
+def _index_books(
+    books: list[Any],
+    taxonomy: tuple[dict[int, dict[str, Any]], bool, bool],
+    work_keys: set[str],
+    rejected: _OptionalRejections,
+    *,
+    books_query: bool,
+) -> dict[int, dict[str, Any]]:
+    """Index an answer's books by id, each joined to its own taxonomy."""
+    indexed_tags, taxonomy_unavailable, taxonomy_oversized = taxonomy
+    indexed: dict[int, dict[str, Any]] = {}
+    for raw_book in books:
+        # Only the work identity is part of the anchor.  Every other work
+        # member is independently projected below.
+        book = _anchored_projection(raw_book, {"id"}, work_keys)
+        book = {key: book.get(key) for key in work_keys}
+        raw_taggings = book["taggings"]
+        taggings: list[dict[str, Any]] = []
+        book_taxonomy_issue = taxonomy_unavailable
+        book_taxonomy_oversized = taxonomy_oversized
+        if type(raw_taggings) is not list:
+            book_taxonomy_issue = True
+            rejected.reject()
+        elif len(raw_taggings) > MAX_TAGS:
+            book_taxonomy_oversized = True
+            rejected.reject()
+        else:
+            for raw_tagging in raw_taggings:
+                try:
+                    tagging = _closed(raw_tagging, {"id", "tag_id"})
+                    _identifier(tagging["id"])
+                    tag_id = _identifier(tagging["tag_id"])
+                    tag = indexed_tags[tag_id]
+                except (KeyError, TypeError, ValueError):
+                    book_taxonomy_issue = True
+                    rejected.reject()
+                    continue
+                taggings.append({"id": tagging["id"], "tag": tag})
+        book = {
+            **book,
+            "taggings": taggings,
+            "_taxonomy_issue": book_taxonomy_issue,
+            "_taxonomy_oversized": book_taxonomy_oversized,
+        }
+        book_id = _identifier(book["id"])
+        if book_id in indexed:
+            raise ValueError("provider work invalid")
+        # These optional values are otherwise consumed only by neutral
+        # evidence and cover projections. Diagnose them here, once for the
+        # source work, rather than once for every joined edition/projection.
+        _field(ClaimKind.PUBLICATION_DATE, book["release_date"], rejected)
+        _cover_url(book["image"], rejected)
+        if books_query:
+            book["canonical_id"] = _canonical_book(book["canonical_id"], rejected)
+            if (
+                book["compilation"] is not None
+                and type(book["compilation"]) is not bool
+            ):
+                rejected.reject()
+        indexed[book_id] = book
+    if len(indexed) != len(books):
+        raise ValueError("provider work invalid")
+    return indexed
+
+
+def _book_candidates(
+    provider: str,
+    indexed: dict[int, dict[str, Any]],
+    local_claims: tuple[LocalClaim, ...],
+    rejected: _OptionalRejections,
+    first_publication: bool,
+) -> list[ProviderCandidate]:
+    """One work candidate per book, for a lane that keeps books alone."""
+    candidates: list[ProviderCandidate] = []
+    for book_id, book in sorted(indexed.items()):
+        identity = f"hardcover-work-{book_id:010d}"
+        bindings: list[ProviderIdentityBinding] = []
+        claims = _work_claims(
+            provider, identity, book, local_claims, 0, rejected, bindings
+        )
+        publication = (
+            _work_first_publication_claim(
+                provider, identity, book["release_date"], len(claims)
+            )
+            if first_publication
+            else None
+        )
+        if publication is not None:
+            claims.append(publication)
+        candidates.append(
+            finalize_candidate_comparisons(
+                ProviderCandidate(
+                    identity,
+                    identity,
+                    tuple(claims),
+                    _work_evidence(book),
+                    tuple(
+                        sorted(
+                            bindings,
+                            key=lambda b: (
+                                b.scope.value,
+                                b.role or "",
+                                b.source_ordinal,
+                                b.identity,
+                                b.claim_reference,
+                            ),
+                        )
+                    ),
+                ),
+                local_claims,
+                provider,
+            )
+        )
+    return candidates
+
+
+def _book_keys(books_query: bool) -> set[str]:
+    keys = {
+        "id",
+        "title",
+        "description",
+        "release_date",
+        "image",
+        "contributions",
+        "book_series",
+        "taggings",
+    }
+    return keys | {"canonical_id", "compilation"} if books_query else keys
+
+
+def _canonical_book(value: object, rejected: _OptionalRejections) -> int | None:
+    """Read a book's `canonical_id`; a malformed one points nowhere."""
+    if value is None:
+        return None
+    try:
+        return _identifier(value)
+    except ValueError:
+        rejected.reject()
+        return None
+
+
+def _collapse_canonical_books(
+    books: dict[int, tuple[int | None, ProviderCandidate]],
+    admits: Callable[[ProviderCandidate], bool],
+) -> list[ProviderCandidate]:
+    """Remove each book that is a duplicate of another book in the same answer.
+
+    A book whose `canonical_id` names another book of this answer is removed
+    only when that book has no `canonical_id` of its own and `admits` accepts
+    it on its own title and authors. One hop, inside the answer: a
+    self-reference, a cycle, a chain, a book outside the answer or one that is
+    refused leaves the duplicate standing as itself. Nothing is ever fetched,
+    and the book that stays keeps only its own values (#1380, ADR-0056).
+    """
+    return [
+        candidate
+        for book_id, (canonical, candidate) in sorted(books.items())
+        if canonical is None
+        or canonical == book_id
+        or canonical not in books
+        or books[canonical][0] is not None
+        or not admits(books[canonical][1])
+    ]
 
 
 def _work_first_publication_claim(
@@ -1441,9 +1616,9 @@ def _work_first_publication_claim(
 ) -> ProviderClaim | None:
     """State an audiobook work's first publication from the book's release date.
 
-    Only an audiobook work lane reads a book alone, so only an audiobook's
-    work candidate states it, at the precision Hardcover gives (#1642,
-    ADR-0061 clause 9). It comes last, after every claim the work already
+    Only an audiobook's work candidate states it, at the precision Hardcover
+    gives (#1642, ADR-0061 clause 9); an ebook's book keeps the claims its
+    edition rows carried before books-first search (#1380). It comes last, after every claim the work already
     stated, so no earlier claim changes its place.
     """
     if value is None:
@@ -1525,21 +1700,26 @@ def _parse_edition_enrichment_overflow(
     author_names: set[str] = set()
     authors: list[ProviderClaim] = []
     bindings: list[ProviderIdentityBinding] = []
-    for ordinal, raw in enumerate(contributions):
+    for raw in contributions:
         contribution = _closed(raw, {"id", "contribution", "author"})
         contribution_id = _identifier(contribution["id"])
         author = _closed(contribution["author"], {"id", "name"})
         author_id = _identifier(author["id"])
         _text(author["name"], MAX_SCALAR_CHARACTERS)
-        if (
-            contribution_id in contribution_ids
-            or author_id in author_ids
-            or normalize_title(author["name"]).casefold() in author_names
-            or validate_role_projection(contribution["contribution"]).casefold()
-            != "author"
-        ):
+        if contribution_id in contribution_ids:
             raise ValueError("provider overflow authors are contradictory")
         contribution_ids.add(contribution_id)
+        # An illustrator or translator names no one the work is by, so it is
+        # passed over as `_contributions` does, rather than refused (#1380).
+        role = contribution["contribution"]
+        if role is not None and validate_role_projection(role).casefold() != "author":
+            continue
+        if (
+            author_id in author_ids
+            or normalize_title(author["name"]).casefold() in author_names
+        ):
+            raise ValueError("provider overflow authors are contradictory")
+        ordinal = len(authors)
         author_ids[author_id] = author["name"]
         author_names.add(normalize_title(author["name"]).casefold())
         claim = _claim(
@@ -1567,6 +1747,8 @@ def _parse_edition_enrichment_overflow(
         )
     if title.state is not FieldState.VALID or title.value is None:
         raise ValueError("provider overflow work is incomplete")
+    if not authors:
+        raise ValueError("provider overflow work is incomplete")
     return EditionEnrichmentOverflow(
         work_identity, title.value, tuple(authors), tuple(bindings)
     )
@@ -1577,6 +1759,8 @@ def _parse_cover_descriptors(
     provider: str,
     query_kind: ProviderQueryKind,
     rejected: _OptionalRejections | None = None,
+    *,
+    books_query: bool = False,
 ) -> tuple[ProviderCoverDescriptor, ...]:
     rejected = rejected or _OptionalRejections()
     source = json.loads(
@@ -1587,15 +1771,15 @@ def _parse_cover_descriptors(
     )
     data = _closed(
         _closed(source, {"data"})["data"],
-        {"editions", "books", "tags"},
+        {"books", "tags"} if books_query else {"editions", "books", "tags"},
     )
-    rows = data["editions"]
+    rows = [] if books_query else data["editions"]
     books = data["books"]
     if (
         type(rows) is not list
         or len(rows) > MAX_CANDIDATES
         or type(books) is not list
-        or len(books) > MAX_CANDIDATES
+        or len(books) > (_BOOKS_LIMIT - 1 if books_query else MAX_CANDIDATES)
     ):
         raise ValueError("provider rows invalid")
     descriptors: list[ProviderCoverDescriptor] = []
@@ -1665,16 +1849,7 @@ def _parse_cover_descriptors(
                 terminal_state=terminal_state,
             )
         )
-    work_keys = {
-        "id",
-        "title",
-        "description",
-        "release_date",
-        "image",
-        "contributions",
-        "book_series",
-        "taggings",
-    }
+    work_keys = _book_keys(books_query)
     for raw_book in books:
         book = _anchored_projection(raw_book, {"id"}, work_keys)
         book = {key: book.get(key) for key in work_keys}
@@ -2639,7 +2814,9 @@ def _optional_member(
     return None if mapping is None else mapping.get(key)
 
 
-def _optional_projection_rejections(payload: bytes) -> int:
+def _optional_projection_rejections(
+    payload: bytes, *, books_query: bool = False
+) -> int:
     """Count unknown additive keys only at safely traversable parser seams.
 
     Strict anchor and join keys are deliberately exempt: their validation is
@@ -2682,17 +2859,10 @@ def _optional_projection_rejections(payload: bytes) -> int:
             if type(language) is dict:
                 count += len(set(language) - {"id", "code2", "code3", "language"})
     books = data.get("books")
-    if type(books) is list and len(books) <= MAX_CANDIDATES:
-        work_keys = {
-            "id",
-            "title",
-            "description",
-            "release_date",
-            "image",
-            "contributions",
-            "book_series",
-            "taggings",
-        }
+    if type(books) is list and len(books) < (
+        _BOOKS_LIMIT if books_query else MAX_CANDIDATES + 1
+    ):
+        work_keys = _book_keys(books_query)
         for book in books:
             if type(book) is dict:
                 count += len(set(book) - work_keys)

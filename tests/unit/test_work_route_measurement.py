@@ -63,7 +63,7 @@ from tests.support.audiobook_providers import (
     work_plan,
 )
 from tests.support.audiobook_reports import recorded_dispatch
-from tests.support.hardcover_evidence import hardcover_envelope
+from tests.support.hardcover_evidence import hardcover_answer
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.unit.test_carried_recording_admission import _candidate, _catalogue
 
@@ -97,7 +97,8 @@ def _hardcover(*books: dict[str, object]) -> ProviderObservation:
             return httpx.Response(200, json={"data": {"editions": []}})
         return httpx.Response(
             200,
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [],
                 [
                     {

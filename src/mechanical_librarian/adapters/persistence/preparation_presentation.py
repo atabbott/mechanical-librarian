@@ -36,12 +36,14 @@ _STAGE_ORDER = {
     "admission": 3,
     "projection": 4,
 }
+# The masthead's stage words, so a book's stage reads the same on every screen
+# (#1765).
 _STAGE_COPY = {
-    "extraction": "Reading from library",
-    "provider": "Finishing searches",
-    "proposal": "Comparing candidates",
-    "admission": "Checking metadata",
-    "projection": "Preparing review",
+    "extraction": "Reading your files",
+    "provider": "Asking sources",
+    "proposal": "Comparing sources",
+    "admission": "Checking automatic choices",
+    "projection": "Preparing the review",
 }
 _SQLITE_INTEGER_MAXIMUM = 9_223_372_036_854_775_807
 _preparation_display_name = bounded_utf8_text(2048)
@@ -1258,7 +1260,7 @@ def preparation_presentation_snapshot(
             (run_id,),
         ).fetchall()
         active = tuple(
-            PreparationActiveBook(name, _STAGE_COPY.get(stage, "Preparing review"))
+            PreparationActiveBook(name, _STAGE_COPY.get(stage, "Preparing the review"))
             for name, stage in active_rows
         )
         completion_rows = connection.execute(

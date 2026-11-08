@@ -1115,10 +1115,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {consentState === 'off'
                   ? `${consent.lapsed ? `${consent.lapsed} ` : ''}Open permission review to check backup readiness and the destinations available for writes.`
                   : consentState === 'enabling'
-                    ? 'Confirming permission with the authoritative server. No change is sent twice.'
+                    ? 'Confirming permission…'
                     : consentState === 'enabled'
                       ? 'Permission is confirmed. Mechanical Librarian is starting the prepared changes.'
-                      : `${String(reasons.applying)} ${reasons.applying === 1 ? 'change is' : 'changes are'} in progress; the remaining ${String(reasons.scheduled)} stay ready.`}
+                      : `Writing ${String(reasons.applying)} ${reasons.applying === 1 ? 'change' : 'changes'}. ${String(reasons.scheduled)} more ${reasons.scheduled === 1 ? 'is' : 'are'} ready.`}
               </p>
             </div>
             <dl>
@@ -1223,7 +1223,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     : permission?.backup_ready === null
                       ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
                       : permission?.backup_ready === false
-                        ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
+                        ? 'The backup check did not pass. Check again before enabling writes.'
                         : 'Backup readiness checked. Review the included and excluded destinations.'}
           </p>
           {/* Busy, not disabled: a disabled button would drop a keyboard owner's focus to <body>. */}
