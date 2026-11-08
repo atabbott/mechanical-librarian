@@ -44,6 +44,7 @@
               }
             ],
             "classification": "needs_attention",
+            "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -122,6 +123,7 @@
               }
             ],
             "classification": "needs_attention",
+            "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -218,6 +220,7 @@
               }
             ],
             "classification": "needs_attention",
+            "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -303,6 +306,7 @@
               }
             ],
             "classification": "needs_attention",
+            "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -362,6 +366,7 @@
               }
             ],
             "classification": "needs_attention",
+            "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -438,6 +443,7 @@
               }
             ],
             "classification": "needs_attention",
+            "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -490,6 +496,7 @@
               }
             ],
             "classification": "unsupported",
+            "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -540,6 +547,7 @@
               }
             ],
             "classification": "unsupported",
+            "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -611,6 +619,7 @@
               }
             ],
             "classification": "human_recorded",
+            "classification_cause": "human_decided",
             "classification_reason": "You decided this field. You can change it here.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -761,6 +770,7 @@
               }
             ],
             "classification": "unsupported",
+            "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -811,6 +821,7 @@
               }
             ],
             "classification": "unsupported",
+            "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -876,6 +887,7 @@
               }
             ],
             "classification": "owner_choosable",
+            "classification_cause": "owner_choosable",
             "classification_reason": "Tags are off in your settings, so your tags are left as they are and no review is needed. You can still choose proposed tags.",
             "corroboration_sources": [],
             "cover_consideration": null,
@@ -933,6 +945,7 @@
               }
             ],
             "classification": "unsupported",
+            "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
             "cover_consideration": null,
