@@ -310,8 +310,8 @@ def _policy_changes(
         return []
     changes: list[dict[str, str]] = []
     for setting, previous_pairs, next_pairs in (
-        ("Review mode", before.destinations, after.destinations),
-        ("Representation", before.options, after.options),
+        ("Setting", before.destinations, after.destinations),
+        ("Option", before.options, after.options),
     ):
         previous_values, next_values = dict(previous_pairs), dict(next_pairs)
         for field in sorted(set(previous_values) | set(next_values)):
