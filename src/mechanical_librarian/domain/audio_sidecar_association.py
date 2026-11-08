@@ -52,6 +52,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetSeries,
     normalize_title,
 )
+from mechanical_librarian.domain.validation import (
+    exact_type,
+    optional,
+    tuple_of,
+)
+from mechanical_librarian.domain.validation import text as exact_text
 from mechanical_librarian.domain.work_identity_levels import (
     IdentityReference as _Reference,
 )
@@ -127,17 +133,10 @@ class AudioAssociationContext:
     own_file_names: tuple[str, ...] | None
 
     def __post_init__(self) -> None:
-        if (
-            (self.title is not None and type(self.title) is not str)
-            or type(self.fields) is not tuple
-            or any(type(value) is not TargetField for value in self.fields)
-            or (
-                self.own_file_names is not None
-                and (
-                    type(self.own_file_names) is not tuple
-                    or any(type(value) is not str for value in self.own_file_names)
-                )
-            )
+        if not (
+            optional(exact_text)(self.title)
+            and tuple_of(exact_type(TargetField))(self.fields)
+            and optional(tuple_of(exact_text))(self.own_file_names)
         ):
             raise ValueError("audio association context is invalid")
 

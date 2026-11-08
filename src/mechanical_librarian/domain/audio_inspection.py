@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import ClassVar, Final, Mapping, cast
+from typing import Any, ClassVar, Final, Mapping, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -22,6 +22,15 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_role_projection,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+from mechanical_librarian.domain.validation import (
+    boolean,
+    closed_document,
+    exact_type,
+    matching,
+    optional,
+    tuple_of,
+)
+from mechanical_librarian.domain.validation import text as exact_text
 
 # `v5` returns each interpreted sidecar on its own -- its name, its facts and
 # its association text -- beside the file's own association text, so the
@@ -363,15 +372,10 @@ def association_text(value: object) -> str | None:
 
 
 def _valid_association(value: object) -> bool:
-    return type(value) is str and association_text(value) == value
+    return exact_text(value) and association_text(value) == value
 
 
-def _valid_creators(value: object) -> bool:
-    return (
-        type(value) is tuple
-        and len(value) <= MAX_ASSOCIATION_CREATORS
-        and all(_valid_association(item) for item in value)
-    )
+_valid_creators = tuple_of(_valid_association, MAX_ASSOCIATION_CREATORS)
 
 
 def normalize_duration_seconds(value: str) -> str:
@@ -801,7 +805,7 @@ class AudioSidecarShadow:
     canonical: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.field) is not AudioSidecarShadowField:
+        if not exact_type(AudioSidecarShadowField)(self.field):
             raise ValueError("audio sidecar shadow is malformed")
         try:
             validate_projection_text(
@@ -825,12 +829,16 @@ class AudioSidecarShadow:
         return "AudioSidecarShadow(<redacted>)"
 
 
+_valid_shadow = tuple_of(exact_type(AudioSidecarShadow), MAX_SIDECAR_SHADOW)
+_list = exact_type(list)
+
+
 def _ordered_members(value: object, vocabulary: type[StrEnum]) -> bool:
     """A tuple of distinct members of one closed vocabulary, in its own order."""
-    if type(value) is not tuple or any(type(item) is not vocabulary for item in value):
+    if not tuple_of(exact_type(vocabulary))(value):
         return False
     order = list(vocabulary)
-    positions = [order.index(item) for item in value]
+    positions = [order.index(item) for item in cast("tuple[StrEnum, ...]", value)]
     return positions == sorted(set(positions))
 
 
@@ -861,7 +869,7 @@ class AudioSidecarDigest:
     shadow: tuple[AudioSidecarShadow, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.digest) is not str or _SHA256.fullmatch(self.digest) is None:
+        if not matching(_SHA256)(self.digest):
             raise ValueError("audio sidecar digest is malformed")
         try:
             validate_projection_text(
@@ -870,25 +878,17 @@ class AudioSidecarDigest:
         except EvidenceValueError as error:
             raise ValueError("audio sidecar name is malformed") from error
         if (
-            type(self.kind) is not AudioSidecarKind
-            or type(self.binding) is not AudioSidecarBinding
+            not exact_type(AudioSidecarKind)(self.kind)
+            or not exact_type(AudioSidecarBinding)(self.binding)
             or not _ordered_members(self.refusals, AudioSidecarRefusal)
             or not _ordered_members(self.disputed, AudioInspectionField)
             or not _ordered_members(self.echoed, AudioInspectionField)
-            or type(self.shadow) is not tuple
-            or len(self.shadow) > MAX_SIDECAR_SHADOW
-            or any(type(value) is not AudioSidecarShadow for value in self.shadow)
+            or not _valid_shadow(self.shadow)
         ):
             raise ValueError("audio sidecar classification is malformed")
-        if (
-            type(self.claims) is not tuple
-            or len(self.claims) > MAX_FACTS
-            or any(
-                type(value) is not str or _CLAIM_REFERENCE.fullmatch(value) is None
-                for value in self.claims
-            )
-            or len(set(self.claims)) != len(self.claims)
-        ):
+        if not tuple_of(matching(_CLAIM_REFERENCE), MAX_FACTS)(self.claims) or len(
+            set(self.claims)
+        ) != len(self.claims):
             raise ValueError("audio sidecar claim provenance is malformed")
         refusals = set(self.refusals)
         terminal = refusals & TERMINAL_SIDECAR_REFUSALS
@@ -1082,24 +1082,22 @@ class AudioSidecarReading:
             raise ValueError("audio sidecar reading is malformed") from error
         if (
             self.surface not in SIDECAR_KIND_SURFACES.values()
-            or type(self.surface) is not AudioEvidenceSurface
-            or type(self.facts) is not tuple
-            or len(self.facts) > MAX_FACTS
-            or any(
-                type(value) is not AudioInspectionFact or value.surface != self.surface
-                for value in self.facts
-            )
-            or (self.title is not None and not _valid_association(self.title))
+            or not exact_type(AudioEvidenceSurface)(self.surface)
+            or not tuple_of(
+                lambda value: (
+                    exact_type(AudioInspectionFact)(value)
+                    and cast("AudioInspectionFact", value).surface == self.surface
+                ),
+                MAX_FACTS,
+            )(self.facts)
+            or not optional(_valid_association)(self.title)
             or not _valid_creators(self.creators)
-            or (
-                self.file_reference is not None
-                and not _valid_association(self.file_reference)
-            )
+            or not optional(_valid_association)(self.file_reference)
             or (
                 self.file_reference is not None
                 and self.surface is not AudioEvidenceSurface.SIDECAR_CUE
             )
-            or type(self.file_refused) is not bool
+            or not boolean(self.file_refused)
             or (
                 self.file_refused
                 and (
@@ -1107,9 +1105,7 @@ class AudioSidecarReading:
                     or self.surface is not AudioEvidenceSurface.SIDECAR_CUE
                 )
             )
-            or type(self.shadow) is not tuple
-            or len(self.shadow) > MAX_SIDECAR_SHADOW
-            or any(type(value) is not AudioSidecarShadow for value in self.shadow)
+            or not _valid_shadow(self.shadow)
             or (
                 self.shadow
                 and self.surface is not AudioEvidenceSurface.SIDECAR_LIBATION
@@ -1147,8 +1143,9 @@ _FACT_KEYS = frozenset(
 
 
 def _fact_from_data(item: object, source: Fingerprint | None) -> AudioInspectionFact:
-    if type(item) is not dict or set(item) != _FACT_KEYS:
+    if not closed_document(*_FACT_KEYS)(item):
         raise ValueError("audio inspection protocol is invalid")
+    item = cast("dict[str, Any]", item)
     # A fact-bearing document always carries a source: `AudioInspectionFact`
     # rejects a `None` source, and the `ValueError` it raises is caught by the
     # caller as an invalid protocol.
@@ -1165,31 +1162,27 @@ def _fact_from_data(item: object, source: Fingerprint | None) -> AudioInspection
 
 
 def _shadow_from_data(item: object) -> AudioSidecarShadow:
-    if type(item) is not dict or set(item) != {"canonical", "field", "observed"}:
+    if not closed_document("canonical", "field", "observed")(item):
         raise ValueError("audio sidecar shadow is malformed")
+    item = cast("dict[str, Any]", item)
     return AudioSidecarShadow(
         AudioSidecarShadowField(item["field"]), item["observed"], item["canonical"]
     )
 
 
 def _reading_from_data(item: object, source: Fingerprint | None) -> AudioSidecarReading:
-    if type(item) is not dict or set(item) != {
-        "creators",
-        "facts",
+    if not closed_document(
         "file",
         "file_refused",
         "name",
-        "shadow",
         "surface",
         "title",
-    }:
+        facts=_list,
+        creators=_list,
+        shadow=_list,
+    )(item):
         raise ValueError("audio inspection protocol is invalid")
-    if (
-        type(item["facts"]) is not list
-        or type(item["creators"]) is not list
-        or type(item["shadow"]) is not list
-    ):
-        raise ValueError("audio inspection protocol is invalid")
+    item = cast("dict[str, Any]", item)
     return AudioSidecarReading(
         item["name"],
         AudioEvidenceSurface(item["surface"]),
@@ -1228,11 +1221,12 @@ class AudioInspection:
 
     def __post_init__(self) -> None:
         if (
-            (self.album is not None and not _valid_association(self.album))
+            not optional(_valid_association)(self.album)
             or not _valid_creators(self.creators)
-            or type(self.sidecars) is not tuple
-            or len(self.sidecars) > AudioInspectionLimits.HARD_CAPS["sidecar_documents"]
-            or any(type(value) is not AudioSidecarReading for value in self.sidecars)
+            or not tuple_of(
+                exact_type(AudioSidecarReading),
+                AudioInspectionLimits.HARD_CAPS["sidecar_documents"],
+            )(self.sidecars)
             or len({value.name for value in self.sidecars}) != len(self.sidecars)
             or len(self.facts) + sum(len(value.facts) for value in self.sidecars)
             > MAX_FACTS

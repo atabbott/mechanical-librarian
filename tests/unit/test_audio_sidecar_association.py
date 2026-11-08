@@ -979,3 +979,31 @@ def test_no_byte_order_mark_is_stripped() -> None:
         AudioSidecar(_LIBATION, "book.metadata.json", document)
     ).sidecars
     assert reading.facts == ()
+
+
+class _Name(str):
+    """A ``str`` subclass, which the context's exact-type checks reject."""
+
+
+@pytest.mark.parametrize(
+    ("title", "fields", "own"),
+    [
+        (_Name("Title"), (), None),
+        (1, (), None),
+        (None, [], None),
+        (None, ("not a field",), None),
+        (None, (), ["book.m4b"]),
+        (None, (), ("book.m4b", 1)),
+        (None, (), (_Name("book.m4b"),)),
+    ],
+)
+def test_the_association_context_refuses_what_it_cannot_read(
+    title: object, fields: object, own: object
+) -> None:
+    with pytest.raises(ValueError, match="audio association context is invalid"):
+        AudioAssociationContext(title, fields, own)  # type: ignore[arg-type]
+
+
+def test_the_association_context_accepts_nullable_title_and_file_list() -> None:
+    assert AudioAssociationContext(None, (), None).own_file_names is None
+    assert AudioAssociationContext("Title", (), ()).own_file_names == ()
