@@ -1,89 +1,104 @@
-# Opening-Audio Evidence
+# Opening-audio evidence
 
-This is planned, unscheduled work. Mechanical Librarian does not transcribe
-audio, and nothing here grants write authority.
+Mechanical Librarian does not transcribe audio. This page is an unscheduled plan
+for how it could. The plan grants no write permission.
 
 ## Direction
 
-Spoken opening credits often state an audiobook's title, author, narrator,
-series, publisher or performance type more reliably than a path or tag. The
-plan is an optional adapter that transcribes a bounded opening window and
-extracts explicit spoken claims as evidence. It excludes whole-book or
-mid-book transcription, story-content identification, voice identity, and
-sharing audio or voice data.
+Opening credits often state an audiobook's title, author, narrator, series,
+publisher or performance type, such as abridged or full cast. They are often
+more reliable than a path or a tag. The plan is for an optional feature that
+transcribes a limited stretch of the opening and records each claim spoken
+outright as evidence. It leaves out transcribing the whole book or its middle,
+identifying a book from its story, recognising voices, and sharing audio or
+voice data.
 
-## Constraints any implementation must keep
+## Rules for any implementation
 
-**Optional and non-blocking.** Disabled, saturated or failing transcription
-leaves the audiobook available and other evidence processing running. An
-unavailable model, unsupported codec, quota failure or transcript with no
-credits is an operational outcome, never evidence a field is absent.
+Transcription is optional, and nothing waits for it. When it is off, at capacity
+or failing, the audiobook stays available and Mechanical Librarian keeps reading
+other evidence. An unavailable model, an unsupported codec, a used-up quota or a
+transcript with no credits is an outcome of the run. It is never evidence that a
+field has no value.
 
-**Bounded input.** Only opening windows of the first playable track are read.
-Track choice is deterministic and recorded: target-service order first,
-filename order as a fallback, extras excluded. Windows stay under a hard total
-budget well inside the opening, and original offsets are kept. A changed item
-fingerprint cancels the job before transcription.
+Mechanical Librarian reads only short windows at the start of the first playable
+track. It picks the same track every time from the same files, and records why.
+Your library service's track order comes first, with filename order as a
+fallback. Extras such as samples and interviews are left out. The windows stay
+under a hard total limit, well inside the opening, and keep their original times
+in the track. If the item's fingerprint changes, the job is cancelled before
+transcription.
 
-**Separate stages.** Track selection, sampling, transcription, claim
-extraction, matching and policy are separate. A `Transcriber` port
-returns typed segments, language, timing, confidence, model identity and
-failure class, never metadata decisions. Language comes from the audio or an
-explicitly configured library language, never a path guess or global default.
-Deterministic patterns handle clear phrases ("written by", "narrated by", "book
-two of"). An isolated reviewer may resolve ambiguous grammar only by choosing
-transcript-supported spans and closed role vocabularies.
+Each step is separate: picking the track, cutting the windows, transcribing,
+pulling out claims, matching them and applying policy. Transcription goes
+through one interface, `Transcriber`. It returns the text in segments, with the
+language, timing, confidence, the model that ran and the kind of any failure. It
+never returns a decision about metadata. The language comes from the audio or a
+language you set for the library, never from a guess based on the path or a
+global default. Fixed patterns read clear phrases ("written by", "narrated by",
+"book two of"). An isolated reviewer can settle unclear wording only by choosing
+words the transcript contains and roles from a fixed list.
 
-**Local by default.** Models and runtimes are pinned, checksummed and installed
-at image build time, never at run time. Any hosted transcription is disabled by
-default and needs an explicit destination-specific opt-in that discloses the
-audio and data sent, credentials, billing, retention and what works without it.
+By default, transcription runs where Mechanical Librarian runs. Each model and
+runtime is a fixed version with a known checksum, installed when the image is
+built and never at run time. Each hosted transcription service is off by
+default, and you turn each one on separately. Before you do, Mechanical
+Librarian shows the audio and data sent, the credentials and billing needed, how
+long the service keeps the data, and what works without it.
 
-**Claims carry provenance.** Each claim records field, value, spoken role,
-transcript span, audio offsets, component versions, item fingerprint, track,
-language, confidence and warnings. Unclear values stay absent. The parser
-never invents an identifier, person, series or sequence. Spoken text that
-looks like an instruction is inert evidence.
+Each claim records the field, the value, the spoken role, the words in the
+transcript and their times in the audio. It also records the item's fingerprint,
+the track, the language, the confidence and any warnings. It records the
+versions of the transcript, the step that pulls out claims, the schema and the
+model as well. An unclear value is left out. That step never makes up an
+identifier, a person, a series or a position in a series. Spoken text that
+sounds like an instruction is only evidence.
 
-**One lineage, not several sources.** A transcript, the claims parsed from it,
-and any reviewer reading of it are one correlated lineage. Their agreement
-never counts as independent support. Tags or path values used as spelling
-hints are recorded, compared against a no-hint control, and never counted as
-separate support.
+A transcript, the claims pulled from it and any reviewer reading of it are one
+source. Their agreement is never confirmation from another source. When tags or
+path values are used as spelling hints, Mechanical Librarian records each one
+and compares the result with a run without hints. A hint and the transcript it
+shaped never count as two sources.
 
-**Spoken credits are evidence, not truth.** Credits can name the performer
-first, describe another work in a preview, or be misheard. Claims may confirm
-or propose a value, improve search or expose a contradiction. Catalogue,
-tag, path and target evidence stay visible beside them. A spoken ISBN can aid
-search or corroborate independent evidence, but alone never establishes an
-edition. Several spoken ISBNs, or one that disagrees with other evidence, stay
-unresolved; one spoken in a preview or about another work never counts, even
-if it matches.
+A spoken credit can be wrong. It can name the performer first, describe another
+work in a preview, or be misheard. A claim can confirm a value, propose one,
+improve a search or show a contradiction. Evidence from catalogues, tags and the
+path, and your library's current values, stay visible beside it. A spoken ISBN
+can help a search or confirm evidence from an independent source. On its own, it
+never establishes an edition. Several spoken ISBNs, or one that disagrees with
+other evidence, stay unresolved. An ISBN spoken in a preview or about another
+work never counts, even if it matches.
 
-**Privacy.** Opening audio and transcripts are content evidence under the
-[data-privacy policy](../architecture/data-privacy.md). Production audio stays
-read-only. Temporary samples are always deleted, including after failure or
-recovery, and never reach logs, support bundles, backups or caches. The
-durable record holds hashes, segment metadata, cited spans, claims and
-provenance, not audio. Keeping a full opening transcript is a separate
-local-only retention choice. Reviewer packets carry only cited spans; exports
-and support bundles carry no audio or transcript.
+Opening audio and transcripts are private content under the
+[data-privacy policy](../architecture/data-privacy.md). Your audio files stay
+read-only. Temporary audio clips are always deleted, even after a failure or a
+recovery. They never reach logs, support bundles, backups or caches. Mechanical
+Librarian records hashes of the transcript and the clips, segment details, the
+quoted passages, the claims and where each came from, but no audio. Keeping a
+full transcript of the opening is a separate setting, and that transcript is
+stored only where Mechanical Librarian runs. A reviewer is sent only the quoted
+passages. Exports and support bundles carry no audio or transcript.
 
-**Resources.** Transcription ranks below all core work. It runs under CPU,
-memory, duration, temporary-space and concurrency bounds, one local job at a
-time by default, with durable retry state, lease recovery and circuit
-breakers. No database transaction or write lock is held while audio is
-decoded or transcribed.
+Transcription has lower priority than all core work. It has limits on CPU,
+memory, run time, temporary space and parallel jobs. By default, one local job
+runs at a time. A restart does not reset a job's retries, and an interrupted job
+is picked up again. A cut-off stops new jobs after repeated failures. Mechanical
+Librarian holds no database transaction or write lock while it decodes or
+transcribes audio.
 
-**Qualified per field.** Each field is qualified independently in shadow mode
-before it can affect an automatic disposition, under the same gates as other
-evidence. A
-changed model, prompt, schema, sampling or backend version is a new evaluation
-cohort. The feature returns to report-only if it harms playback or core work,
-exceeds its qualified error rates, or cannot prove sample cleanup.
+Each field qualifies on its own before its spoken claims can affect an automatic
+decision. Until then, Mechanical Librarian measures the claims but never uses
+them for one. An automatic decision from them passes the same checks as one from
+any other evidence. A change of model, prompt, schema, sampling or backend
+version starts a new evaluation. If transcription harms playback or core work,
+or a field exceeds the error rates it qualified with, all spoken claims go back
+to being measured without being used. They also go back if Mechanical Librarian
+cannot prove it deleted the temporary audio.
 
 ## Open decisions
 
-An ADR or configuration contract must settle the backend and model packaging,
-sample and resource limits, transcript retention default, languages, hosted
-transcription, scheduling, and per-field thresholds before implementation.
+Before work starts, a decision record (ADR) or a configuration contract must
+settle the transcription backend and how models are packaged. It must also set
+the limits on audio clips and resources, and say whether full transcripts are
+kept by default. It must settle the languages, hosted transcription, scheduling
+and the threshold for each field.
