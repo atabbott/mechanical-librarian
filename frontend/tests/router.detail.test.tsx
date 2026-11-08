@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '../src/api/http'
+import { ApiError, BuildMismatchError } from '../src/api/http'
 import { DecodeFailure } from '../src/generated/review-decoders'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
@@ -394,6 +394,41 @@ describe('Library review ownership', () => {
   })
 
   it.each([
+    ['evidence', 'Evidence'],
+    ['history', 'History'],
+  ])('names a %s read refused by a newer build and offers Reload', async (subview, lead) => {
+    const refuse = async (): Promise<never> => {
+      throw new BuildMismatchError()
+    }
+    renderRoute(`/review/case-1?field=title&subview=${subview}`, {
+      ...createHttp(),
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(refuse),
+      getHistory: vi.fn<ReviewHttp['getHistory']>(refuse),
+    })
+    expect(await screen.findByText(`${lead} was not loaded.`)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
+    expect(screen.queryByText(/could not be loaded/u)).toBeNull()
+  })
+
+  it.each(['evidence', 'history'])(
+    'asks for a reload after any other %s read failure',
+    async (subview) => {
+      const fail = async (): Promise<never> => {
+        throw new ApiError(503, 'unavailable')
+      }
+      renderRoute(`/review/case-1?field=title&subview=${subview}`, {
+        ...createHttp(),
+        getEvidence: vi.fn<ReviewHttp['getEvidence']>(fail),
+        getHistory: vi.fn<ReviewHttp['getHistory']>(fail),
+      })
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        /could not be loaded\. Reload the page to try again\./u,
+      )
+      expect(screen.queryByText(/was not loaded/u)).toBeNull()
+    },
+  )
+
+  it.each([
     [undefined, 'Nothing from the sources for this work.'],
     ['next-page', 'Nothing from the sources yet. More may load below.'],
   ])('says once that the sources gave nothing (cursor %s)', async (nextCursor, line) => {
@@ -657,7 +692,7 @@ describe('Library review ownership', () => {
     expect(screen.getByText(/The cover reviewer looked at 2 covers/u)).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Cover chosen' })).toBeVisible()
     expect(screen.getByText('You chose a proposed cover.', { exact: false })).toBeVisible()
-    expect(screen.getByText('The policy recommends a cover.')).toBeVisible()
+    expect(screen.getByText('The policy recommended a cover.')).toBeVisible()
     expect(screen.getByText('Confirmed covers are ranked in a fixed order')).toBeVisible()
     const preview = screen.getByRole('list', { name: 'Preview outcomes' })
     expect(preview).toHaveTextContent('Needs you7')
@@ -1649,6 +1684,17 @@ it.each(['evidence', 'history'])(
           category: 'description' as const,
           occurredAt: 1786000000,
           outcome: 'description_advice_recorded',
+          state: 'failed' as const,
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate: null,
+          selected: false,
+          chosenBy: null,
+        },
+        {
+          category: 'description' as const,
+          occurredAt: 1786000000,
+          outcome: 'description_advice_recorded',
           state: 'running' as const,
           engine: candidate.engine,
           model: candidate.model,
@@ -1728,14 +1774,19 @@ it.each(['evidence', 'history'])(
       expect(screen.getByText('Checking the write started.', { exact: false })).toBeVisible()
       expect(screen.getByText('Advice writing started.', { exact: false })).toBeVisible()
       expect(document.body.textContent).not.toMatch(/\b(is being|is in progress|will be)\b/u)
-      // Advice still being written has no text yet, which is not news.
-      expect(screen.queryByText('No description was written.')).toBeNull()
+      // Only advice that stopped says it has no text; advice still being
+      // written has none yet, which is not news.
+      expect(screen.getAllByText('No description was written.')).toHaveLength(1)
+      const running = screen
+        .getByText('Advice writing started.', { exact: false })
+        .closest('article')
+      expect(running).not.toHaveTextContent('No description was written.')
       expect(
         screen.getByText('Replaced by a later choice.', {
           exact: false,
         }),
       ).toBeVisible()
-      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(9)
+      expect(screen.getAllByRole('heading', { name: 'Description advice' })).toHaveLength(10)
     } else {
       await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
       expect(screen.queryByText(candidate.output.description)).toBeNull()

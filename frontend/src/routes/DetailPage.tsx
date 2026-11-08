@@ -12,7 +12,8 @@ import type {
   HistoryView,
   TargetDestination,
 } from '../api/http'
-import { displayValue } from '../api/http'
+import { BuildMismatchError, displayValue } from '../api/http'
+import { StaleBuildRead } from '../components/StaleBuildRead'
 import { railOffers } from '../reviewChoiceCounts'
 import { RecordedTime } from '../components/RecordedTime'
 import {
@@ -76,8 +77,8 @@ const coverOwnerSentences = {
   reject: 'You declined the cover change.',
 } as const
 const coverPolicySentences = {
-  recommended: 'The policy recommends a cover.',
-  abstained: 'The policy recommends no cover.',
+  recommended: 'The policy recommended a cover.',
+  abstained: 'The policy recommended no cover.',
 } as const
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
@@ -326,6 +327,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           </header>
           {evidence.isPending ? (
             <p role="status">Loading evidence…</p>
+          ) : evidence.error instanceof BuildMismatchError ? (
+            // The shell's build notice is the alert; this names what is missing.
+            <StaleBuildRead lead="Evidence was not loaded." />
           ) : evidence.isError ? (
             <p className="diagnostic-read-failure" role="alert">
               Evidence could not be loaded. Reload the page to try again.
@@ -418,6 +422,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           </header>
           {history.isPending ? (
             <p role="status">Loading history…</p>
+          ) : history.error instanceof BuildMismatchError ? (
+            // The shell's build notice is the alert; this names what is missing.
+            <StaleBuildRead lead="History was not loaded." />
           ) : history.isError ? (
             <p className="diagnostic-read-failure" role="alert">
               History could not be loaded. Reload the page to try again.

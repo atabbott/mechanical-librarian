@@ -813,7 +813,8 @@ export type HistoryItemView = (
       engine: string
       candidate: DescriptionCandidateDto | null
       selected: boolean
-      // Who chose the advice, for a choice; null on advice and write events.
+      // Who chose the advice. Read only on a choice; null when the event
+      // carries no decision.
       chosenBy: 'owner' | 'automatic' | null
     }
   | {

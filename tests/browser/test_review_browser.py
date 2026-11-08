@@ -11002,10 +11002,13 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             if destination == "ignore":
+                # An ignored field keeps no source answers, so Evidence
+                # leaves it out once the read has finished.
+                expect(page.locator(".diagnostic-complete").first).to_be_visible()
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_have_count(0)
                 expect(
                     page.get_by_role("heading", name="Genres", exact=True)
-                ).to_be_visible()
+                ).to_have_count(0)
             else:
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_be_visible()
             if destination != "ignore":
@@ -11608,9 +11611,12 @@ def test_same_name_series_owner_journey(media, destination):
             else:
                 expect(choice).to_have_count(0)
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Series", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 expect(
                     page.get_by_text("Series membership: " + title, exact=False).first
@@ -11979,9 +11985,12 @@ def test_audiobook_synopsis_owner_journey(destination):
                     page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(
@@ -12067,9 +12076,12 @@ def test_ebook_synopsis_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
-            ).to_be_visible()
+            ).to_have_count(0 if destination == "ignore" else 1)
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
@@ -12265,7 +12277,12 @@ def test_ebook_isbn_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
-            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_be_visible()
+            # An ignored field keeps no source answers, so Evidence leaves it
+            # out once the read has finished.
+            expect(page.locator(".diagnostic-complete").first).to_be_visible()
+            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_have_count(
+                0 if destination == "ignore" else 1
+            )
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
