@@ -723,7 +723,7 @@ def test_the_breakdown_markdown_reads_not_estimable_at_n_zero(tmp_path: Path) ->
     assert code == 0
     # The breakdown's tables only: its page is one run's output.
     assert markdown.startswith("### Replay\n")
-    assert "### Ranked gates" not in markdown
+    assert "## Ranked gates" not in markdown
     assert (
         "| authors_one_correlation | pooled | both | 0 | 0 | 0 / 0 / 0 / 0 | 0 | 0/0/0 "
         "| not estimable |"

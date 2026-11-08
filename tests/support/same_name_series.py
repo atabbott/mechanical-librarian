@@ -1,6 +1,8 @@
 """Synthetic provider-produced first-book membership shared by persistence and UI."""
 
+import json
 from dataclasses import replace
+from typing import cast
 
 import httpx
 
@@ -22,6 +24,14 @@ from tests.support.audiobook_providers import audio_claim
 from tests.support.audiobook_reports import synthetic_audiobook_product_lookup_report
 from tests.support.hardcover_evidence import hardcover_envelope, isbn_claim
 from tests.support.proposal_evidence import _fields, _report, consensus_local_title
+
+
+def _answer(request: httpx.Request, envelope: dict[str, object]) -> dict[str, object]:
+    """Answer the books-first WORK search with the envelope's books alone."""
+    if json.loads(request.content)["operationName"] != "BooksByTitleAuthor":
+        return envelope
+    data = cast("dict[str, list[dict[str, object]]]", envelope["data"])
+    return {"data": {"books": data["books"], "tags": data["tags"]}}
 
 
 def same_name_series_report(
@@ -128,7 +138,7 @@ def same_name_series_report(
         )
         with httpx.Client(
             transport=httpx.MockTransport(
-                lambda request: httpx.Response(200, json=payload)
+                lambda request: httpx.Response(200, json=_answer(request, payload))
             )
         ) as client:
             # Production binds the configured adapter as authority (#1013).

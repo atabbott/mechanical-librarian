@@ -130,7 +130,7 @@ def test_election_follows_actual_source_identity_not_prose(reverse, swap):
     assert selected is not None
     assert selected[0].value.value == summaries[0]
     source = report.providers[0].candidates[0]
-    assert source.identity == "hardcover-edition-0000000001"
+    assert source.identity == "hardcover-work-0000000010"
     assert selected[1] == tuple(
         c.reference for c in source.claims if c.kind.value == "description"
     )

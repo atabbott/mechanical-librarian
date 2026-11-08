@@ -29,7 +29,10 @@ from mechanical_librarian.domain.metadata_report import (
     _provider_from_data,
 )
 from tests.support.audiobook_providers import local_runtime_claim, work_plan
-from tests.support.hardcover_evidence import hardcover_envelope
+from tests.support.hardcover_evidence import (
+    books_envelope,
+    hardcover_answer,
+)
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 _TITLE = "Ember Tide Protocol"
@@ -44,8 +47,7 @@ def _plan(*, audio: bool = True) -> MetadataDiscoveryPlan:
 
 
 def _work_response(book_ids: tuple[int, ...] = (10,)) -> dict[str, object]:
-    return hardcover_envelope(
-        [],
+    return books_envelope(
         [
             {
                 "id": book_id,
@@ -139,7 +141,7 @@ def test_counted_editions_are_kept_with_runtime_narrator_and_asin() -> None:
     )
 
     assert ProviderStatus.CANDIDATES is observation.status
-    assert ["MetadataEvidenceByWork", "AudioEditions"] == [
+    assert ["BooksByTitleAuthor", "AudioEditions"] == [
         body["operationName"] for body in sent
     ]
     assert {"book": 10, "offset": 0} == sent[1]["variables"]
@@ -161,7 +163,7 @@ def test_an_ebook_lane_never_asks_for_audio_editions() -> None:
         _plan(audio=False),
     )
 
-    assert ["MetadataEvidenceByWork"] == [body["operationName"] for body in sent]
+    assert ["BooksByTitleAuthor"] == [body["operationName"] for body in sent]
     assert () == observation.audio_editions
 
 
@@ -274,7 +276,8 @@ def _dated_observation(
             return _page()
         return httpx.Response(
             200,
-            json=hardcover_envelope(
+            json=hardcover_answer(
+                request,
                 [] if plan.audio is not None else [{"id": 3, "book_id": 10}],
                 [
                     {
