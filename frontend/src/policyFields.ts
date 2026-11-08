@@ -8,10 +8,10 @@ import { destinationLabel } from './labels'
 export const audiobookOperationLabels = {
   fill: 'Fill an empty field',
   preserve: 'Keep the current value',
-  normalize: 'Normalise the representation',
+  normalize: 'Normalise the current value',
   add: 'Add supported members',
   replace: 'Replace the current value',
-  replace_invalid: 'Replace an invalid ASIN',
+  replace_invalid: 'Replace an unreadable ASIN',
   replace_recording: 'Replace a valid ASIN',
 } as const
 
@@ -31,8 +31,8 @@ export const operationWords = {
   normalize: 'normalise',
   add: 'add',
   replace: 'replace',
-  replace_invalid: 'replace invalid',
-  replace_recording: 'replace recording',
+  replace_invalid: 'replace unreadable',
+  replace_recording: 'replace valid',
 } as const
 export const policyDestinationLabels = {
   ask: 'Ask me',
@@ -62,7 +62,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'title_layout',
     label: 'Title and subtitle',
-    meaning: 'Keep a title and subtitle together as one coherent identity.',
+    meaning: 'Decide the title and subtitle together.',
     options: ['preserve', 'title_and_subtitle'],
     optionLabels: {
       preserve: 'Preserve current layout',
@@ -73,7 +73,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'contributor_names',
     label: 'Authors and narrators',
-    meaning: 'Preserve contributor order while choosing how supported names appear.',
+    meaning: 'Keep the order of names and choose how they are written.',
     options: ['preserve', 'canonical'],
     optionLabels: { preserve: 'Preserve supported form', canonical: 'Use canonical names' },
     chapter: 'identity',
@@ -81,8 +81,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'language_rendering',
     label: 'Language',
-    meaning:
-      'Write every language as one display name, such as English; a current value of the same language spelled another way is respelled, and another language is never written.',
+    meaning: 'Write each language by name, such as English.',
     options: ['display_name'],
     optionLabels: {
       display_name: 'Use language display name',
@@ -92,20 +91,20 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'subtitle',
     label: 'Subtitle',
-    meaning: 'Use a supported descriptive subtitle, or a corroborated title and subtitle pair.',
+    meaning:
+      'Use a descriptive subtitle, or a title and subtitle pair confirmed by another source.',
     options: ['fill_empty', 'replace_descriptive', 'corroborated_split'],
     optionLabels: {
       fill_empty: 'Fill only when empty',
       replace_descriptive: 'Replace a promotional subtitle',
-      corroborated_split: 'Use corroborated split',
+      corroborated_split: 'Use a confirmed split',
     },
     chapter: 'identity',
   },
   {
     key: 'date_precision',
     label: 'Publication date and year',
-    meaning:
-      'Audiobooks use original work publication; ebooks retain edition publication. Recording release dates stay separate.',
+    meaning: "Audiobooks use the date the work was first published, and ebooks the edition's date.",
     options: ['year', 'full_date'],
     optionLabels: { year: 'Year only', full_date: 'Keep source date precision' },
     chapter: 'publication',
@@ -113,7 +112,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'publisher_preference',
     label: 'Publisher',
-    meaning: 'Choose the supported publisher or imprint for the applicable work or edition.',
+    meaning: 'Choose the publisher or imprint for the work or edition.',
     options: ['publisher', 'imprint'],
     optionLabels: { publisher: 'Prefer publisher', imprint: 'Prefer imprint' },
     chapter: 'publication',
@@ -122,7 +121,7 @@ export const fields: readonly FieldDefinition[] = [
     key: 'isbn_form',
     label: 'ISBN',
     meaning:
-      'Use an ISBN associated with the selected audiobook recording or ebook edition; a lookup hint alone is not enough.',
+      'Use the ISBN of the audiobook recording or the ebook edition. An ISBN used only to search is not enough.',
     options: ['preserve_exact', 'prefer_isbn13'],
     optionLabels: { preserve_exact: 'Preserve exact ISBN', prefer_isbn13: 'Prefer ISBN-13' },
     chapter: 'publication',
@@ -130,8 +129,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'series',
     label: 'Series memberships',
-    meaning:
-      'Fill empty Series, add supported memberships, or explicitly replace the current list.',
+    meaning: 'Fill an empty Series, add supported memberships, or replace the current list.',
     options: [
       'primary_narrative',
       'source_order',
@@ -151,7 +149,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'genres',
     label: 'Genres',
-    meaning: 'Use one exact eligible source list.',
+    meaning: "Use one source's genre list as it is.",
     options: ['fill_empty', 'add', 'replace'],
     optionLabels: {
       fill_empty: 'Fill only when empty',
@@ -164,7 +162,7 @@ export const fields: readonly FieldDefinition[] = [
     key: 'tags',
     label: 'Tags',
     meaning:
-      'Tags are off by default, and while off they never ask for review. When enabled, use compatible source tags or review them yourself.',
+      'Tags start Off and are never asked about while Off. The other options take them from sources.',
     options: ['off', 'fill_empty', 'add', 'replace'],
     optionLabels: {
       off: 'Off',
@@ -177,8 +175,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'description_fill',
     label: 'Description',
-    meaning:
-      'Deterministic selection retains one source description. Audiobooks preserve useful existing prose; optional advice can separately rewrite or combine text.',
+    meaning: "Use one source's description. Audiobooks keep useful text they already have.",
     options: ['safe_plain_text', 'google_visible_text', 'replace_safe_plain_text'],
     optionLabels: {
       safe_plain_text: 'Fill empty with safe plain text',
@@ -191,19 +188,18 @@ export const fields: readonly FieldDefinition[] = [
     key: 'cover_order',
     label: 'Cover',
     meaning:
-      'Use a confirmed cover. Audiobooks keep an adequate cover and replace only a small incumbent with a materially larger match.',
+      'Use a confirmed cover. Audiobooks replace a small current cover only with a clearly larger one.',
     options: ['fixed_source_order', 'replace_if_strictly_better'],
     optionLabels: {
-      fixed_source_order: 'Fill from confirmed order',
-      replace_if_strictly_better: 'Replace with a material improvement',
+      fixed_source_order: 'Fill from confirmed covers',
+      replace_if_strictly_better: 'Replace with a clearly larger cover',
     },
     chapter: 'curation',
   },
   {
     key: 'asin',
     label: 'ASIN',
-    meaning:
-      'Use an ASIN associated with the audiobook recording, or the ASIN of a confirmed ebook edition.',
+    meaning: 'Use the ASIN of the audiobook recording, or of a confirmed ebook edition.',
     options: ['preserve_exact', 'ebook_manifestation'],
     optionLabels: {
       preserve_exact: 'Preserve exact ASIN',
@@ -214,8 +210,7 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'explicit',
     label: 'Explicit-content flag',
-    meaning:
-      'An adult-product source may set an audiobook flag to true. Missing or false evidence never clears it or certifies clean content.',
+    meaning: 'An adult-product source can turn the flag on for an audiobook.',
     options: ['unsupported', 'adult_product'],
     optionLabels: {
       unsupported: 'Leave flag unchanged',
@@ -230,82 +225,81 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   'title_layout:preserve': {
     admitted: 'the current candidate value and its policy/audit context',
     transformation: 'does not transform the produced candidate',
-    effect: 'Automatic records the selected title; the subtitle is context only',
-    fallback: 'makes no change when Automatic cannot decide safely',
+    effect: 'Automatic records the selected title and leaves the subtitle as it is',
+    fallback: 'makes no change when Automatic cannot decide',
   },
   'title_layout:title_and_subtitle': {
     admitted: 'the current candidate value and its policy/audit context',
     transformation: 'does not split the produced candidate',
-    effect: 'Automatic records the selected title; the subtitle is context only',
-    fallback: 'makes no change when Automatic cannot decide safely',
+    effect: 'Automatic records the selected title and leaves the subtitle as it is',
+    fallback: 'makes no change when Automatic cannot decide',
   },
   'contributor_names:preserve': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without transforming the candidate',
-    effect: 'Automatic writes only the selected contributor value',
-    fallback: 'makes no change when Automatic cannot decide safely',
+    effect: 'Automatic writes only the selected names',
+    fallback: 'makes no change when Automatic cannot decide',
   },
   'contributor_names:canonical': {
     admitted:
       'the already-produced exact candidate from provider-consensus display evidence and its retained local provenance',
     transformation:
       'replaces only an equivalent local contributor display form without reconciling contributor identity',
-    effect: 'Automatic writes only the selected contributor value',
-    fallback: 'makes no change when Automatic cannot decide safely',
+    effect: 'Automatic writes only the selected names',
+    fallback: 'makes no change when Automatic cannot decide',
   },
   'language_rendering:display_name': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation:
       'writes the display name of the language the evidence names, such as English; keeps a current value already spelled that way',
     effect:
-      'Automatic fills an empty or undetermined language and respells a current value of the same language to that name; a different language is never written',
+      "Automatic writes the language's name into an empty or unknown field, and respells the same language written another way",
     fallback:
-      'keeps the recorded form when a language has no display name; an undetermined language is never written',
+      'keeps the current form when a language has no name, and never writes a different or unknown language',
   },
   'subtitle:fill_empty': {
     admitted: "one supported subtitle attested by the book's own metadata",
     transformation: 'uses the exact admitted text',
     effect: 'fills an empty Subtitle only',
-    fallback:
-      "makes no change when Subtitle already has a value or the book's own metadata does not state it",
+    fallback: "makes no change when Subtitle has a value or the book's own details give none",
   },
   'subtitle:corroborated_split': {
     admitted: 'one corroborated title and subtitle pair',
     transformation: 'splits only an admitted exact joined title',
     effect: 'sets Title and Subtitle together',
     fallback:
-      'requires both fields to be Automatic with write permission; if either is blocked, neither changes',
+      'needs both fields set to Automatic, with write permission. If either is held back, neither changes',
   },
   'subtitle:replace_descriptive': {
     admitted: 'a supported descriptive subtitle for this audiobook work',
     transformation: 'replaces only a recognized whole-field promotion',
     effect: 'fills an empty Subtitle or replaces an award, bestseller or adaptation announcement',
-    fallback: 'keeps genuine descriptive text and never clears a subtitle from missing evidence',
+    fallback: 'keeps real descriptive text, and never clears a subtitle because sources lack one',
   },
   'date_precision:year': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without reducing the candidate',
     effect: 'Automatic writes only the selected publication date or year',
     fallback:
-      "audiobooks need a confirmed original publication date; a recording's release date is not used",
+      "audiobooks need a confirmed original publication date. A recording's release date is not used",
   },
   'date_precision:full_date': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without changing candidate precision',
     effect: 'Automatic writes only the selected publication date or year',
     fallback:
-      'audiobooks retain the supplied year, month or day precision without inventing a date; Automatic must support the change',
+      'audiobooks keep the year, month or day precision the source gives. No date is invented',
   },
   'publisher_preference:publisher': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without selecting a publisher value',
     effect: 'Automatic writes only the selected publisher',
-    fallback: 'makes no change when Automatic cannot decide safely',
+    fallback: 'makes no change when Automatic cannot decide',
   },
   'publisher_preference:imprint': {
     admitted: 'the already-produced exact Publisher preview candidate and its policy/audit context',
     transformation: 'records the option without selecting an imprint value',
-    effect: 'the preview shows the selected publisher; Automatic does not write an imprint',
+    effect: 'the preview shows the selected publisher. Automatic does not write an imprint',
     fallback: 'makes no change when no publisher is found',
   },
   'isbn_form:preserve_exact': {
@@ -335,21 +329,20 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   'series:all_qualified': {
     admitted: 'all provider-backed qualified memberships for this work',
     transformation: 'keeps them visible in admitted order',
-    effect:
-      'keeps the full context while Automatic fills an empty Series field with only its first membership',
+    effect: 'shows every membership, but Automatic fills an empty Series field with only the first',
     fallback: 'makes no change when no series membership is confirmed',
   },
   'series:add_qualified': {
     admitted: 'supported series and sequence associations for this work',
     transformation: 'retains current memberships and adds missing associations',
     effect: 'extends Series only where Automatic supports adding for this media',
-    fallback: 'asks you when Automatic cannot add safely or the evidence is ambiguous',
+    fallback: 'asks you when Automatic cannot add, or the sources do not agree',
   },
   'series:replace_qualified': {
     admitted: 'supported series and sequence associations for this work',
     transformation: 'uses the complete selected list',
     effect: 'replaces Series only where Automatic supports replacing for this media',
-    fallback: 'asks you when Automatic cannot replace safely or the evidence is ambiguous',
+    fallback: 'asks you when Automatic cannot replace, or the sources do not agree',
   },
   'genres:fill_empty': {
     admitted: 'one exact eligible source list',
@@ -373,7 +366,7 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted: 'no source value',
     transformation: 'does not transform metadata',
     effect: 'leaves Tags unchanged',
-    fallback: 'never changes tags',
+    fallback: 'never asks you about tags',
   },
   'tags:fill_empty': {
     admitted: 'compatible explicit tag lists from applicable sources',
@@ -385,7 +378,7 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted: 'compatible explicit tag lists from applicable sources',
     transformation: 'keeps owner tags and adds supported audiobook members in stable order',
     effect: 'extends Tags',
-    fallback: 'makes no change when the lists are malformed, incomplete or conflicting',
+    fallback: 'makes no change when a list is unreadable or incomplete, or the lists disagree',
   },
   'tags:replace': {
     admitted: 'one exact eligible source list',
@@ -398,24 +391,24 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
       'safe complete text from an applicable source; catalogue placeholders are excluded from automatic ebook fills and retained for explicit choice',
     transformation:
       'uses the preferred applicable source; equal sources use stable source-record order, never text length',
-    effect: 'fills an empty Description; preserves populated prose',
+    effect: 'fills an empty Description and keeps existing text',
     fallback:
-      'makes no change for unsafe or incomplete source text, conflicting work identity, or when Automatic is unavailable',
+      'makes no change when the source text is unsafe or incomplete, or the sources disagree about the work',
   },
   'description_fill:replace_safe_plain_text': {
     admitted: 'safe complete synopsis text from an applicable source',
     transformation:
       'keeps the original preferred source text; equal audiobook sources use stable source-record order',
     effect:
-      'for audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text',
+      'for audiobooks, fills an empty Description or replaces a placeholder, such as a lone chapter number or "No synopsis". Other text is kept. For ebooks, fills or replaces it with source text',
     fallback:
-      'makes no change for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not judge writing quality',
+      'makes no change when the text is unsafe or incomplete, or the sources disagree. The placeholder rule does not judge how well a description is written',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',
     transformation: 'turns bounded Google HTML into inert visible text',
     effect: 'fills an empty Description only',
-    fallback: 'makes no change without it and never falls back to Hardcover',
+    fallback: 'makes no change without Google Books text, and never uses Hardcover instead',
   },
   'cover_order:fixed_source_order': {
     admitted: 'identity-confirmed non-current covers after provider fetching is quiescent',
@@ -427,9 +420,9 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted: 'confirmed audiobook covers with a known small incumbent',
     transformation: 'selects the first eligible cover in the existing confirmed order',
     effect:
-      'replaces an incumbent below 300 pixels on its shorter edge with a candidate at least 500 pixels and twice as large on that edge',
+      'replaces a current cover under 300 pixels on its shorter edge with one at least 500 pixels and twice as large on that edge',
     fallback:
-      'keeps a current cover that is large enough or of unknown size; the new cover must be portrait or square, and Automatic must support the change',
+      'keeps a current cover that is large enough or of unknown size. The new cover must be portrait or square',
   },
   'asin:preserve_exact': {
     admitted: 'an already admitted exact ASIN',
@@ -447,14 +440,14 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted: 'no automatic source value',
     transformation: 'does not interpret content',
     effect: 'leaves the explicit-content flag unchanged',
-    fallback: 'stays off until you choose an eligible option and review mode',
+    fallback: 'nothing changes until you choose the other option and a setting',
   },
   'explicit:adult_product': {
     admitted: 'positive adult-product evidence for the applicable audiobook',
     transformation: 'sets only true, never false',
-    effect: 'may set the flag to true after separate application consent',
+    effect: 'can turn the flag on, once you give write permission',
     fallback:
-      'preserves the current flag for false or missing evidence; this does not certify clean content',
+      'keeps the current flag when a source says no or nothing. An unset flag does not mean the book is clean',
   },
 }
 
@@ -471,27 +464,11 @@ export const fieldDefaults: Readonly<Record<string, PolicyFieldDefault>> = Objec
   ]),
 )
 
-export const chapters: readonly { key: PolicySection; label: string; description: string }[] = [
-  {
-    key: 'identity',
-    label: 'Identity',
-    description: 'How a work names itself and its contributors.',
-  },
-  {
-    key: 'publication',
-    label: 'Publication',
-    description: 'How edition facts and memberships are represented.',
-  },
-  {
-    key: 'curation',
-    label: 'Curation',
-    description: 'Fields that remain intentionally owner-directed.',
-  },
-  {
-    key: 'unsupported',
-    label: 'Additional fields',
-    description: 'Fields with limited support that start off until you enable them.',
-  },
+export const chapters: readonly { key: PolicySection; label: string }[] = [
+  { key: 'identity', label: 'Identity' },
+  { key: 'publication', label: 'Publication' },
+  { key: 'curation', label: 'Curation' },
+  { key: 'unsupported', label: 'Additional fields' },
 ]
 
 // A suspension category is a policy field or, for a provider-consensus
@@ -524,5 +501,5 @@ export const automaticQualified = (
 // apply are the two sentences that belong on the line.
 export const representationConsequence = (guidance: RepresentationGuidance | undefined) =>
   guidance === undefined
-    ? 'No owner-readable consequence is recorded for this representation.'
-    : `${guidance.effect.slice(0, 1).toUpperCase()}${guidance.effect.slice(1)}; ${guidance.fallback}.`
+    ? 'Nothing is recorded for this option.'
+    : `${guidance.effect.slice(0, 1).toUpperCase()}${guidance.effect.slice(1)}. ${guidance.fallback.slice(0, 1).toUpperCase()}${guidance.fallback.slice(1)}.`
