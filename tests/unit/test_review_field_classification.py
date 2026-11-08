@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import get_args
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +16,8 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
+    ReviewFieldCause,
+    ReviewFieldClassificationCause,
     classify_review_field,
 )
 from tests.support.review_cases import _report
@@ -28,7 +31,7 @@ def attention_documents():
 
 
 @pytest.mark.parametrize(
-    ("inputs", "state", "attention", "editable"),
+    ("inputs", "state", "cause", "attention", "editable"),
     (
         (
             {
@@ -38,6 +41,7 @@ def attention_documents():
                 "suspended": False,
             },
             "needs_attention",
+            "review_needed",
             True,
             True,
         ),
@@ -49,6 +53,7 @@ def attention_documents():
                 "suspended": False,
             },
             "manual_fallback",
+            "automatic_abstained",
             True,
             True,
         ),
@@ -60,6 +65,7 @@ def attention_documents():
                 "suspended": False,
             },
             "automatic_recorded",
+            "automatic_decided",
             False,
             True,
         ),
@@ -71,6 +77,7 @@ def attention_documents():
                 "suspended": False,
             },
             "human_recorded",
+            "human_decided",
             False,
             True,
         ),
@@ -82,6 +89,7 @@ def attention_documents():
                 "suspended": True,
             },
             "unsupported",
+            "automatic_safety_suspended",
             False,
             False,
         ),
@@ -93,6 +101,7 @@ def attention_documents():
                 "suspended": False,
                 "owner_choosable": True,
             },
+            "owner_choosable",
             "owner_choosable",
             False,
             True,
@@ -108,7 +117,7 @@ def attention_documents():
     ),
 )
 def test_closed_matrix_keeps_attention_and_recorded_states_distinct(
-    inputs: dict[str, object], state: str, attention: bool, editable: bool
+    inputs: dict[str, object], state: str, cause: str, attention: bool, editable: bool
 ) -> None:
     value = classify_review_field(
         **inputs,
@@ -116,6 +125,7 @@ def test_closed_matrix_keeps_attention_and_recorded_states_distinct(
         proposed_values=("Title",),
     )
     assert value.state == state
+    assert value.cause == cause
     assert value.needs_attention == attention
     assert value.editable == editable
     assert value.preservation_only
@@ -131,18 +141,23 @@ _BASE_INPUTS: dict[str, object] = {
 
 
 @pytest.mark.parametrize(
-    ("higher", "state"),
+    ("higher", "state", "cause"),
     (
-        ({"attention_candidate": True}, "needs_attention"),
-        ({"automatic_outcome": "abstention"}, "manual_fallback"),
-        ({"automatic_outcome": "candidate"}, "automatic_recorded"),
-        ({"has_human_decision": True}, "human_recorded"),
+        ({"attention_candidate": True}, "needs_attention", "review_needed"),
+        ({"automatic_outcome": "abstention"}, "manual_fallback", "automatic_abstained"),
+        ({"automatic_outcome": "candidate"}, "automatic_recorded", "automatic_decided"),
+        ({"has_human_decision": True}, "human_recorded", "human_decided"),
         (
             {"suspended": True, "cause": "external_field_failure"},
             "unsupported",
+            "external_field_failure",
         ),
-        ({"cause": "automatic_safety_suspended"}, "needs_attention"),
-        ({"cause": "unsupported"}, "unsupported"),
+        (
+            {"cause": "automatic_safety_suspended"},
+            "needs_attention",
+            "automatic_safety_suspended",
+        ),
+        ({"cause": "unsupported"}, "unsupported", "unsupported"),
     ),
     ids=(
         "attention",
@@ -155,7 +170,7 @@ _BASE_INPUTS: dict[str, object] = {
     ),
 )
 def test_every_other_input_decides_before_owner_choosable(
-    higher: dict[str, object], state: str
+    higher: dict[str, object], state: str, cause: str
 ) -> None:
     """An optional choice is only what is left when nothing else applies."""
     inputs = {**_BASE_INPUTS, **higher}
@@ -170,6 +185,7 @@ def test_every_other_input_decides_before_owner_choosable(
     )
 
     assert plain.state == choosable.state == state
+    assert plain.cause == choosable.cause == cause
     assert plain == choosable
 
 
@@ -182,6 +198,7 @@ def test_owner_choosable_is_an_uncounted_inspectable_choice() -> None:
     )
 
     assert value.navigation_role == "inspect"
+    assert value.cause == "owner_choosable"
     assert value.recorded is False
     assert value.preservation_only is False
     # The browser's needs-review filter must never read this reason.
@@ -213,6 +230,7 @@ def test_an_immaterial_optional_choice_says_why_no_review_is_needed() -> None:
     assert immaterial == plain.__class__(
         plain.state,
         immaterial.reason,
+        plain.cause,
         plain.needs_attention,
         plain.editable,
         plain.recorded,
@@ -230,8 +248,9 @@ def test_an_immaterial_optional_choice_says_why_no_review_is_needed() -> None:
         "Your current cover is kept, so no review is needed. You can still "
         "choose another cover."
     )
-    assert (kept.state, kept.needs_attention, kept.editable) == (
+    assert (kept.state, kept.cause, kept.needs_attention, kept.editable) == (
         plain.state,
+        "owner_choosable",
         False,
         True,
     )
@@ -280,6 +299,7 @@ def test_a_choice_the_policy_settles_says_the_value_is_kept(
         **{flag: True},
     )
     assert optional.state == "owner_choosable"
+    assert optional.cause == "owner_choosable"
     assert optional.needs_attention is False
     assert optional.reason == reason
     assert not re.search(r"verified|confirmed", optional.reason, re.IGNORECASE)
@@ -323,6 +343,67 @@ def test_owner_guidance_is_distinct_for_each_typed_unavailable_cause(
         proposed_values=(),
     )
     assert value.reason == guidance
+    assert value.cause == cause
+
+
+@pytest.mark.parametrize(
+    ("inputs", "state", "cause"),
+    (
+        ({"suspended": True}, "unsupported", "automatic_safety_suspended"),
+        ({}, "unsupported", "nothing_to_decide"),
+        ({"owner_entry": True}, "unsupported", "nothing_to_decide"),
+        (
+            {"automatic_outcome": "candidate", "override_available": False},
+            "automatic_recorded",
+            "automatic_decided",
+        ),
+        (
+            {"has_human_decision": True, "override_available": False},
+            "human_recorded",
+            "human_decided",
+        ),
+        (
+            # A cause a higher branch overrides does not leak into the code.
+            {
+                "attention_candidate": True,
+                "cause": "external_connection_failure",
+            },
+            "needs_attention",
+            "review_needed",
+        ),
+        (
+            {"has_human_decision": True, "cause": "automatic_safety_suspended"},
+            "human_recorded",
+            "human_decided",
+        ),
+    ),
+    ids=(
+        "suspended-without-cause",
+        "fallback",
+        "owner-entry-fallback",
+        "automatic-override-blocked",
+        "human-override-blocked",
+        "ignored-cause",
+        "human-over-safety",
+    ),
+)
+def test_the_code_names_the_branch_that_chose_the_sentence(
+    inputs: dict[str, object], state: str, cause: str
+) -> None:
+    """Library reads the code, never the sentence, so each branch names its own (#1791)."""
+    value = classify_review_field(
+        **{**_BASE_INPUTS, **inputs},
+        current_value="Title",
+        proposed_values=("Other",),
+    )
+    assert (value.state, value.cause) == (state, cause)
+
+
+def test_the_code_list_holds_every_input_cause() -> None:
+    assert set(get_args(ReviewFieldCause)) <= set(
+        get_args(ReviewFieldClassificationCause)
+    )
+    assert len(set(get_args(ReviewFieldClassificationCause))) == 11
 
 
 @pytest.mark.parametrize(

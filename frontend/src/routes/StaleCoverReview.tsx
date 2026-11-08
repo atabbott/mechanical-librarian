@@ -90,7 +90,10 @@ export const useStaleCoverReview = ({
             This cover comparison changed before your choice was recorded. No cover was changed.
           </p>
           {staleCoverReview.failed && !staleCoverReview.stale ? (
-            <p>The current comparison could not be loaded. Try again.</p>
+            <p>
+              The current comparison could not be loaded. Choose Review current comparison to try
+              again.
+            </p>
           ) : null}
         </div>
         {staleCoverReview.stale ? (
