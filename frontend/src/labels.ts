@@ -544,8 +544,8 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
   atomic_bundle_unavailable: 'A linked field this choice depends on is unavailable.',
   corroborated_split_unavailable:
     'The confirmed title and subtitle do not match the current combined title.',
-  option_evidence_unavailable: 'The source details your chosen setting needs are unavailable.',
-  policy_option_unavailable: 'The setting you chose does not apply to this field.',
+  option_evidence_unavailable: 'The source details your chosen option needs are unavailable.',
+  policy_option_unavailable: 'The option you chose does not apply to this field.',
   target_projection_oversized: 'The result would be longer than the library accepts.',
   policy_off: 'Tag handling is off.',
   explicit_unsupported: 'Explicit content is never marked for you with this setting.',

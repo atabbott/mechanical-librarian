@@ -103,7 +103,7 @@ def test_csrf_renewal_resends_idempotent_decision_and_pure_policy_validation() -
 
                 page.get_by_role("button", name="Validate and preview").click()
                 page.get_by_text(
-                    "Impact preview is current. The active policy is unchanged."
+                    "Impact preview ready. The active policy is unchanged."
                 ).wait_for()
                 assert validations == [403, 200]
             browser.close()

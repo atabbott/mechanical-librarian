@@ -1989,7 +1989,7 @@ describe('ReviewApiClient', () => {
       change_detail: 'Set Series from Not set to Earthsea Cycle',
       field_label: 'Series',
       policy_changes: [
-        { field: 'Title', setting: 'Review mode', previous: 'Ask me', next: 'Automatic' },
+        { field: 'Title', setting: 'Setting', previous: 'Ask me', next: 'Automatic' },
       ],
       evidence: [{ label: 'Previous value', value: 'Not set' }],
       library: 'Fiction',
@@ -2122,7 +2122,7 @@ describe('ReviewApiClient', () => {
     })
     expect(activity.events[0]?.policy_changes[0]).toEqual({
       field: 'Title',
-      setting: 'Review mode',
+      setting: 'Setting',
       previous: 'Ask me',
       next: 'Automatic',
     })

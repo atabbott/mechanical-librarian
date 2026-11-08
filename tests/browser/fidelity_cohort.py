@@ -1272,19 +1272,19 @@ def _cohort_change(work: str, destination: str) -> tuple[str, str, str]:
 _COHORT_POLICY_CHANGES = [
     {
         "field": "Title layout",
-        "setting": "Review mode",
+        "setting": "Setting",
         "previous": "Ask me",
         "next": "Automatic",
     },
     {
         "field": "Description fill",
-        "setting": "Representation",
+        "setting": "Option",
         "previous": "Safe plain text",
         "next": "Visible Google text",
     },
     {
         "field": "Cover",
-        "setting": "Review mode",
+        "setting": "Setting",
         "previous": "Ask me",
         "next": "Automatic",
     },
