@@ -1440,13 +1440,13 @@ describe('Activity route', () => {
               policy_changes: [
                 {
                   field: 'Title layout',
-                  setting: 'Review mode',
+                  setting: 'Setting',
                   previous: 'Ask me',
                   next: 'Automatic',
                 },
                 {
                   field: 'Description fill',
-                  setting: 'Representation',
+                  setting: 'Option',
                   previous: 'Safe plain text',
                   next: 'Visible Google text',
                 },
@@ -1498,7 +1498,7 @@ describe('Activity route', () => {
     await user.click(disclosureFor('Library policy'))
     const table = screen.getByLabelText('2 exact policy changes')
     expect(table).toHaveTextContent('Title layout')
-    expect(table).toHaveTextContent('Review mode')
+    expect(table).toHaveTextContent('Setting')
     expect(table).toHaveTextContent('Ask me')
     expect(table).toHaveTextContent('Automatic')
     expect(table).toHaveTextContent('Visible Google text')

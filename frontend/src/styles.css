@@ -346,7 +346,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
    the room. The segmented options wrap onto further rows rather than split a
    word, so at 200% text each option still reads whole. */
 .cm-policy-route :is(h1, h2, .cm-policy-sidebar nav strong, .cm-policy-field > header strong, .cm-policy-representation > span, .cm-policy-control-heading strong, .cm-finish-summary strong, .cm-policy-impact > b) { overflow-wrap:normal; }
-.cm-policy-sidebar nav button small { color:var(--soft); font-size:.75rem; line-height:1.35; }
 .cm-change-count { flex:none; display:grid; width:26px; height:26px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; color:var(--soft); font-size:.75rem; }
 [aria-current='page'] > .cm-change-count { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); }
 .cm-policy-mode { margin:auto .65rem .65rem; padding:.7rem .55rem; border-top:1px solid var(--line); }
@@ -364,7 +363,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-content > header { display:grid; align-content:center; min-height:4.9rem; padding:.95rem 1.35rem .8rem; }
 .cm-policy-content > header > div { max-width:62ch; }
 .cm-policy-content > header h2 { margin:0 0 .18rem; font:700 1.6rem/1.15 Georgia,serif; }
-.cm-policy-content > header p { margin:0; color:var(--soft); font-size:.76rem; line-height:1.4; }
 .cm-policy-field-list { display:grid; border-top:1px solid var(--line); }
 .cm-policy-field { display:grid; grid-template-columns:minmax(190px,.84fr) minmax(260px,1.15fr) minmax(190px,.86fr); align-items:center; gap:.75rem; margin:0; padding:.75rem 1.35rem; border:0; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
 .cm-policy-field.is-changed { background:var(--notice-soft); }
@@ -565,7 +563,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-sidebar > header small { grid-column:2; grid-row:1; max-width:22ch; text-align:right; }
   .cm-policy-sidebar nav { grid-template-columns:repeat(4,minmax(0,1fr)); gap:.35rem; }
   .cm-policy-sidebar nav button { min-height:52px; }
-  .cm-policy-sidebar nav button small { display:none; }
   .cm-policy-mode { margin:.15rem .65rem .65rem; }
   .cm-finish-tray:not(.settings-tray) { position:static; }
   .settings-change-review { max-height:min(30vh,14rem); }

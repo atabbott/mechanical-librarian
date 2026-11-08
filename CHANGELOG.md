@@ -149,6 +149,11 @@ brackets are GitHub issues.
 - The sign-in page has one heading, "Sign in to review your library", without
   the eyebrow, tagline and paragraph about write permission around it, and the
   forgotten-password steps say what to do in short sentences (#1765).
+- Policy reads in your words. Each field has an option and a setting
+  (Automatic, Ask me, Ignore or Not supported) instead of a "representation"
+  and a "review mode"; the chapters lose their captions; the impact preview
+  counts undecided works; lost answers say "No answer came back"; and
+  "authoritative", "retained", "reconciled" and "safely" are gone (#1765).
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).

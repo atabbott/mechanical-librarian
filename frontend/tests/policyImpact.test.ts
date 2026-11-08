@@ -14,7 +14,7 @@ describe('policy impact projections', () => {
         reason: null,
         target_state: 'missing',
       }).detail,
-    ).toBe('fills the empty field with Title: Synthetic Journey; Subtitle: A Tale of Courage')
+    ).toBe('fills the empty field with title Synthetic Journey and subtitle A Tale of Courage')
   })
 
   it('reads a list or series as Activity does, never as raw JSON (#1286 X6)', () => {
@@ -160,8 +160,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail:
-        'The preview did not select an automatic action; no more specific reason is available.',
+      detail: 'No value would be chosen for you, and no more specific reason is known.',
     })
     expect(
       policyImpactDisplay({
@@ -174,7 +173,7 @@ describe('policy impact projections', () => {
       }),
     ).toMatchObject({
       changed: false,
-      title: 'Needs review',
+      title: 'Needs you',
       detail: 'Current value is unavailable or unreadable. Inspect the source before deciding.',
     })
     expect(
@@ -189,7 +188,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains empty. This policy leaves the field unchanged.',
+      detail: 'remains empty. Ignore leaves this field unchanged.',
     })
     expect(
       policyImpactDisplay({
@@ -230,7 +229,7 @@ describe('policy impact projections', () => {
       }),
     ).toMatchObject({
       changed: false,
-      title: 'Needs review',
+      title: 'Needs you',
       detail: 'The sources do not agree on one value.',
     })
     expect(
@@ -259,7 +258,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains Current title. This policy leaves the field unchanged.',
+      detail: 'remains Current title. Ignore leaves this field unchanged.',
     })
     expect(
       policyImpactDisplay({
@@ -384,14 +383,14 @@ describe('policy impact projections', () => {
       expect(guidance.effect).toMatch(/^Automatic writes only the selected /)
       if (key === 'date_precision:year') {
         expect(guidance.fallback).toBe(
-          "audiobooks need a confirmed original publication date; a recording's release date is not used",
+          "audiobooks need a confirmed original publication date. A recording's release date is not used",
         )
       } else if (key === 'date_precision:full_date') {
         expect(guidance.fallback).toBe(
-          'audiobooks retain the supplied year, month or day precision without inventing a date; Automatic must support the change',
+          'audiobooks keep the year, month or day precision the source gives. No date is invented',
         )
       } else {
-        expect(guidance.fallback).toBe('makes no change when Automatic cannot decide safely')
+        expect(guidance.fallback).toBe('makes no change when Automatic cannot decide')
       }
     }
     const language = policyRepresentationGuidance['language_rendering:display_name']
@@ -401,10 +400,10 @@ describe('policy impact projections', () => {
       'writes the display name of the language the evidence names, such as English; keeps a current value already spelled that way',
     )
     expect(language.effect).toBe(
-      'Automatic fills an empty or undetermined language and respells a current value of the same language to that name; a different language is never written',
+      "Automatic writes the language's name into an empty or unknown field, and respells the same language written another way",
     )
     expect(language.fallback).toBe(
-      'keeps the recorded form when a language has no display name; an undetermined language is never written',
+      'keeps the current form when a language has no name, and never writes a different or unknown language',
     )
     expect(policyRepresentationGuidance['language_rendering:preserve']).toBeUndefined()
     expect(policyRepresentationGuidance['date_precision:year']?.effect).toBe(
@@ -419,8 +418,8 @@ describe('policy impact projections', () => {
     // The owner reads plain words: none of the audit vocabulary the guidance
     // used to speak in reaches a consequence (#1286).
     for (const guidance of Object.values(policyRepresentationGuidance)) {
-      expect(`${guidance.effect}; ${guidance.fallback}`).not.toMatch(
-        /abstain|qualif|admitted|non-authoritative|projected|destination value/iu,
+      expect(`${guidance.effect}. ${guidance.fallback}`).not.toMatch(
+        /abstain|qualif|admitted|non-authoritative|projected|destination value|retained|incumbent|corroborat|safely/iu,
       )
     }
   })
@@ -460,7 +459,7 @@ describe('ebook synopsis refusals', () => {
       'do not show that this value describes this work',
       'No change',
     ],
-    ['ambiguous_evidence', 'do not agree on one value', 'Needs review'],
+    ['ambiguous_evidence', 'do not agree on one value', 'Needs you'],
   ])('explains %s without claiming no retained source', (reason, text, title) => {
     const display = policyImpactDisplay({
       field: 'description_fill',

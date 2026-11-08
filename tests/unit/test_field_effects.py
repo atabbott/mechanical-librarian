@@ -440,7 +440,7 @@ def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
 ) -> None:
     """The From/To comes from the transition's two profiles, not from now.
 
-    The activation below moves one review mode and one representation. Both
+    The activation below moves one setting and one option. Both
     reach the row as the owner's words for the exact settings that moved, and
     the settings that did not move are absent rather than listed as unchanged.
     """
@@ -477,16 +477,12 @@ def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
     assert record["source_kind"] == "policy_transition"
     changes = record["policy_changes"]
     assert {change["setting"] for change in changes} == {
-        "Review mode",
-        "Representation",
+        "Setting",
+        "Option",
     }
-    review_mode = next(
-        change for change in changes if change["setting"] == "Review mode"
-    )
+    review_mode = next(change for change in changes if change["setting"] == "Setting")
     assert (review_mode["previous"], review_mode["next"]) == ("Ask me", "Skip it")
-    representation = next(
-        change for change in changes if change["setting"] == "Representation"
-    )
+    representation = next(change for change in changes if change["setting"] == "Option")
     assert representation["previous"] != representation["next"]
     assert representation["next"][:1].isupper()
     # Only what moved is named; the profile's other settings are not listed.
