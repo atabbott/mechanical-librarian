@@ -38,7 +38,7 @@ const previewValue = (value: unknown, language = false): string => {
     typeof value.title === 'string' &&
     typeof value.subtitle === 'string'
   )
-    return `Title: ${value.title}; Subtitle: ${value.subtitle}`
+    return `title ${value.title} and subtitle ${value.subtitle}`
   return 'a value this preview cannot show'
 }
 
@@ -57,7 +57,7 @@ export interface PolicyImpactDisplay {
   readonly technicalDetail: string
   readonly title:
     | 'Change'
-    | 'Needs review'
+    | 'Needs you'
     | 'No change'
     | 'No supported value found'
     | 'Policy change'
@@ -75,22 +75,22 @@ const hasMetadataValue = (value: unknown) => value !== null && value !== undefin
 // A reason after "remains …" starts its own sentence (#1760).
 const reasonSentence = (reason: string) => `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`
 const humanReason = (reason: string | null) => {
-  if (reason === 'ambiguous_evidence') return 'evidence is ambiguous'
-  if (reason === 'policy_ignored' || reason === 'policy_off')
-    return 'this policy leaves the field unchanged'
+  if (reason === 'ambiguous_evidence') return 'the sources do not agree on one value'
+  if (reason === 'policy_ignored') return 'Ignore leaves this field unchanged'
+  if (reason === 'policy_off') return 'tag handling is off'
   if (reason === 'explicit_unsupported')
-    return 'this policy leaves the explicit-content flag unchanged'
-  if (reason === 'source_value_absent') return 'the source supplied no ISBN'
-  if (reason === 'source_unavailable') return 'the ISBN source could not be reached'
+    return 'Not supported leaves the explicit-content flag unchanged'
+  if (reason === 'source_value_absent') return 'no source supplied an ISBN'
+  if (reason === 'source_unavailable') return 'the sources could not be read'
   if (reason === 'source_value_malformed_or_incomplete')
-    return 'source ISBN data is malformed or incomplete'
-  if (reason === 'source_values_conflict') return 'sources supply competing ISBNs'
+    return 'the sources give an unreadable or incomplete ISBN'
+  if (reason === 'source_values_conflict') return 'the sources give different ISBNs'
   if (reason === 'source_value_insufficient_association')
-    return 'the supplied ISBN is not sufficiently linked to this recording'
+    return 'the sources do not tie this ISBN closely enough to this recording'
   if (reason === 'verified_manifestation_isbn') return 'it is verified for this edition'
-  if (reason === 'target_work_contradicted') return 'the sources name a different work'
-  if (reason === 'target_preserved' || reason === 'unchanged')
-    return 'the exact current value is preserved'
+  if (reason === 'target_work_contradicted')
+    return 'the sources suggest this value belongs to a different work'
+  if (reason === 'target_preserved' || reason === 'unchanged') return 'the current value is kept'
   return 'no supported value found'
 }
 
@@ -130,19 +130,19 @@ export const policyImpactDisplay = (
   if (field.reason === 'target_state_unusable')
     return {
       changed: false,
-      title: 'Needs review',
+      title: 'Needs you',
       detail: 'Current value is unavailable or unreadable. Inspect the source before deciding.',
       technicalDetail,
     }
   if (field.outcome === 'abstain')
     return {
       changed: false,
-      title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
+      title: field.reason === 'ambiguous_evidence' ? 'Needs you' : 'No change',
       detail:
         field.reason === 'policy_ignored'
           ? `remains ${current}. ${reasonSentence(humanReason(field.reason))}`
           : (automaticRefusalReasons[field.reason ?? ''] ??
-            'The preview did not select an automatic action; no more specific reason is available.'),
+            'No value would be chosen for you, and no more specific reason is known.'),
       technicalDetail,
     }
   if (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value))

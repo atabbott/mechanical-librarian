@@ -466,8 +466,8 @@ preparation row.
 
 ## Policy
 
-Policy rules are in the [automation policy](automation-policy.md). Each option
-leads with its behaviour: Automatic, Ask me, Ignore or unavailable. Limits
+Policy rules are in the [automation policy](automation-policy.md). Each field
+leads with its setting: Automatic, Ask me, Ignore or Not supported. Limits
 appear beside each option and in activation review.
 
 A preview compares retained inputs; it never activates or writes. It separates
