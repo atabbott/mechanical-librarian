@@ -157,6 +157,7 @@ export function RecordedFieldObservations({
 }
 export function MetadataChoice({
   advice,
+  automatic = false,
   retainedAdvice = false,
   context,
   current,
@@ -173,6 +174,8 @@ export function MetadataChoice({
   value,
 }: {
   advice?: ReviewField['descriptionAdvice']
+  // The selected badge names Automatic when the pick is Automatic's (#1765).
+  automatic?: boolean
   retainedAdvice?: boolean
   context: ChoiceContextView | undefined
   current: boolean
@@ -227,7 +230,9 @@ export function MetadataChoice({
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
-          {selected ? <b className="choice-chosen">Your choice</b> : null}
+          {selected ? (
+            <b className="choice-chosen">{automatic ? 'Automatic’s choice' : 'Your choice'}</b>
+          ) : null}
         </small>
         <strong>
           {longDescription

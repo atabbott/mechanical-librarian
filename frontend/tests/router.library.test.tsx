@@ -4534,6 +4534,72 @@ describe('Library route', () => {
     expect(recorded).not.toHaveTextContent('This file’s own identifiers confirm this ISBN.')
   })
 
+  // The selected card names who chose, as the field's tab does (#1765 L2).
+  it.each(['automatic', 'owner'] as const)(
+    'names the chooser on the selected card when %s chose it',
+    async (chooser) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const value = base.proposedValues[0]
+      if (!value) throw new Error('workspace fixture requires a proposed title')
+      const field = {
+        ...base,
+        automaticDecision: {
+          candidate_id: 'alternative-title-1',
+          decision_id: 'automatic-title',
+          destination: 'title' as const,
+          occurred_at: 1,
+          outcome: 'candidate' as const,
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: value,
+          target_fingerprint: base.targetFingerprint,
+        },
+        classification:
+          chooser === 'automatic' ? ('automatic_recorded' as const) : ('human_recorded' as const),
+        decisionActions: ['keep_current', 'accept'] as const,
+        editable: true,
+        humanDecision:
+          chooser === 'owner'
+            ? {
+                actor: 'owner',
+                application: 'apply' as const,
+                application_reason: null,
+                decision_id: 'decision-title',
+                destination: 'title' as const,
+                occurred_at: 2,
+                outcome: 'accept' as const,
+                proposal_id: base.proposalId,
+                review_case_id: 'case-1',
+                selected_value: value,
+                target_fingerprint: base.targetFingerprint,
+              }
+            : null,
+        needsAttention: false,
+        navigationRole: 'resolved' as const,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=title', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [field],
+        })),
+      })
+
+      const card = await screen.findByRole('radio', { name: 'Choose proposed value: New title' })
+      expect(card).toHaveAttribute('aria-checked', 'true')
+      const badge = card.querySelector('.choice-chosen')
+      expect(badge).toHaveTextContent(
+        chooser === 'automatic' ? /^Automatic’s choice$/u : /^Your choice$/u,
+      )
+      expect(
+        screen
+          .getByRole('radio', { name: /Choose current value/u })
+          .querySelector('.choice-chosen'),
+      ).toBeNull()
+    },
+  )
+
   it.each([
     { outcome: 'keep_current' as const, currentValue: 'Unavailable', currentRaw: null },
     { outcome: 'reject' as const, currentValue: 'Unavailable', currentRaw: null },
@@ -5390,10 +5456,16 @@ describe('Library route', () => {
       expect(card).toHaveTextContent('From the matched book, not a confirmed recording.')
       expect(card).not.toHaveTextContent('Match not confirmed')
       expect(card).not.toHaveTextContent('No source confirms this cover belongs')
-      // Other unconfirmed covers keep their wording.
-      expect(
-        within(group).getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (5)' }),
-      ).toHaveTextContent('Match not confirmed')
+      // Other unconfirmed covers keep their title, and no line repeats it (#1765).
+      const unconfirmed = within(group).getByRole('radio', {
+        name: 'Choose Open Library cover, 800 × 1200 px (5)',
+      })
+      expect(unconfirmed).toHaveTextContent('Match not confirmed')
+      expect(unconfirmed.querySelector('.choice-recommendation')).toBeNull()
+      // The matched-book card keeps its reason, the control for the line above.
+      expect(card.querySelector('.choice-recommendation')).toHaveTextContent(
+        'From the matched book, not a confirmed recording.',
+      )
       // The match stays unverified, so the tap still confirms it.
       await user.click(card)
       expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
@@ -13518,13 +13590,13 @@ it('names a language observation as Detail does, in choice evidence and recorded
     items: [
       {
         destinations: ['language'],
-        observation: 'Language: zh-Hant. Retained for review only; not an eligible choice.',
+        observation: 'Language: zh-Hant. Not offered as a choice.',
         role: 'external_observation',
         source: 'Open Library',
       },
       {
         destinations: ['language'],
-        observation: 'Language: UND. Undetermined language; not an eligible choice.',
+        observation: 'Language: UND. Not offered as a choice. The language is not known.',
         role: 'local_presence',
         source: 'Local metadata',
       },
@@ -13539,11 +13611,11 @@ it('names a language observation as Detail does, in choice evidence and recorded
   const region = await screen.findByRole('region', { name: 'Other source values' })
   expect(
     await within(region).findByText(
-      'Language: Traditional Chinese (zh-Hant). Retained for review only; not an eligible choice.',
+      'Language: Traditional Chinese (zh-Hant). Not offered as a choice.',
     ),
   ).toBeVisible()
   expect(
-    within(region).getByText('Language: UND. Undetermined language; not an eligible choice.'),
+    within(region).getByText('Language: UND. Not offered as a choice. The language is not known.'),
   ).toBeVisible()
 })
 

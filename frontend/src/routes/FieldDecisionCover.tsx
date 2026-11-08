@@ -326,8 +326,9 @@ function LibraryCoverChoicesContent({
   const excludedReason = (candidate: (typeof candidates)[number]) =>
     candidate.matchReason === 'matched_book'
       ? 'From the matched book, not a confirmed recording.'
-      : candidate.matchState === 'match_not_confirmed'
-        ? 'No source confirms this cover belongs to this book or edition.'
+      : // The card's title already says Match not confirmed, so no line repeats it (#1765).
+        candidate.matchState === 'match_not_confirmed'
+        ? null
         : candidate.observation === null
           ? 'The reviewer did not check this cover.'
           : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
@@ -462,7 +463,9 @@ function LibraryCoverChoicesContent({
             {!eligibleCandidate ||
             candidate.matchState === 'match_not_confirmed' ||
             candidate.matchReason === 'matched_book' ? (
-              <span className="choice-recommendation">{excludedReason(candidate)}</span>
+              excludedReason(candidate) === null ? null : (
+                <span className="choice-recommendation">{excludedReason(candidate)}</span>
+              )
             ) : recommended && context?.recommendationReason ? (
               <span className="choice-recommendation">{context.recommendationReason}</span>
             ) : null}

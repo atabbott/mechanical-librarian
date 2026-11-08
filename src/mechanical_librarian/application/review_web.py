@@ -2913,7 +2913,7 @@ def _choice_text(value: str | int | float) -> str:
     )
     normalized = " ".join(cleaned.split())
     if not normalized:
-        return "Value retained"
+        return "no readable value"
     return normalized[:160] + ("…" if len(normalized) > 160 else "")
 
 
@@ -2939,12 +2939,8 @@ def _review_unselectable_evidence(
             "source": "Local metadata",
             "observation": (
                 f"Language: {_choice_text(local_claim.observed)}. "
-                + (
-                    "Undetermined language; "
-                    if unknown
-                    else "Retained for review only; "
-                )
-                + "not an eligible choice."
+                + "Not offered as a choice."
+                + (" The language is not known." if unknown else "")
             ),
         }
     for provider in report.providers:
@@ -3000,26 +2996,27 @@ def _review_unselectable_evidence(
                     else None
                 )
                 reason = (
-                    "Undetermined language. "
+                    "The language is not known. "
                     if language
                     and type(claim.value) is str
                     and language_is_unknown(claim.value)
-                    else "Recording language conflicts with this item. "
+                    else "That recording is in another language. "
                     if conflict == "recording_language_conflict"
-                    else "Recording language is not one of this library's. "
+                    else "That recording is not in one of this library\u2019s languages. "
                     if conflict == "recording_language_outside_library"
-                    else "Recording variant conflicts with this item. "
+                    else "That recording is a different version of this audiobook. "
                     if conflict is not None
-                    else "Recording timing is invalid or conflicts with this item. "
+                    else "That recording\u2019s running time is unreadable or does not "
+                    "match this audiobook. "
                     if narrator
                     else ""
                 )
                 value = (
                     _choice_text(claim.value)
                     if claim.state is FieldState.VALID and type(claim.value) is str
-                    else "No valid narrator retained"
+                    else "no readable name"
                     if narrator
-                    else "No valid identifier retained"
+                    else "no readable identifier"
                 )
                 observations.setdefault(
                     claim.reference,
@@ -3028,10 +3025,9 @@ def _review_unselectable_evidence(
                         "role": "external_observation",
                         "source": _provider_label(provider.authority),
                         "observation": (
-                            f"{label}: {value}. Retained for review only; "
-                            f"not an eligible choice. {reason}"
+                            f"{label}: {value}. Not offered as a choice. {reason}"
                             + (
-                                "Edition-level detail."
+                                "It belongs to one edition."
                                 if claim.scope is ClaimScope.EDITION
                                 else ""
                             )

@@ -3511,19 +3511,16 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
     expected_facts: Counter[tuple[str, str, tuple[str, ...], str]] = Counter()
     for reference, (authority, candidate, claim) in claims.items():
         fact = (
-            claim.value
-            if claim.state is FieldState.VALID
-            else "No valid identifier retained"
+            claim.value if claim.state is FieldState.VALID else "no readable identifier"
         )
         expected_facts[
             (
                 {"audible_catalog": "Audible", "audnexus": "Audnexus"}[authority],
                 "external_observation",
                 (claim.kind.value,),
-                f"{claim.kind.value.upper()}: {fact}. Retained for review only; "
-                "not an eligible choice."
+                f"{claim.kind.value.upper()}: {fact}. Not offered as a choice."
                 + (
-                    " Edition-level detail."
+                    " It belongs to one edition."
                     if claim.scope is ClaimScope.EDITION
                     else ""
                 ),
@@ -3554,8 +3551,7 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         assert {fact.reference for fact in report.identifier_evidence} <= set(claims)
     if shape == "malformed":
         assert any(
-            "No valid identifier retained" in item["observation"]
-            for item in observations
+            "no readable identifier" in item["observation"] for item in observations
         )
     with TestClient(app, base_url="https://review.test") as client:
         assert (
@@ -3722,9 +3718,9 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
     assert evidence["role"] == "external_observation"
     assert evidence["destinations"] == ["narrators"]
     assert evidence["observation"] == (
-        "Narrator: Ilsa Brandt. Retained for review only; not an eligible choice. "
-        "Recording variant conflicts with this item."
-        + (" Edition-level detail." if claim.scope is ClaimScope.EDITION else "")
+        "Narrator: Ilsa Brandt. Not offered as a choice. "
+        "That recording is a different version of this audiobook."
+        + (" It belongs to one edition." if claim.scope is ClaimScope.EDITION else "")
     )
     assert "Scope:" not in evidence["observation"]
     assert claim.reference not in _review_unselectable_evidence(

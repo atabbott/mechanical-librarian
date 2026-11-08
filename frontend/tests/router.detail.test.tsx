@@ -104,13 +104,13 @@ describe('Library review ownership', () => {
           },
           {
             destinations: ['language' as const],
-            observation: 'Language: French (fr). Retained for review only; not an eligible choice.',
+            observation: 'Language: French (fr). Not offered as a choice.',
             role: 'local_presence' as const,
             source: 'Local metadata',
           },
           {
             destinations: ['language' as const],
-            observation: 'Language: UND. Undetermined language; not an eligible choice.',
+            observation: 'Language: UND. Not offered as a choice. The language is not known.',
             role: 'local_presence' as const,
             source: 'Local metadata',
           },
@@ -123,11 +123,9 @@ describe('Library review ownership', () => {
     expect(await screen.findByText('Language: English (en)')).toBeVisible()
     expect(screen.getByText('Language: Brazilian Portuguese (pt-BR)')).toBeVisible()
     expect(screen.queryByText('Language: en')).toBeNull()
+    expect(screen.getByText('Language: French (fr). Not offered as a choice.')).toBeVisible()
     expect(
-      screen.getByText('Language: French (fr). Retained for review only; not an eligible choice.'),
-    ).toBeVisible()
-    expect(
-      screen.getByText('Language: UND. Undetermined language; not an eligible choice.'),
+      screen.getByText('Language: UND. Not offered as a choice. The language is not known.'),
     ).toBeVisible()
   })
 

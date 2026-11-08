@@ -68,6 +68,7 @@ import {
   effectSummary,
   commandSelected,
   choiceSelected,
+  automaticallySelected,
   isLongDescription,
   decisionQuestion,
 } from '../fieldDecision'
@@ -1610,6 +1611,7 @@ export default function LibraryPage({
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
   const currentChoice: DirectChoice | null = selected?.decisionActions.includes('keep_current')
     ? {
+        automatic: automaticallySelected(selected, selectedProgress),
         context: choiceContext(selected, null),
         current: true,
         disabled: false,
@@ -1639,6 +1641,7 @@ export default function LibraryPage({
           const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
           return {
             id: key,
+            automatic: automaticallySelected(selected, selectedProgress),
             context,
             current: false,
             disabled: false,
@@ -1670,6 +1673,7 @@ export default function LibraryPage({
           {
             id: 'advice:retained',
             advice: selectedAdvice,
+            automatic: selectedAdvice.selection?.origin === 'automatic_policy',
             retainedAdvice: true,
             context: undefined,
             current: false,
@@ -1697,6 +1701,9 @@ export default function LibraryPage({
           {
             id: 'advice:candidate',
             advice: selectedAdvice,
+            automatic:
+              (selectedProgress === null || selectedProgress.phase === 'failed') &&
+              selectedAdvice.selection?.origin === 'automatic_policy',
             retainedAdvice: selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
             context: undefined,
             current: false,

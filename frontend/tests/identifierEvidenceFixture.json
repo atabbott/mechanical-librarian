@@ -958,13 +958,13 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ASIN: B000000002. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ISBN: 9780593135204. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["title"],
@@ -976,7 +976,7 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ASIN: B000000001. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["narrators"],
@@ -1000,7 +1000,7 @@
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Edition-level detail."
+        "observation": "ISBN: 9781250077004. Not offered as a choice. It belongs to one edition."
       },
       {
         "destinations": ["narrators"],

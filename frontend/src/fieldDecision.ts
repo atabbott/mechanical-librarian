@@ -140,6 +140,13 @@ const recordedSelected = (
         !field.manualHold &&
         field.automaticDecision !== null &&
         automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
+// A recorded pick is Automatic's while the owner has not decided, no carried
+// hold pauses it and no press of theirs is pending, so its card says so (#1765).
+export const automaticallySelected = (field: ReviewField, progress: ChoiceProgress) =>
+  (progress === null || progress.phase === 'failed') &&
+  field.humanDecision === null &&
+  !field.manualHold &&
+  field.automaticDecision !== null
 export const choiceSelected = (
   field: ReviewField,
   progress: ChoiceProgress,

@@ -10842,7 +10842,7 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             expect(page.get_by_text("English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Evidence", exact=True).click()
             page.get_by_text(
-                "Undetermined language; not an eligible choice", exact=False
+                "Not offered as a choice. The language is not known.", exact=False
             ).wait_for()
             expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
             # The page names the language beside its tag, as Library does (#1286 L1).

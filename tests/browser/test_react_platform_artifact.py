@@ -1415,9 +1415,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 unconfirmed = comparison.locator(".cover-choice.is-unconfirmed")
                 expect(unconfirmed).to_have_count(1)
                 unconfirmed.get_by_text("Match not confirmed", exact=True).wait_for()
-                assert (
-                    "No source confirms this cover belongs" in unconfirmed.inner_text()
-                )
+                # The title says it, so no reason line repeats it (#1765).
+                expect(unconfirmed.locator(".choice-recommendation")).to_have_count(0)
                 unconfirmed_choice = unconfirmed.get_by_role(
                     "radio", name="Choose Open Library cover", exact=True
                 )
