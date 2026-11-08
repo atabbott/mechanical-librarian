@@ -405,9 +405,10 @@ author). To decide counts exactly what Library's attention counts for covers,
 and the counts follow each decision. Pages hold 50 books, with **Show more
 covers** for the next; a page resumes after the last book shown, so a
 decision never makes it skip one. The tab and the open book live in the URL,
-and pages are private and never cached. A thumbnail reads **No cover** when
+and pages are private and never cached. A wall tile reads **No cover** when
 the cover field is empty and **Image unavailable** when the library's cover
-could not be read.
+could not be read; a queue thumbnail, too small for the words, shows an empty
+frame and leaves the state to screen readers and the open book.
 
 On a wide screen To decide and Kept open their first undecided book beside
 the list; on a phone the list comes first and **Back to books** returns to

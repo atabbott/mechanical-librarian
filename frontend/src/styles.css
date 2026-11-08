@@ -1469,7 +1469,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-notice, .covers-empty { color:var(--soft); }
 .covers-failure { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; color:var(--danger); }
 .covers-failure p { margin:0; }
-.covers-image-missing { display:grid; place-items:center; aspect-ratio:2 / 3; color:var(--soft); background:var(--page); font-size:.75rem; }
+.covers-image-missing { display:grid; place-items:center; aspect-ratio:2 / 3; overflow:hidden; padding:.15rem; color:var(--soft); background:var(--page); font-size:.75rem; line-height:1.15; text-align:center; overflow-wrap:anywhere; }
 .covers-queue { display:grid; grid-template-columns:minmax(16rem,22rem) minmax(0,1fr); gap:1.25rem; align-items:start; }
 .covers-queue-list section + section { margin-top:1rem; }
 .covers-queue-list h2 { margin:0 0 .4rem; font-size:.8rem; color:var(--soft); text-transform:uppercase; letter-spacing:.04em; }

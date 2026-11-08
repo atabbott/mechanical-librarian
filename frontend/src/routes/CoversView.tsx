@@ -17,7 +17,7 @@ import { mediaKindLabels } from '../labels'
 import { invalidateForegroundQueries, useRequiredQuery as useQuery } from '../queryWork'
 import { ownerRefusalCopy, requestKey } from '../reviewDecisionController'
 import { routeFailureCopy } from '../routeFailure'
-import { detailQuery, libraryRoute, useReviewContext } from '../router'
+import { detailQuery, libraryRoute, usePreparation, useReviewContext } from '../router'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { StatusPill } from '../components/StatusPill'
 import { LibraryCoverChoices } from './FieldDecisionCover'
@@ -138,10 +138,13 @@ function CoverImage({
   cover,
   unreadable,
   alt = '',
+  quiet = false,
 }: {
   cover: { url: string } | null
   unreadable: boolean
   alt?: string
+  /** Too small to hold the words: the frame alone, the state read beside it. */
+  quiet?: boolean
 }) {
   const [failed, setFailed] = useState(false)
   if (cover && !failed)
@@ -162,9 +165,15 @@ function CoverImage({
   ) : (
     // Beside the written title, so it is not read out as part of its name.
     <span className="covers-image-missing" aria-hidden="true">
-      {state}
+      {quiet ? null : state}
     </span>
   )
+}
+
+/** A decorative thumbnail's state, read after the title it sits beside. */
+function CoverStateText({ work }: { work: CoverWorkView }) {
+  if (work.cover) return null
+  return <span className="sr-only">{work.unreadable_cover ? 'Image unavailable' : 'No cover'}</span>
 }
 
 function CoverComparison({
@@ -473,10 +482,11 @@ function QueueItem({
         data-cover-index={index}
         onClick={onSelect}
       >
-        <CoverImage cover={work.cover} unreadable={work.unreadable_cover} />
+        <CoverImage cover={work.cover} unreadable={work.unreadable_cover} quiet />
         <span>
           <strong>{work.title}</strong>
           <small>{byline(work)}</small>
+          <CoverStateText work={work} />
         </span>
         <StatusPill
           tone={
@@ -513,24 +523,29 @@ function CoverWall({
 }) {
   const wall = useRef<HTMLUListElement>(null)
   const openIndex = works.findIndex((work) => work.review_case_id === selectedId)
-  const [rowEnd, setRowEnd] = useState(openIndex)
+  // Where the panel goes, for this open tile and this many tiles. Until it is
+  // measured the panel sits after the last tile, out of every row, so the
+  // tiles lie as they would without it (v8 placeExpander).
+  const [placed, setPlaced] = useState<{ open: number; tiles: number; end: number } | null>(null)
+  const rowEnd = placed?.open === openIndex && placed.tiles === works.length ? placed.end : null
   useLayoutEffect(() => {
-    const measure = () => {
-      const tiles = [
-        ...(wall.current?.querySelectorAll<HTMLElement>(':scope > .covers-tile') ?? []),
-      ]
-      const top = tiles[openIndex]?.offsetTop
-      let end = openIndex
-      tiles.forEach((tile, index) => {
-        if (index > openIndex && tile.offsetTop === top) end = index
-      })
-      setRowEnd(end)
-    }
-    measure()
+    if (openIndex < 0 || rowEnd !== null) return
+    const tiles = [...(wall.current?.querySelectorAll<HTMLElement>(':scope > .covers-tile') ?? [])]
+    const top = tiles[openIndex]?.offsetTop
+    let end = openIndex
+    tiles.forEach((tile, index) => {
+      if (index > openIndex && tile.offsetTop === top) end = index
+    })
+    setPlaced({ open: openIndex, tiles: works.length, end })
+  }, [openIndex, rowEnd, works.length])
+  // A resize lays the rows out again: the panel returns to the end and the
+  // row is measured afresh.
+  useEffect(() => {
     if (openIndex < 0) return
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [openIndex, works.length])
+    const remeasure = () => setPlaced(null)
+    window.addEventListener('resize', remeasure)
+    return () => window.removeEventListener('resize', remeasure)
+  }, [openIndex])
   const open = openIndex >= 0 ? works[openIndex] : undefined
   return (
     <ul className="covers-wall" ref={wall}>
@@ -558,10 +573,11 @@ function CoverWall({
               </StatusPill>
               <strong>{work.title}</strong>
               <small>{work.authors.join(', ')}</small>
+              <CoverStateText work={work} />
             </button>
           </li>
         )
-        return open && index === Math.max(rowEnd, openIndex)
+        return open && index === (rowEnd ?? works.length - 1)
           ? [
               tile,
               <li key="covers-wall-panel" className="covers-wall-panel">
@@ -574,6 +590,8 @@ function CoverWall({
   )
 }
 
+// Count reads in the order they were sent.
+let countReads = 0
 const pillCounts = (page: CoversPage | undefined) => page?.counts
 
 export default function CoversView() {
@@ -582,6 +600,9 @@ export default function CoversView() {
   const { http } = useReviewContext()
   const queryClient = useQueryClient()
   const tab: CoverTab = search.tab ?? 'decide'
+  // As Works says it: only a confirmed snapshot with no library names the
+  // way to fill the list.
+  const noLibraryConnected = usePreparation().data?.libraries.length === 0
   const pages = useInfiniteQuery({
     queryKey: ['covers', tab] as const,
     queryFn: ({ pageParam, signal }) =>
@@ -595,10 +616,17 @@ export default function CoversView() {
   const [done, setDone] = useState<Readonly<Record<string, Outcome>>>({})
   // Counts read again after each decision; the rows on screen stay as they
   // were, with the decided ones marked, and the next page resumes after them.
-  const [liveCounts, setLiveCounts] = useState<{ tab: CoverTab; counts: CoversPage['counts'] }>()
+  const [liveCounts, setLiveCounts] = useState<{
+    tab: CoverTab
+    counts: CoversPage['counts']
+    requested: number
+    pageAt: number
+  }>()
   const works = pages.data?.pages.flatMap((page) => page.items) ?? []
   const counts =
-    (liveCounts?.tab === tab ? liveCounts.counts : undefined) ?? pillCounts(pages.data?.pages[0])
+    (liveCounts?.tab === tab && liveCounts.pageAt === pages.dataUpdatedAt
+      ? liveCounts.counts
+      : undefined) ?? pillCounts(pages.data?.pages[0])
   const selectedId = search.cover
   const listed = works.find((work) => work.review_case_id === selectedId)
   // A linked book past the loaded pages is read on its own.
@@ -638,11 +666,21 @@ export default function CoversView() {
     if (!selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
       select(firstOpen.review_case_id, true)
   })
-  const recordCounts = () =>
+  // Only the newest count read is shown: an older answer arriving late is
+  // dropped, and a later read of the first page replaces it.
+  const recordCounts = () => {
+    const requested = ++countReads
+    const pageAt = pages.dataUpdatedAt
     void http.getCovers(tab).then(
-      (page) => setLiveCounts({ tab, counts: page.counts }),
+      (page) =>
+        setLiveCounts((current) =>
+          current?.tab === tab && current.requested > requested
+            ? current
+            : { tab, counts: page.counts, requested, pageAt },
+        ),
       () => undefined,
     )
+  }
   // After a choice or a skip the next book opens, so one tap moves on.
   const advance = (work: CoverWorkView, outcome: Outcome) => {
     setNotice(outcomeCopy(outcome, work.title))
@@ -744,7 +782,19 @@ export default function CoversView() {
             </button>
           </div>
         ) : works.length === 0 ? (
-          <p className="covers-empty">{emptyCopy[tab]}</p>
+          <p className="covers-empty">
+            {tab === 'all' && noLibraryConnected ? (
+              <>
+                No works yet. Add a library in{' '}
+                <Link to="/settings" search={{ group: 'libraries' }}>
+                  Settings
+                </Link>
+                .
+              </>
+            ) : (
+              emptyCopy[tab]
+            )}
+          </p>
         ) : tab === 'switched' ? (
           <ul className="covers-switched">
             {works.map((work, index) => (

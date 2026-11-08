@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,7 +10,7 @@ import type {
   CoverWorkView,
   ReviewHttp,
 } from '../src/api/http'
-import { createHttp, detail, library, renderRoute } from './fixtures'
+import { createHttp, detail, idlePreparation, library, renderRoute } from './fixtures'
 
 afterEach(cleanup)
 
@@ -135,6 +135,22 @@ const coversHttp = (pages: Partial<Record<CoverTab, CoversView>>) => {
       coverDetail(id, titles[id] ?? id),
     ),
   }
+}
+// One connected library, so an empty All has nothing to name.
+const library0 = {
+  blocked: 0,
+  recorded: 0,
+  not_matched: 0,
+  checked: 0,
+  connection: 'primary',
+  library: 'books',
+  library_id: 'books',
+  ready: 0,
+  rescan_requested: false,
+  scan_id: null,
+  state: 'idle' as const,
+  total: 0,
+  stages: [],
 }
 const decide = page('decide', [work('case-1', 'proposal'), work('case-2', 'choice')])
 const chooseOther = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -349,14 +365,14 @@ describe('Covers view (#1633)', () => {
       ]),
     })
     renderRoute('/library?lens=all&view=covers', http)
-    expect(
-      within(await screen.findByRole('button', { name: /^First Book/u })).getByText(
-        'Image unavailable',
-      ),
-    ).toBeVisible()
-    expect(
-      within(screen.getByRole('button', { name: /^Second Book/u })).getByText('No cover'),
-    ).toBeVisible()
+    // The thumbnail shows the state; a screen reader hears it after the title.
+    const unreadable = await screen.findByRole('button', {
+      name: /^First Book.*Image unavailable/u,
+    })
+    // The 3rem thumbnail is too small for the words: it shows the frame only.
+    expect(within(unreadable).getAllByText('Image unavailable')).toHaveLength(1)
+    expect(unreadable.querySelector('.covers-image-missing')).toBeEmptyDOMElement()
+    expect(screen.getByRole('button', { name: /^Second Book.*No cover/u })).toBeVisible()
   })
 
   it.each([
@@ -365,8 +381,20 @@ describe('Covers view (#1633)', () => {
     ['switched', 'No covers switched automatically.'],
     ['all', 'No works yet.'],
   ] as const)('says when %s has no covers', async (tab, sentence) => {
-    renderRoute(`/library?lens=all&view=covers&tab=${tab}`, coversHttp({}))
+    const http = coversHttp({})
+    http.getPreparation = vi.fn(async () => ({ ...idlePreparation, libraries: [library0] }))
+    renderRoute(`/library?lens=all&view=covers&tab=${tab}`, http)
     expect(await screen.findByText(sentence)).toBeVisible()
+  })
+
+  it('names Settings when All is empty because no library is connected', async () => {
+    renderRoute('/library?lens=all&view=covers&tab=all', coversHttp({}))
+    const empty = await screen.findByText(/^No works yet\. Add a library in/u)
+    expect(empty).toHaveTextContent('No works yet. Add a library in Settings.')
+    expect(within(empty).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/settings?group=libraries',
+    )
   })
 
   it('shows more after a decision without skipping a book, and focuses the first added', async () => {
@@ -407,6 +435,70 @@ describe('Covers view (#1633)', () => {
     expect(screen.queryByRole('link', { name: 'Covers' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /First Book/u })).toHaveFocus())
+  })
+
+  it('places the open book after the last tile of its row, measured without the panel', async () => {
+    const user = userEvent.setup()
+    // Two tiles a row: the panel would split the row if it were measured in place.
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop')
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        const wall = this.parentElement
+        if (!this.classList.contains('covers-tile') || !wall) return 0
+        const tiles = [...wall.children]
+        const index = tiles.indexOf(this)
+        // A panel in flow takes a row of its own and pushes later tiles down.
+        const panel = tiles.findIndex((child) => child.classList.contains('covers-wall-panel'))
+        const slot = panel >= 0 && index > panel ? index + 2 - (index % 2) : index
+        return Math.floor(slot / 2) * 100
+      },
+    })
+    try {
+      const http = coversHttp({
+        all: page('all', [work('case-1', 'kept'), work('case-2', 'none'), work('case-3', 'kept')]),
+      })
+      renderRoute('/library?lens=all&view=covers&tab=all', http)
+      await user.click(await screen.findByRole('button', { name: /First Book/u }))
+      const panel = (
+        await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+      ).closest('li')
+      await waitFor(() => expect(panel?.previousElementSibling).toHaveTextContent('Second Book'))
+      expect(panel?.nextElementSibling).toHaveTextContent('Third Book')
+      // A resize measures the row again, the same way.
+      fireEvent(window, new Event('resize'))
+      await waitFor(() =>
+        expect(
+          document.querySelector('.covers-wall-panel')?.previousElementSibling,
+        ).toHaveTextContent('Second Book'),
+      )
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'offsetTop', descriptor)
+    }
+  })
+
+  it('shows only the newest count read when an older one answers late', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ decide })
+    let releaseFirst: (page: CoversView) => void = () => undefined
+    const late = new Promise<CoversView>((resolve) => {
+      releaseFirst = resolve
+    })
+    http.getCovers
+      .mockResolvedValueOnce(decide)
+      .mockReturnValueOnce(late)
+      .mockResolvedValueOnce(page('decide', [...decide.items], null, { ...counts, decide: 0 }))
+    renderRoute('/library?lens=all&view=covers&cover=case-1', http)
+    await chooseOther(user)
+    expect(await screen.findByText('Switched First Book.')).toBeVisible()
+    await chooseOther(user)
+    expect(await screen.findByText('Switched Second Book.')).toBeVisible()
+    const tabs = screen.getByRole('navigation', { name: 'Cover views' })
+    expect(await within(tabs).findByRole('button', { name: 'To decide 0' })).toBeVisible()
+    releaseFirst(page('decide', [...decide.items], null, { ...counts, decide: 1 }))
+    await late
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(within(tabs).getByRole('button', { name: 'To decide 0' })).toBeVisible()
   })
 
   it('opens a linked book that is past the loaded pages on its own', async () => {
