@@ -25,6 +25,9 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    preparation_work_id,
+)
 from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline
 from mechanical_librarian.adapters.retained_covers import (
     ContentAddressedOriginals,
@@ -38,11 +41,13 @@ from mechanical_librarian.application.metadata_report import (
     TargetCoverReader,
 )
 from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
     PipelineProgress,
     ReviewPipelineError,
 )
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.cover_images import synthetic_image
 from tests.support.field_effects import (
     CAPABILITY,
@@ -237,6 +242,79 @@ def test_a_switch_that_verifies_during_a_run_prepares_its_work_afresh_after_it(
     # Spent: the scan after that carries the fresh report forward.
     repository.request_review_scan("primary", "books", "lib-1", "f" * 64, 200)
     assert _drain(repository, 201) == ["discovery"]
+
+
+def _request_refresh(effects: _EffectEnvironment) -> None:
+    connection = sqlite3.connect(effects.database_path)
+    try:
+        connection.execute("UPDATE review_preparation_work SET refresh_requested=1")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _claim(
+    repository: SQLiteMetadataReportRepository, by_work: bool, tick: int
+) -> PipelineAction | None:
+    """Claim through the scheduler's path or the named-successor path."""
+    if by_work:
+        return repository.claim_review_pipeline_work(
+            preparation_work_id("primary", "books", "book-1"), tick
+        )
+    return repository.claim_review_pipeline_action(tick)
+
+
+def _discovered(repository: SQLiteMetadataReportRepository) -> None:
+    """One scan's discovery, leaving the work queued at extraction."""
+    repository.request_review_scan("primary", "books", "lib-1", "f" * 64, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None and discovery.stage == "discovery"
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (ENTRY,), 12)
+
+
+@pytest.mark.parametrize("by_work", (False, True), ids=("next", "named"))
+def test_claiming_an_extraction_spends_a_refresh_request(
+    effects: _EffectEnvironment, by_work: bool
+) -> None:
+    """An extraction reads the cover again, so claiming it spends the
+    request (#1363, Q17)."""
+    _discovered(effects.repository)
+    _request_refresh(effects)
+
+    extraction = _claim(effects.repository, by_work, 13)
+
+    assert extraction is not None and extraction.stage == "extraction"
+    assert _refresh_requested(effects) == 0
+
+
+@pytest.mark.parametrize("by_work", (False, True), ids=("next", "named"))
+def test_claiming_a_later_stage_keeps_a_refresh_request(
+    effects: _EffectEnvironment, by_work: bool
+) -> None:
+    """A later stage builds on the report it already has and never reads the
+    cover, so claiming it keeps the request for the next discovery (#1363)."""
+    repository = effects.repository
+    _discovered(repository)
+    running = repository.claim_review_pipeline_action(13)
+    assert running is not None and running.stage == "extraction"
+    _request_refresh(effects)
+
+    def advance(value: object, published: object) -> None:
+        # The report goes on to proposal rather than completing.
+        cast(
+            SQLiteMetadataReportRepository, value
+        ).complete_review_extraction_publication(
+            running, cast("MetadataReport", published).report_id, 14
+        )
+
+    repository.publish(
+        _for(_audiobook("x"), "books", "book-1"), lambda: True, None, advance
+    )
+
+    later = _claim(repository, by_work, 15)
+
+    assert later is not None and later.stage == "proposal"
+    assert _refresh_requested(effects) == 1
 
 
 def test_the_original_reaches_a_report_only_once_its_switch_verifies(

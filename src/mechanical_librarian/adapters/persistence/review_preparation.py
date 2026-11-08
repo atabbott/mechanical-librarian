@@ -178,8 +178,6 @@ def preparation_work_id(connection_name: str, library: str, item_id: str) -> str
     return "review_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-# No catalogue fingerprint is all zeros, so a work carrying this one never
-# equals its next discovery and starts again at extraction.
 def mark_preparation_work_fresh(
     connection: sqlite3.Connection, connection_name: str, library: str, item_id: str
 ) -> None:
