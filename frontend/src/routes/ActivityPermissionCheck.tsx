@@ -69,7 +69,7 @@ export const ActivityPermissionCheck = ({
                   : permission?.backup_ready === null
                     ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
                     : permission?.backup_ready === false
-                      ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
+                      ? 'The backup check did not pass. Check again before enabling writes.'
                       : 'Backup readiness checked. Review the included and excluded destinations.'}
       </p>
       {staleLead !== null ? (
