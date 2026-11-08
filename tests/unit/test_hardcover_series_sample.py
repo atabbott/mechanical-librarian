@@ -661,6 +661,16 @@ def test_main_refuses_a_missing_or_unreadable_store(tmp_path: Path) -> None:
             "http://host:port",
             "give the address as http://host:port or https://host",
         ),
+        (
+            "--origin",
+            "http://ho st",
+            "give the address as http://host:port or https://host",
+        ),
+        (
+            "--origin",
+            "http://host:",
+            "give the address as http://host:port or https://host",
+        ),
         ("--limit", "0", "give a whole number from 1 to 500"),
         ("--limit", "501", "give a whole number from 1 to 500"),
         ("--limit", "ten", "give a whole number from 1 to 500"),
@@ -670,6 +680,8 @@ def test_main_refuses_a_missing_or_unreadable_store(tmp_path: Path) -> None:
         "path",
         "query",
         "port_name",
+        "host_space",
+        "empty_port",
         "limit_zero",
         "limit_501",
         "limit_word",
@@ -712,3 +724,21 @@ def test_the_statement_carries_the_product_fragments_verbatim() -> None:
     assert _episode_decision_sql("decision") in owner
     assert "automatic_decisions" not in owner + suspension
     assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL not in sample._FIELDS_SQL
+
+
+_OWNER_MARKER = " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
+
+
+@pytest.mark.parametrize(
+    "doubled", (False, True), ids=("marker_missing", "marker_doubled")
+)
+def test_a_reshaped_clear_fragment_fails_instead_of_composing(
+    monkeypatch: pytest.MonkeyPatch, doubled: bool
+) -> None:
+    """Each slice marker must occur exactly once in the queue's clear fragment."""
+    clear = _REVIEW_FIELD_ATTENTION_CLEAR_SQL
+    assert clear.count(_OWNER_MARKER) == 1
+    reshaped = clear + _OWNER_MARKER if doubled else clear.replace(_OWNER_MARKER, " ")
+    monkeypatch.setattr(sample, "_REVIEW_FIELD_ATTENTION_CLEAR_SQL", reshaped)
+    with pytest.raises(RuntimeError, match="the review clear fragment changed shape"):
+        sample._clear_clauses(_OWNER_MARKER, None)

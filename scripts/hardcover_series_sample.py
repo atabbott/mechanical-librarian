@@ -145,6 +145,8 @@ def _origin(value: str) -> str:
         or parts.fragment
         or "?" in value
         or "#" in value
+        or any(character.isspace() for character in value)
+        or parts.netloc.endswith(":")
     ):
         raise argparse.ArgumentTypeError(
             "give the address as http://host:port or https://host"
