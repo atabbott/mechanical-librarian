@@ -48,8 +48,8 @@ def login_html(return_path: str | None = None) -> str:
       </form>
       <details class="forgotten">
         <summary>Forgot the owner password?</summary>
-        <p>It can't be shown or reset here.</p>
-        <p>If you set it with a password hash file, write a new Argon2id hash to that file and restart Mechanical Librarian. Every browser is signed out.</p>
+        <p>Mechanical Librarian can't show or reset it here.</p>
+        <p>If you set it with a password hash file, write a new Argon2id hash to that file and restart Mechanical Librarian. The restart signs every browser out.</p>
         <p>If you set it during setup, there is no reset yet. Restore a backup of the data volume from when you knew the password, or start again with an empty volume.</p>
         <p><a href="https://github.com/atabbott/mechanical-librarian/blob/main/docs/operations/deployment.md#forgotten-owner-password" rel="noreferrer">Recovery steps in the deployment guide</a></p>
       </details>
