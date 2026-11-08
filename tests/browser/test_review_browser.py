@@ -3409,7 +3409,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 page.get_by_role("heading", name="Title", exact=True).wait_for()
                 recorded = page.get_by_label("Title recorded outcome")
-                recorded.get_by_text("Resolved automatically", exact=True).wait_for()
+                recorded.get_by_text("Automatic", exact=True).wait_for()
                 expect(recorded.get_by_text("Chosen value", exact=True)).to_be_visible()
                 expect(
                     recorded.get_by_text("Synthetic title revised", exact=True)
@@ -3564,9 +3564,7 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 comparison = page.get_by_role("region", name="Choose a cover")
                 comparison.wait_for()
                 expect(page.get_by_alt_text("EPUB file cover")).to_be_visible()
-                comparison.get_by_text(
-                    "1 unavailable candidate", exact=False
-                ).wait_for()
+                comparison.get_by_text("1 cover not shown", exact=False).wait_for()
                 assert page.locator(".library-cover-card").count() == 1
                 candidate = page.locator(".library-cover-card").filter(
                     has=page.get_by_alt_text("EPUB file cover")
@@ -4545,7 +4543,7 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 _login(page, origin)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()
-                retry = page.get_by_role("button", name="Retry advisory review")
+                retry = page.get_by_role("button", name="Retry visual review")
                 expect(retry).to_be_enabled()
                 with page.expect_response(
                     lambda response: response.url.endswith(
@@ -6243,7 +6241,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     expect(
                         page.get_by_role(
                             "button",
-                            name=re.compile("^Narrators · Current value retained"),
+                            name=re.compile("^Narrators · Current value kept"),
                         )
                     ).to_be_visible()
                     page.set_viewport_size({"width": 1440, "height": 900})
@@ -6435,9 +6433,8 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 expect(choice).to_be_visible()
                 expect(choice).to_contain_text("B0SYNE7P1K")
                 expect(choice).to_contain_text(
-                    "Selected from Audible and Audnexus to fill an empty ASIN field "
-                    "under a qualified automatic policy; the runtime gate "
-                    "corroborated that this recording is that product."
+                    "Chosen from Audible and Audnexus to fill the empty ASIN field. "
+                    "The running time confirms this recording is that product."
                 )
 
                 # Narrators is named by the same two authorities and has no
@@ -6457,9 +6454,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 narrators = page.locator(".direct-choice").first
                 expect(narrators).to_be_visible()
                 expect(narrators).to_contain_text("Ilsa Brandt")
-                assert (
-                    0 == page.get_by_text("under a qualified automatic policy").count()
-                )
+                assert 0 == page.get_by_text("to fill the empty ASIN field").count()
                 expect(
                     page.get_by_role(
                         "radio", name=re.compile("^Choose proposed value: ")
@@ -10011,7 +10006,7 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 ).click()
                 expect(
                     page.get_by_text(
-                        "The response was lost. The current case was reloaded before any retry."
+                        "No answer came back. Check whether your choice was recorded before choosing again."
                     )
                 ).to_be_visible()
                 page.unroute("**/decisions")
@@ -10020,7 +10015,7 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 ).click()
                 expect(
                     page.get_by_text(
-                        "The response was lost. The current case was reloaded before any retry."
+                        "No answer came back. Check whether your choice was recorded before choosing again."
                     )
                 ).to_have_count(0)
                 context.close()
@@ -10424,7 +10419,9 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                     retained = page.get_by_role(
                         "region", name="Description recorded outcome"
                     )
-                    expect(retained).to_contain_text("Resolved automatically")
+                    expect(
+                        retained.get_by_text("Automatic", exact=True)
+                    ).to_be_visible()
                     expect(retained).to_contain_text("Existing description.")
                 else:
                     expect(
@@ -10859,7 +10856,7 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             expect(page.get_by_text("English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Evidence", exact=True).click()
             page.get_by_text(
-                "Undetermined language; not an eligible choice", exact=False
+                "Not offered as a choice. The language is not known.", exact=False
             ).wait_for()
             expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
             # The page names the language beside its tag, as Library does (#1286 L1).
@@ -11141,7 +11138,9 @@ def test_owner_enters_a_title_at_enlarged_text():
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
         panel = page.get_by_role("region", name="Your value for Title")
         expect(
-            page.get_by_text("There’s no other value to choose from.")
+            page.locator(
+                ".decision-context", has_text="No source offered a different value."
+            )
         ).to_have_count(0)
         panel.get_by_role("button", name="Enter a value", exact=True).click()
         field = panel.get_by_role("textbox", name="Your value for Title")
@@ -11620,7 +11619,7 @@ def test_same_name_series_owner_journey(media, destination):
                 if media == "ebook":
                     expect(
                         page.get_by_text(
-                            "Selected from Hardcover to fill an empty Series field"
+                            "Chosen from Hardcover to fill the empty Series field"
                         )
                     ).to_be_visible()
             else:

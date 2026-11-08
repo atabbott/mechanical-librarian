@@ -1194,7 +1194,7 @@ def test_a_companion_isbn_value_for_an_asin_it_did_not_link_is_refused() -> None
 def test_a_current_round_trip_keeps_every_lane_value() -> None:
     for report in (_carried_leaf(), _regional_report(), _companion_report()):
         data = json.loads(report.to_json())
-        assert "metadata-report-v72" == data["schema_version"]
+        assert "metadata-report-v73" == data["schema_version"]
         stated = {
             member["admission_basis"]
             for observation in data["providers"]

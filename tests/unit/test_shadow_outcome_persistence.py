@@ -1677,7 +1677,7 @@ def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_po
                     (report_id,),
                 ).fetchone()[0],
                 "review_case_id": review_case_id,
-                "schema_version": "cover-consideration-v4",
+                "schema_version": "cover-consideration-v5",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -1773,7 +1773,7 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
                         (report_id,),
                     ).fetchone()[0],
                     "review_case_id": review_case_id,
-                    "schema_version": "cover-consideration-v4",
+                    "schema_version": "cover-consideration-v5",
                     "supersedes_id": supersedes_id,
                 },
                 separators=(",", ":"),
@@ -7707,7 +7707,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
             assert title["decision_actions"] == []
             assert not title["needs_attention"]
             assert (
-                "Changes made for you are waiting for a safety recovery."
+                "Automatic is paused, so this field is waiting for you."
                 == title["classification_reason"]
             )
             library = repository.read_review_library(None, 50, 0, "needs_attention")
@@ -7734,7 +7734,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
             )
             assert attention.total == projected["total"]
             assert ["subtitle"] == [item["destination"] for item in projected["items"]]
-            assert "Changes made for you are waiting for a safety recovery." == next(
+            assert "Automatic is paused, so this field is waiting for you." == next(
                 item["classification_reason"]
                 for item in projected["items"]
                 if item["destination"] == "subtitle"

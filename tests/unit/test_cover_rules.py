@@ -896,3 +896,52 @@ def test_malformed_stage_input_is_refused() -> None:
         _elect([_candidate("x")])  # type: ignore[arg-type]  # reason: proves the exact-type check
     with pytest.raises(ValueError):
         _elect((_candidate("x"),), protection="protected")  # type: ignore[arg-type]  # reason: as above
+
+
+def test_measures_round_trip_through_their_document() -> None:
+    measures = CoverMeasures("0f" * 8, "f0" * 8, (1,) * 64, (128,) * 48)
+
+    assert CoverMeasures.from_data(measures.to_data()) == measures
+
+
+@pytest.mark.parametrize(
+    "document",
+    (
+        pytest.param([], id="not_an_object"),
+        pytest.param(
+            {"colour": [1] * 64, "dhash": "0" * 16, "layout": [0] * 48},
+            id="missing_phash",
+        ),
+        pytest.param(
+            {
+                "colour": (1,) * 64,
+                "dhash": "0" * 16,
+                "layout": [0] * 48,
+                "phash": "0" * 16,
+            },
+            id="tuple_colour",
+        ),
+        pytest.param(
+            {
+                "colour": [1] * 64,
+                "dhash": "0" * 16,
+                "layout": [0] * 48,
+                "phash": "0" * 16,
+                "aspect": 1,
+            },
+            id="extra_key",
+        ),
+        pytest.param(
+            {
+                "colour": [1] * 64,
+                "dhash": "0" * 16,
+                "layout": [True] * 48,
+                "phash": "0" * 16,
+            },
+            id="boolean_layout",
+        ),
+    ),
+)
+def test_measures_refuse_any_other_document(document: object) -> None:
+    with pytest.raises(ValueError):
+        CoverMeasures.from_data(document)
