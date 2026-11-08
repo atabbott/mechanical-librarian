@@ -556,6 +556,10 @@ describe('Covers view (#1633)', () => {
     renderRoute('/library?lens=all&view=covers&cover=case-1', http)
     await chooseOther(user)
     expect(await screen.findByText('Switched First Book.')).toBeVisible()
+    // The next book opens and takes focus first, as the owner sees it, so
+    // Show more's focus is not raced by that book's read on a slow runner.
+    const next = await screen.findByRole('heading', { level: 2, name: 'Second Book' })
+    await waitFor(() => expect(next).toHaveFocus())
     await user.click(screen.getByRole('button', { name: 'Show more covers' }))
     const added = await screen.findByRole('button', { name: /^Third Book/u })
     // The next page resumes after the last book shown, wherever decisions moved
