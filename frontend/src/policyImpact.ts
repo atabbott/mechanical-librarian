@@ -55,18 +55,12 @@ export interface PolicyImpactDisplay {
   readonly changed: boolean
   readonly detail: string
   readonly technicalDetail: string
-  readonly title:
-    | 'Change'
-    | 'Needs you'
-    | 'No change'
-    | 'No supported value found'
-    | 'Policy change'
-    | 'No policy change'
+  readonly title: 'Change' | 'Needs you' | 'No change' | 'No supported value found'
 }
 
 export interface PolicyImpactRow {
   readonly caseId: string
-  readonly impact: PolicyImpactDisplay
+  readonly impact: Pick<PolicyImpactDisplay, 'changed'>
 }
 
 const sameMetadataValue = (left: unknown, right: unknown) =>

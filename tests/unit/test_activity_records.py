@@ -7,14 +7,18 @@ reading the current catalogue fails here rather than in a screenshot.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import cast
 
 import pytest
 
+from mechanical_librarian.domain import readable_activity
 from mechanical_librarian.domain.activity_records import (
     activity_result_label,
     readable_activity_event,
 )
+from mechanical_librarian.domain.metadata_policy import DESTINATIONS, OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -36,6 +40,9 @@ from mechanical_librarian.domain.readable_activity import (
     ISBN_REFUSAL_REASONS,
     destination_label,
     keep_change,
+    policy_destination_label,
+    policy_option_label,
+    policy_setting_label,
     set_change,
     value_text,
 )
@@ -111,13 +118,13 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
         ("accept", "Accepted"),
         ("keep_current", "Kept current"),
         ("reject", "Rejected"),
-        ("owner_entered", "Owner-entered"),
+        ("owner_entered", "Entered by you"),
         ("withdraw", "Withdrawn"),
         ("completed", "Cover advice completed"),
         ("unavailable", "Cover advice unavailable"),
         ("failed", "Cover advice failed"),
-        ("selected", "Owner cover choice recorded"),
-        ("retry", "Manual cover retry"),
+        ("selected", "Your cover choice recorded"),
+        ("retry", "Cover retried by you"),
         ("no_change_required", "No change needed"),
         ("applying", "Applying"),
         ("claimed", "Preparing"),
@@ -265,7 +272,7 @@ def test_an_owner_acceptance_states_the_exact_before_and_after() -> None:
     assert _facts(event) == {
         "Previous value": "Paper Moons: Larkspur",
         "New value": "Paper Moons over Larkspur Station",
-        "Chosen by": "Library owner",
+        "Chosen by": "You",
     }
 
 
@@ -303,7 +310,9 @@ def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
     assert event["change"] == "Left unchanged"
     facts = _facts(event)
     assert facts["Current value"] == "The Left Hand of Darkness"
-    assert facts["Outcome"] == "No change was prepared"
+    assert facts["Chosen by"] == "You"
+    # The change column says "Left unchanged"; no fact repeats it (#1765).
+    assert "Outcome" not in facts
     assert "Previous value" not in facts and "New value" not in facts
 
 
@@ -337,7 +346,7 @@ def test_an_automatic_decision_names_the_policy_that_chose_it() -> None:
         "Previous value": ABSENT,
         "New value": "Earthsea Cycle (1)",
         "Chosen by": "Automatic policy",
-        "Policy setting": "Series: Primary narrative",
+        "Policy option": "Series memberships: Primary narrative",
         "Policy generation": "4",
     }
 
@@ -367,7 +376,8 @@ def test_an_automatic_keep_shows_the_unchanged_value_on_both_sides() -> None:
     assert event["change"] == "Kept The Farthest Shore"
     assert facts["Previous value"] == "The Farthest Shore"
     assert facts["New value"] == "The Farthest Shore"
-    assert facts["Policy setting"] == "Title layout: Leave as it is"
+    assert facts["Policy option"] == "Title and subtitle: Preserve current layout"
+    assert "Policy setting" not in facts
 
 
 def test_unavailable_automatic_authority_has_one_value_free_diagnostic() -> None:
@@ -387,9 +397,9 @@ def test_unavailable_automatic_authority_has_one_value_free_diagnostic() -> None
         "event_class": "automatic_decision",
         "reason": AUTOMATIC_AUTHORITY_UNAVAILABLE,
     }
+    # The change column says "Details unavailable"; only the reason follows.
     assert _facts(event) == {
-        "Record status": "This retained event cannot be fully projected",
-        "Disclosure": "The automatic authority is no longer available",
+        "Reason": "The automatic decision it records can no longer be read",
     }
 
 
@@ -446,7 +456,7 @@ def test_a_write_distinguishes_its_lifecycle_while_keeping_one_change(
         (
             "retryable",
             "target_changed",
-            "Prepared change paused",
+            "Prepared change waiting",
             "The current value changed after this was prepared",
         ),
         (
@@ -458,11 +468,23 @@ def test_a_write_distinguishes_its_lifecycle_while_keeping_one_change(
         (
             "abandoned",
             "owner_abandoned",
-            "Prepared change closed",
+            "Prepared change stopped",
             "You stopped this change",
         ),
+        (
+            "failed",
+            "target_failure",
+            "Prepared change failed",
+            "Audiobookshelf refused the change",
+        ),
+        (
+            "superseded",
+            "authority_superseded",
+            "Prepared change replaced",
+            "A newer decision replaced the one behind this change",
+        ),
     ),
-    ids=("paused", "closed", "stopped"),
+    ids=("paused", "closed", "stopped", "failed", "replaced"),
 )
 def test_a_stopped_write_says_why_and_never_claims_a_new_value(
     state: str, failure: str, compact: str, reason: str
@@ -483,11 +505,10 @@ def test_a_stopped_write_says_why_and_never_claims_a_new_value(
     assert event["change"] == compact
     facts = _facts(event)
     assert facts["Prepared value"] == "The Lathe of Heaven (1971)"
-    # A paused retry has not stopped, so it says what happened (#1402).
-    assert facts["What happened" if state == "retryable" else "Why it stopped"] == (
-        reason
-    )
-    assert ("Why it stopped" in facts) is (state != "retryable")
+    # Every ended or waiting change says what happened, beside a summary
+    # that takes its result column's word (#1765).
+    assert facts["What happened"] == reason
+    assert "Why it stopped" not in facts
     assert "New value" not in facts
     assert (
         facts.get("What happens next")
@@ -501,14 +522,14 @@ def test_a_stopped_write_says_why_and_never_claims_a_new_value(
         (
             "retryable",
             "not_sent",
-            "Prepared change paused",
+            "Prepared change waiting",
             "This change was not sent to Audiobookshelf",
             "Mechanical Librarian checks the current value again",
         ),
         (
             "retryable",
             "not_applied",
-            "Prepared change paused",
+            "Prepared change waiting",
             "Audiobookshelf did not apply the change",
             "Mechanical Librarian checks the current value again",
         ),
@@ -549,10 +570,9 @@ def test_an_unsent_or_unreachable_write_says_what_happened_and_what_follows(
     )
     assert event["change"] == compact
     facts = _facts(event)
-    # A change that has not stopped never says why it stopped.
-    stopped = state == "stale" and failure != "connection"
-    assert facts["Why it stopped" if stopped else "What happened"] == reason
-    assert ("Why it stopped" in facts) is stopped
+    # Ended or not, the change says what happened (#1765).
+    assert facts["What happened"] == reason
+    assert "Why it stopped" not in facts
     assert facts.get("What happens next") == next_step
     assert ("Confirmed in Audiobookshelf" in facts) is (
         failure == "connection_exhausted"
@@ -562,7 +582,7 @@ def test_an_unsent_or_unreachable_write_says_what_happened_and_what_follows(
 def test_a_policy_row_carries_its_own_exact_from_and_to() -> None:
     changes = [
         {
-            "field": "Title layout",
+            "field": "Title and subtitle",
             "setting": "Setting",
             "previous": "Ask me",
             "next": "Automatic",
@@ -584,7 +604,69 @@ def test_a_policy_row_carries_its_own_exact_from_and_to() -> None:
     assert event["category"] == "policy"
     assert event["change"] == "1 change activated"
     assert event["policy_changes"] == changes
-    assert _facts(event)["Active policy"] == "Updated with all 1 change"
+    # The change column already says "1 change activated", so no fact repeats
+    # it, and the row names the owner as "You".
+    assert "Active policy" not in _facts(event)
+    assert _facts(event)["Changed by"] == "You"
+
+
+_POLICY_FIELDS = (
+    Path(__file__).resolve().parents[2] / "frontend" / "src" / "policyFields.ts"
+)
+_POLICY_ENTRY = re.compile(r"(\w+):\s*(['\"])(.*?)\2", re.DOTALL)
+
+
+def _block(source: str, start: str) -> str:
+    begin = source.index("{", source.index(start)) + 1
+    return source[begin : source.index("}", begin)]
+
+
+def _policy_page_labels() -> tuple[
+    dict[str, str], dict[str, str], dict[tuple[str, str], str]
+]:
+    source = _POLICY_FIELDS.read_text(encoding="utf-8")
+    destinations = {
+        code: text
+        for code, _, text in _POLICY_ENTRY.findall(
+            _block(source, "export const policyDestinationLabels")
+        )
+    }
+    start = source.index("export const fields")
+    catalogue = source[start : source.index("\n]\n", start)]
+    fields: dict[str, str] = {}
+    options: dict[tuple[str, str], str] = {}
+    for entry in catalogue.split("\n  {\n")[1:]:
+        named = dict((name, text) for name, _, text in _POLICY_ENTRY.findall(entry))
+        fields[named["key"]] = named["label"]
+        for option, _, text in _POLICY_ENTRY.findall(_block(entry, "optionLabels:")):
+            options[(named["key"], option)] = text
+    return fields, destinations, options
+
+
+def test_a_policy_row_names_each_field_setting_and_option_as_policy_does() -> None:
+    # Activity's policy rows copy the Policy page's own names
+    # (`policyFields.ts`), so the two tables stay equal and close over the
+    # whole policy catalogue (#1765).
+    fields, destinations, options = _policy_page_labels()
+    assert readable_activity._POLICY_FIELD_LABELS == fields
+    assert readable_activity._POLICY_DESTINATION_LABELS == destinations
+    assert readable_activity._POLICY_OPTION_LABELS == options
+    assert set(fields) == set(OPTION_CATALOGUE)
+    assert set(destinations) == set(DESTINATIONS)
+    assert set(options) == {
+        (field, option)
+        for field, offered in OPTION_CATALOGUE.items()
+        for option in offered
+    }
+    for field, label in fields.items():
+        assert policy_setting_label(field) == label
+    for destination, label in destinations.items():
+        assert policy_destination_label(destination) == label
+    for (field, option), label in options.items():
+        assert policy_option_label(option, field) == label
+    # A setting and an option that share a code still read differently.
+    assert policy_destination_label("unsupported") == "Not supported"
+    assert policy_option_label("unsupported", "explicit") == "Leave flag unchanged"
 
 
 def test_other_categories_never_inherit_policy_detail_bulk() -> None:
@@ -625,6 +707,8 @@ def test_a_cover_record_describes_the_choice_rather_than_the_image(
     )
     assert event["change"] == compact
     assert "cover_" not in str(event["evidence"])
+    # The same on every cover row, so no row says it (#1765).
+    assert "Your action" not in _facts(event)
 
 
 # --- the values are the event's, not the catalogue's -------------------------
@@ -986,6 +1070,13 @@ def _record(kind: str, state: str, report: MetadataReport | None) -> dict[str, o
 def _refusal(report: MetadataReport | None) -> dict[str, object]:
     record = {"source_kind": "isbn_refusal", "reason_code": "source_value_absent"}
     return _project(_event(destination="isbn", record=record), report)
+
+
+def test_an_isbn_refusal_says_why_once() -> None:
+    facts = _facts(_refusal(_titled("Recorded")))
+    assert facts["Why it stayed unchanged"] == "No source supplied an ISBN"
+    # The change column says "Left ISBN unchanged"; no fact repeats it (#1765).
+    assert "Outcome" not in facts
 
 
 _CHECKED = _titled("Recorded")
