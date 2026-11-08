@@ -60,15 +60,22 @@ export const invalidationKeys = (update: LiveUpdate): readonly (readonly unknown
       return [['review-preparation']]
     case 'library':
       // The bounded page the owner is looking at, and the attention rail beside
-      // it. Never a whole-Library rebuild: these refetch the same cursor and
-      // limit the surface already asked for.
-      return [['library'], ['attention']]
+      // it, or the Covers pages in its place. Never a whole-Library rebuild:
+      // these refetch the same cursors and limits the surface already asked for.
+      return [['library'], ['attention'], ['covers']]
     case 'case':
       return [caseKey(update.subject)]
     case 'activity':
       return [['activity']]
     default:
-      return [['review-preparation'], ['library'], ['attention'], ['activity'], ['review-case']]
+      return [
+        ['review-preparation'],
+        ['library'],
+        ['attention'],
+        ['covers'],
+        ['activity'],
+        ['review-case'],
+      ]
   }
 }
 
