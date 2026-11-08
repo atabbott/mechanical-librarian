@@ -36,19 +36,16 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
         Description advice
       </h3>
       <p>
-        A configured adviser can rewrite or combine provider descriptions. Its text is always marked
-        as advised, authored content.
+        An adviser can rewrite or combine source descriptions. Its text is always marked as advice.
       </p>
-      <a href="/settings?group=reviewer">
-        Choose the description engine and review its data and usage disclosure
-      </a>
+      <a href="/settings?group=reviewer">Choose the description adviser</a>
       {query.isPending ? (
         <p role="status">Loading description preferences…</p>
       ) : query.error instanceof BuildMismatchError ? (
         <StaleBuildRead lead="Description preferences were not loaded." ref={preferencesRetry} />
       ) : query.isError ? (
         <div role="alert">
-          <p>Description preferences are unavailable.</p>
+          <p>Description preferences could not be loaded.</p>
           <button
             ref={preferencesRetry}
             onClick={() => {
@@ -143,11 +140,10 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   return (
     <div>
       <p>
-        Cleanup choices start on. Automatic application starts off and is independent of engine
-        selection. When enabled, ready advice uses the existing consent, backup and write checks; an
-        owner decision takes precedence.
+        When automatic applying is on, ready advice is written with your write permission, unless
+        you chose a description yourself.
       </p>
-      {locked ? <p>These preferences are managed by deployment configuration.</p> : null}
+      {locked ? <p>These preferences are set in the deployment configuration.</p> : null}
       <div className="description-advice-fields">
         {(Object.keys(labels) as (keyof Preferences)[]).map((name) => (
           <FieldRow
@@ -184,8 +180,8 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         {mutation.isSuccess
           ? 'Description preferences saved.'
           : changed
-            ? 'Unsaved. These save with their own button, not with the policy.'
-            : 'Saved with their own button, not with the policy.'}
+            ? 'Unsaved. Activating the policy does not save them.'
+            : ''}
       </p>
       {staleLead !== null ? (
         <StaleBuildRead key="stale" lead={staleLead} ref={reloadButton} />
@@ -193,10 +189,10 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         <div role="alert">
           <p>
             {!stale && unconfirmed
-              ? 'Description preferences could not be confirmed. They may have been saved; the saved preferences were reloaded. Check them before saving again.'
+              ? 'No answer came back. Check whether the description preferences were saved before saving again.'
               : refusalCopy(
                   stale ? null : mutation.error,
-                  'Description preferences could not be saved against the current settings. Reload the saved preferences before trying again.',
+                  'Description preferences were not saved. Reload them, then try again.',
                 )}
           </p>
           <button
@@ -209,9 +205,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
           >
             {reload.isPending ? 'Reloading preferences…' : 'Reload description preferences'}
           </button>
-          {reload.isError ? (
-            <p>Saved preferences could not be loaded. Retry when the connection returns.</p>
-          ) : null}
+          {reload.isError ? <p>The saved preferences could not be loaded. Try again.</p> : null}
         </div>
       ) : null}
     </div>
