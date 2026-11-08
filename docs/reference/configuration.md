@@ -380,9 +380,9 @@ and Inventaire receive no audiobook requests.
 `cover_enabled` makes a provider a cover source. A report admits at most four
 provider cover sources per named connection, eight for Hardcover, and twelve in
 all. Extra sources are recorded as truncated. Hardcover covers come only from
-`assets.hardcover.app`. An edition's cover is fetched only when the edition
-states one of the library's languages and at least 300 px on its short side.
-Ebooks take portrait covers and audiobooks square ones.
+`assets.hardcover.app`. A Hardcover edition's cover is fetched only when the
+edition states one of the library's languages and at least 300 px on its short
+side. An ebook takes a portrait edition cover and an audiobook a square one.
 
 Settings shows a **Cover evidence** switch only for `audible_catalog` (its art
 becomes an audiobook cover source) and `itunes_search` (a matching audiobook
