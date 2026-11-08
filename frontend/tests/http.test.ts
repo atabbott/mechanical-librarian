@@ -2997,7 +2997,7 @@ describe('ReviewApiClient', () => {
   it('accepts only ordered and bounded preparation presentation content', async () => {
     const presentation = preparationPresentation({
       passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
-      active_books: [{ name: 'Private title', stage: 'Comparing candidates' }],
+      active_books: [{ name: 'Private title', stage: 'Comparing sources' }],
       recent_completions: [{ name: 'Finished title', outcome: 'ready', completed_at: 101 }],
       throughput_per_minute: 1.2,
     })
