@@ -434,7 +434,13 @@ class IsolatedAudioInspector:
                 tuple(value.rsplit("/", 1)[-1] for value in relative_paths),
                 own_file_names,
             )
-            return tuple(_parent_view(value) for value in sidecars) == tuple(
+            # Documents open in priority order (track-bound, the target's
+            # record, folder-level) while the manifest lists them by name, so
+            # both sides are compared by name (#1481).
+            return tuple(
+                _parent_view(value)
+                for value in sorted(sidecars, key=lambda opened: opened.name)
+            ) == tuple(
                 (
                     value.name,
                     value.digest,
@@ -446,7 +452,7 @@ class IsolatedAudioInspector:
                         if refusal in PARENT_SIDECAR_REFUSALS
                     ),
                 )
-                for value in expected_sidecars
+                for value in sorted(expected_sidecars, key=lambda entry: entry.name)
             )
         except (LocalMediaError, OSError, ValueError, ReportValueError):
             return False

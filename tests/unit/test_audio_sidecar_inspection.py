@@ -300,3 +300,37 @@ def test_nothing_a_document_references_is_ever_opened(
         ("book.cue", "cue", "track", ("other_file",)),
         ("folder.opf", "opf", "folder", ()),
     ]
+
+
+def test_unchanged_media_stays_current_whatever_order_the_documents_open_in(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """Codex r5: documents open track-bound, then record, then folder.
+
+    The manifest is sorted by name, so `aaa.nfo`, `book.opf` and the target's
+    `metadata.json` open in another order than the manifest lists them.  The
+    comparison is by name, so unchanged media stays current.
+    """
+    documents = {
+        "aaa.nfo": f"Title: {_TITLE}\nAuthor: {_AUTHOR}\n",
+        "book.metadata.json": _libation(),
+        "book.opf": _opf(),
+        "metadata.json": json.dumps({"title": _TITLE}),
+    }
+    result = _inspect(tmp_path, documents)
+    assert [entry.name for entry in result.audio.sidecars] == sorted(documents)
+
+    def current() -> bool:
+        return IsolatedAudioInspector().unchanged(
+            MediaMountConfiguration("audiobooks", str(tmp_path), "/library", True),
+            ("Item/book.m4b",),
+            result.content_digest,
+            _MAXIMUM,
+            result.audio.sidecars,
+            result.audio.tracks,
+            own_file_names=("book.m4b", *documents),
+        )
+
+    assert current()
+    (tmp_path / "Item" / "aaa.nfo").write_text("Title: Changed\n", encoding="utf-8")
+    assert not current()
