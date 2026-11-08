@@ -395,6 +395,50 @@ it('holds focus in the workspace while a selected detail retry reads (#1742)', a
   )
 })
 
+it('keeps focus on a selected detail Try again that stays mounted while it reads and fails again (#1742)', async () => {
+  const user = userEvent.setup()
+  const base = createHttp()
+  const updates = createLiveStream()
+  let failing = false
+  let release: () => void = () => undefined
+  let held = false
+  const http: ReviewHttp = {
+    ...base,
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (...args) => {
+      if (!failing) return base.getCaseDetail(...args)
+      if (held)
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      throw new ApiError(503, 'unavailable')
+    }),
+  }
+  renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+  expect(
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
+  ).toBeVisible()
+  // A background read of the loaded case fails: the case keeps its data, so its
+  // retry stays in error, and Try again stays mounted, while it reads.
+  failing = true
+  await act(async () => {
+    updates.announce({ sequence: 1, subject: 'case-1', topic: 'case' })
+  })
+  const failure = await screen.findByText(/Selected work could not be loaded\./u)
+  const retry = within(failure).getByRole('button', { name: 'Try again' })
+  held = true
+  retry.focus()
+  await user.click(retry)
+  await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(3))
+  expect(retry).toBeInTheDocument()
+  expect(retry).toHaveFocus()
+  await act(async () => {
+    release()
+  })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(within(failure).getByRole('button', { name: 'Try again' })).toHaveFocus()
+  expect(document.body).not.toHaveFocus()
+})
+
 it('moves focus to Reload when a lineage check outlasts a selected-work retry (#1742)', async () => {
   const user = userEvent.setup()
   let retried = false

@@ -1133,13 +1133,16 @@ export default function LibraryPage({
     selectedDetailRetry.current = null
     selectedDetailShown.current = null
   }, [search.preview])
-  // The loading line replaces a selected-work Try again while its reads run:
-  // the workspace, which stays, holds focus until the settled read takes it.
-  const holdSelectedRetry = () => {
+  // A read with no data goes back to pending when retried, so the loading line
+  // replaces its Try again: the workspace, which stays, holds focus until the
+  // settled read takes it. A read that still holds data keeps Try again
+  // mounted, and focus stays on it.
+  const holdSelectedRetry = (replaced: boolean) => {
     selectedDetailRetry.current = search.preview ?? null
-    document
-      .querySelector<HTMLElement>('#main-content .workspace-detail')
-      ?.focus({ preventScroll: true })
+    if (replaced)
+      document
+        .querySelector<HTMLElement>('#main-content .workspace-detail')
+        ?.focus({ preventScroll: true })
   }
   useEffect(() => {
     // An error is settled only once it renders: while another read is still
@@ -1162,12 +1165,16 @@ export default function LibraryPage({
     }
     selectedDetailRetry.current = null
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
+    // A retried read that fails again with its Try again still mounted
+    // changes none of the states above: its new error is what settles it.
   }, [
     selectedReadError,
     selectedReadLoading,
     selectedReadStale,
     search.preview,
     selectedDetailReady,
+    detail.errorUpdateCount,
+    attention.errorUpdateCount,
   ])
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
@@ -2219,7 +2226,11 @@ export default function LibraryPage({
                 <button
                   ref={selectedDetailRetryButton}
                   onClick={() => {
-                    holdSelectedRetry()
+                    holdSelectedRetry(
+                      data === undefined ||
+                        attention.data === undefined ||
+                        (detail.isError && detail.data === undefined),
+                    )
                     void retry()
                     void attention.refetch()
                     // The case read names the work too, so it is read again (#1365).
@@ -2261,7 +2272,7 @@ export default function LibraryPage({
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
-                  holdSelectedRetry()
+                  holdSelectedRetry(detail.data === undefined)
                   void detail.refetch()
                 }}
               >
