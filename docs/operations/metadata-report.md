@@ -113,7 +113,10 @@ embedded cover art exists. Each claim names its surface: embedded tag, sidecar,
 or file and folder names. Chapters are a structured section, not claims.
 Embedded cover art is a presence fact with no cover authority.
 Audiobookshelf's own `metadata.json` and `metadata.abs` are recorded as present
-and yield no claim.
+and yield no claim. A sidecar that starts with a byte-order mark is read as it
+is, which supplies its claims, and again without the mark. Values only the
+second reading finds are recorded in the document's manifest entry and never
+become claims.
 
 - A description over 512 characters keeps its first 512 as `oversized`, with
   no canonical value, and is never proposed.

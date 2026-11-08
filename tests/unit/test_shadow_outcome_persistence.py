@@ -10294,6 +10294,10 @@ def test_supported_current_title_conflict_stays_manual_without_suspension(
             if mode == "automatic"
             else None
         )
+        # The reason states the title condition, so Library shows it once (#1802).
+        assert field["automatic_withheld_condition"] == (
+            "isbn_title_material_conflict" if mode == "automatic" else None
+        )
         assert repository.persist_shadow_outcome(case_id, 6) == persisted
     with closing(open_repository(path, create=False)) as reopened:
         assert reopened.persist_shadow_outcome(case_id, 7) == persisted

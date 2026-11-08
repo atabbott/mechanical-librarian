@@ -193,6 +193,12 @@ brackets are GitHub issues.
 - **Clean rebuild required.** An audiobook sidecar whose author differs only
   in how initials are written, such as "R.F." for "R. F.", is still set aside,
   and its report now gives that as the reason (#1780).
+- **Clean rebuild required.** An audiobook sidecar file that starts with a
+  byte-order mark is now also read without the mark. What that adds is recorded
+  in the report and not used until a run measures how often such files occur
+  and whether they agree with the audio file's tags (#1796).
+- A paused field's reason is no longer repeated beside it as a comparison
+  condition (#1802).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

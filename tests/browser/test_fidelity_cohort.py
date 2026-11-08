@@ -220,7 +220,8 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
             assert len(page_2_payload["items"]) == 3
             admitted_destinations = {"title", "authors", "series"}
             assert all(
-                set(item) == {"destinations", "observation", "role", "source"}
+                set(item)
+                == {"destinations", "language", "observation", "role", "source"}
                 for item in page_2_payload["items"]
             )
             for item in page_2_payload["items"]:

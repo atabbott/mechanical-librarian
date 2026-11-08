@@ -176,28 +176,48 @@ describe('owner labels (#1286)', () => {
   })
 
   // One language tag reads one way on every page, region and script included
-  // (#1286 L1); the server's observation text stays literal.
+  // (#1286 L1); the server's observation text stays literal. The value comes
+  // from the row's own member, never from the sentence's words (#1802).
   it.each([
-    ['Language: en', 'Language: English (en)'],
-    ['Language: pt-BR', 'Language: Brazilian Portuguese (pt-BR)'],
-    ['Language: en-GB', 'Language: British English (en-GB)'],
-    ['Language: zh-Hant', 'Language: Traditional Chinese (zh-Hant)'],
-    ['Language: fr. Not offered as a choice.', 'Language: French (fr). Not offered as a choice.'],
+    ['Language: en', 'en', 'Language: English (en)'],
+    ['Language: pt-BR', 'pt-BR', 'Language: Brazilian Portuguese (pt-BR)'],
+    ['Language: en-GB', 'en-GB', 'Language: British English (en-GB)'],
+    ['Language: zh-Hant', 'zh-Hant', 'Language: Traditional Chinese (zh-Hant)'],
+    [
+      'Language: fr. Not offered as a choice.',
+      'fr',
+      'Language: French (fr). Not offered as a choice.',
+    ],
+    // A reworded sentence still names the value where it stands.
+    [
+      'Recorded language pt-BR; not offered as a choice.',
+      'pt-BR',
+      'Recorded language Brazilian Portuguese (pt-BR); not offered as a choice.',
+    ],
+    // Only the first whole word is the value; the later "as" is a word.
+    [
+      'Language: as. Not offered as a choice.',
+      'as',
+      'Language: Assamese (as). Not offered as a choice.',
+    ],
     // Undetermined keeps its tag; the observation already says so.
-    ['Language: und', 'Language: und'],
+    ['Language: und', 'und', 'Language: und'],
     [
       'Language: UND. Not offered as a choice. The language is not known.',
+      'UND',
       'Language: UND. Not offered as a choice. The language is not known.',
     ],
-    // Not a tag, or not a language observation: shown as it is.
-    ['Language: English', 'Language: English'],
-    ['Language: not a tag', 'Language: not a tag'],
-    ['Title: en', 'Title: en'],
-  ])('reads the observation %j as %j', (text, shown) => {
-    expect(observationText(text)).toBe(shown)
-    // The page names the tag exactly as the field value beside it does.
-    const tag = /^Language: ([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)(?=\.|$)/u.exec(text)?.[1]
-    if (tag && !/^und$/iu.test(tag)) expect(shown).toContain(languageName(tag))
+    // Not a tag, or not a language row: shown as it is.
+    ['Language: English', 'English', 'Language: English'],
+    ['Language: not a tag', 'not a tag', 'Language: not a tag'],
+    ['Title: en', null, 'Title: en'],
+    // Negative controls: a row that states no language is not read for one,
+    // and a value the sentence does not hold as a word changes nothing.
+    ['Language: pt-BR', null, 'Language: pt-BR'],
+    ['A language not stated here.', 'fr', 'A language not stated here.'],
+    ['Language: often', 'en', 'Language: often'],
+  ])('reads the observation %j stating %j as %j', (observation, language, shown) => {
+    expect(observationText({ observation, language })).toBe(shown)
   })
 })
 

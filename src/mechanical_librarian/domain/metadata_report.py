@@ -26,16 +26,22 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioObservation,
     AudioObservationKind,
     AudioSidecarBinding,
+    AudioSidecarByteOrderMark,
+    AudioSidecarByteOrderMarkFact,
     AudioSidecarDigest,
     AudioSidecarKind,
     AudioSidecarRefusal,
     AudioSidecarShadow,
     AudioSidecarShadowField,
+    AudioSidecarStrippedLimit,
     AudioTrackDigest,
     normalize_duration_seconds,
 )
 from mechanical_librarian.domain.audio_inspection import (
     MAX_CHAPTERS as MAX_AUDIO_CHAPTERS,
+)
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_FACTS as MAX_AUDIO_FACTS,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -103,7 +109,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v76"
+REPORT_SCHEMA = "metadata-report-v77"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1335,6 +1341,14 @@ class AudioFacts:
             or len(self.sidecars) > MAX_AUDIO_SIDECARS
             or any(type(value) is not AudioSidecarDigest for value in self.sidecars)
             or names != tuple(sorted(set(names)))
+            # Item-wide, what readings without a byte-order mark add is held
+            # to the same bound as the facts themselves (#1796).
+            or sum(
+                len(value.byte_order_mark.facts)
+                for value in self.sidecars
+                if value.byte_order_mark is not None
+            )
+            > MAX_AUDIO_FACTS
         ):
             raise ReportValueError("audio sidecar manifest is invalid")
         if (
@@ -1394,6 +1408,41 @@ class AudioFacts:
             "sidecars": [value.to_data() for value in self.sidecars],
             "tracks": [value.to_data() for value in self.tracks],
         }
+
+
+def audio_record_rungs(audio: AudioFacts) -> tuple[AudioFacts, ...]:
+    """The audio section, smaller at each step, for a byte bound to choose from.
+
+    What readings without a byte-order mark add is never believed (#1796), so
+    it is the first thing a bound takes: the section as it is, then with every
+    record's facts emptied and marked omitted, then with every record removed.
+    A section with no record has one step.
+    """
+    if all(entry.byte_order_mark is None for entry in audio.sidecars):
+        return (audio,)
+    return (
+        audio,
+        replace(
+            audio,
+            sidecars=tuple(
+                entry
+                if entry.byte_order_mark is None or not entry.byte_order_mark.facts
+                else replace(
+                    entry,
+                    byte_order_mark=replace(
+                        entry.byte_order_mark, facts=(), facts_omitted=True
+                    ),
+                )
+                for entry in audio.sidecars
+            ),
+        ),
+        replace(
+            audio,
+            sidecars=tuple(
+                replace(entry, byte_order_mark=None) for entry in audio.sidecars
+            ),
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -6047,30 +6096,42 @@ class MetadataReport:
             if field_results is not None
             else derive_field_results(local_claims)
         )
-        identifiers = (
-            identifier_evidence
-            if identifier_evidence is not None
-            else derive_identifier_evidence(local_claims, providers, target, audio)
-        )
-        data = _report_data(
-            "",
-            target,
-            file,
-            local_claims,
-            local_status,
-            local_reasons,
-            providers,
-            results,
-            identifiers,
-            cover_sources,
-            audio,
-            companion,
-            library_languages,
-            cover_recovery,
-        )
-        data.pop("report_id")
+        # A record of what a reading without a byte-order mark adds is the
+        # first thing the report's byte bound takes (#1796): every site that
+        # creates a report, a provider-retry successor included, comes here.
+        rungs = (audio,) if audio is None else audio_record_rungs(audio)
+        for rung in rungs:
+            identifiers = (
+                identifier_evidence
+                if identifier_evidence is not None
+                else derive_identifier_evidence(local_claims, providers, target, rung)
+            )
+            data = _report_data(
+                "",
+                target,
+                file,
+                local_claims,
+                local_status,
+                local_reasons,
+                providers,
+                results,
+                identifiers,
+                cover_sources,
+                rung,
+                companion,
+                library_languages,
+                cover_recovery,
+            )
+            data.pop("report_id")
+            address = report_content_address(data)
+            if (
+                rung is rungs[-1]
+                or len(canonical_json({**data, "report_id": address}).encode("utf-8"))
+                <= MAX_REPORT_BYTES
+            ):
+                break
         return cls(
-            report_content_address(data),
+            address,
             target,
             file,
             local_claims,
@@ -6080,7 +6141,7 @@ class MetadataReport:
             results,
             identifiers,
             cover_sources,
-            audio=audio,
+            audio=rung,
             companion=companion,
             library_languages=library_languages,
             cover_recovery=cover_recovery,
@@ -7852,6 +7913,7 @@ def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
         value,
         {
             "binding",
+            "byte_order_mark",
             "claims",
             "digest",
             "disputed",
@@ -7885,9 +7947,34 @@ def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
                 )
             ),
             _integers(item["echoed_narrators"]),
+            _byte_order_mark_from_data(item["byte_order_mark"]),
         )
     except ValueError as error:
         raise ReportValueError("audio sidecar manifest is invalid") from error
+
+
+def _byte_order_mark_from_data(value: object) -> AudioSidecarByteOrderMark | None:
+    """A manifest entry's closed record of a reading without its mark (#1796)."""
+    if value is None:
+        return None
+    item = _object(value, {"facts", "facts_omitted", "omitted", "refusals"})
+    return AudioSidecarByteOrderMark(
+        tuple(AudioSidecarRefusal(code) for code in _strings(item["refusals"])),
+        tuple(
+            AudioSidecarByteOrderMarkFact(
+                AudioInspectionField(fact["field"]),
+                fact["observed"],
+                fact["canonical"],
+                fact["role"],
+            )
+            for fact in (
+                _object(entry, {"canonical", "field", "observed", "role"})
+                for entry in _list(item["facts"])
+            )
+        ),
+        item["facts_omitted"],
+        None if item["omitted"] is None else AudioSidecarStrippedLimit(item["omitted"]),
+    )
 
 
 def _audio_chapter_from_data(value: object) -> AudioChapter:
@@ -8647,6 +8734,7 @@ __all__ = [
     "IdentifierEvidenceBasis",
     "IdentifierRelation",
     "MAX_REPORT_BYTES",
+    "audio_record_rungs",
     "AUDIO_FILE_FORMATS",
     "SUPPORTED_FILE_FORMATS",
     "PROVIDER_AUTHORITIES",

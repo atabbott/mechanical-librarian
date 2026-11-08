@@ -43,6 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from tests.support.audiobook_reports import audio_local_claims, qualified_audiobook
 from tests.support.metadata_report_doubles import single_track_audio_facts
+from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
 
 def _structure_evidence(
@@ -303,7 +304,7 @@ def test_a_v33_audio_report_may_carry_a_provider_observation() -> None:
     dispatches none until the activation packet, which is a different fact.
     """
     report = _audio_report(())
-    assert "metadata-report-v76" == report.schema_version
+    assert CURRENT_REPORT_SCHEMA == report.schema_version
     assert ProviderQueryKind.ASIN == report.providers[0].query_kind
     assert "audible_catalog" == report.providers[0].authority
     assert report == MetadataReport.from_json(report.to_json())

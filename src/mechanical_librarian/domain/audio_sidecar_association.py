@@ -474,8 +474,12 @@ def _valid(fact: AudioInspectionFact) -> bool:
     return fact.state == "valid" and fact.canonical_value is not None
 
 
-def _comparison_key(field: AudioInspectionField, canonical: str) -> str:
-    """One canonical value's comparison form for the disagreement rule."""
+def comparison_key(field: AudioInspectionField, canonical: str) -> str:
+    """One canonical value's comparison form for the disagreement rule.
+
+    Also how the cold-start report compares a value recorded from a reading
+    without a byte-order mark with the file's own tags (#1796).
+    """
     if field is AudioInspectionField.SERIES_SEQUENCE:
         number = _number(canonical)
         return canonical if number is None else str(number.normalize())
@@ -486,7 +490,7 @@ def _value_set(
     facts: list[AudioInspectionFact], field: AudioInspectionField
 ) -> frozenset[str]:
     return frozenset(
-        _comparison_key(field, fact.canonical_value)
+        comparison_key(field, fact.canonical_value)
         for fact in facts
         if fact.field is field and fact.canonical_value is not None and _valid(fact)
     )
@@ -601,6 +605,7 @@ __all__ = [
     "SidecarDocument",
     "SidecarOutcome",
     "associate_sidecars",
+    "comparison_key",
     "document_series_names",
     "file_association_evidence",
     "shared_folder",

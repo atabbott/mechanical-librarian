@@ -47,7 +47,7 @@ export function ChoiceEvidencePanel({
             <li key={`${row.source}:${row.observation}:${String(index)}`}>
               <strong>{row.source}</strong>
               <span>{evidenceRoleLabel(row.role)}</span>
-              <p>{observationText(row.observation)}</p>
+              <p>{observationText(row)}</p>
             </li>
           ))}
         </ul>
@@ -135,7 +135,7 @@ export function RecordedFieldObservations({
         <ul className="evidence-values" ref={list}>
           {observations.map((item, index) => (
             <li key={`${item.source}:${item.observation}:${String(index)}`} tabIndex={-1}>
-              <p>{observationText(item.observation)}</p>
+              <p>{observationText(item)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
               </small>

@@ -8,6 +8,7 @@ would read.  Every title, name and identifier here is synthetic.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 
@@ -845,6 +846,7 @@ def test_the_refusal_vocabulary_is_closed_and_ordered() -> None:
 def _entry_data(**changes: object) -> dict[str, object]:
     data: dict[str, object] = {
         "binding": "folder",
+        "byte_order_mark": None,
         "claims": [],
         "digest": "a" * 64,
         "disputed": [],
@@ -923,12 +925,12 @@ def _wide(width: int) -> str:
     return "\U0001d11e" * width
 
 
-def _maximal_reading(index: int) -> AudioSidecarReading:
+def _maximal_reading(index: int, title: str = "") -> AudioSidecarReading:
     return AudioSidecarReading(
         f"{index}{'n' * (MAX_SIDECAR_NAME_CHARACTERS - 15)}.metadata.json",
         _LIBATION,
         (),
-        _wide(MAX_ASSOCIATION_CHARACTERS),
+        title + _wide(MAX_ASSOCIATION_CHARACTERS - len(title)),
         tuple(
             f"{creator:02d}{_wide(MAX_ASSOCIATION_CHARACTERS - 2)}"
             for creator in range(MAX_ASSOCIATION_CREATORS)
@@ -947,8 +949,10 @@ def _maximal_reading(index: int) -> AudioSidecarReading:
 def test_the_worst_case_child_output_survives_its_own_protocol() -> None:
     """T27: maximal chapters plus 8 maximal sidecar readings and file text.
 
-    Every character costs four bytes.  The facts budget is unchanged by #1481
-    and is not part of this bound.
+    Every character costs four bytes.  Each reading also carries a maximal
+    reading without its byte-order mark (#1796).  The facts budget is
+    unchanged by #1481 and is not part of this bound; past it the child drops
+    the readings without a mark first (control 4).
     """
     report = AudioInspection(
         AudioInspectionOutcome.SUCCESS,
@@ -967,7 +971,14 @@ def test_the_worst_case_child_output_survives_its_own_protocol() -> None:
             f"{creator:02d}{_wide(MAX_ASSOCIATION_CHARACTERS - 2)}"
             for creator in range(MAX_ASSOCIATION_CREATORS)
         ),
-        sidecars=tuple(_maximal_reading(index) for index in range(8)),
+        sidecars=tuple(
+            dataclasses.replace(
+                _maximal_reading(index),
+                byte_order_mark=True,
+                stripped=_maximal_reading(index, "s"),
+            )
+            for index in range(8)
+        ),
     )
     serialized = report.to_json()
 
@@ -975,7 +986,7 @@ def test_the_worst_case_child_output_survives_its_own_protocol() -> None:
     assert AudioInspection.from_json(serialized) == report
 
 
-def test_protocol_v5_round_trips_and_refuses_v4() -> None:
+def test_protocol_v6_round_trips_and_refuses_v5() -> None:
     reading = _reading(
         "book.cue",
         _CUE,
@@ -993,9 +1004,11 @@ def test_protocol_v5_round_trips_and_refuses_v4() -> None:
     assert AudioInspection.from_json(serialized) == report
 
     old = json.loads(serialized)
-    old["schema"] = "audio-inspection-v4"
-    with pytest.raises(ValueError, match="protocol"):
-        AudioInspection.from_json(json.dumps(old))
+    old["schema"] = "audio-inspection-v5"
+    with pytest.raises(ValueError, match="protocol is invalid"):
+        AudioInspection.from_json(
+            json.dumps(old, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        )
     del old["sidecars"], old["album"], old["creators"]
     with pytest.raises(ValueError, match="protocol"):
         AudioInspection.from_json(json.dumps(old))
@@ -1033,6 +1046,7 @@ def test_a_digest_carries_no_association_text() -> None:
         "name",
         "refusals",
         "shadow",
+        "byte_order_mark",
     }
 
 
@@ -1041,13 +1055,30 @@ def test_a_digest_carries_no_association_text() -> None:
     (
         "Narrator: Example Narrator\n".encode("utf-16"),
         b"Narrator: Example \xff Narrator\n",
+        b"\xff\xfe" + "Narrator: Example Narrator\n".encode("utf-16-le"),
+        b"\xfe\xff" + "Narrator: Example Narrator\n".encode("utf-16-be"),
+        b"\xff\xfe\x00\x00" + "Narrator: Example Narrator\n".encode("utf-32-le"),
+        b"\x00\x00\xfe\xff" + "Narrator: Example Narrator\n".encode("utf-32-be"),
+        b"\xef\xbb\xbfNarrator: Example \xff Narrator\n",
     ),
-    ids=("utf16", "invalid_utf8"),
+    ids=(
+        "utf16",
+        "invalid_utf8",
+        "utf16le_bom",
+        "utf16be_bom",
+        "utf32le_bom",
+        "utf32be_bom",
+        "utf8_bom_then_invalid",
+    ),
 )
 def test_a_document_that_is_not_strict_utf8_is_dropped_whole(
     tmp_path, payload: bytes
 ) -> None:
-    """S3: the child's decoder refuses it, so no reading exists at all."""
+    """S3, #1796 control 1: the child's decoder refuses it, so no reading exists.
+
+    A UTF-8 mark followed by invalid bytes, and UTF-16 or UTF-32 with their own
+    marks, are still dropped whole before any mark could be removed.
+    """
     import os
 
     from mechanical_librarian.bootstrap import audio_child
@@ -1059,15 +1090,6 @@ def test_a_document_that_is_not_strict_utf8_is_dropped_whole(
         assert audio_child._sidecar_text(descriptor, 1_048_576) is None
     finally:
         os.close(descriptor)
-
-
-def test_no_byte_order_mark_is_stripped() -> None:
-    """S17, S3: a JSON export opening with U+FEFF stays unread, as on main."""
-    document = "﻿" + json.dumps({"asin": _ASIN})
-    [reading] = _interpret(
-        AudioSidecar(_LIBATION, "book.metadata.json", document)
-    ).sidecars
-    assert reading.facts == ()
 
 
 class _Name(str):

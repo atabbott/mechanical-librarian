@@ -1143,6 +1143,24 @@ describe('ReviewApiClient', () => {
     await expect(readCase(response([field({ classification_cause: 'queued' })]))).rejects.toThrow(
       ApiError,
     )
+    // The condition a withheld reason states maps; one the server never sends
+    // does not (#1802).
+    expect(
+      (
+        await readCase(
+          response([
+            field({
+              automatic_withheld_reason: 'Reworded title reason.',
+              automatic_withheld_condition: 'isbn_title_material_conflict',
+            }),
+          ]),
+        )
+      ).fields[0]?.automaticWithheldCondition,
+    ).toBe('isbn_title_material_conflict')
+    expect((await readCase(response([field()]))).fields[0]?.automaticWithheldCondition).toBeNull()
+    await expect(
+      readCase(response([field({ automatic_withheld_condition: 'queued' })])),
+    ).rejects.toThrow(ApiError)
     expect(
       (await readCase(response([field({ automatic_withheld_reason: null })]))).fields[0]
         ?.automaticWithheldReason,
@@ -1210,6 +1228,31 @@ describe('ReviewApiClient', () => {
     expect(retainedContexts).toHaveLength(3)
     expect(retainedContexts?.[1]?.alternativeId).toBe('eligible')
     expect(retainedContexts?.[2]?.alternativeId).toBe('preserves-target')
+    // A choice card's language row carries the value it states (#1802).
+    const languageRow = {
+      language: 'pt-BR',
+      observation: 'Language: pt-BR',
+      role: 'local_presence',
+      source: 'Local library record',
+    }
+    expect(
+      (
+        await readCase(
+          response([field({ choice_contexts: [choiceContext({ evidence: [languageRow] })] })]),
+        )
+      ).fields[0]?.choiceContexts[0]?.evidence,
+    ).toEqual([languageRow])
+    await expect(
+      readCase(
+        response([
+          field({
+            choice_contexts: [
+              choiceContext({ evidence: [{ ...languageRow, language: undefined }] }),
+            ],
+          }),
+        ]),
+      ),
+    ).rejects.toThrow(ApiError)
     for (const [invalid, failure] of [
       [null, 'type@/fields/0'],
       ['field', 'type@/fields/0'],
@@ -1246,6 +1289,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           destinations: ['title'],
+          language: null,
           observation: 'Title: A Book',
           role: 'external_corroboration',
           source: 'Hardcover',
@@ -1273,6 +1317,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           destinations: ['title'],
+          language: null,
           observation: 'Title: A Book',
           role: 'external_corroboration',
           source: 'Hardcover',
@@ -1300,6 +1345,22 @@ describe('ReviewApiClient', () => {
         })
       ).items[0]?.role,
     ).toBe('external_observation')
+    // A language row carries the value it states (#1802).
+    expect(
+      (
+        await readEvidence({
+          ...payload,
+          items: [
+            {
+              ...payload.items[0],
+              destinations: ['language'],
+              language: 'pt-BR',
+              observation: 'Language: pt-BR. Not offered as a choice.',
+            },
+          ],
+        })
+      ).items[0]?.language,
+    ).toBe('pt-BR')
     for (const invalid of [
       { ...payload, schema_version: 'review-case-evidence-v3' },
       { ...payload, items: [{ fact: '{}', kind: 'raw', reference: 'evidence-1' }] },
@@ -1307,6 +1368,8 @@ describe('ReviewApiClient', () => {
       { ...payload, items: [{ ...payload.items[0], destinations: ['title', 'title'] }] },
       { ...payload, items: [{ ...payload.items[0], role: 'unknown' }] },
       { ...payload, items: [{ ...payload.items[0], observation: 'x'.repeat(1025) }] },
+      { ...payload, items: [{ ...payload.items[0], language: 1 }] },
+      { ...payload, items: [{ ...payload.items[0], language: 'x'.repeat(1025) }] },
       { ...payload, source_ledger: [{ provider: 'Hardcover' }] },
     ])
       await expect(readEvidence(invalid)).rejects.toThrow(ApiError)
