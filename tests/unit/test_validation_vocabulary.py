@@ -14,8 +14,10 @@ from mechanical_librarian.domain.validation import (
     non_negative_integer,
     nonempty_text,
     one_of,
+    optional,
     prefixed_hex_identity,
     text,
+    tuple_of,
 )
 
 
@@ -308,3 +310,31 @@ def test_nested_documents_close_their_own_field_set() -> None:
     assert not check({"pending_return": {"requested_at": 0}})
     assert not check({"pending_return": {"requested_at": 0, "scan_id": "s", "x": 1}})
     assert not check({"pending_return": None})
+
+
+class _Tuple(tuple[object, ...]):
+    """A ``tuple`` subclass, which exact-type sequence checks must reject."""
+
+
+def test_tuple_of_accepts_an_exact_tuple_of_valid_members_within_its_bound() -> None:
+    names = tuple_of(text, 2)
+    assert names(())
+    assert names(("a", "b"))
+    assert not names(("a", "b", "c"))
+    assert not names(["a"])
+    assert not names(_Tuple(("a",)))
+    assert not names(("a", _Text("b")))
+    assert not names(("a", 1))
+
+
+def test_tuple_of_without_a_bound_checks_members_only() -> None:
+    assert tuple_of(boolean)((True,) * 1000)
+    assert not tuple_of(boolean)((True, 1))
+
+
+def test_optional_accepts_none_or_whatever_its_check_accepts() -> None:
+    maybe_text = optional(text)
+    assert maybe_text(None)
+    assert maybe_text("value")
+    assert not maybe_text(_Text("value"))
+    assert not maybe_text(0)

@@ -24,6 +24,7 @@ from typing import Final, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
+    AudioInspectionField,
     AudioObservation,
     AudioObservationKind,
 )
@@ -68,6 +69,7 @@ from mechanical_librarian.domain.metadata_report import (
     companion_work_payload,
     discovery_lane_identity,
     duration_milliseconds,
+    echoed_target_values,
     field_evidence_providers,
     local_identifier_asins,
     plan_alternative_discovery_title,
@@ -1121,6 +1123,7 @@ def _chapter_candidate_support(
     authors: tuple[str, ...],
     requested_asin: str | None,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> bool:
     """Qualify raw recording evidence before shaping can discard its vetoes."""
     # The chapter route needs exact work admission, which a target with no
@@ -1129,7 +1132,7 @@ def _chapter_candidate_support(
         return False
     if (
         recording_variant_conflict(
-            candidate, local_claims, title or "", library_languages
+            candidate, local_claims, title or "", library_languages, echoed_languages
         )
         is not None
     ):
@@ -1180,6 +1183,13 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
         report.local_claims,
         report.target.current_title or "",
         report.library_languages,
+        _echoed_languages(report),
+    )
+
+
+def _echoed_languages(report: MetadataReport) -> tuple[str, ...]:
+    return echoed_target_values(
+        report.audio, report.target.fields, AudioInspectionField.LANGUAGE
     )
 
 
@@ -1188,6 +1198,7 @@ def stated_runtime_admission(
     local_claims: tuple[LocalClaim, ...],
     title: str,
     library_languages: tuple[str, ...],
+    echoed_languages: tuple[str, ...] = (),
 ) -> bool:
     """Whether any of these observations admitted a recording by stated runtime.
 
@@ -1202,7 +1213,7 @@ def stated_runtime_admission(
                 candidate
                 for candidate in observation.candidates
                 if recording_variant_conflict(
-                    candidate, local_claims, title, library_languages
+                    candidate, local_claims, title, library_languages, echoed_languages
                 )
                 is None
             ),
@@ -1278,6 +1289,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                     authors,
                     asin,
                     report.library_languages,
+                    _echoed_languages(report),
                 )
             ):
                 vetoed.add(asin)
@@ -1334,6 +1346,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 authors,
                 asin,
                 report.library_languages,
+                _echoed_languages(report),
             ):
                 support.append((observation.provider, candidate.identity, asin))
     eligible = tuple(
@@ -1361,15 +1374,28 @@ def admitted_audiobook_identity(report: MetadataReport) -> bool:
 
 
 def candidate_narrator_disjoint(
-    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...],
+    echoed_narrators: tuple[str, ...] = (),
 ) -> bool:
     """Whether a product credits only narrators the recording's own credits lack.
 
     An unknown cast on either side is never disjoint, so a recording without
     local narrator credits, or a product stating none, passes (#1252, #1316).
+    `echoed_narrators` are the target's narrators an `.opf` or `.nfo` stated
+    and echo withholding took out of the local claims (#1481): this only
+    refuses, so they stand in for the withheld credits exactly as those did,
+    and no reader that counts support reads them.
     """
     return narrator_cast_disjoint(
-        _recording_narrators(local_claims), _candidate_narrators(candidate)
+        (*_recording_narrators(local_claims), *echoed_narrators),
+        _candidate_narrators(candidate),
+    )
+
+
+def _echoed_narrators(report: MetadataReport) -> tuple[str, ...]:
+    return echoed_target_values(
+        report.audio, report.target.fields, AudioInspectionField.CONTRIBUTOR
     )
 
 
@@ -1528,6 +1554,7 @@ def _corroborated_distance(
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     library_languages: tuple[str, ...],
+    echoed_languages: tuple[str, ...] = (),
 ) -> int | None:
     """The tight-band distance of one product the rule admits, or ``None``."""
     local = local_claim_runtime_seconds(local_claims)
@@ -1539,7 +1566,9 @@ def _corroborated_distance(
         or claims is None
         or stated_runtime_agreement(local, candidate).outcome
         is not CorroborationOutcome.CORROBORATED
-        or recording_variant_conflict(candidate, local_claims, title, library_languages)
+        or recording_variant_conflict(
+            candidate, local_claims, title, library_languages, echoed_languages
+        )
         is not None
     ):
         return None
@@ -1594,6 +1623,7 @@ def corroborated_recording_candidate(
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderCandidate | None:
     """Choose the one product the corroborated admission rule admits (#1307).
 
@@ -1624,6 +1654,7 @@ def corroborated_recording_candidate(
                 local_claims,
                 corroboration,
                 library_languages,
+                echoed_languages,
             )
         )
         is not None
@@ -1654,6 +1685,7 @@ def band_first_candidate(
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
 ) -> ProviderCandidate | None:
     """Admit the one tight product of a set of title-admitted ones (#1260, #1307).
 
@@ -1684,7 +1716,9 @@ def band_first_candidate(
         len(tight) != 1
         or sum(outcome is CorroborationOutcome.CONTRADICTED for outcome, _ in outcomes)
         != len(admitted) - 1
-        or recording_variant_conflict(tight[0], local_claims, title, library_languages)
+        or recording_variant_conflict(
+            tight[0], local_claims, title, library_languages, echoed_languages
+        )
         is not None
         or _narrator_signal(
             (*corroboration.narrators, *_recording_narrators(local_claims)), tight[0]
@@ -1845,7 +1879,9 @@ def _verified_carried_candidates(
                 candidate is not None
                 and asin in _edition_asins(candidate)
                 and _tight_recording(candidate, report.local_claims)
-                and not candidate_narrator_disjoint(candidate, report.local_claims)
+                and not candidate_narrator_disjoint(
+                    candidate, report.local_claims, _echoed_narrators(report)
+                )
             ):
                 verified.append(candidate)
     return tuple(verified)
@@ -1876,7 +1912,9 @@ def _admitted_candidates(
         and observation.status is ProviderStatus.CANDIDATES
         for candidate in observation.candidates
         if _tight_recording(candidate, report.local_claims)
-        and not candidate_narrator_disjoint(candidate, report.local_claims)
+        and not candidate_narrator_disjoint(
+            candidate, report.local_claims, _echoed_narrators(report)
+        )
     )
 
 
@@ -2088,7 +2126,9 @@ def unconfirmed_audio_editions(
         for observation in report.providers
         for edition in observation.audio_editions
         if id(edition) in counted
-        and not candidate_narrator_disjoint(edition, report.local_claims)
+        and not candidate_narrator_disjoint(
+            edition, report.local_claims, _echoed_narrators(report)
+        )
         and all(unconfirmed(asin) for asin in _edition_asins(edition))
     )
 
@@ -2373,6 +2413,9 @@ def asin_lane_admission_basis_replays(
             candidate, work[0], work[1], audiobook=True
         ).admitted
     )
+    echoed_languages = echoed_target_values(
+        audio, target.fields, AudioInspectionField.LANGUAGE
+    )
     if value == TARGET_ADMISSION_BASIS:
         corroboration = recording_corroboration(target.fields)
         return (
@@ -2386,6 +2429,7 @@ def asin_lane_admission_basis_replays(
                 () if work is None else work[1],
                 queried,
                 library_languages,
+                echoed_languages,
             )
             or (
                 carried_lane
@@ -2398,6 +2442,7 @@ def asin_lane_admission_basis_replays(
                     local_claims,
                     corroboration,
                     library_languages,
+                    echoed_languages,
                 )
                 is not None
             )
@@ -2406,7 +2451,11 @@ def asin_lane_admission_basis_replays(
         return False
     linked = queried in companion_linked_asins(
         local_claims, audio, providers, companion
-    ) and not candidate_narrator_disjoint(candidate, local_claims)
+    ) and not candidate_narrator_disjoint(
+        candidate,
+        local_claims,
+        echoed_target_values(audio, target.fields, AudioInspectionField.CONTRIBUTOR),
+    )
     if value == COMPANION_ISBN_WORK_BASIS or linked:
         return value == COMPANION_ISBN_WORK_BASIS and linked
     identity = alternative_lane_identity(

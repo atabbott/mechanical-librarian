@@ -3,7 +3,7 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v8`` JSON document to stdout.
+prints one ``cold-start-report-v9`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -116,7 +116,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v8"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v9"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -600,9 +600,29 @@ def _audiobook_rows(
                 hardcover_edition_witness(report).value,
                 _companion_use(report),
                 _admission_basis(report),
+                _sidecar_entries(audio),
             )
         )
     return rows
+
+
+def _sidecar_entries(
+    audio: AudioFacts,
+) -> tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...]:
+    """Each manifest entry as closed codes only: no name, digest or value (#1481).
+
+    (kind, binding, refusals, echoed fields, disputed fields).
+    """
+    return tuple(
+        (
+            entry.kind.value,
+            entry.binding.value,
+            tuple(value.value for value in entry.refusals),
+            tuple(value.value for value in entry.echoed),
+            tuple(value.value for value in entry.disputed),
+        )
+        for entry in audio.sidecars
+    )
 
 
 def _admission_basis(report: MetadataReport) -> str | None:
@@ -1083,6 +1103,41 @@ def _companion_counts(rows: list[tuple[object, ...]]) -> dict[str, object]:
     }
 
 
+def _audiobook_sidecars(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    """Count one library's audiobook sidecar manifests by closed code (#1481).
+
+    `reports` holds any manifest entry; `entries` counts them by kind and
+    binding; `refusals` counts documents by refusal; `echoed` and `disputed`
+    count documents by the field withheld.
+    """
+    entries: Counter[tuple[str, str]] = Counter()
+    refusals: Counter[str] = Counter()
+    echoed: Counter[str] = Counter()
+    disputed: Counter[str] = Counter()
+    reports = 0
+    for row in rows:
+        manifest = cast(
+            "tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...]",
+            row[10],
+        )
+        reports += bool(manifest)
+        for kind, binding, refused, echoes, disputes in manifest:
+            entries[(kind, binding)] += 1
+            refusals.update(refused)
+            echoed.update(echoes)
+            disputed.update(disputes)
+    return {
+        "reports": reports,
+        "entries": [
+            {"kind": kind, "binding": binding, "count": count}
+            for (kind, binding), count in sorted(entries.items())
+        ],
+        "refusals": dict(sorted(refusals.items())),
+        "echoed": dict(sorted(echoed.items())),
+        "disputed": dict(sorted(disputed.items())),
+    }
+
+
 def _audiobook_cover_reads(rows: list[tuple[object, ...]]) -> dict[str, object]:
     """Count one library's Audiobookshelf cover reads by state and timeout scope."""
     states: Counter[tuple[str, str]] = Counter()
@@ -1401,7 +1456,7 @@ def assemble_cold_start_report(
     stage_timings: tuple[StageTiming, ...] | None = None,
     recovery: dict[str, list[tuple[object, ...]]] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v8`` document from persisted aggregates.
+    """Build the ``cold-start-report-v9`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
@@ -1678,6 +1733,7 @@ def assemble_cold_start_report(
                 "audiobook_cover_reads": _audiobook_cover_reads(
                     audiobook_rows.get(key, [])
                 ),
+                "audiobook_sidecars": _audiobook_sidecars(audiobook_rows.get(key, [])),
                 "dispatches": _dispatches(
                     dispatch_rows.get(key, []),
                     tuple(

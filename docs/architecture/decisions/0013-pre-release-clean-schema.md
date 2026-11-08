@@ -430,3 +430,14 @@ never marks an audiobook provider-limited and an iTunes listing never takes it
 out of Not matched. The proposal policy is unchanged. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
+
+Issue #1481 also takes the clean-rebuild branch. `metadata-report-v75` gives
+every audiobook sidecar manifest entry its kind, its binding, its closed
+refusals, the claims it supplied, the fields it lost to disagreement or to
+echoing the target, and Libation shadow values; `audio-inspection-v5` is the
+matching child protocol. A v74 report states none of these and holds claims
+from Audiobookshelf's own record, from shared folders and from other books'
+sidecars, and a report carries forward while its file and configuration
+fingerprints are unchanged, so a stored report would keep them. The proposal
+policy is unchanged. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.
