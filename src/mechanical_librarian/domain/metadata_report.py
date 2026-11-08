@@ -3452,9 +3452,18 @@ def echoed_target_values(
     )
     if type(value) is str:
         return (value,) if value else ()
-    if type(value) is tuple:
-        return tuple(item for item in value if type(item) is str and item)
-    return ()
+    if type(value) is not tuple:
+        return ()
+    # Only the narrators a document repeated were withheld, so only those
+    # stand in for it; the manifest records their positions (#1481).
+    positions = sorted(
+        {position for entry in audio.sidecars for position in entry.echoed_narrators}
+    )
+    return tuple(
+        item
+        for item in (value[position] for position in positions if position < len(value))
+        if type(item) is str and item
+    )
 
 
 def recording_variant_conflict(
@@ -4977,6 +4986,10 @@ def _validate_sidecar_claims(
         )
         if len(stated) != len(entry.claims):
             raise ReportValueError("audio sidecar claim provenance is unresolved")
+        if any(
+            position >= len(context.narrators) for position in entry.echoed_narrators
+        ):
+            raise ReportValueError("audio sidecar echoed narrator is unresolved")
         if entry.kind not in {AudioSidecarKind.OPF, AudioSidecarKind.NFO}:
             continue
         series_names = tuple(
@@ -7743,6 +7756,7 @@ def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
             "digest",
             "disputed",
             "echoed",
+            "echoed_narrators",
             "kind",
             "name",
             "refusals",
@@ -7770,6 +7784,7 @@ def _audio_sidecar_from_data(value: object) -> AudioSidecarDigest:
                     for entry in _list(item["shadow"])
                 )
             ),
+            _integers(item["echoed_narrators"]),
         )
     except ValueError as error:
         raise ReportValueError("audio sidecar manifest is invalid") from error

@@ -592,6 +592,7 @@ def _sidecar_manifest(
                 if document.reading is None
                 or set(outcome.refusals) & TERMINAL_SIDECAR_REFUSALS
                 else document.reading.shadow,
+                outcome.echoed_narrators,
             )
         )
     return tuple(sorted(entries, key=lambda entry: entry.name))

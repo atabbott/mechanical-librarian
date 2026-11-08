@@ -678,3 +678,44 @@ def test_an_echoed_opf_narrator_no_longer_settles_a_single_source_cast(
     assert held(_narrated(tmp_path, "echo", _NARRATOR))
     assert held(_narrated(tmp_path, "bare", None))
     assert not held(_narrated(tmp_path, "other", "Rowan Pell"))
+
+
+def test_only_the_echoed_narrator_guards_in_its_place(
+    tmp_path: Path, child: GrammarChild
+) -> None:
+    """Codex r5: the guard reads exactly what the echo withheld.
+
+    The target credits two narrators and the `.opf` repeats one of them. The
+    withheld claim named only that one, so a replacement by the other
+    narrator alone still shares nobody with what the file credited.
+    """
+    from mechanical_librarian.domain.shadow_outcome import (
+        _NARRATORS_REPLACE_IDENTITY,
+        _withdrawn_audiobook_identity,
+    )
+
+    folder = _in(tmp_path, "subset")
+    own = _library(folder, {"book.opf": _opf(_narrator_element(_NARRATOR))})
+    report, _, _ = _publish(folder, own, narrators=(_NARRATOR, _OTHER_NARRATOR))
+
+    def withdrawn(desired: list[str]) -> bool:
+        return _withdrawn_audiobook_identity(
+            _NARRATORS_REPLACE_IDENTITY,
+            None,
+            [_NARRATOR, _OTHER_NARRATOR],
+            desired,
+            report,
+            None,  # type: ignore[arg-type]  # read only by the title guard
+            series_preserved=False,
+        )
+
+    assert _echoed(report) == [["contributor"]]
+    assert report.audio is not None
+    assert [entry.echoed_narrators for entry in report.audio.sidecars] == [(0,)]
+    assert withdrawn([_OTHER_NARRATOR])
+    assert not withdrawn([_NARRATOR])
+    # A position the target's narrators do not hold is refused on reading.
+    document = json.loads(report.to_json())
+    document["audio"]["sidecars"][0]["echoed_narrators"] = [2]
+    with pytest.raises(ValueError, match="echoed narrator is unresolved"):
+        MetadataReport.from_json(json.dumps(document))

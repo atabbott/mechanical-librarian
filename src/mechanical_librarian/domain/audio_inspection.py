@@ -27,6 +27,7 @@ from mechanical_librarian.domain.validation import (
     closed_document,
     exact_type,
     matching,
+    non_negative_integer,
     optional,
     tuple_of,
 )
@@ -867,6 +868,9 @@ class AudioSidecarDigest:
     disputed: tuple[AudioInspectionField, ...] = ()
     echoed: tuple[AudioInspectionField, ...] = ()
     shadow: tuple[AudioSidecarShadow, ...] = ()
+    # Positions in the target's narrator list of the narrators echoed, value
+    # free like the rest; present exactly when a narrator was echoed.
+    echoed_narrators: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not matching(_SHA256)(self.digest):
@@ -884,6 +888,8 @@ class AudioSidecarDigest:
             or not _ordered_members(self.disputed, AudioInspectionField)
             or not _ordered_members(self.echoed, AudioInspectionField)
             or not _valid_shadow(self.shadow)
+            or not tuple_of(non_negative_integer, MAX_FACTS)(self.echoed_narrators)
+            or list(self.echoed_narrators) != sorted(set(self.echoed_narrators))
         ):
             raise ValueError("audio sidecar classification is malformed")
         if not tuple_of(matching(_CLAIM_REFERENCE), MAX_FACTS)(self.claims) or len(
@@ -912,6 +918,8 @@ class AudioSidecarDigest:
             != (AudioSidecarRefusal.SIDECARS_DISAGREE in refusals)
             or not set(self.disputed) <= SIDECAR_FIELDS
             or not set(self.echoed) <= ECHO_FIELDS
+            or bool(self.echoed_narrators)
+            != (AudioInspectionField.CONTRIBUTOR in self.echoed)
             or (
                 self.echoed
                 and self.kind not in {AudioSidecarKind.OPF, AudioSidecarKind.NFO}
@@ -932,6 +940,7 @@ class AudioSidecarDigest:
             "digest": self.digest,
             "disputed": [value.value for value in self.disputed],
             "echoed": [value.value for value in self.echoed],
+            "echoed_narrators": list(self.echoed_narrators),
             "kind": self.kind.value,
             "name": self.name,
             "refusals": [value.value for value in self.refusals],

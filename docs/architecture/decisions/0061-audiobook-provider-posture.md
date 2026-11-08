@@ -360,20 +360,22 @@ with track-bound documents now going to their track.
    everywhere, so the change is deliberate. Echo withholding withholds belief,
    never a refusal: a reader that can only refuse -- the recording-conflict
    language check and the narrator guard on a qualified replacement -- reads
-   the target's value for any field an entry recorded in `echoed`, which is
-   the input the withheld claim gave it, so a product in another language is
-   still refused and a disjoint narrator replacement still goes to the owner.
-   The narrator corroboration guard tightens instead: an echoed narrator is
-   not the file's mention, so a cast only one source stated is held for the
-   owner, as for an item with no sidecar. A description echo is compared only
-   for a plain description short enough to have a canonical value; a longer
-   one is never an echo.
+   the target's value for any field an entry recorded in `echoed` -- for
+   narrators, only the ones a document repeated, by their positions in
+   `echoed_narrators` -- which is the input the withheld claim gave it, so a
+   product in another language is still refused and a disjoint narrator
+   replacement still goes to the owner. The narrator corroboration guard
+   tightens instead: an echoed narrator is not the file's mention, so a cast
+   only one source stated is held for the owner, as for an item with no
+   sidecar. A description echo is compared only for a plain description short
+   enough to have a canonical value; a longer one is never an echo.
 8. **Manifest fields.** Each entry records `name`, `digest`, `kind`
    (`audiobookshelf_record`, `libation`, `opf`, `nfo`, `cue`), `binding`
    (`track` or `folder`), `refusals` (the seven closed codes, the first five
-   terminal), `claims` (the claims it supplied), `disputed`, `echoed`, and
-   `shadow` (Libation's `series[].title` and `format_type`, recorded and never
-   claimed until measured, #1482). Currentness re-derives kind, binding and the
+   terminal), `claims` (the claims it supplied), `disputed`, `echoed`,
+   `echoed_narrators` (positions in the target's narrators), and `shadow`
+   (Libation's `series[].title` and `format_type`, recorded and never claimed
+   until measured, #1482). Currentness re-derives kind, binding and the
    parent-side refusals from the listing and the re-read file list.
 
 This is `metadata-report-v72` and `audio-inspection-v5`, a clean rebuild under

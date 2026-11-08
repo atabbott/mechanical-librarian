@@ -228,6 +228,9 @@ class SidecarOutcome:
     facts: tuple[AudioInspectionFact, ...] = ()
     disputed: tuple[AudioInspectionField, ...] = ()
     echoed: tuple[AudioInspectionField, ...] = ()
+    # Positions, in the target's narrator list, of the narrators the document
+    # repeated, so a refuse-only reader is handed exactly what was withheld.
+    echoed_narrators: tuple[int, ...] = ()
 
 
 def shared_folder(
@@ -329,6 +332,7 @@ def associate_sidecars(
             kept[index] = [fact for fact in kept[index] if fact.field is not field]
     # S13: an `.opf` or `.nfo` value repeating the target's record is withheld.
     echoed: list[set[AudioInspectionField]] = [set() for _ in documents]
+    narrators: list[set[int]] = [set() for _ in documents]
     for index in associated:
         document = documents[index]
         if document.kind not in _ECHO_KINDS or document.reading is None:
@@ -342,6 +346,10 @@ def associate_sidecars(
                 and target_echo(context, fact.field, fact.canonical_value, names)
             ):
                 echoed[index].add(fact.field)
+                if fact.field is AudioInspectionField.CONTRIBUTOR:
+                    narrators[index].update(
+                        echoed_narrator_positions(context, fact.canonical_value)
+                    )
             else:
                 retained.append(fact)
         kept[index] = retained
@@ -353,6 +361,7 @@ def associate_sidecars(
             tuple(kept[index]),
             tuple(sorted(disputed[index], key=fields.index)),
             tuple(sorted(echoed[index], key=fields.index)),
+            tuple(sorted(narrators[index])),
         )
         for index in range(len(documents))
     )
@@ -481,6 +490,18 @@ def document_series_names(facts: tuple[AudioInspectionFact, ...]) -> tuple[str, 
         if fact.field is AudioInspectionField.SERIES
         and fact.canonical_value is not None
         and fact.state == "valid"
+    )
+
+
+def echoed_narrator_positions(
+    context: AudioAssociationContext, canonical: str
+) -> tuple[int, ...]:
+    """Where in the target's narrators one echoed narrator stands."""
+    key = _text_key(canonical)
+    return tuple(
+        position
+        for position, value in enumerate(context.narrators)
+        if key is not None and key == _text_key(value)
     )
 
 
