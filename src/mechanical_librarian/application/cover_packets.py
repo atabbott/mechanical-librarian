@@ -94,12 +94,16 @@ class _Candidate:
 
     @property
     def listed_only(self) -> bool:
-        """Whether every provider source of this preview is a listed edition."""
-        return {
-            source.provenance.designation
+        """Whether every source of this preview is a listed edition.
+
+        A preview the EPUB or the library also carries keeps that local
+        evidence, so it is never listed-only (#1778).
+        """
+        return bool(self.sources) and all(
+            source.provenance is not None
+            and source.provenance.designation is CoverDesignation.LISTED_EDITION
             for source in self.sources
-            if source.provenance is not None
-        } == {CoverDesignation.LISTED_EDITION}
+        )
 
     def priority(self, source_counts: dict[str, int]) -> tuple[int, int, int, str, str]:
         return candidate_priority(

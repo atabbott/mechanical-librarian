@@ -105,6 +105,7 @@ from mechanical_librarian.application.cover_observation import (  # noqa: E402
 from mechanical_librarian.application.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     PreparedCoverPacket,
+    _Candidate,
     cover_source_reference,
     prepare_cover_packet,
 )
@@ -1527,6 +1528,48 @@ def test_a_full_gallery_cuts_listed_editions_before_a_book_cover() -> None:
         if source.provenance is not None
         and source.provenance.designation is CoverDesignation.LISTED_EDITION
     }
+
+
+def test_an_embedded_cover_sharing_a_listed_editions_image_is_not_listed_only() -> None:
+    """A preview the EPUB also carries is never cut as listed-only (#1778).
+
+    The embedded cover deduplicates with a Hardcover listed edition of the
+    same image. The combined preview keeps its local evidence, so a full
+    gallery does not cut it before the listed-only covers.
+    """
+    payload = _preview(1)
+    embedded = _source(1, payload, embedded=True)
+    listed = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:listed:2"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"listed-2", payload, "image/png", 400, 600),
+        provenance=CoverProvenance(
+            "hardcover",
+            CoverDesignation.LISTED_EDITION,
+            "hardcover-work-0000000007",
+            "hardcover-edition-0000000002",
+        ),
+    )
+
+    def candidate(*sources: CoverSource) -> _Candidate:
+        return _Candidate(
+            "cover_ref_" + "a" * 64,
+            "b" * 64,
+            "c" * 64,
+            payload,
+            400,
+            600,
+            400,
+            600,
+            False,
+            list(sources),
+            [],
+        )
+
+    assert candidate(listed).listed_only
+    assert not candidate(embedded, listed).listed_only
+    assert not candidate(embedded).listed_only
 
 
 def test_changed_preview_and_overbound_incumbent_fail_closed() -> None:
