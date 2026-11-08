@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 
 import pytest
 
@@ -226,29 +227,178 @@ def test_adr_control_same_author_same_title_different_book_is_the_callers() -> N
         )
 
 
+def _agree(target_creators: tuple[str, ...], record_creators: tuple[str, ...]):
+    """Both levels' results for one title, folded and unfolded."""
+    target = IdentityReference("Lantern Harbour", target_creators)
+    record = IdentityReference("Lantern Harbour", record_creators)
+    return tuple(
+        predicate(target, record, fold_initials=fold)
+        for fold in (True, False)
+        for predicate in (title_and_creator_exact, title_and_creator)
+    )
+
+
+FOLDED_ONLY = (True, True, False, False)
+NEITHER = (False, False, False, False)
+
+
 @pytest.mark.parametrize(
     ("target_creator", "record_creator"),
     (
         ("J. R. Example", "J R Example"),
         ("J.R. Example", "J. R. Example"),
-        ("J. R. Example", "Jane Ruth Example"),
-        ("Example, Ada", "Ada Example"),
+        ("J R Example", "J.R. Example"),
+        ("R.\u00a0F. Example", "R.F. Example"),
+        ("E\u0301. R. Example", "\u00c9.R. Example"),
     ),
     ids=[
         "dotted_vs_spaced_initials",
         "joined_vs_spaced_initials",
-        "initials_vs_full_names",
-        "comma_inverted",
+        "undotted_vs_joined_dotted",
+        "no_break_space_inside_initials",
+        "precomposable_decomposed_mark",
     ],
 )
-def test_creators_are_not_folded_or_inverted(
+def test_dotted_initials_fold_at_both_levels(
     target_creator: str, record_creator: str
 ) -> None:
-    target = ref("Lantern Harbour", target_creator)
-    record = ref("Lantern Harbour", record_creator)
+    """#1780: the three spellings are one creator; unfolded they stay two."""
+    assert _agree((target_creator,), (record_creator,)) == FOLDED_ONLY
+    # Beside a shared creator, the wide level already agreed unfolded.
+    assert _agree((target_creator, ALDER), (ALDER, record_creator)) == (
+        True,
+        True,
+        False,
+        True,
+    )
 
-    assert not title_and_creator_exact(target, record)
-    assert not title_and_creator(target, record)
+
+@pytest.mark.parametrize(
+    ("target_creator", "record_creator"),
+    (
+        ("J. R. Example", "Jane Ruth Example"),
+        ("Example, Ada", "Ada Example"),
+        ("Example, R. F.", "R.F. Example"),
+        ("R. F. Example", "R. Example"),
+        ("J.R.R. Example", "J.R. Example"),
+        ("R. F. Example", "F.R. Example"),
+        ("Jane\u2009Example", "Jane Example"),
+        ("Jane\u202fExample", "Jane Example"),
+        ("R. F.", "R.F."),
+        ("R. F.", "R F"),
+        ("A. B. 12", "A.B. 12"),
+        ("A. B. ?!", "A.B. ?!"),
+    ),
+    ids=[
+        "initials_vs_full_names",
+        "comma_inverted",
+        "comma_inverted_initials",
+        "dropped_initial",
+        "added_initial",
+        "reversed_initials",
+        "thin_space_without_initials",
+        "narrow_no_break_space_without_initials",
+        "initials_only",
+        "initials_only_undotted",
+        "initials_with_digits",
+        "initials_with_punctuation",
+    ],
+)
+def test_fold_never_widens_beyond_respelled_initials(
+    target_creator: str, record_creator: str
+) -> None:
+    """Guards: count, order, inversion, names without initials, initials only."""
+    assert _agree((target_creator,), (record_creator,)) == NEITHER
+
+
+@pytest.mark.parametrize(
+    ("target_creator", "record_creator"),
+    (
+        ("\uff32. F. Example", "R.F. Example"),
+        ("\u0410. F. Example", "A.F. Example"),
+        ("R\u2024F\u2024 Example", "R. F. Example"),
+        ("R\uff0eF\uff0e Example", "R. F. Example"),
+        ("\u00df. R. Example", "\u00df.R. Example"),
+        ("\u0130. R. Example", "\u0130.R. Example"),
+        ("Q\u0301. R. Example", "Q\u0301.R. Example"),
+        ("R.F.Example", "R. F. Example"),
+        ("J.-P. Example", "J. P. Example"),
+        ("A. \u00b2. Example", "A.\u00b2. Example"),
+        ("\u2160. R. Example", "\u2160.R. Example"),
+    ),
+    ids=[
+        "fullwidth_letter",
+        "cyrillic_vs_latin",
+        "one_dot_leader",
+        "fullwidth_full_stop",
+        "casefold_expanding_sharp_s",
+        "casefold_expanding_dotted_capital_i",
+        "mark_with_no_precomposed_form",
+        "no_space_before_surname",
+        "hyphenated_initials",
+        "superscript_digit_initial",
+        "roman_numeral_initial",
+    ],
+)
+def test_unicode_initials_fail_closed(target_creator: str, record_creator: str) -> None:
+    """Guards: NFC only, no NFKC or confusable mapping, ASCII full stops only."""
+    assert _agree((target_creator,), (record_creator,)) == NEITHER
+
+
+def test_fold_collapse_keeps_creators_unfolded() -> None:
+    """Guard: a fold merging two listed creators leaves that side unfolded."""
+    assert _agree(("R. F. Example", "R.F. Example"), ("R F Example",)) == NEITHER
+
+
+def test_fold_never_loses_an_unfolded_admission() -> None:
+    """Guard: one side's collapse never undoes a creator shared exactly."""
+    target = ("R. F. Example", "R.F. Example")
+    record = ("R. F. Example", "Jane Doe")
+
+    assert _agree(target, record) == (False, True, False, True)
+
+
+def test_same_initials_different_book_is_refused_by_title() -> None:
+    """Guard: agreeing creators never stand in for the title."""
+    target = ref("Lantern Harbour", "R. F. Example")
+    record = ref("Tidewater Lantern", "R.F. Example")
+
+    assert admitting_level(WIDE, target, record) is None
+
+
+def test_fold_on_bounded_long_name_is_linear() -> None:
+    """Guard: a long near-miss token for the dotted-initials pattern stays cheap."""
+    near_miss = "R." * 2000 + "! Example"
+    started = time.monotonic()
+    assert _agree((near_miss,), ("R. F. Example",)) == NEITHER
+    assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.parametrize("level", (EXACT, WIDE))
+def test_level_admission_folds_unless_asked_not_to(level: WorkIdentityLevel) -> None:
+    """#1780: the keyword passes through `admitting_level` to both predicates."""
+    target = ref("Lantern Harbour", "R. F. Example")
+    record = ref("Lantern Harbour", "R.F. Example")
+
+    assert admitting_level(level, target, record) is EXACT
+    assert admitting_level(level, target, record, fold_initials=False) is None
+    for fold, expected in (
+        (True, LevelAdmission(EXACT, "work_identity:title_and_creator_exact")),
+        (False, None),
+    ):
+        assert (
+            level_admission(
+                level,
+                target.title,
+                target.creators,
+                record.title,
+                record.creators,
+                omnibus_against_volume=False,
+                contradicted=False,
+                fold_initials=fold,
+            )
+            == expected
+        )
 
 
 def test_identifier_never_admits() -> None:
@@ -406,6 +556,19 @@ def test_entry_points_reject_a_level_or_flag_outside_the_closed_set() -> None:
             omnibus_against_volume=0,  # type: ignore[arg-type]
             contradicted=False,
         )
+    with pytest.raises(ValueError, match="input is invalid"):
+        level_admission(
+            WIDE,
+            "Lantern Harbour",
+            (ALDER,),
+            "Lantern Harbour",
+            (ALDER,),
+            omnibus_against_volume=False,
+            contradicted=False,
+            fold_initials=1,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="input is invalid"):
+        title_and_creator(target, target, fold_initials=None)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -443,3 +606,35 @@ def test_omnibus_against_volume_is_closed_and_directional(
 def test_omnibus_against_volume_refuses_a_non_text_input() -> None:
     with pytest.raises(ValueError):
         omnibus_against_volume(None, "The Synthetic Saga")  # type: ignore[arg-type]
+
+
+_FOLD_CREATORS: tuple[tuple[str, ...], ...] = (
+    *_CREATORS,
+    ("R. F. Example",),
+    ("R.F. Example",),
+    ("R F Example",),
+    ("R. F. Example", "R.F. Example"),
+    ("R. F. Example", ALDER),
+    ("R.F. Example", "R. F. Example", BIRCH),
+    ("F.R. Example",),
+    ("R. F.",),
+)
+_FOLD_REFERENCES = tuple(
+    IdentityReference(title, creators)
+    for title in ("Lantern Harbour", "Lantern Harbour (2001)", "Lantern Harbor")
+    for creators in _FOLD_CREATORS
+)
+
+
+def test_the_fold_only_ever_widens_over_every_synthetic_pair() -> None:
+    """Guard: whatever the unfolded comparison admits, the folded one admits."""
+    widened = 0
+    for target, record in itertools.product(_FOLD_REFERENCES, repeat=2):
+        for level in STRICTNESS:
+            plain = admitting_level(level, target, record, fold_initials=False)
+            folded = admitting_level(level, target, record)
+            if plain is not None:
+                assert folded is not None
+                assert STRICTNESS.index(folded) <= STRICTNESS.index(plain)
+            widened += plain is None and folded is not None
+    assert widened

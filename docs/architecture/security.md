@@ -417,6 +417,13 @@ an XML or container parser.
 **Text.** Every value entering a report passes the shared projection grammar:
 forbidden code points, private paths and credentials are refused, never
 repaired. Comparison never strips diacritics or uses fuzzy distance.
+ADR-0096's creator predicates also fold dotted initials ("R.F." and "R. F."
+agree), only in a name whose dotted tokens are letters and that keeps a token
+of two or more letters. Letter count and order still count, no NFKC,
+confusable mapping or other dot character applies, a fold that would merge two
+listed creators is not applied, and the fold never removes an agreement the
+unfolded comparison makes. Sidecar belonging compares creators exactly until
+#1418 (#1780).
 
 Incumbent description HTML is rendered by the one provider renderer, which
 drops attributes and refuses event handlers and unbalanced markup; path and
