@@ -373,7 +373,14 @@ sidecars are read in the audio child under a closed recognition grammar, never
 an XML or container parser.
 
 - An over-long, unreadable or non-UTF-8 sidecar is dropped whole; a badly
-  shaped identifier is reported as malformed, not believed.
+  shaped identifier is reported as malformed, not believed. A UTF-8 sidecar
+  that starts with one byte-order mark is also read once without it, in the
+  same child and under the same bounds. What only that reading finds is
+  recorded in the document's manifest entry and is never a claim, a refusal or
+  a reason to withhold one. Recorded values pass the projection grammar, carry
+  no excerpt or association text, and are dropped for size before they could
+  deny an item or its report. UTF-16 and UTF-32 sidecars are still dropped
+  whole.
 - A directory listing refuses past 1,024 entries; path evidence uses bare
   names only.
 - A description over 512 characters is checked whole, then kept only as

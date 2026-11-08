@@ -317,3 +317,6 @@ which documents belong to the item
 the association text never leaves the inspector. Audiobookshelf's own
 `metadata.json` and `metadata.abs`, and a folder-level document in a shared
 folder, are digested and never handed to the child.
+
+`audio-inspection-v6` adds, per sidecar, whether it started with a byte-order
+mark and its reading without that mark when the two differ (#1796).

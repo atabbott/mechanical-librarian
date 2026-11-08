@@ -220,7 +220,7 @@ def _install_parent_guard(
 
 
 def _write_report(report: AudioInspection) -> None:
-    payload = (report.to_json() + "\n").encode("utf-8")
+    payload = (report.to_json_within(_STDOUT_LIMIT - 1) + "\n").encode("utf-8")
     if len(payload) > _STDOUT_LIMIT:
         raise ValueError("child report exceeded protocol")
     offset = 0
