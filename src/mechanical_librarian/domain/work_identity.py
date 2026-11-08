@@ -15,6 +15,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.validation import exact_type, nonempty_text
+from mechanical_librarian.domain.validation import text as exact_text
 
 
 class WorkDispatchRung(StrEnum):
@@ -2322,6 +2323,26 @@ def _initials_fold(value: str) -> str:
     )
 
 
+def initials_folded_name(value: str) -> str | None:
+    """Return a name with its dotted initials folded, if it carries any (#1780).
+
+    The fold of #1260: "R. F. Example", "R.F. Example" and "R F Example" all
+    give "r f example".  A name with no token of dotted single letters gives
+    None, so whitespace or Unicode differences alone never make two names
+    agree; so does a name of initials only, which keeps no longer token.
+    """
+    if not exact_text(value):
+        raise ValueError("initials fold input is invalid")
+    if not any(
+        _DOTTED_INITIALS.fullmatch(token) for token in _comparison_text(value).split()
+    ):
+        return None
+    folded = _initials_fold(value)
+    if all(len(token) == 1 for token in folded.split(" ")):
+        return None
+    return folded
+
+
 def _initials_fold_lineage(
     local_authors: tuple[str, ...], provider_authors: tuple[str, ...]
 ) -> WorkTitleTransformationLineage | None:
@@ -2436,6 +2457,7 @@ __all__ = [
     "discovery_title_candidate",
     "fold_lone_apostrophes",
     "hardcover_query_spellings",
+    "initials_folded_name",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
     "series_label_segment",

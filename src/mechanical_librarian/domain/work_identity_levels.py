@@ -10,9 +10,14 @@ predicate over a target's and a record's already-admitted title and creators:
   decoration grammar and the two share at least one creator.
 
 A side with no title or no creator never meets either predicate. Creators are
-compared on their stored forms under the report's closed creator comparison
-key: no comma inversion and no initials folding (#1780), so "J. R. Example"
-and "J R Example" are different creators here.
+compared under the report's closed creator comparison key, then with dotted
+initials folded (#1780): "J. R. Example", "J.R. Example" and "J R Example" are
+one creator. The fold applies only to a name that carries a token of dotted
+single letters and keeps a longer token, so names without initials, and names
+of initials only, compare unfolded; if folding would merge two of one side's
+creators, that side compares unfolded. Letter count and order still matter,
+and there is no comma inversion. `fold_initials=False` compares unfolded
+throughout; sidecar belonging passes it until #1418 qualifies the fold.
 
 The predicates cover only title and creator. Callers keep every other refusal
 ADR-0096 names, at every level: an omnibus or box set against one of its
@@ -41,6 +46,7 @@ from mechanical_librarian.domain.work_identity import (
 )
 from mechanical_librarian.domain.work_identity import (
     direct_work_title_election_matches,
+    initials_folded_name,
     work_title_has_variant_marker,
 )
 
@@ -92,10 +98,18 @@ def _stated_title(reference: IdentityReference) -> str | None:
     return reference.title
 
 
-def _creator_keys(reference: IdentityReference) -> frozenset[str]:
-    return frozenset(
+def _creator_keys(reference: IdentityReference, fold_initials: bool) -> frozenset[str]:
+    keys = frozenset(
         creator_comparison_key(value) for value in reference.creators if value.strip()
     )
+    if not boolean(fold_initials):
+        raise ValueError("work identity creator comparison input is invalid")
+    if not fold_initials:
+        return keys
+    folded = frozenset(initials_folded_name(key) or key for key in keys)
+    # The collapse guard: a fold that merges two listed creators compares
+    # that side unfolded rather than letting a set shrink into agreement.
+    return folded if len(folded) == len(keys) else keys
 
 
 def _titles_closed_equal(left: str, right: str) -> bool:
@@ -121,11 +135,15 @@ def _titles_decoration_equal(left: str, right: str) -> bool:
 
 
 def title_and_creator_exact(
-    target: IdentityReference, record: IdentityReference
+    target: IdentityReference,
+    record: IdentityReference,
+    *,
+    fold_initials: bool = True,
 ) -> bool:
     """Closed-equal titles and equal creator sets, both sides stating each."""
     target_title, record_title = _stated_title(target), _stated_title(record)
-    target_creators, record_creators = _creator_keys(target), _creator_keys(record)
+    target_creators = _creator_keys(target, fold_initials)
+    record_creators = _creator_keys(record, fold_initials)
     return (
         target_title is not None
         and record_title is not None
@@ -135,19 +153,30 @@ def title_and_creator_exact(
     )
 
 
-def title_and_creator(target: IdentityReference, record: IdentityReference) -> bool:
+def title_and_creator(
+    target: IdentityReference,
+    record: IdentityReference,
+    *,
+    fold_initials: bool = True,
+) -> bool:
     """Decoration-equal titles and at least one shared creator."""
     target_title, record_title = _stated_title(target), _stated_title(record)
     return (
         target_title is not None
         and record_title is not None
-        and bool(_creator_keys(target) & _creator_keys(record))
+        and bool(
+            _creator_keys(target, fold_initials) & _creator_keys(record, fold_initials)
+        )
         and _titles_decoration_equal(target_title, record_title)
     )
 
 
 def admitting_level(
-    level: WorkIdentityLevel, target: IdentityReference, record: IdentityReference
+    level: WorkIdentityLevel,
+    target: IdentityReference,
+    record: IdentityReference,
+    *,
+    fold_initials: bool = True,
 ) -> WorkIdentityLevel | None:
     """Return the strictest level at or below `level` the pair meets.
 
@@ -157,10 +186,10 @@ def admitting_level(
         raise ValueError("work identity level is invalid")
     if level is WorkIdentityLevel.IDENTIFIER:
         return None
-    if title_and_creator_exact(target, record):
+    if title_and_creator_exact(target, record, fold_initials=fold_initials):
         return WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
     if level is WorkIdentityLevel.TITLE_AND_CREATOR and title_and_creator(
-        target, record
+        target, record, fold_initials=fold_initials
     ):
         return WorkIdentityLevel.TITLE_AND_CREATOR
     return None
@@ -220,12 +249,14 @@ def level_admission(
     *,
     omnibus_against_volume: bool,
     contradicted: bool,
+    fold_initials: bool = True,
 ) -> LevelAdmission | None:
     """Apply the caller's refusals, then `admitting_level`, with its rule."""
     if (
         not exact_type(WorkIdentityLevel)(level)
         or not boolean(omnibus_against_volume)
         or not boolean(contradicted)
+        or not boolean(fold_initials)
     ):
         raise ValueError("work identity level admission input is invalid")
     if omnibus_against_volume or contradicted:
@@ -234,6 +265,7 @@ def level_admission(
         level,
         IdentityReference(target_title, target_creators),
         IdentityReference(record_title, record_creators),
+        fold_initials=fold_initials,
     )
     if admitted is None:
         return None

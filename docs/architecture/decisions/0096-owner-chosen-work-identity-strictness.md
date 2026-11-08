@@ -90,6 +90,28 @@ refuses:
   translation, adaptation, abridgement and variant-marker vetoes, and an
   audiobook recording variant conflict.
 
+### Initials fold (#1780)
+
+Both predicates compare creators after one fold, ADR-0018's #1260
+`initials_fold`: after NFC and casefold, a whitespace token of single letters
+each followed by a full stop becomes the letters separated by spaces, so
+"R. F. Example", "R.F. Example" and "R F Example" are one creator. It applies
+only inside a name that carries such a token and keeps a token longer than one
+letter, so whitespace or Unicode differences between names without initials,
+and names of initials only, never agree by it. Letter count and order still
+matter. If folding would merge two of one side's creators, that side compares
+unfolded. There is no NFKC, confusable mapping or other dot character, and
+the fold composes with no other rule.
+
+Shadow first applies to the fold as to the levels. Sidecar belonging
+(ADR-0061) compares creators exactly until #1418 qualifies the fold; a
+document refused only because its creators agree after the fold is recorded
+as `initials_spelling`, so #1418 counts what the fold would admit there. On
+the #744 ebook snapshot's natural controls, the fold adds 22 retained
+candidates in 17 reports at `title_and_creator_exact` (14 positive, 0
+negative, 8 unlabelled) and none at `title_and_creator`; on the #1294
+audiobook snapshot it adds 1 unlabelled pair.
+
 ### Scope
 
 Only work-scope fields read the level: title, contributors, description,

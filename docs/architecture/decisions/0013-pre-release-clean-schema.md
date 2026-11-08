@@ -417,3 +417,12 @@ sidecars, and a report carries forward while its file and configuration
 fingerprints are unchanged, so a stored report would keep them. The proposal
 policy is unchanged. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1780 also takes the clean-rebuild branch. `metadata-report-v76` adds
+the sidecar refusal `initials_spelling`, for a document whose creators agree
+with the item's only once dotted initials fold. A stored report would name
+such a document `other_book`, and a report carries forward while its file and
+configuration fingerprints are unchanged. The audio child protocol carries no
+refusal and stays `audio-inspection-v5`. The proposal policy is unchanged.
+Every earlier application database is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.

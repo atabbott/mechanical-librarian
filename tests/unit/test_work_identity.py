@@ -28,6 +28,7 @@ from mechanical_librarian.domain.work_identity import (
     closed_creator_display_possibility,
     discovery_title_candidate,
     hardcover_query_spellings,
+    initials_folded_name,
     narrowing_work_query,
     replay_provider_work_identity_admission,
     series_label_segment,
@@ -1977,6 +1978,43 @@ def test_initials_fold_refusals(
         **kwargs,
     }
     assert not admit_provider_work_identity(**arguments).admitted  # type: ignore[arg-type]  # reason: parametrized keyword overrides
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("R. F. Example", "r f example"),
+        ("R.F. Example", "r f example"),
+        ("J.R.R. Example", "j r r example"),
+        ("R.\u00a0F. Example", "r f example"),
+        ("R F Example", None),
+        ("Jane\u2009Example", None),
+        ("R. F.", None),
+        ("R.F.", None),
+        ("", None),
+    ),
+    ids=(
+        "spaced",
+        "joined",
+        "three_initials",
+        "no_break_space",
+        "undotted",
+        "thin_space_without_initials",
+        "initials_only",
+        "joined_initials_only",
+        "empty",
+    ),
+)
+def test_initials_folded_name_folds_only_names_carrying_initials(
+    value: str, expected: str | None
+) -> None:
+    """#1780: no dotted-initial token, or no longer token, gives None."""
+    assert initials_folded_name(value) == expected
+
+
+def test_initials_folded_name_refuses_a_non_text_input() -> None:
+    with pytest.raises(ValueError, match="initials fold input is invalid"):
+        initials_folded_name(None)  # type: ignore[arg-type]
 
 
 def test_initials_fold_refuses_a_translator_credited_as_an_author() -> None:

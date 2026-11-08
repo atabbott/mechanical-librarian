@@ -298,7 +298,7 @@ class AudioSidecarRefusal(StrEnum):
     """Why a document, or part of one, does not speak for the item (#1481).
 
     Closed and value-free, recorded in the report's sidecar manifest only.
-    The first five end evaluation for the document; the last two withhold
+    The first six end evaluation for the document; the last two withhold
     part of it.  Declaration order is the order a manifest entry lists them.
     """
 
@@ -306,6 +306,9 @@ class AudioSidecarRefusal(StrEnum):
     SHARED_FOLDER = "shared_folder"
     OTHER_FILE = "other_file"
     OTHER_BOOK = "other_book"
+    # Another book only until #1418 qualifies ADR-0096's initials fold: the
+    # creators agree once dotted initials fold, and not exactly (#1780).
+    INITIALS_SPELLING = "initials_spelling"
     COLLECTION = "collection"
     OTHER_EDITION = "other_edition"
     SIDECARS_DISAGREE = "sidecars_disagree"
@@ -317,6 +320,7 @@ TERMINAL_SIDECAR_REFUSALS: Final = frozenset(
         AudioSidecarRefusal.SHARED_FOLDER,
         AudioSidecarRefusal.OTHER_FILE,
         AudioSidecarRefusal.OTHER_BOOK,
+        AudioSidecarRefusal.INITIALS_SPELLING,
         AudioSidecarRefusal.COLLECTION,
     }
 )

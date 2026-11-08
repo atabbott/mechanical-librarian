@@ -2130,3 +2130,32 @@ def test_audiobook_sidecars_count_entries_refusals_echoes_and_disputes() -> None
     assert not any(
         name in serialized for name in ("book.nfo", "book.opf", "metadata.json")
     )
+
+
+def test_audiobook_sidecars_count_initials_spelling() -> None:
+    """#1780: the shadow refusal is counted, so #1418 can see the fold's reach."""
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioSidecarBinding,
+        AudioSidecarDigest,
+        AudioSidecarKind,
+        AudioSidecarRefusal,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    audio = replace(
+        single_track_audio_facts(),
+        sidecars=(
+            AudioSidecarDigest(
+                "book.opf",
+                "a" * 64,
+                AudioSidecarKind.OPF,
+                AudioSidecarBinding.TRACK,
+                (AudioSidecarRefusal.INITIALS_SPELLING,),
+            ),
+        ),
+    )
+    row = (None,) * 10 + (cold_start._sidecar_entries(audio),)
+
+    assert cold_start._audiobook_sidecars([row])["refusals"] == {"initials_spelling": 1}

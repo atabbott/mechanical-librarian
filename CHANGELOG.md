@@ -61,6 +61,9 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** An audiobook sidecar whose author differs only
+  in how initials are written, such as "R.F." for "R. F.", is still set aside,
+  and its report now gives that as the reason (#1780).
 - **Clean rebuild required.** Hardcover now finds a widely published ebook by
   its title and author instead of refusing it for having many editions. It
   matches the title whatever its capitals, searches with the EPUB's own authors

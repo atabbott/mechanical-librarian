@@ -13,9 +13,13 @@ The rules, in the order they run:
    names none of the item's tracks (`other_file`).
 2. A document belongs only when ADR-0096's `title_and_creator` level admits it
    against the file's own evidence or against the target's record, with
-   narrators among the creators on both sides.  Otherwise it describes a
-   collection the audiobook is one volume of (`collection`) or another book
-   (`other_book`).
+   narrators among the creators on both sides and creators compared exactly
+   until #1418 qualifies the level's initials fold.  Otherwise it describes a
+   collection the audiobook is one volume of (`collection`); or it would
+   belong once dotted initials fold (`initials_spelling`, #1780); or it is
+   another book (`other_book`).  `collection` comes first, so a document that
+   passes only as a collection against every reference stays `collection`
+   even where the fold would admit it against another.
 3. Where a document states an ASIN that the file's embedded tags do not, and
    the tags state one, the tags stand: its ASIN, narrator, performance type and
    language are withheld (`other_edition`).
@@ -397,34 +401,53 @@ def _belonging_refusal(
 
     Narrators join both creator sets as an input choice: a CUE `PERFORMER` or
     a `composer` tag is often the narrator, and the title must still match.
+    Belonging compares creators exactly; the folded comparison only names the
+    refusal (`initials_spelling`), so #1418 can count what the fold would admit.
     """
     references = [
         (title, _creators(evidence.creators)) for title in evidence.titles
     ] + [(context.title, _creators((*context.authors, *context.narrators)))]
     record = _Reference(reading.title, reading.creators)
     passing_collection: list[bool] = []
+    respelled = False
     for title, creators in references:
-        reference = _Reference(title, creators)
         collection = _omnibus(reading.title, title)
-        volume = _omnibus(title, reading.title)
-        if (
-            level_admission(
-                WorkIdentityLevel.TITLE_AND_CREATOR,
-                title,
-                creators,
-                reading.title,
-                reading.creators,
-                omnibus_against_volume=collection or volume,
-                contradicted=False,
-            )
-            is not None
-        ):
+        omnibus = collection or _omnibus(title, reading.title)
+        if _admits(title, creators, reading, omnibus, fold_initials=False):
             return None
-        if title_and_creator(reference, record):
+        respelled = respelled or _admits(
+            title, creators, reading, omnibus, fold_initials=True
+        )
+        if title_and_creator(_Reference(title, creators), record, fold_initials=False):
             passing_collection.append(collection)
     if passing_collection and all(passing_collection):
         return AudioSidecarRefusal.COLLECTION
+    if respelled:
+        return AudioSidecarRefusal.INITIALS_SPELLING
     return AudioSidecarRefusal.OTHER_BOOK
+
+
+def _admits(
+    title: str | None,
+    creators: tuple[str, ...],
+    reading: AudioSidecarReading,
+    omnibus: bool,
+    *,
+    fold_initials: bool,
+) -> bool:
+    return (
+        level_admission(
+            WorkIdentityLevel.TITLE_AND_CREATOR,
+            title,
+            creators,
+            reading.title,
+            reading.creators,
+            omnibus_against_volume=omnibus,
+            contradicted=False,
+            fold_initials=fold_initials,
+        )
+        is not None
+    )
 
 
 def _omnibus(collection: str | None, volume: str | None) -> bool:

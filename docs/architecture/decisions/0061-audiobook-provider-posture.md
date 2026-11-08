@@ -326,8 +326,11 @@ with track-bound documents now going to their track.
    own `album` and person tags, or against the target's title with its authors
    and narrators. Narrators are creator inputs on both sides, because a CUE
    `PERFORMER` or a `composer` tag is often the narrator; the title must still
-   match. Otherwise the document is `collection` when it describes a
-   collection the audiobook is one volume of, and `other_book` otherwise. A
+   match. Creators compare exactly until #1418; a document refused only
+   because its creators agree after ADR-0096's initials fold is
+   `initials_spelling` (#1780). Otherwise the document is `collection` when it
+   describes a collection the audiobook is one volume of, which takes
+   precedence over `initials_spelling`, and `other_book` otherwise. A
    CUE sheet whose first `FILE` value names none of the item's tracks, or is
    not a bare name, is `other_file`. A document's title, creators and `FILE`
    value are association text only: never a claim, persisted, logged or query
@@ -371,7 +374,7 @@ with track-bound documents now going to their track.
    enough to have a canonical value; a longer one is never an echo.
 8. **Manifest fields.** Each entry records `name`, `digest`, `kind`
    (`audiobookshelf_record`, `libation`, `opf`, `nfo`, `cue`), `binding`
-   (`track` or `folder`), `refusals` (the seven closed codes, the first five
+   (`track` or `folder`), `refusals` (the eight closed codes, the first six
    terminal), `claims` (the claims it supplied), `disputed`, `echoed`,
    `echoed_narrators` (positions in the target's narrators), and `shadow`
    (Libation's `series[].title` and `format_type`, recorded and never claimed
