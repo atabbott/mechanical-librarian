@@ -420,7 +420,7 @@ removal obligation. The proposal policy is unchanged. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
 
-Issue #1779 also takes the clean-rebuild branch. `metadata-report-v75` plans
+Issue #1779 also takes the clean-rebuild branch. `metadata-report-v74` plans
 one iTunes Search lane for an audiobook, whose answer supplies only its cover
 (ADR-0061 clause 9). An earlier report replays no such lane, and a report carries
 forward while its file and configuration fingerprints are unchanged, so a

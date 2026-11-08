@@ -282,7 +282,7 @@ of them the Audible art at a higher resolution, which is why it is asked
 again. It removes no Audible banner: every probed iTunes copy of a bannered
 cover carried it too. It is searched for an audiobook only while its
 `cover_enabled` is true, so the title and author are never sent for an answer
-that would be discarded. `metadata-report-v75` marks the change, and the report
+that would be discarded. `metadata-report-v74` marks the change, and the report
 browse facts ignore its lanes on an audio report, so it never limits or matches
 an audiobook (ADR-0013 clean rebuild). The configuration schema is unchanged.
 
