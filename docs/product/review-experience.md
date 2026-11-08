@@ -453,28 +453,25 @@ opens it wherever it falls in All.
 `/review/{case}` is a read-only page with Evidence and History tabs. Neither
 has decision controls or shows internal identifiers.
 
-- **Evidence** lists observations by field with their source, and provider
-  outcomes in a Sources disclosure. Missing lineage never claims a field is
-  empty. An audiobook's companion EPUB lookup reads "ISBN lookup (EPUB in this
-  folder)" here, in the work summary and in the comparison footer, so an
-  audiobook with no ISBN of its own never shows a bare ISBN row (#1723). An
-  audiobook's iTunes lookup is for a cover only, so a listing it finds reads
-  "Cover found" and its reason says nothing else it returns is compared
-  (#1779).
-- **History** lists owner and automatic outcomes for the case, each with its
-  own time, and shows a value only where the record links it exactly.
+- Evidence lists what each source said for each field, with each lookup's
+  result under Sources. When source answers are no longer available, it says
+  how many and never calls a field empty. The ISBN lookup for an audiobook's
+  EPUB reads "ISBN lookup (EPUB in this folder)" here, in the work summary
+  and in the comparison footer (#1723). An audiobook's iTunes lookup
+  is for a cover only, so a listing it finds reads "Cover found" (#1779).
+- History lists your choices and automatic outcomes for the case, each with
+  its time. It shows a value only where the record links it exactly.
 
-Both keep the Library lens, search, cursors and field, and Back to work returns
-to the same work and field. Cross-work history is in Activity.
+Both keep your place in Library, and Back to work returns to the same work and
+field. History across works is in Activity.
 
-Audiobooks carry a Media health section: container mismatches, unexpected
-codecs, missing running time, rights-managed audio, and running time short of
-the matched edition. Observations refuse nothing and offer no action
+An audiobook can carry a Media health section about its audio, such as an
+unexpected container or format, encrypted audio, or a running time missing or
+shorter than the edition. The section blocks no choice and offers no action
 ([ADR-0074](../architecture/decisions/0074-headers-only-media-health-facts.md)).
-The section appears only when it has an observation: in a work's Recorded
-evidence, beside an audiobook case's fields in Library, beneath a row whose
-latest preparation stopped but which keeps earlier evidence, and on a failed
-preparation row.
+It appears only with something to report: in a work's Recorded evidence, a
+review case's Evidence, and beside a Library row whose latest preparation
+stopped, including Could not finish rows.
 
 ## Policy
 
@@ -482,35 +479,37 @@ Policy rules are in the [automation policy](automation-policy.md). Each field
 leads with its setting: Automatic, Ask me, Ignore or Not supported. Limits
 appear beside each option and in activation review.
 
-A preview compares retained inputs; it never activates or writes. It separates
-draft effects from projected library changes and shows the real abstention
-cause. Sampled-work counts include unchanged works;
-changed-field counts include only policy-caused changes. A rule no sampled
-work evaluated reads
-"Not previewed. This rule takes effect on the next preparation."
-An edited draft is named "Custom policy".
-Activation names the libraries that keep write permission, or says none does
-and activating grants none. Rule codes appear only under "Technical detail".
+A preview runs the draft on recorded evidence and changes nothing. It lists
+the changes the draft causes apart from Unchanged outcomes, and says why when
+the draft would choose nothing. Sampled works include those with no change,
+and changed fields count only what the draft causes. A rule no sampled work
+reached reads "Not previewed. This rule takes effect on the next preparation."
+An edited draft is named "Custom policy". Activation names the libraries that
+keep write permission, or says none has it and activating grants none. Rule
+codes appear only under "Technical detail".
 
 ## Activity
 
-Activity is a permanent destination with no badge. Guarded state, recovery and
-recent outcomes lead the page. Pause, resume and revoke are its only prominent
-controls. While a change is stopped until you act, for example a description
-to restore in Audiobookshelf, the header and summary say how many wait on you
-and never read as calm.
+Activity is always in the masthead and has no badge. While a change waits for
+you, such as a description to restore in Audiobookshelf, the page never says
+no action is needed. Pausing writes and removing a library's write
+permission are in a section you open.
 
 ### Write permission
 
-There is one Review write permissions entry, and Library's link opens the same
-panel. Opening grants nothing. The review checks backup readiness, prepared
-work, destination capabilities and one before-and-after example; nothing can be
-confirmed before that check answers. The checked libraries survive refreshes
-and retries. They are discarded, with the reason stated, when the basis
-changes (libraries, destination capability or consent, or active policy), or
-on cancel or navigation. Confirmation binds the exact visible set and fails
-safely if it changes. A lapsed permission is stated in Library and Activity,
-and neither reads as calm while no library holds permission
+Review write permissions opens one panel, from Activity or from Library's
+write handoff, and opening it grants nothing. Mechanical Librarian then checks
+that its own database is consistent and shows the prepared work, the fields
+each library can write and one before-and-after example. You can confirm only
+once that check passes and you include at least one library.
+
+The libraries you include stay included through page updates and repeat
+checks. A change to the libraries, their fields' write support or permission,
+or the active policy clears your choice and says why. Cancel or leaving the
+page clears it too. Confirming grants only the libraries you included. If the
+libraries, their fields, the policy or the database check changed since, it
+grants nothing and says so. Library and Activity both state a lapsed
+permission, and neither says no action is needed while no library has permission
 ([ADR-0039](../architecture/decisions/0039-continuous-guarded-application.md)).
 
 ### The ledger
@@ -518,82 +517,75 @@ and neither reads as calm while no library holds permission
 The ledger shows one row per change: the work or setting, the field, the exact
 before and after, who chose it, and whether Audiobookshelf confirmed it.
 Categories are your choice, automatic choice, policy change and recovery.
-Values come from the event's immutable record, so later changes never alter
+Values come from the record made at the time, so later changes never alter
 history. A record that was not a change, such as a paused preparation, says
 what happened instead. Automatic checks with nothing to write gather into one
 row, "Checked N fields, no changes". Each Details control names its row's
-field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25, 50 or
-100-row pages run on the server. An unknown filter shows every event and says
-so.
+field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25,
+50 or 100-row pages run on the server. An unknown filter shows every event and
+says so.
 
 ## Settings
 
 Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
-is the `?group=` URL value. Above about 700 pixels a section index sits beside
-the page; below, a labelled selector replaces it.
+is the `?group=` URL value. Wider than 760 pixels, a section index sits beside
+the page, and at 760 or narrower a selector replaces it.
 
-The page edits one draft of the whole configuration, with change counts per
-section. Indirect changes count too: turning a source off removes it from its
-libraries. A bottom tray, shared with Policy, appears while anything is unsaved,
-lists before and after values, and offers Discard all and Save settings. A tray
-taller than a third of the window scrolls with the page instead of floating. Save
-validates everything and goes to the first invalid value. A save is confirmed
-once, as saved and in use, in a notice above the page's end and the tray, so it
-moves nothing. A stale save reloads the newer settings and keeps the draft on
-top. An edit to a value that was
-also changed elsewhere takes the newer saved value, and the tray says how many
-did. In file mode the page names
-`/data/config.json` and offers no edits
-([configuration](../reference/configuration.md),
+The page edits one draft of all settings, and each section counts its changes,
+indirect ones too. While anything is unsaved, a bottom tray shared with Policy
+lists before and after values and offers Discard all and Save settings. A tray
+taller than a third of the window scrolls with the page. Save settings checks
+every value and goes to the first one that needs fixing. "Settings saved and
+in use." appears once, above the page's end and the tray, so nothing moves. If
+settings changed elsewhere, saving loads them under your draft. An edit to a
+value changed in both places takes the newer value, and the tray counts these.
+In a file-managed deployment the page names `/data/config.json` and offers no
+edits ([configuration](../reference/configuration.md),
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md)).
 
-Secrets show only as `Configured · ····xxxx` or `Not configured`. Disabling a
-provider keeps its key, turns off its cover evidence and removes it from its
-libraries. Turning it back on does not restore those libraries; add them
-again.
+Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
+source off keeps its key, turns off its cover evidence and removes it from its
+libraries. Turning it back on does not add it to those libraries again.
 
 Each library lists its languages by name, the first marked Preferred, with
-buttons to move or remove each and a picker to add one, up to eight. Typing a
-name in the open picker moves to it. In file mode the list is read only.
+buttons to move or remove each and a picker to add one, up to eight. In a
+file-managed deployment the list is read only.
 
-Reviewer sign-in, validation and tests take effect at once and are not part of
-Save. Each reviewer task has a model picker with an example cost per 1,000
-books. Replacing the shared OpenRouter key invalidates access for both tasks.
-Usable advice grants no write
+Reviewer sign-in, validation and tests take effect at once, outside Save
+settings. Each reviewer task has a model picker with an example cost per 1,000
+books. Both tasks share one OpenRouter key, and replacing it keeps both model
+choices. Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 
 ## Words and values
 
-Copy orients, explains a real consequence, resolves a status or gives a next
-step; otherwise it is omitted. Its voice is the one `DESIGN.md` states under
-Voice. The owner never reads a code as words: an
-unknown code is refused, not sentence-cased. Acronyms stay capitalised,
-languages read by name with their tag ("English (en)"), and sizes use MB.
-Times are relative within the past hour, the clock time today, and the date
-otherwise; future times are never relative.
+The voice is the one `DESIGN.md` states under Voice. Mechanical Librarian
+never turns a code into words: it refuses an unknown code instead of
+sentence-casing it. Acronyms stay capitalised, languages read by name with
+their tag ("English (en)"), and sizes use MB. Times within the past hour are
+relative, others on the same day show the clock time, and other days add the
+date. A time still ahead is never relative.
 
 ## Responsive and accessible behaviour
 
-- From 761 to 1199 pixels Attention is a drawer: everything behind it except
+- From 761 to 1199 pixels Attention is a drawer. Everything behind it except
   the toolbar with the Attention toggle is inert, and Tab stays inside. At 760
-  pixels and below, the list, the work and Attention are separate steps, and
-  choosing a work, from the list or Attention, scrolls Back to works just below
-  the masthead.
-- No page scrolls horizontally at 1440, 884, 390 or 320 pixels in either
-  theme. At 200% text, Library, Policy, Activity and Settings keep every
-  control reachable inside its container at every width, and Activity rows
-  fold into cards. A word breaks inside itself only when wider than its line;
-  data tokens may break anywhere.
+  pixels and below, the list, the work and Attention are separate steps.
+  Choosing a work scrolls Back to works to just below the masthead.
+- No page scrolls sideways at 1440, 884, 390 or 320 pixels in either theme. At
+  200% text, Library, Policy, Activity and Settings keep every control
+  reachable inside its container at every width, and Activity rows fold into
+  cards. A word breaks inside itself only when wider than its line, and data
+  tokens can break anywhere.
 - Focus never falls to the page. A running command keeps focus, marked
-  `aria-disabled`, then moves to its outcome. A failure message sits directly
-  under the control it describes. A failed retry or an unreadable
-  detail focuses Try again, or Reload when the tab is on an earlier build; a
-  retry that succeeds focuses what it loaded. Opening Attention focuses its
-  heading; closing returns focus to the toggle. Tab closes a dropdown onto its
-  trigger.
-- Native controls, one heading outline per page, visible focus and polite
-  status announcements throughout. Colour is never the only sign of status.
+  `aria-disabled`, then moves to its outcome. A failure message sits under its
+  control. A failed retry or an unreadable detail focuses Try again, or Reload
+  when the tab is on an earlier build. A retry that succeeds focuses what it
+  loaded. Opening Attention focuses its heading, and closing it returns focus
+  to the toggle. Tab closes a dropdown onto its trigger.
+- Every page uses native controls, one heading outline, visible focus and
+  polite status announcements. Colour is never the only sign of status.
 - Text meets 4.5:1, and boundaries and focus rings 3:1, in both themes. No
   text is smaller than `0.75rem`. Primary targets, lenses, disclosure
   summaries and action links are at least 44 pixels at every width.
@@ -601,10 +593,10 @@ otherwise; future times are never relative.
 
 ## Performance and privacy
 
-- No page embeds the whole library. Collections are paginated; detail,
+- No page embeds the whole library. Collections come in pages, and detail,
   evidence and covers load on demand.
-- Authenticated responses are private and never stored in shared caches.
+- Signed-in responses are private, and shared caches never store them.
 - A strict content-security policy and text-only rendering stop metadata,
-  provider content and URLs from becoming markup.
-- Review endpoints never expose library paths, raw provider payloads or
+  source content and URLs from becoming markup.
+- Review endpoints never expose library paths, raw source responses or
   copyrighted content.
