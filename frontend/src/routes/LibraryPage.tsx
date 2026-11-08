@@ -74,6 +74,7 @@ import {
 import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { useCoverPrepareFailure } from '../coverChoices'
 import {
   AsinAutomaticStatement,
@@ -1766,6 +1767,7 @@ export default function LibraryPage({
             </>
           ) : null}
         </button>
+        <LibraryViewSwitch view="works" />
         <WriteReadyNotice />
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />

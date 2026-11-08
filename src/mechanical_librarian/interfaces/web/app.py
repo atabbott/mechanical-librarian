@@ -1157,6 +1157,47 @@ class _LibraryCover(_ClosedModel):
     width: int = Field(ge=1, le=8192)
 
 
+class _CoverPreview(_ClosedModel):
+    # A preview only, named by digest: the library cover route for a current
+    # cover, the replaced route for a listed switch's original (#1633).
+    height: int = Field(ge=1, le=8192)
+    preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    url: str = Field(pattern=r"^/api/v1/(library/cover|covers/replaced)\?")
+    width: int = Field(ge=1, le=8192)
+
+
+class _CoverSwitch(_ClosedModel):
+    at: _Count
+    before: _CoverPreview | None
+    filled: bool
+
+
+class _CoverWork(_ClosedModel):
+    authors: list[str]
+    choosable: bool
+    cover: _CoverPreview | None
+    group: Literal["proposal", "choice", "kept", "auto", "none"]
+    media_kind: _MediaKind
+    review_case_id: str
+    switched: _CoverSwitch | None
+    title: str
+
+
+class _CoverCounts(_ClosedModel):
+    decide: _Count
+    kept: _Count
+    switched: _Count
+    all: _Count
+
+
+class _CoversResponse(_ClosedModel):
+    counts: _CoverCounts
+    items: list[_CoverWork] = Field(max_length=50)
+    next_cursor: str | None
+    schema_version: Literal["review-covers-v1"]
+    view: Literal["decide", "kept", "switched", "all"]
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: _Count
@@ -4320,6 +4361,74 @@ def _register_browse_and_preparation_routes(
                 # The URL names the preview by its digest, so these bytes
                 # cannot change.
                 "Cache-Control": _IMMUTABLE_CACHE,
+                "Content-Security-Policy": "default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get(
+        "/api/v1/covers",
+        response_model=_CoversResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
+        },
+    )
+    async def covers(
+        request: Request,
+        view: Literal["decide", "kept", "switched", "all"] = Query(default="decide"),
+        cursor: str | None = Query(default=None, max_length=128),
+        ml_session: str | None = Security(session_cookie),
+    ) -> _CoversResponse | Response:
+        """Read-only: one page of 50 books under a Covers tab, with each count."""
+
+        def read(check_active: Callable[[], None]) -> _CoversResponse:
+            _require_session(sessions, ml_session)
+            return _CoversResponse.model_validate(
+                _query_call(
+                    lambda: application.covers(
+                        view=view, cursor=cursor, check_active=check_active
+                    )
+                )
+            )
+
+        return await _browse_response(request, read)
+
+    @app.get(
+        "/api/v1/covers/replaced",
+        response_class=Response,
+        responses={
+            200: {
+                "content": {
+                    "image/png": {"schema": {"type": "string", "format": "binary"}}
+                }
+            },
+            **{status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)},
+        },
+    )
+    def replaced_cover(
+        plan: str = Query(max_length=76),
+        preview: str = Query(max_length=64),
+        ml_session: str | None = Security(session_cookie),
+    ) -> Response:
+        """Read-only: the preview of the cover an automatic switch replaced.
+
+        Served only while the switch is listed with its original retained, and
+        only by the preview digest bound to that original; once the original
+        is released the route has nothing to serve.
+        """
+        _require_session(sessions, ml_session)
+        try:
+            payload = application.replaced_cover(plan, preview)
+        except (ReviewWebError, ReviewApplicationError) as error:
+            status = 404 if error.code == "missing" else 503
+            code = "not_found" if status == 404 else "unavailable"
+            raise HTTPException(status, detail={"code": code}) from None
+        return Response(
+            content=payload,
+            media_type="image/png",
+            # Not content-addressed for good: a released original stops being
+            # served, so this keeps the default no-store rather than caching.
+            headers={
                 "Content-Security-Policy": "default-src 'none'",
                 "X-Content-Type-Options": "nosniff",
             },

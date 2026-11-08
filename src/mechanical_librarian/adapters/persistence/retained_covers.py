@@ -82,6 +82,32 @@ def release_unlisted_retained_covers(
     )
 
 
+def release_kept_retained_covers(
+    connection: sqlite3.Connection,
+    connection_name: str,
+    library: str,
+    work_id: str,
+    changed_at: int,
+) -> None:
+    """Release a work's listed originals once the owner keeps its cover.
+
+    Runs inside the transaction that records the owner's Keep, so keeping a
+    decision frees its copy before the switch leaves the list (Amendment 5).
+    Only listed switches are released: a listing exists only for a verified
+    switch, and a pending plan's copy is never released here.
+    """
+    connection.execute(
+        "INSERT INTO retained_cover_removals(plan_id,reason,state,attempt,updated_at) "
+        "SELECT listing.plan_id,'released','pending',0,? "
+        "FROM retained_cover_listings listing "
+        "JOIN retained_cover_bindings binding ON binding.plan_id=listing.plan_id "
+        "WHERE binding.connection_name=? AND binding.library_name=? "
+        "AND binding.work_id=? AND NOT EXISTS (SELECT 1 FROM retained_cover_removals "
+        "removal WHERE removal.plan_id=listing.plan_id)",
+        (changed_at, connection_name, library, work_id),
+    )
+
+
 class SQLiteRetainedCoverRepository(ConnectionScoped):
     """Record bindings and run the removal obligation for retained originals."""
 

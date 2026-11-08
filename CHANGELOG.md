@@ -143,6 +143,11 @@ brackets are GitHub issues.
 - Retrying description advice while preparation is paused is now confirmed
   instead of reported as failed. The retry was already saved and runs at the
   first library scan after preparation resumes (#1784).
+- Library has a Covers view beside Works for going through every book's
+  cover: To decide, Kept, Switched (automatic switches, with the cover before
+  and now) and All, 50 books at a time. One tap records a choice and opens the
+  next book, and a book whose covers changed is refused on its own. Keeping an
+  automatic switch releases the replaced cover's copy (#1633).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import type { SyntheticEvent } from 'react'
 
@@ -71,20 +72,30 @@ const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
         : 0
   if (delta !== 0) track.scrollLeft += delta
 }
-export function LibraryCoverChoices(props: {
-  reviewCaseId: string
-  mediaKind: string
-  field: ReviewField
-  disabled: boolean
-  progress: ChoiceProgress
-  expandedEvidence: { has: (key: string) => boolean }
-  revealEvidence: (key: string) => void
-  choose: (
-    outcome: DecisionCommand['outcome'],
-    selectedValue?: DecisionCommand['selectedValue'],
-  ) => void
-  prepareFailure: { failure: CoverPrepareFailure | null; record: RecordCoverPrepareFailure }
-}) {
+// What the Covers view says differently from the book page (#1633): it asks
+// about a book, names a current cover an automatic write chose, and is itself
+// the Covers view, so it shows no link back to it.
+interface CoverChoiceWording {
+  question?: string
+  currentLabel?: string
+  coversLink?: boolean
+}
+export function LibraryCoverChoices(
+  props: {
+    reviewCaseId: string
+    mediaKind: string
+    field: ReviewField
+    disabled: boolean
+    progress: ChoiceProgress
+    expandedEvidence: { has: (key: string) => boolean }
+    revealEvidence: (key: string) => void
+    choose: (
+      outcome: DecisionCommand['outcome'],
+      selectedValue?: DecisionCommand['selectedValue'],
+    ) => void
+    prepareFailure: { failure: CoverPrepareFailure | null; record: RecordCoverPrepareFailure }
+  } & CoverChoiceWording,
+) {
   return (
     <LibraryCoverChoicesContent
       key={`${props.reviewCaseId}:${props.field.coverConsideration?.id ?? 'absent'}`}
@@ -248,6 +259,9 @@ function LibraryCoverChoicesContent({
   revealEvidence,
   choose,
   prepareFailure,
+  question = decisionQuestion('cover'),
+  currentLabel = 'Current cover',
+  coversLink = true,
 }: {
   reviewCaseId: string
   mediaKind: string
@@ -261,7 +275,7 @@ function LibraryCoverChoicesContent({
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
   prepareFailure: { failure: CoverPrepareFailure | null; record: RecordCoverPrepareFailure }
-}) {
+} & CoverChoiceWording) {
   const { http } = useReviewContext()
   const access = useQuery({
     queryKey: ['reviewer-access'] as const,
@@ -401,7 +415,7 @@ function LibraryCoverChoicesContent({
     const key = `${candidate.incumbent ? 'current' : 'alternative'}-${String(index)}`
     const evidenceId = `cover-evidence-${String(candidate.ordinal)}-${key}`
     const label = candidate.incumbent
-      ? 'Current cover'
+      ? currentLabel
       : (names.get(candidate.reference) ?? 'Proposed cover')
     const evidenceKey = `cover:${key}`
     const open = expandedEvidence.has(evidenceKey)
@@ -560,6 +574,15 @@ function LibraryCoverChoicesContent({
           Automatically selected. Only a strictly better confirmed cover can update this choice.
         </p>
       ) : null}
+      {coversLink ? (
+        <Link
+          className="covers-link"
+          to="/library"
+          search={{ lens: 'all', view: 'covers', tab: 'all', cover: reviewCaseId }}
+        >
+          Covers
+        </Link>
+      ) : null}
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
         keys, to compare them.
@@ -579,7 +602,7 @@ function LibraryCoverChoicesContent({
         <div
           className="library-cover-pinned"
           role="radiogroup"
-          aria-label={decisionQuestion('cover')}
+          aria-label={question}
           onKeyDown={moveChoiceFocus}
         >
           <aside>
@@ -600,7 +623,7 @@ function LibraryCoverChoicesContent({
         <div
           className="library-cover-layout"
           role="radiogroup"
-          aria-label={decisionQuestion('cover')}
+          aria-label={question}
           onKeyDown={moveChoiceFocus}
         >
           {unavailableCurrent ? (

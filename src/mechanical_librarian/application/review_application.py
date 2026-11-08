@@ -45,6 +45,11 @@ from mechanical_librarian.application.operations import (
     TimingRepository,
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.review_covers import (
+    CoverBrowseStore,
+    cover_page,
+    replaced_cover_preview,
+)
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationSupervisor,
@@ -530,6 +535,7 @@ class ReviewApplication:
         admission: OperationAdmission | None = None,
         operation_lock: RLock | None = None,
         cover_considerations: CoverConsiderationService | None = None,
+        cover_store: CoverBrowseStore | None = None,
         settings: OwnerSettingsOperations | None = None,
         reviewer_access: ReviewerAccessOperations | None = None,
         settings_activation: (
@@ -576,6 +582,7 @@ class ReviewApplication:
         self._close_activity_projection = close_activity_projection
         self._operations = operations
         self._cover_considerations = cover_considerations
+        self._cover_store = cover_store
         self._settings = settings
         self._reviewer_access = reviewer_access
         if reviewer_access is not None:
@@ -1121,6 +1128,37 @@ class ReviewApplication:
                 (connection, library), library
             )
             return detail
+
+        return self.serialized(read)
+
+    def covers(
+        self,
+        *,
+        view: str,
+        cursor: str | None,
+        check_active: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
+        """Read one page of a Covers tab (#1633)."""
+        store = self._cover_store
+        if store is None:
+            raise ReviewWebError("unavailable")
+        return self._browse_serialized(
+            lambda: cover_page(store, view, cursor), check_active
+        )
+
+    def replaced_cover(self, plan: str, preview: str) -> bytes:
+        """Read the preview of an original a listed switch replaced."""
+        store = self._cover_store
+        cover_considerations = self._cover_considerations
+        if store is None or cover_considerations is None:
+            raise ReviewWebError("unavailable")
+
+        def read() -> bytes:
+            digest = replaced_cover_preview(store, plan, preview)
+            try:
+                return cover_considerations.retained_preview(digest)
+            except CoverConsiderationError as error:
+                raise ReviewWebError("unavailable") from error
 
         return self.serialized(read)
 
@@ -1908,6 +1946,7 @@ def compose_review_application(
         admission=admission,
         operation_lock=gate,
         cover_considerations=cover_considerations,
+        cover_store=library_store,
         settings=settings,
         reviewer_access=reviewer_access,
         settings_activation=settings_activation,

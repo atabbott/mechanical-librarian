@@ -393,6 +393,34 @@ with "Match not confirmed". One tap chooses; there is no dialog.
 Contradictory identity stays excluded. A choice against an outdated comparison
 shows the current one. A cover choice can be revised until its write begins.
 
+### Covers view
+
+Library switches between **Works** and **Covers**. Covers lists every work
+with a review case by what its cover asks of the owner, under four tabs with
+their counts: **To decide** (a suggested switch, then an open choice, under
+**Switch suggested** and **Choose**), **Kept** (the current cover stays and
+others can still be chosen), **Switched** and **All** (a wall of every cover).
+To decide counts exactly what Library's attention counts for covers. Pages
+hold 50 books, with **Show more covers** for the next; the tab, its cursor and
+the open book live in the URL, and pages are private and never cached.
+
+Opening a book shows its comparison, asking "Which cover should this book
+use?". One tap records the choice through the work's own decision command and
+opens the next book; **Skip for now** moves on and decides nothing. A book
+whose covers changed since the page loaded is refused on its own with
+**Reload**, and the others stay usable. If no answer comes back, the book says
+so rather than guessing.
+
+**Switched** lists automatic cover writes the owner has not answered since,
+newest first, as **Before** and **Now** with each cover's size; a write that
+filled an empty cover shows **No cover** before. The original is listed only
+while its copy is retained
+([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
+**Keep** records keeping the current cover, releases that copy and marks the
+row **Kept**; **Others** opens the comparison. Putting the original back
+arrives with the cover rules (#1363). A cover field in the work view links to
+its book in Covers.
+
 ## Evidence and History
 
 `/review/{case}` is a read-only page with Evidence and History tabs. Neither

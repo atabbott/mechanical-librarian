@@ -2860,6 +2860,8 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/library"),
         ("get", "/api/v1/library/cover"),
         ("get", "/api/v1/library/report"),
+        ("get", "/api/v1/covers"),
+        ("get", "/api/v1/covers/replaced"),
         ("get", "/api/v1/operations/status"),
         ("get", "/api/v1/operations/support/preview"),
         ("post", "/api/v1/operations/support/export"),

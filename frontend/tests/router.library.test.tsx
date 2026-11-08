@@ -11992,6 +11992,7 @@ describe('Library route', () => {
     expect(document.querySelector('.compact-workspace-controls')).toBeNull()
     expect([...(selectedControls?.children ?? [])].map((child) => child.className)).toEqual([
       'attention-toggle',
+      'cm-segmented',
       selectedNotices[0]?.className,
     ])
     expect(document.querySelector('.library-workspace')?.firstElementChild).toBe(
@@ -14744,7 +14745,11 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     const toggle = screen.getByRole('button', { name: 'Attention 1 work' })
     const children = () => [...(header?.children ?? [])].map((child) => child.className)
     const before = children()
-    expect(before).toEqual(['attention-toggle', expect.stringContaining('cm-library-handoff')])
+    expect(before).toEqual([
+      'attention-toggle',
+      'cm-segmented',
+      expect.stringContaining('cm-library-handoff'),
+    ])
     expect(header).toHaveAttribute('data-route-focus', 'true')
     expect(document.querySelector('.compact-workspace-back')).toBeNull()
 
