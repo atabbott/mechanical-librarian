@@ -19,6 +19,7 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
     publication_ready,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 
 
 @pytest.mark.parametrize(
@@ -412,3 +413,26 @@ def test_other_provider_kinds_never_state_a_final_host(kind: CoverSourceKind) ->
 def test_a_final_host_outside_the_closed_family_is_refused(value: object) -> None:
     with pytest.raises(CoverEvidenceError, match="final host is inconsistent"):
         _open_library_source(final_host=value)
+
+
+def test_an_artifact_carries_its_measures_or_none() -> None:
+    measures = CoverMeasures("0f" * 8, "f0" * 8, (1,) * 64, (128,) * 48)
+    measured = CoverArtifact.create(
+        b"a", b"b", "image/png", 2, 3, "0" * 16, measures=measures
+    )
+
+    assert measured.measures == measures
+    assert measured.to_data()["measures"] == measures.to_data()
+    assert (
+        CoverArtifact.create(b"a", b"b", "image/png", 2, 3).to_data()["measures"]
+        is None
+    )
+    with pytest.raises(CoverEvidenceError):
+        CoverArtifact.create(
+            b"a",
+            b"b",
+            "image/png",
+            2,
+            3,
+            measures=measures.to_data(),  # type: ignore[arg-type]  # reason: proves the runtime refusal
+        )

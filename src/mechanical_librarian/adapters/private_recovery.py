@@ -114,6 +114,22 @@ class PrivateCoverRecoveryStore:
         if removed:
             self._sync_root()
 
+    def read(self, plan_id: str) -> bytes | None:
+        """Return the captured pre-write cover, or ``None`` if none was there."""
+        require_private_directory(self._root, "cover recovery unavailable")
+        descriptor = os.open(
+            self._path(plan_id), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            self._require_private_file(os.fstat(descriptor))
+            chunks = []
+            while chunk := os.read(descriptor, 1024 * 1024):
+                chunks.append(chunk)
+        finally:
+            os.close(descriptor)
+        value = b"".join(chunks)
+        return None if value == b"ABSENT\n" else value
+
     def exists(self, plan_id: str) -> bool:
         require_private_directory(self._root, "cover recovery unavailable")
         try:
