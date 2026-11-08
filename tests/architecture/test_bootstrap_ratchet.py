@@ -65,10 +65,12 @@ ENTRY_POINTS = {
 }
 CEILING = {
     "__init__.py": 8,
-    # 3242 since #1363's Put back wired the retained store into the cover
+    # 3243 since #1363's Put back wired the retained store into the cover
     # write and the owner check, and the coalesced scan request into each
     # guarded application: straight-line construction and keyword arguments.
-    "composition.py": 3242,
+    # The currentness check also skips a retained source, whose original is
+    # in the retained store only (one import).
+    "composition.py": 3243,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }

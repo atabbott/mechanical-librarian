@@ -1492,8 +1492,10 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-switched-row { display:grid; grid-template-columns:5rem auto 5rem minmax(0,1fr) auto; gap:.75rem; align-items:center; padding:.75rem 0; border-bottom:1px solid var(--line); }
 .covers-switched-row figure { margin:0; display:grid; gap:.25rem; }
 .covers-switched-row img, .covers-switched-row .covers-image-missing { width:5rem; aspect-ratio:2 / 3; object-fit:contain; }
-.covers-switched-row figcaption { display:grid; font-size:.75rem; }
+.covers-switched-row figure { min-width:0; }
+.covers-switched-row figcaption { display:grid; font-size:.75rem; overflow-wrap:anywhere; }
 .covers-switched-row figcaption small { color:var(--soft); }
+.covers-switched-text { min-width:0; overflow-wrap:anywhere; }
 .covers-switched-text h3 { margin:0; font-size:1rem; }
 .covers-switched-text p { margin:.15rem 0 0; color:var(--soft); }
 .covers-switched-actions { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; }
@@ -1512,6 +1514,14 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .covers-queue { grid-template-columns:minmax(0,1fr); }
   .covers-page.has-selection .covers-queue-list { display:none; }
   .covers-page.has-selection .covers-back { display:inline-flex; }
-  .covers-switched-row { grid-template-columns:4rem auto 4rem minmax(0,1fr); }
+  .covers-switched-row { grid-template-columns:minmax(0,4rem) auto minmax(0,4rem) minmax(0,1fr); }
+  /* The images fill their columns, so neither runs into the title. */
+  .covers-switched-row img, .covers-switched-row .covers-image-missing { width:100%; }
   .covers-switched-actions { grid-column:1 / -1; }
+}
+/* On a phone, and at enlarged text, the Before and Now pair sits above the
+   title and the text takes the full width, so nothing scrolls sideways. */
+@media (max-width:40rem) {
+  .covers-switched-row { grid-template-columns:minmax(0,5rem) auto minmax(0,5rem) minmax(0,1fr); }
+  .covers-switched-text { grid-column:1 / -1; }
 }

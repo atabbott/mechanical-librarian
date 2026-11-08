@@ -1228,6 +1228,8 @@ class _CoverSwitch(_ClosedModel):
     before: _CoverPreview | None
     filled: bool
     put_back: _CoverPutBack | None
+    # Put back is offered only while the work's comparison has the original.
+    put_back_offered: bool
 
 
 class _CoverWork(_ClosedModel):
@@ -3911,7 +3913,7 @@ def _register_case_and_effect_routes(
             or re.fullmatch(r"cover_ref_[0-9a-f]{64}", reference) is None
         ):
             raise HTTPException(404, detail={"code": "not_found"})
-        payload = _case_call(
+        payload, retained = _case_call(
             lambda: application.cover_image(review_case_id, consideration_id, reference)
         )
         return Response(
@@ -3919,8 +3921,10 @@ def _register_case_and_effect_routes(
             media_type="image/png",
             headers={
                 # The URL binds a content-addressed consideration and the
-                # preview digest it records, so these bytes cannot change.
-                "Cache-Control": _IMMUTABLE_CACHE,
+                # preview digest it records, so these bytes cannot change. The
+                # retained original's preview keeps the default no-store: its
+                # copy can be released, and it is never cached (#1363).
+                **({} if retained else {"Cache-Control": _IMMUTABLE_CACHE}),
                 "Content-Security-Policy": "default-src 'none'",
                 "X-Content-Type-Options": "nosniff",
             },

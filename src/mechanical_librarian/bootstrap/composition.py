@@ -265,6 +265,7 @@ from mechanical_librarian.bootstrap.contained_reviewer import (
 from mechanical_librarian.domain.audiobook_corroboration import (
     recording_unmatched,
 )
+from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
 )
@@ -1089,7 +1090,8 @@ def _require_report_current_loaded(
         audio_inspector=IsolatedAudioInspector(),
     )
     for source in report.cover_sources:
-        if source.artifact is not None:
+        # A retained original's bytes are in the retained store only (#1363).
+        if source.artifact is not None and source.kind is not CoverSourceKind.RETAINED:
             artifacts.require_artifact(source.artifact)
     artifacts.require_current()
     return valid

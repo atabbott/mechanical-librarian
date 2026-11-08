@@ -5091,13 +5091,18 @@
                 "type": "null"
               }
             ]
+          },
+          "put_back_offered": {
+            "title": "Put Back Offered",
+            "type": "boolean"
           }
         },
         "required": [
           "at",
           "before",
           "filled",
-          "put_back"
+          "put_back",
+          "put_back_offered"
         ],
         "title": "_CoverSwitch",
         "type": "object"

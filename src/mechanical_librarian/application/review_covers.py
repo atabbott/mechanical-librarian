@@ -98,6 +98,9 @@ class CoverRow:
     replacement: SwitchCover | None
     key: CoverKey
     put_back: PutBack | None = None
+    # Whether the work's current comparison offers the original, so Put back
+    # can be recorded now (#1363).
+    put_back_offered: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +183,7 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
             "put_back": None
             if row.put_back is None
             else {"failure": row.put_back.failure, "state": row.put_back.state},
+            "put_back_offered": row.put_back_offered,
         }
     return {
         "authors": _report_authors(target),

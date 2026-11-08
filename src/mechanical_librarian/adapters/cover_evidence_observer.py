@@ -219,7 +219,10 @@ class CoverEvidenceObserver:
             decoded = decode_cover(original, deadline=deadline.aggregate_deadline)
         except (ValueError, CoverDecodeRejected, CoverDecodeTimeout):
             return ()
-        self._artifacts.stage(decoded.artifact, original, decoded.preview)
+        # Only its preview is staged: the original stays in the retained store
+        # alone, which the guarded write reads it from (D4), so a release
+        # leaves no copy of it in the artifact store.
+        self._artifacts.stage_preview(decoded.artifact, decoded.preview)
         return (
             CoverSource(
                 cover_source_id(CoverSourceKind.RETAINED, plan_id),

@@ -94,6 +94,21 @@ _PUT_BACK_SQL = (
     "AND json_extract(answered.document,'$.retained_plan_id')=? "
     "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
 )
+# Whether the work's current comparison offers this switch's original, so
+# Put back can be recorded now; before the work is prepared again after its
+# switch it does not, and Put back is not offered (#1363).
+_PUT_BACK_OFFERED_SQL = (
+    "SELECT EXISTS (SELECT 1 FROM current_cover_considerations current "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current.consideration_id,"
+    "json_each(consideration.document,'$.candidates') candidate "
+    "WHERE current.review_case_id=? "
+    "AND json_extract(candidate.value,'$.candidate_kind')='retained' "
+    "AND json_extract(candidate.value,'$.plan_id')=? "
+    "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event "
+    "WHERE event.consideration_id=consideration.consideration_id "
+    "AND event.kind='stale'))"
+)
 # Library's cover attention, read from the same facts its lens reads.
 _DECIDING_SQL = (
     "EXISTS (SELECT 1 FROM review_attention_facts f "
@@ -302,6 +317,11 @@ def read_cover_page(
                 else None,
                 tuple(key),
                 _put_back(connection, target, cast(str, plan_id)) if replaced else None,
+                replaced
+                and connection.execute(
+                    _PUT_BACK_OFFERED_SQL, (case_id, plan_id)
+                ).fetchone()[0]
+                == 1,
             )
         )
     return CoverPageSnapshot(

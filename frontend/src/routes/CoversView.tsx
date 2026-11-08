@@ -513,7 +513,10 @@ function SwitchedRow({
             {failure.text}
           </p>
         ) : refused && !done ? (
-          <p className="covers-failure">{putBackRefusedCopy}</p>
+          // Announced once if it arrives with a live update while the row is open.
+          <p className="covers-failure" role="status">
+            {putBackRefusedCopy}
+          </p>
         ) : null}
       </div>
       <div className="covers-switched-actions">
@@ -528,7 +531,9 @@ function SwitchedRow({
           </>
         ) : work.choosable ? (
           <>
-            {switched.filled || refused ? null : (
+            {/* Offered only while the book's comparison has the original: before
+                the book is prepared again after its switch, it cannot be chosen. */}
+            {!switched.put_back_offered || refused ? null : (
               <button
                 type="button"
                 aria-describedby={titleId}

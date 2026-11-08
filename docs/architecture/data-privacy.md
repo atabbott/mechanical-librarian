@@ -103,8 +103,10 @@ exported, logged, offered as a download or sent to a reviewer, and its path
 appears nowhere. While a copy is retained, the owner sees the replaced cover's
 stored preview in Covers and on the book page and can put it back, which
 uploads the retained original through the guarded write; the preview is never
-cached, and the retained original is never served. A Put back that verifies
-releases the copy in the same transaction.
+cached, and the retained original is never served. Report assembly stores
+only the original's preview in the artifact store, so its bytes stay in the
+retained directory alone and a release leaves no copy of them. A Put back that
+verifies releases the copy in the same transaction.
 
 ## What leaves the host
 

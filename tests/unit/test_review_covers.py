@@ -125,7 +125,7 @@ def _library(
                 retained_source(switch.plan.plan_id, _ORIGINAL),
             ),
         )
-        artifacts.stage(_ORIGINAL, _ORIGINAL_BYTES, _ORIGINAL_PREVIEW)
+        artifacts.stage_preview(_ORIGINAL, _ORIGINAL_PREVIEW)
         list_switch(
             repository._connection,
             switch,
@@ -321,6 +321,9 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
         assert first["group"] == "auto"
         assert first["switched"]["at"] == 100
         assert first["switched"]["filled"] is False
+        # Listed, but its work was not prepared again since the switch, so its
+        # comparison lacks the original and Put back is not offered (#1363).
+        assert first["switched"]["put_back_offered"] is False
         before = first["switched"]["before"]
         assert str(before["url"]).startswith(f"/api/v1/covers/replaced?plan={newer}")
         # A fill replaced nothing, so it has no Before and offers nothing back.
@@ -329,6 +332,7 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
             "before": None,
             "filled": True,
             "put_back": None,
+            "put_back_offered": False,
         }
         assert (
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
@@ -791,9 +795,25 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
             )
             assert original["artifact_id"] == _ORIGINAL.artifact_id
             assert original["selectable"] is True
+            # The original's preview is never cached; a reviewed one is
+            # immutable (data-privacy, "Prior cover bytes").
+            images = f"/api/v1/review-cases/{case_id}/cover-considerations/" + str(
+                consideration["consideration_id"]
+            )
+            for candidate in consideration["candidates"]:
+                image = client.get(f"{images}/images/{candidate['reference']}")
+                assert image.status_code == 200, image.text
+                assert image.headers["Cache-Control"] == (
+                    "no-store, private"
+                    if candidate["candidate_kind"] == "retained"
+                    else "private, max-age=31536000, immutable"
+                )
             plan_id = library.repository._connection.execute(
                 "SELECT plan_id FROM retained_cover_listings"
             ).fetchone()[0]
+            # Its comparison has the original, so Covers offers Put back.
+            (listed,) = client.get("/api/v1/covers?view=switched").json()["items"]
+            assert listed["switched"]["put_back_offered"] is True
             if released:
                 _release(library, plan_id)
 
@@ -833,3 +853,5 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
             assert owner == [("retained", plan_id)]
             (row,) = switched
             assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
+            # The recorded Put back's comparison still offers the original.
+            assert row["switched"]["put_back_offered"] is True

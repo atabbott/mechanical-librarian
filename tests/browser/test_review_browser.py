@@ -720,7 +720,7 @@ def _server(
         artifacts = CoverArtifactStore(database.parent / "cover-artifacts")
         if put_back:
             # Report assembly stages the retained original it decodes (#1363).
-            artifacts.stage(_PUT_BACK_ARTIFACT, _PUT_BACK_ORIGINAL, _PUT_BACK_PREVIEW)
+            artifacts.stage_preview(_PUT_BACK_ARTIFACT, _PUT_BACK_PREVIEW)
         for index, (source, payload) in enumerate(
             zip(sources, payloads, strict=True), 1
         ):
@@ -5399,6 +5399,38 @@ def test_switched_row_puts_back_the_replaced_original(refused: bool) -> None:
                             ).fetchone()[0]
                             == 0
                         )
+                    # The row reflows at 390 and 320 px, and at 320 px with
+                    # 200% text: nothing scrolls sideways or is cut off, the
+                    # text keeps a readable width and no image runs into it.
+                    for width, text in ((390, ""), (320, ""), (320, "200%")):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        set_root_text(page, text)
+                        layout = cast(
+                            "dict[str, float]",
+                            row.evaluate(
+                                """row => {
+                                  const box = node => node.getBoundingClientRect()
+                                  const text = box(row.querySelector('.covers-switched-text'))
+                                  const images = [...row.querySelectorAll('figure')].map(box)
+                                  const refusal = box(row.querySelector('.covers-failure'))
+                                  const page = document.scrollingElement
+                                  return {
+                                    overflow: page.scrollWidth - page.clientWidth,
+                                    textWidth: text.width,
+                                    refusalRight: refusal.right,
+                                    viewport: window.innerWidth,
+                                    overlap: Math.max(0, ...images.map(image =>
+                                      image.bottom > text.top && image.top < text.bottom
+                                        ? image.right - text.left : 0)),
+                                  }
+                                }"""
+                            ),
+                        )
+                        assert layout["overflow"] <= 0, (width, text, layout)
+                        assert layout["textWidth"] >= 200, (width, text, layout)
+                        assert layout["refusalRight"] <= layout["viewport"], layout
+                        assert layout["overlap"] <= 0, (width, text, layout)
+                    set_root_text(page, "")
             browser.close()
 
 

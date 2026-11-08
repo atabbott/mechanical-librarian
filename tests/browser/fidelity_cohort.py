@@ -857,6 +857,7 @@ def _case(case_id: str) -> dict[str, object]:
                             [
                                 {
                                     "artifact_id": "cover-current-synthetic",
+                                    "candidate_kind": "candidate",
                                     "deterministic_citations": [
                                         "cover-ref-current",
                                         "cover-packet-synthetic",
@@ -900,6 +901,7 @@ def _case(case_id: str) -> dict[str, object]:
                         ),
                         {
                             "artifact_id": "cover-choice-synthetic",
+                            "candidate_kind": "candidate",
                             "deterministic_citations": [
                                 "cover-ref-choice",
                                 "cover-packet-synthetic",
@@ -941,6 +943,7 @@ def _case(case_id: str) -> dict[str, object]:
                             [
                                 {
                                     "artifact_id": "cover-unconfirmed-synthetic",
+                                    "candidate_kind": "candidate",
                                     "deterministic_citations": [],
                                     "deterministic_rank": None,
                                     "deterministic_rank_key": None,

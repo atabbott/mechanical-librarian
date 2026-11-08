@@ -161,7 +161,15 @@ def _cover_incumbent(
         "available"
         if incumbent is not None
         else "unavailable"
-        if target_cover.state is TargetFieldState.VALUE
+        # A cover Audiobookshelf holds but that could not be read, including
+        # one too large or not an image, reads "Image unavailable" on the book
+        # page as in Covers (#1363, contract 7.1).
+        if target_cover.state
+        in {
+            TargetFieldState.VALUE,
+            TargetFieldState.MALFORMED,
+            TargetFieldState.OVERSIZED,
+        }
         else "absent"
     )
     return (
@@ -179,14 +187,15 @@ _DECISION_ID = re.compile(r"[A-Za-z0-9_.:-]{1,256}")
 def _retained_candidate(
     report: MetadataReport,
     binding: tuple[str, str, str] | None,
-    ordinal: int,
+    reviewed: list[dict[str, object]],
     incumbent_digest: str | None,
 ) -> dict[str, object] | None:
     """The retained original as an owner-only candidate (#1363, D2).
 
     It is offered only when the report carries the work's ``retained``
     source and ``binding`` (digest, plan, decision) is the switch that source
-    names, and only while it is not already the current cover. It has no
+    names, and only while it is not already the current cover or the same
+    image as a reviewed candidate, so one picture is never two cards. It has no
     identity, no rank and no reviewer evidence: it is a way back, never an
     automatic choice.
     """
@@ -210,9 +219,14 @@ def _retained_candidate(
         ),
         None,
     )
-    if source is None or source.artifact is None:
+    if (
+        source is None
+        or source.artifact is None
+        or any(item["artifact_id"] == source.artifact.artifact_id for item in reviewed)
+    ):
         return None
     artifact = source.artifact
+    ordinal = len(reviewed)
     reference = cover_source_reference(report.report_id, source.source_id)
     return {
         "artifact_id": artifact.artifact_id,
@@ -475,7 +489,7 @@ def _validated_candidates(
             if retained != _retained_candidate(
                 report,
                 _retained_binding(retained),
-                len(expected_candidates),
+                expected_candidates,
                 expected_incumbent_digest,
             ):
                 raise ValueError
@@ -1431,7 +1445,7 @@ class CoverConsiderationService:
             self._retained_original(
                 report.target.connection, report.target.library, report.target.item
             ),
-            len(candidates),
+            candidates,
             incumbent_digest,
         )
         if retained is not None:
@@ -1723,7 +1737,12 @@ class CoverConsiderationService:
 
     def image(
         self, review_case_id: str, consideration_id: str, reference: str
-    ) -> bytes:
+    ) -> tuple[bytes, bool]:
+        """One candidate's preview, and whether it is the retained original.
+
+        The retained original's preview is never cached: the copy it stands
+        for can be released at any time (#1363, data-privacy).
+        """
         document = self._store.current_cover_consideration_document(review_case_id)
         if document is None:
             raise CoverConsiderationError("not_found")
@@ -1738,7 +1757,10 @@ class CoverConsiderationService:
         )
         if candidate is None:
             raise CoverConsiderationError("not_found")
-        return self.retained_preview(str(candidate["preview_sha256"]))
+        return (
+            self.retained_preview(str(candidate["preview_sha256"])),
+            candidate.get("candidate_kind") == "retained",
+        )
 
     def retained_preview(self, preview_sha256: str) -> bytes:
         """Read one retained preview by the digest its caller already bound."""

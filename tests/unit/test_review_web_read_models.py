@@ -323,7 +323,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
     covers.project.return_value = view
     covers.project_for_review.return_value = (view, "current")
     covers.ensure.return_value = view
-    covers.image.return_value = b"\x89PNG\r\n\x1a\nsynthetic"
+    covers.image.return_value = (b"\x89PNG\r\n\x1a\nsynthetic", False)
     configuration = ReviewWebConfiguration(
         tls_certificate_file="/synthetic/review.crt",
         tls_private_key_file="/synthetic/review.key",

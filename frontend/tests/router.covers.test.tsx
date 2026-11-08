@@ -386,9 +386,12 @@ describe('Covers view (#1633)', () => {
           },
           filled: false,
           put_back: null,
+          put_back_offered: true,
         },
       }),
-      work('case-2', 'auto', { switched: { at, before: null, filled: true, put_back: null } }),
+      work('case-2', 'auto', {
+        switched: { at, before: null, filled: true, put_back: null, put_back_offered: false },
+      }),
     ])
     const http = coversHttp({ switched })
     renderRoute('/library?lens=all&view=covers&tab=switched', http)
@@ -434,7 +437,9 @@ describe('Covers view (#1633)', () => {
   it('says Image unavailable when a replaced cover has no stored preview', async () => {
     const at = Math.floor(Date.now() / 1000) - 7200
     const switched = page('switched', [
-      work('case-1', 'auto', { switched: { at, before: null, filled: false, put_back: null } }),
+      work('case-1', 'auto', {
+        switched: { at, before: null, filled: false, put_back: null, put_back_offered: false },
+      }),
     ])
     renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
     const [row] = await screen.findAllByRole('listitem')
@@ -498,6 +503,7 @@ describe('Covers view (#1633)', () => {
           before: preview('b'),
           filled: false,
           put_back: null,
+          put_back_offered: true,
         },
       }),
     ])
@@ -793,7 +799,10 @@ describe('Covers view (#1633)', () => {
 })
 
 describe('Put back (#1363)', () => {
-  const switchedRow = (put_back: NonNullable<CoverWorkView['switched']>['put_back'] = null) =>
+  const switchedRow = (
+    put_back: NonNullable<CoverWorkView['switched']>['put_back'] = null,
+    put_back_offered = true,
+  ) =>
     page('switched', [
       work('case-1', 'auto', {
         switched: {
@@ -801,6 +810,7 @@ describe('Put back (#1363)', () => {
           before: preview('b', 500, 500),
           filled: false,
           put_back,
+          put_back_offered,
         },
       }),
     ])
@@ -847,6 +857,17 @@ describe('Put back (#1363)', () => {
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
+  it('offers no Put back before the book is prepared again after its switch', async () => {
+    // The comparison has no original yet, so Put back could not be recorded.
+    const http = coversHttp({ switched: switchedRow(null, false) })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).queryByRole('button', { name: 'Put back' })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Keep' })).toBeVisible()
+    expect(within(row).getByRole('button', { name: 'Others' })).toBeVisible()
+  })
+
   it('reads a running Put back as put back', async () => {
     const http = coversHttp({ switched: switchedRow({ state: 'applying', failure: null }) })
     renderRoute('/library?lens=all&view=covers&tab=switched', http)
@@ -865,9 +886,12 @@ describe('Put back (#1363)', () => {
     renderRoute('/library?lens=all&view=covers&tab=switched', http)
     const [row] = await screen.findAllByRole('listitem')
     if (!row) throw new Error('a switched row is required')
-    expect(
-      within(row).getByText('The cover was changed in Audiobookshelf, so it was not put back.'),
-    ).toBeVisible()
+    const refusal = within(row).getByText(
+      'The cover was changed in Audiobookshelf, so it was not put back.',
+    )
+    expect(refusal).toBeVisible()
+    // Announced if it arrives with a live update while the row is open.
+    expect(refusal).toHaveAttribute('role', 'status')
     expect(within(row).queryByRole('button', { name: 'Put back' })).toBeNull()
     expect(within(row).getByRole('button', { name: 'Keep' })).toBeVisible()
   })

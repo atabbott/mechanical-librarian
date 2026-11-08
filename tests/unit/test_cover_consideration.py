@@ -1155,9 +1155,10 @@ def test_each_served_image_is_the_artifact_that_choice_would_apply(
     consideration_id = str(value["consideration_id"])
     served: dict[str, bytes] = {}
     for candidate in value["candidates"]:
-        payload = case.service.image(
+        payload, retained = case.service.image(
             case_id, consideration_id, str(candidate["reference"])
         )
+        assert retained is False
         assert hashlib.sha256(payload).hexdigest() == candidate["preview_sha256"]
         assert payload == case.payload_by_artifact[candidate["artifact_id"]]
         served[str(candidate["reference"])] = payload
@@ -2143,6 +2144,38 @@ def test_a_retained_original_that_is_the_current_cover_is_not_offered(
     )
 
 
+def test_a_retained_original_that_a_provider_also_offers_is_one_card(
+    case: _Case,
+) -> None:
+    """One picture is never two cards: the reviewed candidate stands (#1363)."""
+    # A provider's cover, not the current one.
+    reviewed = next(
+        source
+        for source in case.sources
+        if source.artifact is not None and source.kind is not CoverSourceKind.ABS
+    )
+    assert reviewed.artifact is not None
+    same = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.RETRIEVED,
+        reviewed.artifact,
+    )
+    report = _report((*case.sources, same))
+    binding = (reviewed.artifact.original_digest, _PLAN, _DECISION)
+    service, _, _ = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "y" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    offered = [candidate["artifact_id"] for candidate in projected["candidates"]]
+    assert offered.count(reviewed.artifact.artifact_id) == 1
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in json.loads(case.store.current[case_id])["candidates"]
+    )
+
+
 @pytest.mark.parametrize(
     "tamper",
     (
@@ -2164,3 +2197,54 @@ def test_a_malformed_retained_candidate_is_refused(
 
     with pytest.raises(ValueError, match="cover consideration"):
         service.project_historical(json.dumps(document))
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    (
+        ("malformed", "unavailable"),
+        ("oversized", "unavailable"),
+        ("missing", "absent"),
+    ),
+)
+def test_a_held_cover_that_could_not_be_read_is_an_unavailable_current_cover(
+    case: _Case, state: str, expected: str
+) -> None:
+    """The book page names it "Image unavailable", as Covers does (#1363, 7.1)."""
+    from mechanical_librarian.application.cover_consideration import (
+        _cover_incumbent,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetFacts,
+        TargetField,
+        TargetFieldState,
+    )
+
+    target = case.report.target
+    report = MetadataReport.create(
+        target=TargetFacts(
+            target.connection,
+            target.library,
+            target.item,
+            tuple(
+                TargetField(field.destination, TargetFieldState(state))
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in target.fields
+            ),
+        ),
+        file=case.report.file,
+        local_claims=case.report.local_claims,
+        local_reasons=case.report.local_reasons,
+        providers=case.report.providers,
+        cover_sources=(),
+    )
+
+    incumbent, digest = _cover_incumbent(report, [])
+
+    assert (incumbent["state"], incumbent["reference"], digest) == (
+        expected,
+        None,
+        None,
+    )

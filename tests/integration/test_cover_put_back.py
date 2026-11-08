@@ -222,6 +222,11 @@ def test_the_original_reaches_a_report_only_once_its_switch_verifies(
     assert source.provenance is None
     assert source.artifact is not None
     assert source.artifact.original_digest == ORIGINAL_DIGEST
+    # Only its preview is staged: the original is in the retained store alone,
+    # so a release leaves no copy of it in the artifact store.
+    assert artifacts.preview(source.artifact)
+    with pytest.raises(MetadataReportError):
+        artifacts.read_original_digest(ORIGINAL_DIGEST)
     # The guarded writer reads it back from the retained store by digest.
     assert (
         ContentAddressedOriginals(artifacts, _root(effects)).read_original_digest(

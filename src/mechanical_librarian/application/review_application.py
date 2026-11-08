@@ -1304,7 +1304,7 @@ class ReviewApplication:
 
     def cover_image(
         self, review_case_id: str, consideration_id: str, reference: str
-    ) -> bytes:
+    ) -> tuple[bytes, bool]:
         if self._cover_considerations is None:
             raise ReviewApplicationError("unavailable")
         try:
