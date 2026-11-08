@@ -104,7 +104,7 @@ describe('Application shell', () => {
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
     // A count whose source has not resolved is never shown as zero (#1284).
     expect(screen.queryByText(/^0 works?$/u)).toBeNull()
-    expect(screen.queryByText('No exact-current works match this search and lens.')).toBeNull()
+    expect(screen.queryByText(/^No works yet\./u)).toBeNull()
     await act(async () => {
       await router.navigate({ to: '/policy', search: { section: 'identity' } })
     })

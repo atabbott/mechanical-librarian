@@ -116,6 +116,6 @@ it('confirms an off-page decision despite a pre-ack read and repeated case/resyn
   await waitFor(() => expect(hasBackgroundDebt(queryClient, query)).toBe(false))
   expect(await screen.findByRole('heading', { name: 'Review complete' })).toBeVisible()
   expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
-  expect(screen.queryByText('This work is not available in the current Library result.')).toBeNull()
+  expect(screen.queryByText('This work is not in the current list of works.')).toBeNull()
   expect(http.recordDecision).toHaveBeenCalledTimes(1)
 })
