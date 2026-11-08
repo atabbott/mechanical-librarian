@@ -1064,7 +1064,7 @@ _RETAINED_COVER_BINDING_NO_DELETE_SQL = "CREATE TRIGGER retained_cover_bindings_
 _RETAINED_COVER_REMOVALS_SQL = (
     "CREATE TABLE retained_cover_removals ("
     "plan_id TEXT PRIMARY KEY NOT NULL REFERENCES retained_cover_bindings(plan_id), "
-    "reason TEXT NOT NULL CHECK(reason IN ('unverified')), "
+    "reason TEXT NOT NULL CHECK(reason IN ('unverified','released')), "
     "state TEXT NOT NULL CHECK(state IN ('pending','completed')), "
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0)) WITHOUT ROWID"

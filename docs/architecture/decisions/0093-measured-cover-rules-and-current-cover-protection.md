@@ -147,6 +147,12 @@ switches: when the store is full, or the copy does not hash to the pre-value,
 the write stops as stale with the reason `cover_retention` and nothing is sent.
 No automatic switch happens without a copy to put back.
 
+The bounded review list is the most recent 1,000 verified automatic switches
+(`MAXIMUM_LISTED_SWITCHES`). When a switch verifies and pushes the oldest one
+off the list, that original's removal is queued in the same transaction, so
+continuous switching settles near 1,000 kept originals, well inside the
+2,000-entry and 2 GiB bound, which is reached only if removals keep failing.
+
 A revert, shown as Put back, is an ordinary owner cover decision that chooses
 the retained cover through the owner-confirmed retained-cover path (#1078),
 with its `BEGIN IMMEDIATE` selection token and every effect guard. It is

@@ -1522,18 +1522,27 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             ):
                 raise FieldEffectError("invalid_retained_cover")
             bound.add(plan_id)
-        removals = {
-            row[0]
-            for row in connection.execute("SELECT plan_id FROM retained_cover_removals")
-        }
-        if removals != {
-            plan_id
-            for plan_id in bound
-            if operations[plan_id].state in TERMINAL_STATES - {"verified"}
-            and (operations[plan_id].state, operations[plan_id].failure)
-            != ("stale", "connection")
-        }:
-            raise FieldEffectError("invalid_retained_cover")
+        removals = dict(
+            connection.execute("SELECT plan_id,reason FROM retained_cover_removals")
+        )
+        for plan_id in bound | set(removals):
+            operation = operations.get(plan_id)
+            if operation is None or plan_id not in bound:
+                raise FieldEffectError("invalid_retained_cover")
+            # An unverified end always owes its removal; a verified switch
+            # owes one only once it left the bounded list.
+            reason = removals.get(plan_id)
+            if operation.state == "verified":
+                owed = reason in {None, "released"}
+            elif operation.state in TERMINAL_STATES and (
+                operation.state,
+                operation.failure,
+            ) != ("stale", "connection"):
+                owed = reason == "unverified"
+            else:
+                owed = reason is None
+            if not owed:
+                raise FieldEffectError("invalid_retained_cover")
     except (
         json.JSONDecodeError,
         KeyError,

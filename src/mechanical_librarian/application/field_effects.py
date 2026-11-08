@@ -688,6 +688,11 @@ class GuardedFieldApplication:
                 try:
                     self._cover_retention.retain(plan)
                 except Exception:
+                    # A cover that changed since planning no longer hashes to
+                    # the pre-value; the refreshed guards name that first.
+                    guarded = self._preclaim(operation, affected_review_case_ids)
+                    if guarded is not None:
+                        return guarded
                     # An automatic switch that could not be put back never
                     # writes: the plan is staled before the claim, durably.
                     return self._stale(operation, "cover_retention")

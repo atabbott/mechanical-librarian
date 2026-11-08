@@ -22,6 +22,11 @@ from mechanical_librarian.domain.field_effect import (
 )
 
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+# The bounded review list of automatic switches: the most recent this many
+# verified switches keep their originals. Leaving the list releases the
+# original, so continuous switching settles well below the store's hard bound
+# of 2,000 entries (#1363, ADR-0093).
+MAXIMUM_LISTED_SWITCHES = 1000
 # Another binding of the same digest that has no removal still needs the file,
 # whether its write is pending or verified.
 _SHARED_SQL = (
@@ -45,6 +50,28 @@ def schedule_retained_cover_removal(
         "SELECT plan_id,'unverified','pending',0,? FROM retained_cover_bindings "
         "WHERE plan_id=? ON CONFLICT(plan_id) DO NOTHING",
         (changed_at, plan_id),
+    )
+
+
+def release_unlisted_retained_covers(
+    connection: sqlite3.Connection, plan_id: str, changed_at: int
+) -> None:
+    """Oblige removal of every verified switch the newest one pushed off the list.
+
+    Runs inside the transaction that verifies ``plan_id``, which is the newest
+    entry; older verified switches past the list bound are released through
+    the same retryable obligation as an unverified end.
+    """
+    connection.execute(
+        "INSERT INTO retained_cover_removals(plan_id,reason,state,attempt,updated_at) "
+        "SELECT binding.plan_id,'released','pending',0,? "
+        "FROM retained_cover_bindings binding JOIN field_effects effect "
+        "USING(plan_id) WHERE effect.state='verified' AND NOT EXISTS ("
+        "SELECT 1 FROM retained_cover_removals removal "
+        "WHERE removal.plan_id=binding.plan_id) "
+        "ORDER BY binding.plan_id=? DESC,effect.updated_at DESC,"
+        "binding.retained_at DESC,binding.plan_id DESC LIMIT -1 OFFSET ?",
+        (changed_at, plan_id, MAXIMUM_LISTED_SWITCHES),
     )
 
 
@@ -183,4 +210,9 @@ class SQLiteRetainedCoverRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
 
-__all__ = ["SQLiteRetainedCoverRepository", "schedule_retained_cover_removal"]
+__all__ = [
+    "MAXIMUM_LISTED_SWITCHES",
+    "SQLiteRetainedCoverRepository",
+    "release_unlisted_retained_covers",
+    "schedule_retained_cover_removal",
+]

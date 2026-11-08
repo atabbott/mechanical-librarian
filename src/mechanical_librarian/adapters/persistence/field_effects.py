@@ -54,6 +54,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _consent_state,
 )
 from mechanical_librarian.adapters.persistence.retained_covers import (
+    release_unlisted_retained_covers,
     schedule_retained_cover_removal,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
@@ -2139,9 +2140,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             self._upsert_field_effect_cleanup(
                 operation.plan.plan_id, "pending", 0, changed_at
             )
-            # An original kept for Put back stays only behind a verified write.
+            # An original kept for Put back stays only behind a verified write,
+            # and only while that switch is on the bounded list.
             if operation.state != "verified":
                 schedule_retained_cover_removal(
+                    self._connection, operation.plan.plan_id, changed_at
+                )
+            else:
+                release_unlisted_retained_covers(
                     self._connection, operation.plan.plan_id, changed_at
                 )
 
