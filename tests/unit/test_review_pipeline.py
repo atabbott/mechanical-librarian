@@ -3582,6 +3582,55 @@ def test_resume_rolls_back_when_a_pending_description_scan_fails(
     repository.close()
 
 
+def test_resume_requests_pending_description_scan_during_first_preparation(
+    application_path: Path,
+) -> None:
+    # One library's first scan has finished while another's is still queued:
+    # the poll leaves the finished library alone until the first preparation
+    # completes, and never polls one that ended with failures. A resume with
+    # description work waiting for it still starts its scan.
+    repository = open_repository(application_path)
+    libraries = (
+        ("primary", "fiction", "lib-1", _PRODUCER),
+        ("primary", "history", "lib-2", _PRODUCER),
+    )
+    for _connection, library, library_id, producer in libraries:
+        repository.request_review_scan(
+            "primary", library, library_id, producer, 100, first_boot=True
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',"
+        "updated_at=101 WHERE library_name='fiction'"
+    )
+    repository._connection.commit()
+    repository.set_review_pipeline_paused(True, 102)
+    trigger_sql = (
+        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='trigger'"
+    )
+    triggers = repository._connection.execute(trigger_sql).fetchone()
+    history = repository._connection.execute(
+        "SELECT * FROM review_preparation_scans WHERE library_name='history'"
+    ).fetchall()
+
+    with patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=(("primary", "fiction"),)):
+        repository.resume_review_pipeline(libraries, 103)
+
+    assert not repository.review_pipeline_paused()
+    assert repository._connection.execute(
+        "SELECT state,requested_at FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='fiction' "
+        "ORDER BY requested_at DESC,scan_id DESC LIMIT 1"
+    ).fetchone() == ("queued", 103)
+    assert (
+        repository._connection.execute(
+            "SELECT * FROM review_preparation_scans WHERE library_name='history'"
+        ).fetchall()
+        == history
+    )
+    assert repository._connection.execute(trigger_sql).fetchone() == triggers
+    repository.close()
+
+
 def test_pause_mutation_failure_rolls_back_releases_writer_and_retries(
     application_path: Path,
 ) -> None:

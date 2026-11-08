@@ -269,6 +269,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         trigger: PreparationTrigger | None,
         promoting_deferred: bool = False,
         presentation_accepted_at: int | None = None,
+        description_work: bool = False,
     ) -> PipelineProgress:
         row = self._connection.execute(
             "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
@@ -298,7 +299,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 state not in {"completed", "completed_with_failures"}
                 for _scan_id, _connection, _library, state in latest
             )
-            if first_preparation_incomplete:
+            # The poll waits for the first preparation to finish before it
+            # rescans a library, and never polls one that ended with failures.
+            # Description work waiting at resume has no poll to wait for.
+            if first_preparation_incomplete and not description_work:
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
                     raise MetadataReportError("review preparation state is invalid")
@@ -759,6 +763,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 updated_at,
                 first_boot=False,
                 trigger=None,
+                description_work=True,
             )
 
     @local_operation
