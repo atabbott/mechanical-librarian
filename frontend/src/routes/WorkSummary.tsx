@@ -21,7 +21,7 @@ import {
   mediaKindLabels,
   preparationStageLabels,
   preparationStatusLabels,
-  sourceStatusLabels,
+  sourceStatusLabel,
 } from '../labels'
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
@@ -67,7 +67,7 @@ export function WorkSources({
         {outcomes.map((outcome, index) => (
           <li key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}>
             <strong>{outcome.provider}</strong>
-            <b>{sourceStatusLabels[outcome.status]}</b>
+            <b>{sourceStatusLabel(outcome)}</b>
             <span>{outcome.reason}</span>
             <small>
               {sourceLookupLabel(outcome)} · {String(outcome.providerRequests)}{' '}

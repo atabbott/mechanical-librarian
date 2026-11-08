@@ -206,6 +206,10 @@ Librarian** (a source failed inside Mechanical Librarian itself, which is never
 retried), or **No source matched**. If the
 recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
+An audiobook's iTunes listing is only its cover. It never matches the
+audiobook, so one that only iTunes found reads **No source matched**. An iTunes
+failure never makes its sources unavailable, and never puts it under **Some
+lookups gave no usable answer**.
 
 A work whose latest preparation could not finish reads **Could not finish**
 and sits under that heading, counted beside Works as `2 could not
@@ -441,7 +445,10 @@ has decision controls or shows internal identifiers.
   outcomes in a Sources disclosure. Missing lineage never claims a field is
   empty. An audiobook's companion EPUB lookup reads "ISBN lookup (EPUB in this
   folder)" here, in the work summary and in the comparison footer, so an
-  audiobook with no ISBN of its own never shows a bare ISBN row (#1723).
+  audiobook with no ISBN of its own never shows a bare ISBN row (#1723). An
+  audiobook's iTunes lookup is for a cover only, so a listing it finds reads
+  "Cover found" and its reason says nothing else it returns is compared
+  (#1779).
 - **History** lists owner and automatic outcomes for the case, each with its
   own time, and shows a value only where the record links it exactly.
 
