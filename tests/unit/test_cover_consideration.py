@@ -1746,6 +1746,45 @@ def test_a_work_route_cover_is_an_owner_choice_with_no_observer() -> None:
         )
 
 
+def test_a_listed_edition_cover_is_an_unconfirmed_owner_choice() -> None:
+    """A Hardcover edition-list cover is offered, never selectable (#1778).
+
+    It binds by the book's work identity alone, so its identity stays
+    `unknown`: the owner may choose it and so confirms the match, and it is
+    never selectable and never ranked for an automatic choice.
+    """
+    from tests.unit.test_cover_identity_listed_edition import (
+        _isbn_lane_report,
+        _listed_source,
+    )
+
+    payload = _preview(11)
+    report = _isbn_lane_report(_listed_source(11))
+    service = CoverConsiderationService(
+        _Store(),
+        read_preview=lambda *_: payload,
+        read_preview_digest=lambda _: payload,
+        clock=lambda: 10,
+    )
+    case_id = "review_case_" + "c" * 64
+    projection = service.ensure(
+        case_id, report.to_json(), {"proposal_id": "review_proposal_" + "d" * 64}
+    )
+
+    (candidate,) = projection["candidates"]
+    assert "unknown" == candidate["identity"]["outcome"]
+    assert "match_not_confirmed" == candidate["match_state"]
+    assert candidate["manual_eligible"] is True
+    assert candidate["selectable"] is False
+    assert candidate["deterministic_rank"] is None
+    service.validate_decision(
+        case_id,
+        projection["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": candidate["artifact_id"]},
+    )
+
+
 def test_a_work_route_gallery_holds_only_the_offered_covers() -> None:
     """A landscape cover and another work's cover are neither shown nor accepted.
 
