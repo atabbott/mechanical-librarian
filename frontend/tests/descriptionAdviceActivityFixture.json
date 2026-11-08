@@ -280,61 +280,61 @@
           "field": "Contributor names",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Cover order",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Date precision",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Genres",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Isbn form",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Language rendering",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Publisher preference",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Series",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Subtitle",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         },
         {
           "field": "Title layout",
           "next": "Ask me",
           "previous": "Automatic",
-          "setting": "Review mode"
+          "setting": "Setting"
         }
       ],
       "state": "completed",

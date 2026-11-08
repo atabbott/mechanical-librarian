@@ -46,15 +46,15 @@ export const PolicySafety = ({
               ? 'Automatic active'
               : 'Human review active'}
         </strong>
-        <span>Safety</span>
+        <span>Mode</span>
       </summary>
       <div>
         <p>
           {posture.posture === 'preview'
-            ? 'Preview records what Automatic would do; nothing is decided or written.'
+            ? 'Preview records what Automatic would do. Nothing is decided or written.'
             : posture.posture === 'automatic'
-              ? 'Automatic remains decision-only and separately controlled.'
-              : 'Turn on Preview before enabling Automatic.'}
+              ? 'Automatic records choices. Writing them needs your write permission.'
+              : 'Enter Preview mode before turning on Automatic.'}
         </p>
         <div className="cm-policy-safety-actions">
           <button
@@ -86,10 +86,9 @@ export const PolicySafety = ({
         </div>
         {safety.category_suspensions.title_layout ? (
           <p>
-            Eligible completed books are re-evaluated from retained evidence once the title
-            suspension, automatic pause and global suspension are all cleared. A supported unchanged
-            title records no change; recovery does not write to your library. Unrelated category
-            suspensions remain in place.
+            Automatic decides Title and subtitle again once this suspension, the pause and any
+            global suspension are all cleared. It uses what the sources already said for prepared
+            works. Recovering writes nothing to your library. Other suspensions stay in place.
           </p>
         ) : null}
         {Object.keys(safety.category_suspensions).map((category) => (
@@ -103,12 +102,12 @@ export const PolicySafety = ({
         ))}
         <small>
           {sample.isPending
-            ? 'Loading recent Preview outcomes…'
+            ? 'Loading recent Preview results…'
             : sample.isError
-              ? 'Recent Preview outcomes are unavailable.'
+              ? 'Recent Preview results could not be loaded. Reload the page to try again.'
               : sample.data.items.length
-                ? `${String(sample.data.items.length)} recent preview ${sample.data.items.length === 1 ? 'result' : 'results'}; none was decided or written.`
-                : 'No Preview outcomes or safety suspensions need attention.'}
+                ? `${String(sample.data.items.length)} recent Preview ${sample.data.items.length === 1 ? 'result' : 'results'}. None was decided or written.`
+                : 'No recent Preview results.'}
         </small>
       </div>
     </details>
