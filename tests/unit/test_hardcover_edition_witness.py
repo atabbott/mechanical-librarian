@@ -448,6 +448,40 @@ def test_an_edition_must_share_the_files_own_cast(
     assert bool(_unconfirmed(report)) is kept
 
 
+@pytest.mark.parametrize(
+    ("narrator", "kept"),
+    (("Ilsa Brandt", True), ("Someone Else", False)),
+    ids=("same_cast", "disjoint_cast"),
+)
+def test_an_echoed_sidecar_narrator_still_judges_the_editions_cast(
+    narrator: str, kept: bool
+) -> None:
+    """An `.opf` narrator withheld as the target's echo still refuses (#1481).
+
+    The sidecar was the file's only narrator credit and repeated the target,
+    so association withheld it; the edition's cast is read against the
+    echoed target narrator, as it was against the sidecar's own credit.
+    """
+    from tests.unit.test_carried_recording_admission import (
+        _claims as _lead_claims,
+    )
+    from tests.unit.test_carried_recording_admission import (
+        _narrator_echo_audio,
+    )
+    from tests.unit.test_carried_recording_admission import (
+        _report as _lead_report,
+    )
+    from tests.unit.test_hardcover_asin_leads import _hardcover
+
+    report = _lead_report(
+        _lead_claims(carried=None, narrator=None),
+        (_hardcover(_lead_edition(3, None, narrator)),),
+        audio=_narrator_echo_audio(),
+        narrators=("Ilsa Brandt",),
+    )
+    assert bool(_unconfirmed(report)) is kept
+
+
 def test_unconfirmed_editions_survive_the_report_round_trip() -> None:
     report = _confirmation_report(
         (_lead_edition(3, "B0LEADREC1"), _lead_edition(5, None)),

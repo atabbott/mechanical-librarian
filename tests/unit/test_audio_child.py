@@ -37,6 +37,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioInspection,
+    AudioInspectionFact,
     AudioInspectionField,
     AudioInspectionLimits,
     AudioInspectionOutcome,
@@ -56,6 +57,14 @@ _PROBE = json.dumps(
         "chapters": [{"start_time": "0.000", "end_time": "4.000"}],
     }
 )
+
+
+def _all_facts(report: AudioInspection) -> tuple[AudioInspectionFact, ...]:
+    """The file's facts, then each sidecar reading's own."""
+    return (
+        *report.facts,
+        *(fact for reading in report.sidecars for fact in reading.facts),
+    )
 
 
 def _context(**overrides: object) -> dict[str, object]:
@@ -317,7 +326,7 @@ def test_one_undecodable_sidecar_never_stops_the_others() -> None:
         broken = Path(temporary) / "broken.nfo"
         broken.write_bytes(b"Series: \xff\xfe\n")
         sound = Path(temporary) / "book.nfo"
-        sound.write_text("Series: Discworld\n", encoding="utf-8")
+        sound.write_text("Series: Synthetic Series\n", encoding="utf-8")
         descriptors = [os.open(value, os.O_RDONLY) for value in (broken, sound)]
         try:
             written = _run(
@@ -340,8 +349,12 @@ def test_one_undecodable_sidecar_never_stops_the_others() -> None:
             for descriptor in descriptors:
                 os.close(descriptor)
 
-    assert {value.observed_value for value in written[0].facts} >= {"Discworld"}
-    assert not any("\ufffd" in value.observed_value for value in written[0].facts)
+    # Each sidecar is read apart (#1481): the undecodable one is simply absent.
+    assert [value.name for value in written[0].sidecars] == ["book.nfo"]
+    assert {value.observed_value for value in _all_facts(written[0])} >= {
+        "Synthetic Series"
+    }
+    assert not any("\ufffd" in value.observed_value for value in _all_facts(written[0]))
 
 
 def test_sidecar_bytes_reach_the_interpretation_through_passed_descriptors() -> None:
@@ -365,7 +378,7 @@ def test_sidecar_bytes_reach_the_interpretation_through_passed_descriptors() -> 
             os.close(descriptor)
 
     assert ("sidecar_nfo", "Sidecar Narrator") in {
-        (value.surface.value, value.observed_value) for value in written[0].facts
+        (value.surface.value, value.observed_value) for value in _all_facts(written[0])
     }
 
 
@@ -555,7 +568,7 @@ def test_the_parent_runs_the_real_child_over_a_recorded_probe_document() -> None
         media = Path(temporary) / "book.m4b"
         media.write_bytes(b"unused: the probe document is supplied")
         sidecar = Path(temporary) / "book.nfo"
-        sidecar.write_text("Series: Discworld\n", encoding="utf-8")
+        sidecar.write_text("Series: Synthetic Series\n", encoding="utf-8")
         media_descriptor = os.open(media, os.O_RDONLY)
         sidecar_descriptor = os.open(sidecar, os.O_RDONLY)
         try:
@@ -585,11 +598,11 @@ def test_the_parent_runs_the_real_child_over_a_recorded_probe_document() -> None
     assert report.source == _SOURCE
     assert {
         (value.field.value, value.surface.value, value.observed_value)
-        for value in report.facts
+        for value in _all_facts(report)
     } >= {
         ("asin", "mp4_ilst", "B0CW1KL2QD"),
         ("asin", "path_file", "B0CW1KL2QD"),
-        ("series", "sidecar_nfo", "Discworld"),
+        ("series", "sidecar_nfo", "Synthetic Series"),
         ("duration", "container_format", "4.000"),
     }
 

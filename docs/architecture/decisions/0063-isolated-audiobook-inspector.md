@@ -306,3 +306,14 @@ builder skips them and the parent's fact validation refuses them, each on its
 own. The MP4 `prID` atom is an Audible product id, not an ASIN, and no longer
 maps to one. Claims mean something different, so `metadata-report-v55` requires
 a clean rebuild under ADR-0013.
+
+## Sidecars read apart (#1481)
+
+`audio-inspection-v5` returns each sidecar's facts separately, with the
+document's title, creators and CUE `FILE` value as association text, and the
+file's `album` and person tags beside them. The parent decides from these
+which documents belong to the item
+([ADR-0061](0061-audiobook-provider-posture.md#sidecar-association-1481)), and
+the association text never leaves the inspector. Audiobookshelf's own
+`metadata.json` and `metadata.abs`, and a folder-level document in a shared
+folder, are digested and never handed to the child.

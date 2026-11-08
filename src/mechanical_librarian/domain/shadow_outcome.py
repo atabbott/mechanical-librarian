@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
@@ -27,6 +28,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
     TargetFieldState,
+    echoed_target_values,
 )
 from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
@@ -454,6 +456,9 @@ def _withdrawn_audiobook_identity(
             )
         )
     if identity == _NARRATORS_REPLACE_IDENTITY and type(desired) in {list, tuple}:
+        # An `.opf` or `.nfo` narrator withheld as Audiobookshelf's record
+        # echoed back still guards: the guard only refuses, so it reads the
+        # target's narrators in its place, as it read the claim before (#1481).
         local = tuple(
             claim.canonical
             for claim in report.local_claims
@@ -461,6 +466,8 @@ def _withdrawn_audiobook_identity(
             and claim.role == "narrator"
             and claim.state is FieldState.VALID
             and claim.canonical is not None
+        ) + echoed_target_values(
+            report.audio, report.target.fields, AudioInspectionField.CONTRIBUTOR
         )
         return audiobook_decision_qualification.narrator_cast_disjoint(
             local, tuple(cast("list[str]", desired))

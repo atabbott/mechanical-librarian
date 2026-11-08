@@ -81,7 +81,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v74` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v75` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v45` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
@@ -114,10 +114,10 @@ refused.
 | Identifier | What it is |
 | --- | --- |
 | `catalogue-v2` | The catalogue database at `/data/catalogue.sqlite3` ([Catalogue](../operations/catalogue.md)) |
-| `audio-inspection-v4` | The isolated audio inspection protocol |
+| `audio-inspection-v5` | The isolated audio inspection protocol |
 | `epub-inspection-v3` | The isolated EPUB inspection protocol |
 | `batch-manifest-v5` | Source-only foreground evidence batches ([Ebook evidence batches](../operations/ebook-evidence-batches.md)) |
-| `cold-start-report-v8` | The read-only [cold-start report](../operations/cold-start-report.md) |
+| `cold-start-report-v9` | The read-only [cold-start report](../operations/cold-start-report.md) |
 | `work-route-measurement-v1` | The read-only [work-route measurement](../operations/work-route-measurement.md) |
 | `review-react-assets-v1` | The browser bundle identity manifest |
 
