@@ -1192,7 +1192,7 @@ describe('Policy route', () => {
     expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
     expect(
       screen.getByText(
-        /^Validated · \d+ field changes? in the sample · you changed Identity\. Activate to make it the active policy\. Reloading the page starts again from the active policy\.$/u,
+        /^Validated · \d+ changed fields? in the sample · you changed Identity\. Activate to make it the active policy\. Reloading the page starts again from the active policy\.$/u,
       ),
     ).toBeVisible()
     expect(screen.queryByText(/snapshot saved automatically/u)).toBeNull()
@@ -1400,7 +1400,7 @@ describe('Policy route', () => {
     expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
-    expect(screen.getByText(/ · 16 field changes in the sample · /u)).toBeVisible()
+    expect(screen.getByText(/ · 16 changed fields in the sample · /u)).toBeVisible()
     // No design-document term reaches the owner on Policy (#1286 X5); only
     // the Technical detail disclosure quotes the server's own codes.
     const owner = document.body.cloneNode(true) as HTMLElement
@@ -1695,10 +1695,10 @@ describe('Policy route', () => {
         /^Not previewed\.This rule takes effect on the next preparation\.$/u,
       )
     expect(screen.getByText(example.title)).toBeVisible()
-    const material = screen.queryByText(/\d+ field changes? in the sample/u)
+    const material = screen.queryByText(/\d+ changed fields? in the sample/u)
     if (example.rows.some((row) => row.endsWith('Policy change')))
       expect(material).toHaveTextContent(
-        ` · ${String(example.cases.length)} ${example.cases.length === 1 ? 'field change' : 'field changes'} in the sample · `,
+        ` · ${String(example.cases.length)} ${example.cases.length === 1 ? 'changed field' : 'changed fields'} in the sample · `,
       )
     else expect(material).toBeNull()
     const preview = document.querySelector<HTMLElement>('.cm-policy-preview')

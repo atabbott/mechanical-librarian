@@ -651,7 +651,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Check the preview before activating.'
         : stage === 'preview'
-          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'field change' : 'field changes'} in the sample` : ''}${changedChapterLabels.length ? ` · you changed ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
+          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'changed field' : 'changed fields'} in the sample` : ''}${changedChapterLabels.length ? ` · you changed ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
           : stage === 'validating'
             ? ''
             : draftDisplay.changed
