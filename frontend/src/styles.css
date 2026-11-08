@@ -1457,6 +1457,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 /* Library's Covers view (#1633): tabs with counts, the queue beside the open
    book, the Switched list and the All wall. On a phone the list comes first
    and an open book replaces it, with Back to books. */
+.library-view-switch { margin:0 0 .75rem; }
+.library-view-switch .cm-segmented { display:inline-flex; border-radius:999px; }
+.library-view-switch .cm-segmented button { padding:.4rem 1rem; border-radius:999px; font-size:.85rem; }
 .covers-header h1 { margin:0; font-size:1.6rem; }
 .covers-tabs { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:.75rem; }
 .covers-tabs button { min-height:44px; padding:.45rem .8rem; border:1px solid var(--line); border-radius:.65rem; color:var(--soft); background:var(--surface); }
@@ -1470,6 +1473,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-queue { display:grid; grid-template-columns:minmax(16rem,22rem) minmax(0,1fr); gap:1.25rem; align-items:start; }
 .covers-queue-list section + section { margin-top:1rem; }
 .covers-queue-list h2 { margin:0 0 .4rem; font-size:.8rem; color:var(--soft); text-transform:uppercase; letter-spacing:.04em; }
+.covers-queue-list h2 span { margin-left:.3rem; font-weight:500; }
 .covers-queue-list ul, .covers-switched, .covers-wall { margin:0; padding:0; list-style:none; }
 .covers-queue-item { display:grid; grid-template-columns:3rem minmax(0,1fr) auto; gap:.6rem; align-items:center; width:100%; min-height:44px; padding:.4rem; border:1px solid transparent; border-radius:.5rem; text-align:left; color:var(--ink); background:transparent; }
 .covers-queue-item.is-selected { border-color:var(--accent); background:var(--accent-soft); }
@@ -1492,10 +1496,14 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-switched-actions button { min-height:44px; }
 .covers-row-comparison { grid-column:1 / -1; }
 .covers-wall { display:grid; grid-template-columns:repeat(auto-fill,minmax(7.5rem,1fr)); gap:.75rem; }
-.covers-wall > li > button { display:grid; gap:.3rem; justify-items:start; width:100%; padding:0; border:0; background:transparent; }
+.covers-tile > button { display:grid; gap:.3rem; justify-items:start; width:100%; padding:0; border:0; text-align:left; color:var(--ink); background:transparent; }
+.covers-tile > button[aria-expanded='true'] img, .covers-tile > button[aria-expanded='true'] .covers-image-missing { outline:3px solid var(--accent); }
+.covers-tile strong { font-size:.85rem; line-height:1.25; overflow-wrap:anywhere; }
+.covers-tile small { color:var(--soft); font-size:.75rem; }
 .covers-wall img, .covers-wall .covers-image-missing { width:100%; aspect-ratio:2 / 3; object-fit:contain; }
-.covers-wall > li.is-open { display:contents; }
-.covers-wall > li.is-open > .covers-row-comparison { grid-column:1 / -1; }
+.covers-wall-panel { grid-column:1 / -1; }
+.covers-close { justify-self:end; min-height:44px; }
+.covers-row-comparison { display:grid; gap:.5rem; }
 @media (max-width:1024px) {
   .covers-queue { grid-template-columns:minmax(0,1fr); }
   .covers-page.has-selection .covers-queue-list { display:none; }

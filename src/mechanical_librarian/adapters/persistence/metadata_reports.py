@@ -124,6 +124,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_covers import (
+    CoverKey,
     CoverPageSnapshot,
     CoverView,
 )
@@ -1696,11 +1697,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             )
 
     def read_review_covers(
-        self, view: CoverView, limit: int, offset: int
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
     ) -> CoverPageSnapshot:
         try:
             with self.browse_observation():
-                return self._review_projections.read_review_covers(view, limit, offset)
+                return self._review_projections.read_review_covers(
+                    view, limit, after, review_case_id
+                )
         except sqlite3.Error as error:
             raise MetadataReportError("review covers are unavailable") from error
 

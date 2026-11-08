@@ -5076,6 +5076,10 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "unreadable_cover": {
+            "title": "Unreadable Cover",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5086,7 +5090,8 @@
           "media_kind",
           "review_case_id",
           "switched",
-          "title"
+          "title",
+          "unreadable_cover"
         ],
         "title": "_CoverWork",
         "type": "object"
@@ -12113,7 +12118,7 @@
     },
     "/api/v1/covers": {
       "get": {
-        "description": "Read-only: one page of 50 books under a Covers tab, with each count.",
+        "description": "Read-only: one page of 50 books under a Covers tab, with each count.\n\nWith ``cover``, the page holds only that book, wherever it falls in\nthe tab, so a link opens it without reading the pages before it.",
         "operationId": "covers_api_v1_covers_get",
         "parameters": [
           {
@@ -12139,7 +12144,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 128,
+                  "maxLength": 1024,
                   "type": "string"
                 },
                 {
@@ -12147,6 +12152,23 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cover",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 76,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cover"
             }
           }
         ],

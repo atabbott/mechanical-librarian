@@ -1181,6 +1181,8 @@ class _CoverWork(_ClosedModel):
     review_case_id: str
     switched: _CoverSwitch | None
     title: str
+    # The library holds a cover that could not be read, as against no cover.
+    unreadable_cover: bool
 
 
 class _CoverCounts(_ClosedModel):
@@ -2710,6 +2712,7 @@ def create_review_app(
     _register_browse_and_preparation_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
+    _register_cover_routes(app, application, session_cookie)
     _register_live_update_route(app, application, configuration, session_cookie)
     _register_html_routes(app, application, session_cookie, browser_csrf, assets)
 
@@ -4259,6 +4262,89 @@ async def _browse_response(
             await watcher
 
 
+def _register_cover_routes(
+    app: FastAPI, application: ReviewApplication, session_cookie: APIKeyCookie
+) -> None:
+    """Library's Covers view (#1633): its pages and a switch's replaced preview."""
+    sessions = application
+
+    @app.get(
+        "/api/v1/covers",
+        response_model=_CoversResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
+        },
+    )
+    async def covers(
+        request: Request,
+        view: Literal["decide", "kept", "switched", "all"] = Query(default="decide"),
+        cursor: str | None = Query(default=None, max_length=1024),
+        cover: str | None = Query(default=None, max_length=76),
+        ml_session: str | None = Security(session_cookie),
+    ) -> _CoversResponse | Response:
+        """Read-only: one page of 50 books under a Covers tab, with each count.
+
+        With ``cover``, the page holds only that book, wherever it falls in
+        the tab, so a link opens it without reading the pages before it.
+        """
+
+        def read(check_active: Callable[[], None]) -> _CoversResponse:
+            _require_session(sessions, ml_session)
+            return _CoversResponse.model_validate(
+                _query_call(
+                    lambda: application.covers(
+                        view=view,
+                        cursor=cursor,
+                        cover=cover,
+                        check_active=check_active,
+                    )
+                )
+            )
+
+        return await _browse_response(request, read)
+
+    @app.get(
+        "/api/v1/covers/replaced",
+        response_class=Response,
+        responses={
+            200: {
+                "content": {
+                    "image/png": {"schema": {"type": "string", "format": "binary"}}
+                }
+            },
+            **{status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)},
+        },
+    )
+    def replaced_cover(
+        plan: str = Query(max_length=76),
+        preview: str = Query(max_length=64),
+        ml_session: str | None = Security(session_cookie),
+    ) -> Response:
+        """Read-only: the preview of the cover an automatic switch replaced.
+
+        Served only while the switch is listed with its original retained, and
+        only by the preview digest bound to that original; once the original
+        is released the route has nothing to serve.
+        """
+        _require_session(sessions, ml_session)
+        try:
+            payload = application.replaced_cover(plan, preview)
+        except (ReviewWebError, ReviewApplicationError) as error:
+            status = 404 if error.code == "missing" else 503
+            code = "not_found" if status == 404 else "unavailable"
+            raise HTTPException(status, detail={"code": code}) from None
+        return Response(
+            content=payload,
+            media_type="image/png",
+            # Not content-addressed for good: a released original stops being
+            # served, so this keeps the default no-store rather than caching.
+            headers={
+                "Content-Security-Policy": "default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+
 def _register_browse_and_preparation_routes(
     app: FastAPI,
     application: ReviewApplication,
@@ -4361,74 +4447,6 @@ def _register_browse_and_preparation_routes(
                 # The URL names the preview by its digest, so these bytes
                 # cannot change.
                 "Cache-Control": _IMMUTABLE_CACHE,
-                "Content-Security-Policy": "default-src 'none'",
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
-
-    @app.get(
-        "/api/v1/covers",
-        response_model=_CoversResponse,
-        responses={
-            status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
-        },
-    )
-    async def covers(
-        request: Request,
-        view: Literal["decide", "kept", "switched", "all"] = Query(default="decide"),
-        cursor: str | None = Query(default=None, max_length=128),
-        ml_session: str | None = Security(session_cookie),
-    ) -> _CoversResponse | Response:
-        """Read-only: one page of 50 books under a Covers tab, with each count."""
-
-        def read(check_active: Callable[[], None]) -> _CoversResponse:
-            _require_session(sessions, ml_session)
-            return _CoversResponse.model_validate(
-                _query_call(
-                    lambda: application.covers(
-                        view=view, cursor=cursor, check_active=check_active
-                    )
-                )
-            )
-
-        return await _browse_response(request, read)
-
-    @app.get(
-        "/api/v1/covers/replaced",
-        response_class=Response,
-        responses={
-            200: {
-                "content": {
-                    "image/png": {"schema": {"type": "string", "format": "binary"}}
-                }
-            },
-            **{status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)},
-        },
-    )
-    def replaced_cover(
-        plan: str = Query(max_length=76),
-        preview: str = Query(max_length=64),
-        ml_session: str | None = Security(session_cookie),
-    ) -> Response:
-        """Read-only: the preview of the cover an automatic switch replaced.
-
-        Served only while the switch is listed with its original retained, and
-        only by the preview digest bound to that original; once the original
-        is released the route has nothing to serve.
-        """
-        _require_session(sessions, ml_session)
-        try:
-            payload = application.replaced_cover(plan, preview)
-        except (ReviewWebError, ReviewApplicationError) as error:
-            status = 404 if error.code == "missing" else 503
-            code = "not_found" if status == 404 else "unavailable"
-            raise HTTPException(status, detail={"code": code}) from None
-        return Response(
-            content=payload,
-            media_type="image/png",
-            # Not content-addressed for good: a released original stops being
-            # served, so this keeps the default no-store rather than caching.
-            headers={
                 "Content-Security-Policy": "default-src 'none'",
                 "X-Content-Type-Options": "nosniff",
             },

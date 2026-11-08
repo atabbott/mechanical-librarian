@@ -39,6 +39,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetFacts,
+    TargetFieldState,
     _companion_from_data,
     _cover_source_from_data,
     _provider_lane_dispatch_from_data,
@@ -226,6 +227,10 @@ class LibraryReportFacts:
     file: FileFacts
     providers: tuple[ProviderLaneFacts, ...]
     cover: LibraryCoverFacts | None = None
+    # The library's cover field holds a cover its report could not read, as
+    # against holding none, so a page can say "Image unavailable" rather than
+    # "No cover" (#1633).
+    cover_unreadable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,7 +404,17 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
             None,
         )
         return LibraryReportFacts(
-            report["report_id"], target, file, tuple(lanes), library_cover
+            report["report_id"],
+            target,
+            file,
+            tuple(lanes),
+            library_cover,
+            library_cover is None
+            and any(
+                field.destination is TargetDestination.COVER
+                and field.state is TargetFieldState.VALUE
+                for field in target.fields
+            ),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ReviewBrowseValueError("review browse report is invalid") from error

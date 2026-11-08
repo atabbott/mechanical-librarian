@@ -1,9 +1,15 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import { ApiError, refusalCopy, uncertainWriteOutcome } from '../api/http'
-import type { CoverTab, CoverWorkView, DecisionCommand } from '../api/http'
+import type {
+  CoverTab,
+  CoversView as CoversPage,
+  CoverWorkView,
+  DecisionCommand,
+} from '../api/http'
 import { useCoverPrepareFailure } from '../coverChoices'
 import { formatClock } from '../dates'
 import type { ChoiceProgress, ReviewField } from '../fieldDecision'
@@ -38,11 +44,16 @@ const emptyCopy = {
   decide: 'No covers to decide.',
   kept: 'No kept covers with other choices.',
   switched: 'No covers switched automatically.',
-  all: null,
-} satisfies Record<CoverTab, string | null>
+  // All holds every work under review, so it is empty only when Works is.
+  all: 'No works yet.',
+} satisfies Record<CoverTab, string>
 const staleCopy = "This book's covers changed since the page loaded. Nothing was changed."
 const lostCopy = 'No answer came back. Check whether the cover was changed before choosing again.'
 const question = 'Which cover should this book use?'
+// The width at and below which an open book replaces the list.
+const compactQuery = '(max-width: 1024px)'
+const wide = () =>
+  typeof window.matchMedia === 'function' && !window.matchMedia(compactQuery).matches
 
 const byline = (work: CoverWorkView) =>
   [work.authors.join(', '), mediaKindLabels[work.media_kind]].filter(Boolean).join(' · ')
@@ -67,6 +78,8 @@ const switchedLead = (seconds: number, now: Date) => {
       : `Switched automatically, ${dayMonth(seconds)}, ${clock}.`
 }
 const bookSearch = (reviewCaseId: string) => ({ lens: 'all' as const, preview: reviewCaseId })
+const focusLater = (find: () => HTMLElement | null | undefined) =>
+  requestAnimationFrame(() => find()?.focus({ preventScroll: false }))
 
 type Outcome = 'switched' | 'kept' | 'changed' | 'skipped'
 const outcomeCopy = (outcome: Outcome, title: string) =>
@@ -115,19 +128,41 @@ const coverCommand = (
 const coverField = (fields: readonly ReviewField[] | undefined) =>
   fields?.find((field) => field.destination === 'cover')
 
-function CoverImage({ cover, alt }: { cover: { url: string } | null; alt: string }) {
+/**
+ * A cover preview, or the state in its place: "No cover" for an empty cover
+ * field, "Image unavailable" for one the library holds but could not be read
+ * or whose preview fails to load. With no `alt` the image is decorative,
+ * because the book's title is written beside it.
+ */
+function CoverImage({
+  cover,
+  unreadable,
+  alt = '',
+}: {
+  cover: { url: string } | null
+  unreadable: boolean
+  alt?: string
+}) {
   const [failed, setFailed] = useState(false)
-  return cover && !failed ? (
-    <img
-      src={cover.url}
-      alt={alt}
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(true)}
-    />
-  ) : (
+  if (cover && !failed)
+    return (
+      <img
+        src={cover.url}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+      />
+    )
+  const state = cover || unreadable ? 'Image unavailable' : 'No cover'
+  return alt ? (
     <span className="covers-image-missing" role="img" aria-label={alt}>
-      {cover ? 'Image unavailable' : 'No cover'}
+      {state}
+    </span>
+  ) : (
+    // Beside the written title, so it is not read out as part of its name.
+    <span className="covers-image-missing" aria-hidden="true">
+      {state}
     </span>
   )
 }
@@ -135,11 +170,14 @@ function CoverImage({ cover, alt }: { cover: { url: string } | null; alt: string
 function CoverComparison({
   work,
   onRecorded,
+  onReplaced,
   onSkip,
   onBack,
 }: {
   work: CoverWorkView
   onRecorded: (outcome: Outcome) => void
+  /** The book's case was replaced; the view follows it to its successor. */
+  onReplaced: (reviewCaseId: string) => void
   onSkip?: () => void
   onBack?: () => void
 }) {
@@ -151,14 +189,26 @@ function CoverComparison({
   const [failure, setFailure] = useState<Failure | null>(null)
   const [evidence, setEvidence] = useState<ReadonlySet<string>>(new Set())
   const heading = useRef<HTMLHeadingElement>(null)
+  const reloadButton = useRef<HTMLButtonElement>(null)
   useEffect(() => heading.current?.focus(), [work.review_case_id])
-  const reload = () => {
+  useEffect(() => {
+    if (failure?.kind === 'stale') reloadButton.current?.focus()
+  }, [failure])
+  // Reload keeps this book: a rescan that replaced its case is followed to
+  // the successor, otherwise the same case is read again.
+  const reload = async () => {
     setFailure(null)
     setProgress(null)
-    void invalidateForegroundQueries(queryClient, {
+    const successor = await http.getCaseSuccessor(work.review_case_id).catch(() => null)
+    void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
+    if (successor && successor !== work.review_case_id) {
+      onReplaced(successor)
+      return
+    }
+    await invalidateForegroundQueries(queryClient, {
       queryKey: ['review-case', work.review_case_id],
     })
-    void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
+    heading.current?.focus()
   }
   const choose = (
     outcome: DecisionCommand['outcome'],
@@ -176,8 +226,10 @@ function CoverComparison({
         )
       },
       (error: unknown) => {
-        setProgress({ command, phase: 'failed' })
-        setFailure(failureOf(error, field))
+        const next = failureOf(error, field)
+        // A refused stale choice leaves nothing marked as chosen.
+        setProgress(next.kind === 'stale' ? null : { command, phase: 'failed' })
+        setFailure(next)
       },
     )
   }
@@ -201,7 +253,7 @@ function CoverComparison({
       {failure?.kind === 'stale' ? (
         <div className="covers-failure" role="alert">
           <p>{staleCopy}</p>
-          <button type="button" onClick={reload}>
+          <button ref={reloadButton} type="button" onClick={() => void reload()}>
             Reload
           </button>
         </div>
@@ -238,7 +290,7 @@ function CoverComparison({
       ) : detail.isError ? (
         <div className="covers-failure" role="alert">
           <p>{routeFailureCopy(detail.error).message}</p>
-          <button type="button" onClick={reload}>
+          <button type="button" onClick={() => void reload()}>
             Reload
           </button>
         </div>
@@ -254,24 +306,39 @@ function CoverComparison({
 
 function SwitchedRow({
   work,
+  index,
   done,
   open,
   onOpen,
   onRecorded,
+  onReplaced,
 }: {
   work: CoverWorkView
+  index: number
   done: Outcome | undefined
   open: boolean
   onOpen: () => void
   onRecorded: (outcome: Outcome) => void
+  onReplaced: (reviewCaseId: string) => void
 }) {
   const { http, queryClient } = useReviewContext()
   const [failure, setFailure] = useState<Failure | null>(null)
   const [keeping, setKeeping] = useState(false)
+  const change = useRef<HTMLButtonElement>(null)
+  const recorded = useRef(done)
+  // Once Keep or a choice under Others is recorded, focus lands on Change,
+  // the row's one remaining control.
+  useEffect(() => {
+    if (done && recorded.current !== done) change.current?.focus()
+    recorded.current = done
+  }, [done])
   const switched = work.switched
   if (!switched) return null
+  const titleId = `covers-switched-${work.review_case_id}`
   // Keep is the book's keep-current command; its case is read first so the
-  // command carries the exact proposal and selection it answers.
+  // command carries the exact proposal and selection it answers. The command
+  // admits keep-current only beside another cover, so a switch with no other
+  // choice offers no Keep (human_decision.decision_actions).
   const keep = async () => {
     setFailure(null)
     setKeeping(true)
@@ -294,7 +361,12 @@ function SwitchedRow({
   return (
     <li className="covers-switched-row">
       <figure>
-        <CoverImage cover={switched.before} alt={`Before: ${work.title}`} />
+        {switched.filled ? (
+          // A fill replaced nothing: its caption says so, once.
+          <span className="covers-image-missing" aria-hidden="true" />
+        ) : (
+          <CoverImage cover={switched.before} unreadable={false} alt="Previous cover" />
+        )}
         <figcaption>
           Before
           {switched.before ? <small>{size(switched.before)}</small> : null}
@@ -305,15 +377,15 @@ function SwitchedRow({
         →
       </span>
       <figure>
-        <CoverImage cover={work.cover} alt={`Now: ${work.title}`} />
+        <CoverImage cover={work.cover} unreadable={work.unreadable_cover} alt="Cover now" />
         <figcaption>
           Now
           {work.cover ? <small>{size(work.cover)}</small> : null}
         </figcaption>
       </figure>
       <div className="covers-switched-text">
-        <h3>
-          <Link to="/library" search={bookSearch(work.review_case_id)}>
+        <h3 id={titleId}>
+          <Link to="/library" search={bookSearch(work.review_case_id)} data-cover-index={index}>
             {work.title}
           </Link>
         </h3>
@@ -326,7 +398,13 @@ function SwitchedRow({
               type="button"
               onClick={() => {
                 setFailure(null)
-                void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
+                void http
+                  .getCaseSuccessor(work.review_case_id)
+                  .catch(() => null)
+                  .then((successor) => {
+                    void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
+                    if (successor && successor !== work.review_case_id) onReplaced(successor)
+                  })
               }}
             >
               Reload
@@ -343,17 +421,22 @@ function SwitchedRow({
           <>
             <StatusPill tone="accent">{done === 'kept' ? 'Kept' : 'Changed'}</StatusPill>
             {work.choosable ? (
-              <button type="button" onClick={onOpen}>
+              <button ref={change} type="button" aria-describedby={titleId} onClick={onOpen}>
                 Change
               </button>
             ) : null}
           </>
         ) : work.choosable ? (
           <>
-            <button type="button" disabled={keeping} onClick={() => void keep()}>
+            <button
+              type="button"
+              aria-describedby={titleId}
+              disabled={keeping}
+              onClick={() => void keep()}
+            >
               Keep
             </button>
-            <button type="button" aria-expanded={open} onClick={onOpen}>
+            <button type="button" aria-describedby={titleId} aria-expanded={open} onClick={onOpen}>
               Others
             </button>
           </>
@@ -361,7 +444,7 @@ function SwitchedRow({
       </div>
       {open ? (
         <div className="covers-row-comparison">
-          <CoverComparison work={work} onRecorded={onRecorded} />
+          <CoverComparison work={work} onRecorded={onRecorded} onReplaced={onReplaced} />
         </div>
       ) : null}
     </li>
@@ -370,11 +453,13 @@ function SwitchedRow({
 
 function QueueItem({
   work,
+  index,
   selected,
   done,
   onSelect,
 }: {
   work: CoverWorkView
+  index: number
   selected: boolean
   done: boolean
   onSelect: () => void
@@ -385,9 +470,10 @@ function QueueItem({
         type="button"
         className={`covers-queue-item${selected ? ' is-selected' : ''}`}
         aria-current={selected ? 'true' : undefined}
+        data-cover-index={index}
         onClick={onSelect}
       >
-        <CoverImage cover={work.cover} alt={work.title} />
+        <CoverImage cover={work.cover} unreadable={work.unreadable_cover} />
         <span>
           <strong>{work.title}</strong>
           <small>{byline(work)}</small>
@@ -408,6 +494,88 @@ function QueueItem({
   )
 }
 
+/**
+ * The All wall. An open book's panel follows the last tile of its row, so
+ * the row stays whole above it; the row is read from the laid-out tiles.
+ */
+function CoverWall({
+  works,
+  selectedId,
+  done,
+  select,
+  panel,
+}: {
+  works: readonly CoverWorkView[]
+  selectedId: string | undefined
+  done: Readonly<Record<string, Outcome>>
+  select: (id: string | undefined) => void
+  panel: (work: CoverWorkView) => ReactNode
+}) {
+  const wall = useRef<HTMLUListElement>(null)
+  const openIndex = works.findIndex((work) => work.review_case_id === selectedId)
+  const [rowEnd, setRowEnd] = useState(openIndex)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const tiles = [
+        ...(wall.current?.querySelectorAll<HTMLElement>(':scope > .covers-tile') ?? []),
+      ]
+      const top = tiles[openIndex]?.offsetTop
+      let end = openIndex
+      tiles.forEach((tile, index) => {
+        if (index > openIndex && tile.offsetTop === top) end = index
+      })
+      setRowEnd(end)
+    }
+    measure()
+    if (openIndex < 0) return
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [openIndex, works.length])
+  const open = openIndex >= 0 ? works[openIndex] : undefined
+  return (
+    <ul className="covers-wall" ref={wall}>
+      {works.flatMap((work, index) => {
+        const isOpen = work.review_case_id === selectedId
+        const tile = (
+          <li key={work.review_case_id} className="covers-tile">
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              data-cover-index={index}
+              onClick={() => select(isOpen ? undefined : work.review_case_id)}
+            >
+              <CoverImage cover={work.cover} unreadable={work.unreadable_cover} />
+              <StatusPill
+                tone={
+                  work.group === 'proposal' || work.group === 'choice'
+                    ? 'notice'
+                    : work.group === 'auto'
+                      ? 'accent'
+                      : 'neutral'
+                }
+              >
+                {done[work.review_case_id] ? 'Reviewed' : groupLabels[work.group]}
+              </StatusPill>
+              <strong>{work.title}</strong>
+              <small>{work.authors.join(', ')}</small>
+            </button>
+          </li>
+        )
+        return open && index === Math.max(rowEnd, openIndex)
+          ? [
+              tile,
+              <li key="covers-wall-panel" className="covers-wall-panel">
+                {panel(open)}
+              </li>,
+            ]
+          : [tile]
+      })}
+    </ul>
+  )
+}
+
+const pillCounts = (page: CoversPage | undefined) => page?.counts
+
 export default function CoversView() {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
@@ -416,7 +584,8 @@ export default function CoversView() {
   const tab: CoverTab = search.tab ?? 'decide'
   const pages = useInfiniteQuery({
     queryKey: ['covers', tab] as const,
-    queryFn: ({ pageParam, signal }) => http.getCovers(tab, pageParam ?? undefined, signal),
+    queryFn: ({ pageParam, signal }) =>
+      http.getCovers(tab, pageParam ? { cursor: pageParam } : {}, signal),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor,
     staleTime: 15_000,
@@ -424,12 +593,26 @@ export default function CoversView() {
   })
   const [notice, setNotice] = useState<string | null>(null)
   const [done, setDone] = useState<Readonly<Record<string, Outcome>>>({})
+  // Counts read again after each decision; the rows on screen stay as they
+  // were, with the decided ones marked, and the next page resumes after them.
+  const [liveCounts, setLiveCounts] = useState<{ tab: CoverTab; counts: CoversPage['counts'] }>()
   const works = pages.data?.pages.flatMap((page) => page.items) ?? []
-  const counts = pages.data?.pages[0]?.counts
+  const counts =
+    (liveCounts?.tab === tab ? liveCounts.counts : undefined) ?? pillCounts(pages.data?.pages[0])
   const selectedId = search.cover
-  const selected = works.find((work) => work.review_case_id === selectedId)
-  const select = (id: string | undefined) =>
+  const listed = works.find((work) => work.review_case_id === selectedId)
+  // A linked book past the loaded pages is read on its own.
+  const linked = useQuery({
+    queryKey: ['covers', tab, 'book', selectedId] as const,
+    queryFn: ({ signal }) => http.getCovers(tab, { cover: selectedId ?? '' }, signal),
+    enabled: Boolean(selectedId) && pages.isSuccess && !listed,
+    staleTime: 15_000,
+    retry: false,
+  })
+  const selected = listed ?? (linked.isSuccess ? linked.data.items[0] : undefined)
+  const select = (id: string | undefined, replace = false) =>
     void navigate({
+      replace,
       resetScroll: false,
       search: (current) => {
         const next = { ...current }
@@ -442,12 +625,31 @@ export default function CoversView() {
     tab === 'decide' || tab === 'kept'
       ? groupOrder.flatMap((group) => works.filter((work) => work.group === group))
       : works
+  const firstOpen = ordered.find((work) => done[work.review_case_id] === undefined)
+  // A selection the tab no longer holds is dropped, so a phone never shows
+  // neither the list nor a book.
+  useEffect(() => {
+    if (selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
+      select(undefined, true)
+  })
+  // On a wide screen To decide and Kept open their first undecided book
+  // beside the list, so the first tap already chooses.
+  useEffect(() => {
+    if (!selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
+      select(firstOpen.review_case_id, true)
+  })
+  const recordCounts = () =>
+    void http.getCovers(tab).then(
+      (page) => setLiveCounts({ tab, counts: page.counts }),
+      () => undefined,
+    )
   // After a choice or a skip the next book opens, so one tap moves on.
   const advance = (work: CoverWorkView, outcome: Outcome) => {
     setNotice(outcomeCopy(outcome, work.title))
     if (outcome !== 'skipped') {
       setDone((current) => ({ ...current, [work.review_case_id]: outcome }))
       void queryClient.invalidateQueries({ queryKey: ['library'] })
+      recordCounts()
     }
     if (tab === 'switched' || tab === 'all') {
       select(undefined)
@@ -457,17 +659,63 @@ export default function CoversView() {
     const next = ordered.slice(index + 1).find((item) => done[item.review_case_id] === undefined)
     select(next?.review_case_id)
   }
-  const changeTab = (next: CoverTab) =>
+  const replaced = (reviewCaseId: string) => {
+    setNotice(null)
+    select(reviewCaseId, true)
+  }
+  const changeTab = (next: CoverTab) => {
+    setNotice(null)
     void navigate({ search: { lens: 'all', view: 'covers', tab: next } })
+  }
+  const showMore = () => {
+    const first = works.length
+    void pages
+      .fetchNextPage()
+      .then(() =>
+        focusLater(() =>
+          document.querySelector<HTMLElement>(`.covers-list [data-cover-index="${String(first)}"]`),
+        ),
+      )
+  }
+  const comparison = (work: CoverWorkView, queue: boolean) => (
+    <CoverComparison
+      key={work.review_case_id}
+      work={work}
+      onRecorded={(outcome) => advance(work, outcome)}
+      onReplaced={replaced}
+      {...(queue
+        ? { onSkip: () => advance(work, 'skipped'), onBack: () => select(undefined) }
+        : {})}
+    />
+  )
+  const closable = (work: CoverWorkView) => (
+    <div className="covers-row-comparison">
+      <button
+        className="covers-close"
+        type="button"
+        onClick={() => {
+          select(undefined)
+          focusLater(() =>
+            document.querySelector<HTMLElement>(
+              `.covers-list [data-cover-index="${String(works.indexOf(work))}"]`,
+            ),
+          )
+        }}
+      >
+        Close
+      </button>
+      {comparison(work, false)}
+    </div>
+  )
   return (
-    <div className={`covers-page${selectedId ? ' has-selection' : ''}`}>
+    <div className={`covers-page${selected ? ' has-selection' : ''}`}>
+      <LibraryViewSwitch view="covers" />
       <header className="library-header covers-header">
         <h1 data-route-focus tabIndex={-1}>
           Covers
         </h1>
-        <LibraryViewSwitch view="covers" />
       </header>
-      <nav className="covers-tabs" aria-label="Covers">
+      <nav className="covers-tabs" aria-label="Cover views">
         {(Object.keys(tabLabels) as CoverTab[]).map((value) => (
           <button
             key={value}
@@ -484,108 +732,82 @@ export default function CoversView() {
       <p className="covers-notice" role="status">
         {notice}
       </p>
-      {pages.isPending ? (
-        <p role="status">Loading covers…</p>
-      ) : pages.isError ? (
-        <div className="covers-failure" role="alert">
-          <p>{routeFailureCopy(pages.error).message}</p>
-          <button type="button" onClick={() => void pages.refetch()}>
-            Reload
-          </button>
-        </div>
-      ) : works.length === 0 && emptyCopy[tab] ? (
-        <p className="covers-empty">{emptyCopy[tab]}</p>
-      ) : tab === 'switched' ? (
-        <ul className="covers-switched">
-          {works.map((work) => (
-            <SwitchedRow
-              key={work.review_case_id}
-              work={work}
-              done={done[work.review_case_id]}
-              open={selectedId === work.review_case_id}
-              onOpen={() =>
-                select(selectedId === work.review_case_id ? undefined : work.review_case_id)
-              }
-              onRecorded={(outcome) => advance(work, outcome)}
-            />
-          ))}
-        </ul>
-      ) : tab === 'all' ? (
-        <ul className="covers-wall">
-          {works.map((work) => (
-            <li
-              key={work.review_case_id}
-              className={selectedId === work.review_case_id ? 'is-open' : undefined}
-            >
-              <button
-                type="button"
-                aria-expanded={selectedId === work.review_case_id}
-                onClick={() =>
+      {selected && !listed && tab !== 'decide' && tab !== 'kept' ? closable(selected) : null}
+      <div className="covers-list">
+        {pages.isPending ? (
+          <p role="status">Loading covers…</p>
+        ) : pages.isError ? (
+          <div className="covers-failure" role="alert">
+            <p>{routeFailureCopy(pages.error).message}</p>
+            <button type="button" onClick={() => void pages.refetch()}>
+              Reload
+            </button>
+          </div>
+        ) : works.length === 0 ? (
+          <p className="covers-empty">{emptyCopy[tab]}</p>
+        ) : tab === 'switched' ? (
+          <ul className="covers-switched">
+            {works.map((work, index) => (
+              <SwitchedRow
+                key={work.review_case_id}
+                work={work}
+                index={index}
+                done={done[work.review_case_id]}
+                open={selectedId === work.review_case_id}
+                onOpen={() =>
                   select(selectedId === work.review_case_id ? undefined : work.review_case_id)
                 }
-              >
-                <CoverImage cover={work.cover} alt={work.title} />
-                <StatusPill
-                  tone={
-                    work.group === 'proposal' || work.group === 'choice'
-                      ? 'notice'
-                      : work.group === 'auto'
-                        ? 'accent'
-                        : 'neutral'
-                  }
-                >
-                  {done[work.review_case_id] ? 'Reviewed' : groupLabels[work.group]}
-                </StatusPill>
-              </button>
-              {selectedId === work.review_case_id ? (
-                <div className="covers-row-comparison">
-                  <CoverComparison work={work} onRecorded={(outcome) => advance(work, outcome)} />
-                </div>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="covers-queue">
-          <div className="covers-queue-list">
-            {groupOrder
-              .filter((group) => ordered.some((work) => work.group === group))
-              .map((group) => (
-                <section key={group} aria-label={groupLabels[group]}>
-                  <h2>{groupLabels[group]}</h2>
-                  <ul>
-                    {ordered
-                      .filter((work) => work.group === group)
-                      .map((work) => (
-                        <QueueItem
-                          key={work.review_case_id}
-                          work={work}
-                          selected={work === selected}
-                          done={done[work.review_case_id] !== undefined}
-                          onSelect={() => select(work.review_case_id)}
-                        />
-                      ))}
-                  </ul>
-                </section>
-              ))}
+                onRecorded={(outcome) => advance(work, outcome)}
+                onReplaced={replaced}
+              />
+            ))}
+          </ul>
+        ) : tab === 'all' ? (
+          <CoverWall
+            works={works}
+            selectedId={selectedId}
+            done={done}
+            select={select}
+            panel={closable}
+          />
+        ) : (
+          <div className="covers-queue">
+            <div className="covers-queue-list">
+              {groupOrder
+                .filter((group) => ordered.some((work) => work.group === group))
+                .map((group) => {
+                  const members = ordered.filter((work) => work.group === group)
+                  return (
+                    <section key={group} aria-label={groupLabels[group]}>
+                      <h2>
+                        {groupLabels[group]} <span>{String(members.length)}</span>
+                      </h2>
+                      <ul>
+                        {members.map((work) => (
+                          <QueueItem
+                            key={work.review_case_id}
+                            work={work}
+                            index={works.indexOf(work)}
+                            selected={work.review_case_id === selected?.review_case_id}
+                            done={done[work.review_case_id] !== undefined}
+                            onSelect={() => select(work.review_case_id)}
+                          />
+                        ))}
+                      </ul>
+                    </section>
+                  )
+                })}
+            </div>
+            {selected ? comparison(selected, true) : null}
           </div>
-          {selected ? (
-            <CoverComparison
-              key={selected.review_case_id}
-              work={selected}
-              onRecorded={(outcome) => advance(selected, outcome)}
-              onSkip={() => advance(selected, 'skipped')}
-              onBack={() => select(undefined)}
-            />
-          ) : null}
-        </div>
-      )}
+        )}
+      </div>
       {pages.hasNextPage ? (
         <button
           className="covers-more"
           type="button"
           disabled={pages.isFetchingNextPage}
-          onClick={() => void pages.fetchNextPage()}
+          onClick={showMore}
         >
           Show more covers
         </button>

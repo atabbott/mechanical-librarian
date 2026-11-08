@@ -1745,6 +1745,7 @@ export default function LibraryPage({
   return (
     <div className="library-page variant-m-workspace">
       <h1 className="sr-only">Library</h1>
+      <LibraryViewSwitch view="works" />
       {/* One toolbar in both states, so selecting a work never moves the workspace. */}
       <header
         className="library-header"
@@ -1767,7 +1768,6 @@ export default function LibraryPage({
             </>
           ) : null}
         </button>
-        <LibraryViewSwitch view="works" />
         <WriteReadyNotice />
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />

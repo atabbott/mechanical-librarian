@@ -1136,14 +1136,15 @@ class ReviewApplication:
         *,
         view: str,
         cursor: str | None,
+        cover: str | None = None,
         check_active: Callable[[], None] | None = None,
     ) -> dict[str, object]:
-        """Read one page of a Covers tab (#1633)."""
+        """Read one page of a Covers tab, or one book under it (#1633)."""
         store = self._cover_store
         if store is None:
             raise ReviewWebError("unavailable")
         return self._browse_serialized(
-            lambda: cover_page(store, view, cursor), check_active
+            lambda: cover_page(store, view, cursor, cover), check_active
         )
 
     def replaced_cover(self, plan: str, preview: str) -> bytes:

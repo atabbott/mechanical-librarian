@@ -37,6 +37,7 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_covers import (
+    CoverKey,
     CoverPageSnapshot,
     CoverView,
 )
@@ -937,11 +938,15 @@ class FakeReviewRepository:
         )
 
     def read_review_covers(
-        self, view: CoverView, limit: int, offset: int
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
     ) -> CoverPageSnapshot:
         # The served double holds no cover groups; the Covers view's own
         # suite reads them from real reports (tests/unit/test_review_covers.py).
-        del view, limit, offset
+        del view, limit, after, review_case_id
         return CoverPageSnapshot((), {"decide": 0, "kept": 0, "switched": 0, "all": 0})
 
     def read_replaced_cover_preview(self, plan_id: str) -> str | None:

@@ -199,6 +199,7 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
     assert item["choosable"] is True
     assert item["switched"] is None
     assert item["review_case_id"] == library.cases["item-1"]
+    assert item["unreadable_cover"] is False
     # The current cover is named by its preview through the library route only.
     assert str(item["cover"]["url"]).startswith("/api/v1/library/cover?")
 
@@ -217,6 +218,10 @@ def test_an_unreadable_current_cover_asks_for_a_choice(tmp_path: Path) -> None:
 
     assert decide["counts"]["decide"] == 1
     assert [item["group"] for item in decide["items"]] == ["choice"]
+    # The library holds a cover it could not read, which is not "No cover".
+    (item,) = decide["items"]
+    assert item["cover"] is None
+    assert item["unreadable_cover"] is True
     assert kept["items"] == []
 
 
@@ -314,19 +319,51 @@ def test_a_replaced_preview_is_missing_unless_listed_and_bound(
 def test_pages_hold_fifty_books_and_a_cursor_reads_the_rest(tmp_path: Path) -> None:
     items = tuple(f"item-{index}" for index in range(1, COVER_PAGE_SIZE + 3))
     with _library(tmp_path, items) as library:
-        first = cover_page(library.repository, "all", None)
+        first = cover_page(library.repository, "kept", None)
         assert len(first["items"]) == COVER_PAGE_SIZE
-        assert first["counts"]["all"] == COVER_PAGE_SIZE + 2
+        assert first["counts"]["kept"] == COVER_PAGE_SIZE + 2
         cursor = first["next_cursor"]
         assert isinstance(cursor, str)
-        second = cover_page(library.repository, "all", cursor)
+        # A book on the first page leaves the tab, as a decision moves it: the
+        # next page resumes after the last book shown, so none is skipped.
+        _switch(library, "item-1", plan="1", at=100, original=None)
+        second = cover_page(library.repository, "kept", cursor)
         assert len(second["items"]) == 2
         assert second["next_cursor"] is None
+        assert second["counts"]["kept"] == COVER_PAGE_SIZE + 1
+        shown = {item["review_case_id"] for item in first["items"] + second["items"]}
+        assert shown == set(library.cases.values())
         # A cursor is bound to its tab.
         with pytest.raises(ReviewWebError):
-            cover_page(library.repository, "kept", cursor)
+            cover_page(library.repository, "all", cursor)
     with pytest.raises(ReviewWebError):
         cover_page(library.repository, "everything", None)
+
+
+def test_a_linked_book_is_read_on_its_own_wherever_it_falls(tmp_path: Path) -> None:
+    items = tuple(f"item-{index}" for index in range(1, COVER_PAGE_SIZE + 3))
+    with _library(tmp_path, items) as library:
+        # The last book by title, past the first page.
+        last = cover_page(
+            library.repository,
+            "all",
+            cover_page(library.repository, "all", None)["next_cursor"],
+        )["items"][-1]
+        page = cover_page(library.repository, "all", None, last["review_case_id"])
+        assert page["items"] == [last]
+        assert page["next_cursor"] is None
+        assert page["counts"]["all"] == COVER_PAGE_SIZE + 2
+        # Only under a tab that holds it, and never with a cursor.
+        assert (
+            cover_page(library.repository, "switched", None, last["review_case_id"])[
+                "items"
+            ]
+            == []
+        )
+        for cursor, cover in (("x", last["review_case_id"]), (None, "review_case_x")):
+            with pytest.raises(ReviewWebError) as refused:
+                cover_page(library.repository, "all", cursor, cover)
+            assert refused.value.code == "request"
 
 
 @contextmanager
@@ -409,6 +446,12 @@ def test_the_covers_route_is_private_bounded_and_serves_previews_only(
             assert before.headers["cache-control"] == "no-store, private"
             assert client.get("/api/v1/covers?view=everything").status_code == 422
             assert client.get("/api/v1/covers?cursor=bogus").status_code == 400
+            linked = client.get(
+                f"/api/v1/covers?view=all&cover={library.cases['item-2']}"
+            ).json()
+            assert [work["review_case_id"] for work in linked["items"]] == [
+                library.cases["item-2"]
+            ]
             _release(library, plan_id)
             assert client.get(item["switched"]["before"]["url"]).status_code == 404
 

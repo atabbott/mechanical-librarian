@@ -17,6 +17,9 @@ command, so this module only reads. A page names covers by preview only.
 
 from __future__ import annotations
 
+import base64
+import json
+import re
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from urllib.parse import urlencode
@@ -24,8 +27,7 @@ from urllib.parse import urlencode
 from mechanical_librarian.application.review_web import (
     _PREVIEW_DIGEST,
     ReviewWebError,
-    _decode_cursor,
-    _encode_cursor,
+    _cursor_binding,
     _report_authors,
     _report_facts,
 )
@@ -36,6 +38,20 @@ COVER_VIEWS: tuple[CoverView, ...] = ("decide", "kept", "switched", "all")
 COVER_GROUPS: tuple[CoverGroup, ...] = ("proposal", "choice", "kept", "auto", "none")
 # Pages of 50 books, with "Show more covers" for the next (#1363 Q9).
 COVER_PAGE_SIZE = 50
+# A row's place in its tab's order, as the store sorts it: decide by
+# (choice, title, item, case), kept and all by (title, item, case), switched
+# by (verified at, listing sequence, plan), newest first. A page resumes after
+# the last row's key, so a decision on an earlier page never shifts the next
+# one (#1633 review B1).
+CoverKey = tuple[int | str, ...]
+_KEY_TYPES: dict[CoverView, tuple[type, ...]] = {
+    "decide": (int, str, str, str),
+    "kept": (str, str, str),
+    "switched": (int, int, str),
+    "all": (str, str, str),
+}
+_CASE_ID = re.compile(r"review_case_[0-9a-f]{64}")
+_CURSOR_LIMIT = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +76,7 @@ class CoverRow:
     # An automatic fill replaced nothing; a replacement names its original.
     filled: bool
     replaced: ReplacedCover | None
+    key: CoverKey
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +87,11 @@ class CoverPageSnapshot:
 
 class CoverBrowseStore(Protocol):
     def read_review_covers(
-        self, view: CoverView, limit: int, offset: int
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
     ) -> CoverPageSnapshot: ...
     def read_replaced_cover_preview(self, plan_id: str) -> str | None: ...
 
@@ -131,19 +152,75 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
         "review_case_id": row.review_case_id,
         "switched": switched,
         "title": target.current_title or "Untitled",
+        "unreadable_cover": report.cover is None and report.cover_unreadable,
     }
 
 
+def _encode_cover_cursor(key: CoverKey, view: CoverView) -> str:
+    payload = json.dumps(
+        [_cursor_binding("covers", view, None), *key],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    cursor = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    if len(cursor) > _CURSOR_LIMIT:
+        raise ReviewWebError("unavailable")
+    return cursor
+
+
+def _decode_cover_cursor(cursor: str | None, view: CoverView) -> CoverKey | None:
+    if cursor is None:
+        return None
+    try:
+        if (
+            type(cursor) is not str
+            or not 1 <= len(cursor) <= _CURSOR_LIMIT
+            or cursor.strip() != cursor
+        ):
+            raise ValueError
+        raw = json.loads(
+            base64.b64decode(
+                cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True
+            ).decode("utf-8")
+        )
+        types = _KEY_TYPES[view]
+        if (
+            type(raw) is not list
+            or len(raw) != len(types) + 1
+            or raw[0] != _cursor_binding("covers", view, None)
+            or any(
+                type(value) is not kind
+                for value, kind in zip(raw[1:], types, strict=True)
+            )
+        ):
+            raise ValueError
+    except (ValueError, UnicodeDecodeError):
+        raise ReviewWebError("request") from None
+    return tuple(raw[1:])
+
+
 def cover_page(
-    store: CoverBrowseStore, view: str, cursor: str | None
+    store: CoverBrowseStore,
+    view: str,
+    cursor: str | None,
+    cover: str | None = None,
 ) -> dict[str, object]:
-    """One page of a Covers tab, with every tab's count."""
+    """One page of a Covers tab, with every tab's count.
+
+    ``cover`` reads only that book under the tab, so a link to a book past
+    the first page opens it on its own; it takes no cursor.
+    """
     if view not in COVER_VIEWS:
         raise ReviewWebError("request")
-    offset = _decode_cursor(cursor, "covers", view, None)
+    if cover is not None and (
+        cursor is not None or type(cover) is not str or not _CASE_ID.fullmatch(cover)
+    ):
+        raise ReviewWebError("request")
+    after = _decode_cover_cursor(cursor, view)
     try:
-        snapshot = store.read_review_covers(view, COVER_PAGE_SIZE + 1, offset)
-        items = [_cover_item(row) for row in snapshot.rows[:COVER_PAGE_SIZE]]
+        snapshot = store.read_review_covers(view, COVER_PAGE_SIZE + 1, after, cover)
+        page = snapshot.rows[:COVER_PAGE_SIZE]
+        items = [_cover_item(row) for row in page]
     except ReviewWebError:
         raise
     except Exception as error:
@@ -153,7 +230,7 @@ def cover_page(
     return {
         "counts": dict(snapshot.counts),
         "items": items,
-        "next_cursor": _encode_cursor(offset + COVER_PAGE_SIZE, "covers", view, None)
+        "next_cursor": _encode_cover_cursor(page[-1].key, view)
         if len(snapshot.rows) > COVER_PAGE_SIZE
         else None,
         "schema_version": "review-covers-v1",

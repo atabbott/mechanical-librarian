@@ -24,6 +24,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_covers import (
     COVER_GROUPS,
     CoverGroup,
+    CoverKey,
     CoverPageSnapshot,
     CoverRow,
     CoverView,
@@ -52,10 +53,15 @@ _SWITCH_SQL = (
     "AND later.destination='cover' AND later.state='verified' "
     "AND (later.updated_at>effect.updated_at OR (later.updated_at=effect.updated_at "
     "AND later.plan_id>effect.plan_id))) "
-    "AND NOT EXISTS (SELECT 1 FROM cover_selection_authorities answered "
-    "WHERE answered.kind='owner' AND answered.connection_name=effect.connection_name "
-    "AND answered.library_name=effect.library_name "
-    "AND answered.item_id=effect.work_id "
+    # The owner's answer is read through the work's current selection, a
+    # primary-key search: automation never supersedes an owner selection, so
+    # an owner answer after the write is always the current one.
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "WHERE current.connection_name=effect.connection_name "
+    "AND current.library_name=effect.library_name "
+    "AND current.item_id=effect.work_id AND answered.kind='owner' "
     "AND answered.occurred_at>=effect.updated_at))"
 )
 # Library's cover attention, read from the same facts its lens reads.
@@ -106,12 +112,18 @@ _VIEW_FILTER_SQL: dict[CoverView, str] = {
     "all": "1",
 }
 # Suggestions before choices, as the queue groups them; Switched newest first
-# in the release rule's order, a fill placed by when it was verified.
-_VIEW_ORDER_SQL: dict[CoverView, str] = {
+# in the release rule's order, a fill placed by when it was verified. Each
+# order is its row key, so a page resumes strictly after the last row it
+# showed (application/review_covers.py).
+_VIEW_KEY_SQL: dict[CoverView, str] = {
     "decide": "cover_group='choice',title_key,item_id,review_case_id",
     "kept": "title_key,item_id,review_case_id",
-    "switched": "switched_at DESC,COALESCE(sequence,0) DESC,plan_id DESC",
+    "switched": "switched_at,COALESCE(sequence,0),plan_id",
     "all": "title_key,item_id,review_case_id",
+}
+_VIEW_ORDER_SQL: dict[CoverView, str] = {
+    **_VIEW_KEY_SQL,
+    "switched": "switched_at DESC,COALESCE(sequence,0) DESC,plan_id DESC",
 }
 # The retained original's preview and size, from a report that observed it.
 _REPLACED_SQL = (
@@ -144,18 +156,39 @@ def read_cover_page(
     connection: sqlite3.Connection,
     view: CoverView,
     limit: int,
-    offset: int,
+    after: CoverKey | None,
+    review_case_id: str | None,
     cover_authority: tuple[str | None, str | None],
 ) -> CoverPageSnapshot:
-    """Read one page of a tab and every tab's count from one relation."""
+    """Read one page of a tab, after a row key, and every tab's count.
+
+    With ``review_case_id`` the page holds only that book, if the tab has it.
+    """
+    where = [_VIEW_FILTER_SQL[view]]
+    parameters: list[object] = list(cover_authority)
+    if after is not None:
+        where.append(
+            "("
+            + _VIEW_KEY_SQL[view]
+            + ")"
+            + ("<" if view == "switched" else ">")
+            + "("
+            + ",".join("?" * len(after))
+            + ")"
+        )
+        parameters.extend(after)
+    if review_case_id is not None:
+        where.append("review_case_id=?")
+        parameters.append(review_case_id)
     rows = connection.execute(
         _WORKS_SQL + "SELECT review_case_id,report_document,cover_group,choosable,"
-        "switched_at,plan_id,original_digest FROM work WHERE "
-        + _VIEW_FILTER_SQL[view]
+        "switched_at,plan_id,original_digest," + _VIEW_KEY_SQL[view] + " FROM work "
+        "WHERE "
+        + " AND ".join(where)
         + " ORDER BY "
         + _VIEW_ORDER_SQL[view]
-        + " LIMIT ? OFFSET ?",
-        (*cover_authority, limit, offset),
+        + " LIMIT ?",
+        (*parameters, limit),
     ).fetchall()
     grouped = dict(
         connection.execute(
@@ -166,12 +199,13 @@ def read_cover_page(
     if any(group not in COVER_GROUPS for group in grouped):
         raise MetadataReportError("review covers are unavailable")
     page: list[CoverRow] = []
-    for case_id, report, group, choosable, switched_at, plan_id, digest in rows:
+    for case_id, report, group, choosable, switched_at, plan_id, digest, *key in rows:
         if (
             type(case_id) is not str
             or type(report) is not str
             or group not in COVER_GROUPS
             or choosable not in (0, 1)
+            or any(type(value) not in (int, str) for value in key)
         ):
             raise MetadataReportError("review covers are unavailable")
         auto = group == "auto"
@@ -186,6 +220,7 @@ def read_cover_page(
                 _replaced(connection, cast(str, plan_id), cast(str, digest))
                 if auto and digest is not None
                 else None,
+                tuple(key),
             )
         )
     return CoverPageSnapshot(

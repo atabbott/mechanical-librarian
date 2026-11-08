@@ -1204,9 +1204,10 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<AttentionView>
+  /** A Covers tab's page after `cursor`, or only the book `cover` under it. */
   getCovers(
     view: CoverTab,
-    cursor?: string,
+    at?: { cursor?: string; cover?: string },
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<CoversView>
@@ -1665,12 +1666,13 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async getCovers(
     view: CoverTab,
-    cursor?: string,
+    at: { cursor?: string; cover?: string } = {},
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ) {
     const p = new URLSearchParams({ view })
-    if (cursor) p.set('cursor', cursor)
+    if (at.cursor) p.set('cursor', at.cursor)
+    if (at.cover) p.set('cover', at.cover)
     return await this.read(`/api/v1/covers?${p}`, signal, workClass)
   }
   async getAttention(

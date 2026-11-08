@@ -66,6 +66,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_covers import (
+    CoverKey,
     CoverPageSnapshot,
     CoverView,
 )
@@ -973,11 +974,20 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             return row[0]
 
     def read_review_covers(
-        self, view: CoverView, limit: int, offset: int
+        self,
+        view: CoverView,
+        limit: int,
+        after: CoverKey | None,
+        review_case_id: str | None = None,
     ) -> CoverPageSnapshot:
         with self._consistent_review_read():
             return read_cover_page(
-                self._connection, view, limit, offset, self._current_cover_authority()
+                self._connection,
+                view,
+                limit,
+                after,
+                review_case_id,
+                self._current_cover_authority(),
             )
 
     def read_replaced_cover_preview(self, plan_id: str) -> str | None:
