@@ -11,7 +11,7 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
   accept: 'Accepted',
   keep_current: 'Kept current',
   reject: 'Rejected',
-  owner_entered: 'Owner-entered',
+  owner_entered: 'Entered by you',
   withdraw: 'Recorded',
   completed: 'Completed',
   unavailable: 'Unavailable',
@@ -41,8 +41,8 @@ export const stateLabel = (
           completed: 'Cover advice completed',
           unavailable: 'Cover advice unavailable',
           failed: 'Cover advice failed',
-          selected: 'Owner cover choice recorded',
-          retry: 'Manual cover retry',
+          selected: 'Your cover choice recorded',
+          retry: 'Cover retried by you',
         }[state]
       : undefined) ??
   ledgerStateLabels[state] ??
@@ -52,7 +52,7 @@ export const stateLabel = (
 // filter axis is still the durable event type the ledger is indexed by; only
 // the language is the owner's.
 export const categoryLabel: Record<ActivityCategory, string> = {
-  owner: 'Owner choice',
+  owner: 'Your choice',
   automatic: 'Automatic choice',
   policy: 'Policy change',
   recovery: 'Recovery',
@@ -67,8 +67,8 @@ export const noteLabel: Record<ActivityNote, string> = {
 }
 export const noteSentence: Record<ActivityNote, string> = {
   asked_again:
-    'Asked again: this choice was made before the book last came back for review, so it no longer counts and the field is asking you again.',
-  held_back: "Held back: Automatic is off, so this won't be written unless you turn it back on.",
+    'This choice was made before the book came back for review, so the field asks you again.',
+  held_back: 'Automatic is off, so this is not written until you turn it on again.',
 }
 // A ledger day heading; each row under it states only its time.
 export const dayHeading = (value: number | null) =>

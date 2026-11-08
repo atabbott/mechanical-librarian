@@ -460,7 +460,7 @@ and neither reads as calm while no library holds permission
 
 The ledger shows one row per change: the work or setting, the field, the exact
 before and after, who chose it, and whether Audiobookshelf confirmed it.
-Categories are owner choice, automatic choice, policy change and recovery.
+Categories are your choice, automatic choice, policy change and recovery.
 Values come from the event's immutable record, so later changes never alter
 history. A record that was not a change, such as a paused preparation, says
 what happened instead. Automatic checks with nothing to write gather into one

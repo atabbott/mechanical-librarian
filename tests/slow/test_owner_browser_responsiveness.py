@@ -260,7 +260,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     library_navigation: () => exact('.library-works-heading>span', '2300 works'),
                                     attention_status: () => exact('button', 'Load more attention'),
                                     preparation_status: () => heading('Background activity'),
-                                    activity_navigation: () => heading('Activity ledger') && !!document.querySelector('.cm-activity-events article'),
+                                    activity_navigation: () => heading('Ledger') && !!document.querySelector('.cm-activity-events article'),
                                     activity_negative: () => new URL(location.href).searchParams.get('q') === 'absent-search-term'
                                         && exact('strong', 'No activity matches these filters'),
                                     activity_clear: () => !new URL(location.href).searchParams.has('q')
@@ -512,11 +512,11 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 measured(
                                     "activity_filter",
                                     lambda page=page: page.get_by_role(
-                                        "button", name="Owner choices", exact=True
+                                        "button", name="Your choices", exact=True
                                     ).click(),
                                     lambda page=page: expect(
                                         page.get_by_role(
-                                            "button", name="Owner choices", exact=True
+                                            "button", name="Your choices", exact=True
                                         )
                                     ).to_have_attribute("aria-pressed", "true"),
                                 )

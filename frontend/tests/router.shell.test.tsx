@@ -800,18 +800,18 @@ describe('Application shell', () => {
         to: '/activity',
         search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
       })
-      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      await screen.findByRole('heading', { name: 'Activity' })
       expect(
         (await screen.findAllByText(title)).some(
           (element) => getComputedStyle(element).display !== 'none',
         ),
       ).toBe(true)
       expect(screen.getByText('In Library').nextElementSibling).toHaveTextContent(/^7$/u)
-      const activityTitle = state === 'paused' ? 'Library connection is paused' : title
+      const activityTitle = state === 'paused' ? 'Library connection failed' : title
       expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
       expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('2')
-      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
-      expect(screen.queryByText('No action required')).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'No action needed' })).toBeNull()
+      expect(screen.queryByText('No action needed')).toBeNull()
     },
   )
 
@@ -828,7 +828,7 @@ describe('Application shell', () => {
     })
     const quiet = { ...createHttp(), getPreparation: vi.fn(async () => paused([])) }
     renderRoute('/activity', quiet)
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await waitFor(() => expect(quiet.getPreparation).toHaveBeenCalled())
     expect(quiet.getLibrary).not.toHaveBeenCalled()
     cleanup()
@@ -899,8 +899,8 @@ describe('Application shell', () => {
       to: '/activity',
       search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
     })
-    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
-    expect(screen.getByText('No action required')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No action needed' })).toBeVisible()
+    expect(document.querySelector('.cm-activity-calm')).toHaveTextContent(/^No action needed$/u)
     expect(screen.queryByText('Library connection recovered')).toBeNull()
   })
 
@@ -927,9 +927,7 @@ describe('Application shell', () => {
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
     renderRoute('/activity', http)
 
-    expect(
-      await screen.findByRole('heading', { name: 'Library connection is paused' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Library connection failed' })).toBeVisible()
     expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('5')
   })
 

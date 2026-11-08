@@ -159,8 +159,9 @@ from mechanical_librarian.domain.readable_activity import (
     ABSENT,
     AUTOMATIC_AUTHORITY_UNAVAILABLE,
     ISBN_REFUSAL_REASONS,
-    destination_label,
+    policy_destination_label,
     policy_option_label,
+    policy_setting_label,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -309,9 +310,14 @@ def _policy_changes(
     if before is None or after is None:
         return []
     changes: list[dict[str, str]] = []
-    for setting, previous_pairs, next_pairs in (
-        ("Setting", before.destinations, after.destinations),
-        ("Option", before.options, after.options),
+    for setting, label, previous_pairs, next_pairs in (
+        (
+            "Setting",
+            lambda value, _field: policy_destination_label(value),
+            before.destinations,
+            after.destinations,
+        ),
+        ("Option", policy_option_label, before.options, after.options),
     ):
         previous_values, next_values = dict(previous_pairs), dict(next_pairs)
         for field in sorted(set(previous_values) | set(next_values)):
@@ -321,17 +327,15 @@ def _policy_changes(
                 continue
             changes.append(
                 {
-                    "field": destination_label(field),
+                    "field": policy_setting_label(field),
                     "setting": setting,
                     "previous": (
                         ABSENT
                         if previous_value is None
-                        else policy_option_label(previous_value, field)
+                        else label(previous_value, field)
                     ),
                     "next": (
-                        ABSENT
-                        if next_value is None
-                        else policy_option_label(next_value, field)
+                        ABSENT if next_value is None else label(next_value, field)
                     ),
                 }
             )

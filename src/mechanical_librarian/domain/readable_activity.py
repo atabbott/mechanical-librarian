@@ -35,6 +35,7 @@ __all__ = [
     "failure_reason",
     "field_phrase",
     "keep_change",
+    "policy_destination_label",
     "policy_option_label",
     "policy_setting_label",
     "set_change",
@@ -61,11 +62,11 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _WHITESPACE = re.compile(r"\s+")
 
 ISBN_REFUSAL_REASONS = {
-    "source_value_absent": "The source supplied no ISBN",
-    "source_unavailable": "The ISBN source could not be reached",
-    "source_value_malformed_or_incomplete": "The source ISBN was malformed or incomplete",
-    "source_values_conflict": "The sources supplied conflicting ISBNs",
-    "source_value_insufficient_association": "The supplied ISBN was not sufficiently associated with this recording",
+    "source_value_absent": "No source supplied an ISBN",
+    "source_unavailable": "The sources could not be read",
+    "source_value_malformed_or_incomplete": "The sources give an unreadable or incomplete ISBN",
+    "source_values_conflict": "The sources give different ISBNs",
+    "source_value_insufficient_association": "The sources do not tie this ISBN closely enough to this recording",
 }
 
 _DESTINATION_LABELS = {
@@ -91,27 +92,27 @@ _DESTINATION_LABELS = {
 _CHOOSER_LABELS = {
     "automatic_pipeline": "Automatic preparation",
     "automatic_policy": "Automatic policy",
-    "human": "Library owner",
-    "owner_retry": "Library owner",
-    "policy": "Library owner",
+    "human": "You",
+    "owner_retry": "You",
+    "policy": "You",
     "unknown": "Not recorded",
 }
 # Owner-readable causes for the closed durable failure vocabulary. A code the
 # owner cannot act on is still named as something that happened to their
 # library rather than as an internal token.
 _FAILURE_REASONS = {
-    "ambiguous": "The current value could not be read back unambiguously",
-    "authority": "The authority behind this change was replaced",
-    "authority_superseded": "The authority behind this change was replaced",
-    "backup": "A safety copy of the current value was unavailable",
+    "ambiguous": "The current value could not be read back clearly",
+    "authority": "A newer decision replaced the one behind this change",
+    "authority_superseded": "A newer decision replaced the one behind this change",
+    "backup": "No backup of the current value could be made",
     "capability": "Audiobookshelf did not offer this field",
     "circuit_open": "Writing paused after repeated failures",
     "connection": "Audiobookshelf could not be reached for this book",
     "connection_exhausted": "Audiobookshelf could not be reached for this book, "
     "and this change "
     f"stopped after it was prepared again {CONNECTION_REPLAN_LIMIT} times",
-    "consent": "Write permission was not in place",
-    "consent_revoked": "Write permission was withdrawn",
+    "consent": "Write permission was not given",
+    "consent_revoked": "Write permission was removed",
     "cover_recovery": "Cover recovery took this change over",
     "cover_retention": "Mechanical Librarian could not save a copy of the current "
     "cover, so it left the cover unchanged",
@@ -121,9 +122,9 @@ _FAILURE_REASONS = {
     "owner_abandoned": "You stopped this change",
     "readback": "The change could not be confirmed after writing",
     "restart_readback": "The change could not be confirmed after a restart",
-    "restore_unavailable": "This description has formatting that can't be "
-    "restored from here; restore it in Audiobookshelf",
-    "retry_exhausted": "The change was retried and then stopped safely",
+    "restore_unavailable": "This description's formatting can't be restored "
+    "from here. Restore it in Audiobookshelf",
+    "retry_exhausted": "The change stopped after its last retry",
     "target_changed": "The current value changed after this was prepared",
     "target_failure": "Audiobookshelf refused the change",
     "third_value": "The current value became a third, unexpected value",
@@ -184,29 +185,92 @@ def chooser_label(origin: str) -> str:
 
 def failure_reason(failure: str) -> str:
     """State an owner-readable cause for a durable failure code."""
-    return _FAILURE_REASONS.get(failure, "The change stopped safely")
+    return _FAILURE_REASONS.get(failure, "The change stopped")
+
+
+# The Policy page's own names (`frontend/src/policyFields.ts`), so a policy
+# row in Activity names each field, setting and option as Policy does.
+_POLICY_FIELD_LABELS = {
+    "title_layout": "Title and subtitle",
+    "contributor_names": "Authors and narrators",
+    "language_rendering": "Language",
+    "subtitle": "Subtitle",
+    "date_precision": "Publication date and year",
+    "publisher_preference": "Publisher",
+    "isbn_form": "ISBN",
+    "series": "Series memberships",
+    "genres": "Genres",
+    "tags": "Tags",
+    "description_fill": "Description",
+    "cover_order": "Cover",
+    "asin": "ASIN",
+    "explicit": "Explicit-content flag",
+}
+_POLICY_DESTINATION_LABELS = {
+    "ask": "Ask me",
+    "automatic": "Automatic",
+    "ignore": "Ignore",
+    "unsupported": "Not supported",
+}
+_POLICY_OPTION_LABELS = {
+    ("title_layout", "preserve"): "Preserve current layout",
+    ("title_layout", "title_and_subtitle"): "Separate title and subtitle",
+    ("contributor_names", "preserve"): "Preserve supported form",
+    ("contributor_names", "canonical"): "Use canonical names",
+    ("language_rendering", "display_name"): "Use language display name",
+    ("subtitle", "fill_empty"): "Fill only when empty",
+    ("subtitle", "replace_descriptive"): "Replace a promotional subtitle",
+    ("subtitle", "corroborated_split"): "Use a confirmed split",
+    ("date_precision", "year"): "Year only",
+    ("date_precision", "full_date"): "Keep source date precision",
+    ("publisher_preference", "publisher"): "Prefer publisher",
+    ("publisher_preference", "imprint"): "Prefer imprint",
+    ("isbn_form", "preserve_exact"): "Preserve exact ISBN",
+    ("isbn_form", "prefer_isbn13"): "Prefer ISBN-13",
+    ("series", "primary_narrative"): "Primary narrative",
+    ("series", "source_order"): "First source membership",
+    ("series", "all_qualified"): "All supported memberships",
+    ("series", "add_qualified"): "Add supported memberships",
+    ("series", "replace_qualified"): "Replace with supported memberships",
+    ("genres", "fill_empty"): "Fill only when empty",
+    ("genres", "add"): "Add missing values",
+    ("genres", "replace"): "Replace with source list",
+    ("tags", "off"): "Off",
+    ("tags", "fill_empty"): "Fill only when empty",
+    ("tags", "add"): "Add missing values",
+    ("tags", "replace"): "Replace with source list",
+    ("description_fill", "safe_plain_text"): "Fill empty with safe plain text",
+    ("description_fill", "google_visible_text"): "Visible Google text",
+    ("description_fill", "replace_safe_plain_text"): "Fill empty or replace safe text",
+    ("cover_order", "fixed_source_order"): "Fill from confirmed covers",
+    (
+        "cover_order",
+        "replace_if_strictly_better",
+    ): "Replace with a clearly larger cover",
+    ("asin", "preserve_exact"): "Preserve exact ASIN",
+    ("asin", "ebook_manifestation"): "Ebook edition ASIN",
+    ("explicit", "unsupported"): "Leave flag unchanged",
+    ("explicit", "adult_product"): "Set from adult-product evidence",
+}
 
 
 def policy_setting_label(category: str) -> str:
-    """Name a policy option category the way the Policy surface names it."""
-    return destination_label(category)
+    """Name a policy field the way the Policy page names it."""
+    return _POLICY_FIELD_LABELS.get(category) or destination_label(category)
+
+
+def policy_destination_label(destination: str) -> str:
+    """Name a field's setting (Automatic, Ask me, Ignore, Not supported)."""
+    named = _POLICY_DESTINATION_LABELS.get(destination)
+    if named is not None:
+        return named
+    spaced = _tidy(destination.replace("_", " "), 64)
+    return spaced[:1].upper() + spaced[1:]
 
 
 def policy_option_label(option: str, category: str) -> str:
-    """Name a policy option value in owner language."""
-    named = {
-        "all_qualified": "All supported memberships",
-        "ask": "Ask me",
-        "automatic": "Automatic",
-        "canonical": "Canonical form",
-        "ebook_manifestation": "Ebook edition ASIN",
-        "fill_empty": "Fill when empty",
-        "ignore": "Skip it",
-        "preserve": "Leave as it is",
-        "primary_narrative": "Primary narrative",
-        "safe_plain_text": "Safe plain text",
-        "unsupported": "Not supported",
-    }.get(option)
+    """Name a field's option the way the Policy page names it."""
+    named = _POLICY_OPTION_LABELS.get((category, option))
     if named is not None:
         return named
     spaced = _tidy(option.replace("_", " "), 64)

@@ -1799,7 +1799,7 @@ describe('Library route', () => {
       to: '/activity',
       search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
     })
-    expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Activity' })).toBeVisible()
     await act(async () => releaseDismissal(dismissed))
     await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(dismissed))
     expect(router.state.location.pathname).toBe('/activity')
@@ -12283,7 +12283,7 @@ describe('Library route', () => {
       to: '/activity',
       search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
     })
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await screen.findByRole('heading', { name: 'Activity' })
     await originalNavigate({ to: '/policy', search: { section: 'identity' } })
     await screen.findByRole('heading', { name: 'Library policy' })
     await act(async () => {
@@ -12430,7 +12430,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', http)
 
     const heading = await screen.findByRole('heading', {
-      name: '5 works are in Library. Writes are on for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
+      name: '5 works are in Library. Writes are enabled for Fiction Shelf. History Room needs permission. Writes to Research Shelf are held.',
     })
     const notice = heading.closest('section')
     if (!notice) throw new Error('the handoff notice is a section')
@@ -12538,7 +12538,7 @@ describe('Library route', () => {
     expect(controls?.firstElementChild).toBe(screen.getByRole('button', { name: /^Attention/u }))
     expect(controls?.lastElementChild).toBe(notices[0])
     await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
-    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Write permissions' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(await screen.findByRole('checkbox', { name: /fiction/u }))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))

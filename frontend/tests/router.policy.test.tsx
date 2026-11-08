@@ -1289,9 +1289,16 @@ describe('Policy route', () => {
     expect(
       screen.queryByText(/Complete recording cast/, { selector: '.cm-policy-projected-context p' }),
     ).toBeNull()
+    // Each row names its work, media and field once, without repeating the
+    // summary's "No policy change" (#1765).
     expect(
-      screen.getAllByText(/No policy change/, { selector: '.cm-policy-projected-context p' }),
+      screen.getAllByText(/^· (Ebook|Audiobook) · .+:/u, {
+        selector: '.cm-policy-projected-context p',
+      }),
     ).toHaveLength(8)
+    expect(
+      screen.queryByText(/No policy change/, { selector: '.cm-policy-projected-context p' }),
+    ).toBeNull()
     expect(
       screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
     ).toBeVisible()
