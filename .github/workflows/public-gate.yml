@@ -423,7 +423,7 @@ jobs:
         run: uv sync --locked --all-groups
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           # The action downloads the Buildx binary at run time; without this
           # pin an unchanged commit would execute whatever upstream released
@@ -443,7 +443,7 @@ jobs:
       # Dockerfile carries on every FROM line, not from `--pull` -- a base
       # moves only when its pinned digest is bumped.
       - name: Build the shipped container image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           # The action otherwise uploads a build record as a workflow
           # artifact on every run; nothing reads it, and on a public
