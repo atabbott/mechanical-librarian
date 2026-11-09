@@ -883,7 +883,7 @@ def _qualify_retained_recovery(
     """Run native kill/preservation fixtures against this image's installed code."""
     import pytest
 
-    if pytest.__version__ != "9.1.1":
+    if pytest.__version__ != "9.2.0":
         raise QualificationError("recovery_fixture_toolchain_mismatch")
     dependencies = Path(pytest.__file__).resolve().parents[1]
     proof = _run(
@@ -919,7 +919,7 @@ def _qualify_retained_recovery(
             "import json,sqlite3,sys; import mechanical_librarian; "
             "assert mechanical_librarian.__file__.startswith('/opt/mechanical-librarian/'); "
             "sys.path.append('/qualification-deps'); import pytest; "
-            "assert pytest.__version__ == '9.1.1'; "
+            "assert pytest.__version__ == '9.2.0'; "
             "print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version,'installed_origin':True}),flush=True); "
             "raise SystemExit(pytest.main(['--disable-plugin-autoload','-p','no:cacheprovider','-q',"
             "'tests/integration/test_database_crash_recovery.py',"
