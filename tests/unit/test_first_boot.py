@@ -366,3 +366,46 @@ def test_reviewer_inventory_scans_are_bounded_and_closed(
     for scan in scans:
         with pytest.raises(OSError):
             os.fstat(scan.descriptor)
+
+
+def test_a_v4_setup_record_left_mid_setup_fails_closed(tmp_path: Path) -> None:
+    """An unfinished setup-state-v4 volume is refused, never converted."""
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.unit.test_setup_state_store import _retain_v4
+
+    database = tmp_path / "application.sqlite3"
+    _retain_v4(database)
+    before = database.read_bytes()
+
+    # The same bodies as the closures `bootstrap/container.py` `main` passes.
+    def complete_store() -> bool:
+        repository = open_repository(
+            database, create=False, recover_stale_bindings=True
+        )
+        try:
+            repository.owner_settings_store().activate_runtime()
+            return True
+        except Exception:
+            return False
+        finally:
+            repository.close()
+
+    def resumable_setup() -> bool:
+        repository = open_repository(database, create=False)
+        try:
+            repository.setup_state_store().read()
+            return True
+        except Exception:
+            return False
+        finally:
+            repository.close()
+
+    with pytest.raises(FirstBootError):
+        select_first_boot_mode(
+            tmp_path,
+            complete_store=complete_store,
+            resumable_setup=resumable_setup,
+        )
+    assert database.read_bytes() == before

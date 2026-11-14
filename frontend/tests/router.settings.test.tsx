@@ -104,7 +104,7 @@ describe('settings API field validation vocabulary', () => {
     expect(settingsLocalLibraryNameValid('books_1')).toBe(true)
     expect(settingsLocalLibraryNameValid('Not valid')).toBe(false)
     expect(settingsProviderKeyRequired('hardcover')).toBe(true)
-    expect(settingsProviderKeyRequired('google_books')).toBe(false)
+    expect(settingsProviderKeyRequired('google_books')).toBe(true)
     for (const adapter of ['audible_catalog', 'audiosilo', 'audnexus', 'itunes_search']) {
       expect(settingsProviderKeyless(adapter)).toBe(true)
       expect(settingsProviderKeyRequired(adapter)).toBe(false)
@@ -774,6 +774,37 @@ describe('owner settings route', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'Audiobookshelf' })).toBeVisible()
     expect(screen.getByText(/values need fixing before saving/)).toBeVisible()
     expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('asks for a Google Books key while Google Books is on (#1516)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: {
+        ...document,
+        providers: [
+          ...document.providers,
+          {
+            adapter: 'google_books' as const,
+            cover_enabled: false as const,
+            enabled: true,
+            name: 'google',
+          },
+        ],
+      },
+    }))
+    renderRoute('/settings?group=providers', http)
+
+    const key = await screen.findByLabelText('New Google Books API key')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(key).toHaveAttribute('aria-invalid', 'true'))
+    expect(key).toHaveAccessibleDescription(/This source needs an API key while it is on/)
+    expect(http.writeSettings).not.toHaveBeenCalled()
+
+    // Turned off, Google Books needs no key.
+    await user.click(segment('Use Google Books', 'Off'))
+    await waitFor(() => expect(key).not.toHaveAttribute('aria-invalid'))
   })
 
   it.each([

@@ -144,7 +144,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "SHADOW_OUTCOME_SCHEMA",
         "shadow-outcome-set-v11",
     ),
-    ("mechanical_librarian.domain.setup_state", "SETUP_STATE_SCHEMA", "setup-state-v4"),
+    ("mechanical_librarian.domain.setup_state", "SETUP_STATE_SCHEMA", "setup-state-v5"),
     (
         "mechanical_librarian.domain.human_decision",
         "HUMAN_DECISION_SCHEMA",

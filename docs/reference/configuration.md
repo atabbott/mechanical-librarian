@@ -334,8 +334,12 @@ A disabled provider must set `cover_enabled` to `false` and both
 | `hardcover` | Absolute path, required | `null` | Required |
 | `open_library` | `null` | Required email address, 3–254 characters | Required |
 
-- `inventaire` is keyless and preselected in guided setup.
-- `google_books` with `secret_file: null` uses credential-free access.
+- Guided setup ticks the sources that suit the chosen libraries: the
+  audiobook sources for an audiobooks-only library, and every source for any
+  other book library.
+- Guided setup and Settings ask for a Google Books API key while Google Books
+  is on, as they do for Hardcover. In file mode, `google_books` with
+  `secret_file: null` still works and uses credential-free access.
 - A Hardcover secret file holds the bare token, without a `Bearer` scheme.
 - `contact_email` only identifies Open Library HTTP requests. It never
   appears in reports, logs or stored artifacts, and changing it does not

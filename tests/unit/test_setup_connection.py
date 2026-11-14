@@ -135,7 +135,7 @@ def test_operation_records_connection_only_after_successful_probe() -> None:
 
     document = operation.connect(2, "primary", "https://abs.invalid", "secret-value")
 
-    assert document.next_step() == "providers"
+    assert document.next_step() == "libraries"
     assert repository.writes == [
         (document, 2, {"connection.primary.key": "secret-value"})
     ]
