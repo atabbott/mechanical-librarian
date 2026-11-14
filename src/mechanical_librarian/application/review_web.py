@@ -3469,11 +3469,11 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "insufficient_input": "This work lacks the identifiers this source needs.",
     "authentication": (
         "Nothing was recorded from it. "
-        "Check its credentials in Settings → Metadata sources."
+        "Check its API key in Settings → Metadata sources."
     ),
     "authorization": (
         "Nothing was recorded from it. "
-        "Check its credentials in Settings → Metadata sources."
+        "Check its API key in Settings → Metadata sources."
     ),
     "rate_limited": "Refused more lookups for now, so nothing was recorded.",
     "unavailable": "Did not answer.",
@@ -3582,8 +3582,8 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
         "Correct them in Settings → Metadata sources, then scan this library again.",
     ),
     "authentication": (
-        "A source refused its credentials.",
-        "Replace them in Settings → Metadata sources, then scan this library again.",
+        "A source refused its API key.",
+        "Replace it in Settings → Metadata sources, then scan this library again.",
     ),
     "stale": (
         "The book changed while it was being prepared.",

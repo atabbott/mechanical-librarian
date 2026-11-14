@@ -9010,13 +9010,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     expect(page.get_by_label("Model ID", exact=True)).to_be_focused()
                 # Data use and limits are reference detail, read on demand (#1287).
                 caveat = page.get_by_text(
-                    "Cover requests deny provider data collection", exact=False
+                    "Cover requests go only to OpenRouter providers", exact=False
                 )
                 expect(caveat).to_be_hidden()
                 page.get_by_text("OpenRouter limits, data use and key sharing").click()
                 expect(
                     page.get_by_text(
-                        "Cover requests deny provider data collection", exact=False
+                        "Cover requests go only to OpenRouter providers", exact=False
                     )
                 ).to_be_visible()
                 page.get_by_role("button", name="Continue without a reviewer").click()

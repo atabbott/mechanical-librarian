@@ -58,7 +58,7 @@
       "schema_version": "reviewer-cost-evidence-v2"
     },
     "cover_metadata": null,
-    "data_use_caveat": "Cover requests deny provider data collection and allow retention; zero data retention is not required. Review provider data policies before use.",
+    "data_use_caveat": "Cover requests go only to OpenRouter providers that do not collect request data. Those providers may still keep requests for a time, so read their data policies before you choose a model.",
     "description": {
       "engine": "codex",
       "host_headroom_bytes": 2147483648,
@@ -71,7 +71,7 @@
       "engine": "codex"
     },
     "description_metadata": null,
-    "free_tier_caveat": "OpenRouter currently documents free-model caps of 20 requests/minute and 50 requests/day before $10 in lifetime purchases, or 1,000/day after; provider limits may change.",
+    "free_tier_caveat": "OpenRouter limits free models to 20 requests a minute and 50 a day, or 1,000 a day once you have bought $10 of credits.",
     "mapping": null,
     "openrouter": {
       "engine": "openrouter",

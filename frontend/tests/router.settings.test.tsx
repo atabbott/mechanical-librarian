@@ -721,7 +721,9 @@ describe('owner settings route', () => {
     const targetSecret = screen.getByLabelText('Replacement Audiobookshelf access key')
     await user.type(targetSecret, 'Bearer secret')
     expect(targetSecret).toHaveAttribute('aria-invalid', 'true')
-    expect(targetSecret).toHaveAccessibleDescription(/Secrets must be 1–2,048/)
+    expect(targetSecret).toHaveAccessibleDescription(
+      /Enter the key without spaces or a Bearer prefix/,
+    )
 
     await user.click(screen.getByRole('button', { name: /Metadata sources/ }))
     const email = screen.getByRole('textbox', { name: 'Contact email' })
@@ -734,6 +736,11 @@ describe('owner settings route', () => {
     expect(email).not.toHaveAttribute('aria-invalid')
     await user.click(segment('Use Open Library', 'On'))
     expect(email).toHaveAttribute('aria-invalid', 'true')
+    await user.type(email, 'owner@example')
+    expect(email).toHaveAttribute('aria-invalid', 'true')
+    expect(email).toHaveAccessibleDescription(
+      /Enter a full email address for Open Library, such as name@example\.com/,
+    )
 
     await user.click(screen.getByRole('button', { name: 'Clear Hardcover API key' }))
     await user.click(screen.getByRole('button', { name: 'Confirm clear Hardcover API key' }))
@@ -741,7 +748,7 @@ describe('owner settings route', () => {
       name: 'Keep configured Hardcover API key',
     })
     expect(requiredKey).toHaveAttribute('aria-invalid', 'true')
-    expect(requiredKey).toHaveAccessibleDescription(/requires an API key while enabled/)
+    expect(requiredKey).toHaveAccessibleDescription(/This source needs an API key while it is on/)
 
     await user.click(screen.getByRole('button', { name: /Libraries/ }))
     const libraryId = screen.getByRole('textbox', { name: 'Audiobookshelf library ID' })
