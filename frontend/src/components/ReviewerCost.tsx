@@ -37,10 +37,7 @@ export const ReviewerCost = ({
         </dd>
       ))}
       {rows.some(({ row }) => row) ? (
-        <dd>
-          Estimated from a measured run. Your library and current prices will differ; this is an
-          example, not a quote.
-        </dd>
+        <dd>Estimated from a measured run. Your library and current prices will differ.</dd>
       ) : null}
     </div>
   )

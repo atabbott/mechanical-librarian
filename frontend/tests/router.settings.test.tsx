@@ -721,7 +721,9 @@ describe('owner settings route', () => {
     const targetSecret = screen.getByLabelText('Replacement Audiobookshelf access key')
     await user.type(targetSecret, 'Bearer secret')
     expect(targetSecret).toHaveAttribute('aria-invalid', 'true')
-    expect(targetSecret).toHaveAccessibleDescription(/Secrets must be 1–2,048/)
+    expect(targetSecret).toHaveAccessibleDescription(
+      /Enter the key without spaces or a Bearer prefix/,
+    )
 
     await user.click(screen.getByRole('button', { name: /Metadata sources/ }))
     const email = screen.getByRole('textbox', { name: 'Contact email' })
@@ -734,6 +736,11 @@ describe('owner settings route', () => {
     expect(email).not.toHaveAttribute('aria-invalid')
     await user.click(segment('Use Open Library', 'On'))
     expect(email).toHaveAttribute('aria-invalid', 'true')
+    await user.type(email, 'owner@example')
+    expect(email).toHaveAttribute('aria-invalid', 'true')
+    expect(email).toHaveAccessibleDescription(
+      /Enter a full email address for Open Library, such as name@example\.com/,
+    )
 
     await user.click(screen.getByRole('button', { name: 'Clear Hardcover API key' }))
     await user.click(screen.getByRole('button', { name: 'Confirm clear Hardcover API key' }))
@@ -741,7 +748,7 @@ describe('owner settings route', () => {
       name: 'Keep configured Hardcover API key',
     })
     expect(requiredKey).toHaveAttribute('aria-invalid', 'true')
-    expect(requiredKey).toHaveAccessibleDescription(/requires an API key while enabled/)
+    expect(requiredKey).toHaveAccessibleDescription(/This source needs an API key while it is on/)
 
     await user.click(screen.getByRole('button', { name: /Libraries/ }))
     const libraryId = screen.getByRole('textbox', { name: 'Audiobookshelf library ID' })
@@ -806,12 +813,12 @@ describe('owner settings route', () => {
   it.each([
     [
       new ApiError(503, 'reviewer_access_unavailable'),
-      'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+      'No answer came back. Check whether the reviewer change was saved before trying again.',
       true,
     ],
     [
       new ApiError(500, 'invalid_error_response'),
-      'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+      'No answer came back. Check whether the reviewer change was saved before trying again.',
       true,
     ],
     // An answer the decoder refuses may follow a committed write (#1690).
@@ -822,7 +829,7 @@ describe('owner settings route', () => {
         at: '/codex',
         reason: 'required',
       }),
-      'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+      'No answer came back. Check whether the reviewer change was saved before trying again.',
       true,
     ],
     [
@@ -887,10 +894,12 @@ describe('owner settings route', () => {
       'Custom model ID',
     ])
     await user.click(screen.getByRole('option', { name: 'GPT-6 Luna (openai/gpt-6-luna)' }))
-    expect(screen.getByText('Recommended. Paid; observations remain advice.')).toBeVisible()
+    expect(screen.getByText('Recommended. Paid.')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
     await pickModel(user, 'Cover model', 'dots-studio/dots-3-note-preview:free')
-    expect(screen.getByText(/not yet qualified here\. 20 requests\/minute/u)).toBeVisible()
+    expect(
+      screen.getByText(/Not yet tested by Mechanical Librarian\. 20 requests\/minute/u),
+    ).toBeVisible()
     await pickModel(user, 'Cover model', 'Custom model ID')
     const model = screen.getByRole('textbox', { name: 'Cover model ID' })
     await user.type(model, 'xiaomi/mimo-v2.6-flash')
@@ -905,7 +914,7 @@ describe('owner settings route', () => {
       }),
     )
     expect(key).toHaveValue('')
-    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+    expect(await screen.findByText('Status: ready to use')).toBeVisible()
   })
 
   it.each([
@@ -913,16 +922,10 @@ describe('owner settings route', () => {
       'an OpenRouter model',
       'openrouter',
       'openai/gpt-4o-mini',
-      'OpenRouter — openai/gpt-4o-mini',
-      'OpenRouter — openai/gpt-4o-mini',
+      'openai/gpt-4o-mini on OpenRouter',
+      'openai/gpt-4o-mini on OpenRouter',
     ],
-    [
-      'contained Codex with the admitted profile model',
-      'codex',
-      '',
-      'Contained Codex — gpt-5.6-sol',
-      'Contained Codex — gpt-5.6-sol',
-    ],
+    ['Codex with the profile model', 'codex', '', 'Codex (gpt-5.6-sol)', 'Codex (gpt-5.6-sol)'],
     ['cleared', 'none', '', 'No reviewer', 'No reviewer'],
   ] as const)(
     'states the cover model beside its engine when the selection is %s',
@@ -941,14 +944,16 @@ describe('owner settings route', () => {
       }))
       renderRoute('/settings?group=reviewer', http)
 
-      const line = await screen.findByText(/Current selection:/u)
+      const line = await within(
+        await screen.findByRole('region', { name: 'Cover reviewer' }),
+      ).findByText(/^Selected:/u)
       expect(line).toHaveTextContent(expected)
       // Only the engine, and a model it actually has, carry the emphasis: the
       // explanation of an absent model stays plain text.
       expect(line.querySelector('strong')).toHaveTextContent(emphasised)
       expect(line.querySelector('strong')?.textContent).toBe(emphasised)
-      const allowance = screen.getByText(/Usage consumes your plan allowance/)
-      expect(allowance).toHaveTextContent('no per-request monetary estimate is available')
+      const allowance = screen.getByText(/Reviews count against your plan’s usage limits/)
+      expect(allowance).toHaveTextContent('so no cost is shown')
       expect(allowance).not.toHaveTextContent('$')
     },
   )
@@ -969,7 +974,7 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
 
-    const region = await screen.findByRole('region', { name: 'Optional cover reviewer' })
+    const region = await screen.findByRole('region', { name: 'Cover reviewer' })
     const cover = within(region)
     const facts = region.querySelector('.settings-reviewer-facts')
     expect(facts).not.toBeNull()
@@ -978,18 +983,16 @@ describe('owner settings route', () => {
     expect(cover.getAllByRole('term').map((term) => term.textContent)).toEqual([
       'Model',
       'Capabilities',
-      'Observed prices in USD',
+      'Prices in USD',
       'Example cost per 1,000 books',
       'Cover request',
     ])
     expect(cover.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
     expect(cover.getByText(/Image input, text output and structured output/u)).toBeVisible()
-    expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
+    expect(cover.getByText('Validate this model to see its prices.')).toBeVisible()
     expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
     expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
-    expect(
-      cover.getByText('One work packet, which may contain several cover images.'),
-    ).toBeVisible()
+    expect(cover.getByText('One request per book, with every cover it compares.')).toBeVisible()
     expect(cover.queryByText(/Metadata observed|Maximum-size|sample|methodology/u)).toBeNull()
     // The Model row tracks a controlled input, so the list must not be a live
     // region; the status paragraph above owns the announcements.
@@ -1015,7 +1018,7 @@ describe('owner settings route', () => {
     http.getReviewerAccess = vi.fn(async () => reviewerView)
     renderRoute('/settings?group=reviewer', http)
 
-    const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
+    const cover = within(await screen.findByRole('region', { name: 'Cover reviewer' }))
     expect(cover.getByText(/None yet\. Choose a model above/u)).toBeVisible()
     await pickModel(user, 'Cover model', 'Custom model ID')
     const model = cover.getByRole('textbox', { name: 'Cover model ID' })
@@ -1034,12 +1037,9 @@ describe('owner settings route', () => {
     http.getReviewerAccess = vi.fn(async () => reviewerView)
     renderRoute('/settings?group=reviewer', http)
 
-    const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
+    const cover = within(await screen.findByRole('region', { name: 'Cover reviewer' }))
     expect(
-      await cover.findByText(
-        'None yet. Choose a model above; it is checked for image, text and structured output when you validate.',
-        { selector: 'dd' },
-      ),
+      await cover.findByText('None yet. Choose a model above.', { selector: 'dd' }),
     ).toBeVisible()
     expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   })
@@ -1076,7 +1076,7 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
-    expect(await screen.findByText(`Advisory availability: ${terminalWords[state]}`)).toBeVisible()
+    expect(await screen.findByText(`Status: ${terminalWords[state]}`)).toBeVisible()
     expect(http.recheckCodex).toHaveBeenCalledOnce()
     if (failure) expect(screen.getByRole('alert')).toBeVisible()
   })
@@ -1177,7 +1177,7 @@ describe('owner settings route', () => {
       expect(restart).toBeEnabled()
       expect(restart).not.toHaveAttribute('aria-disabled')
       expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toBeEnabled()
-      expect(screen.getByText('Advisory availability: sign-in cancelled')).toBeVisible()
+      expect(screen.getByText('Status: sign-in cancelled')).toBeVisible()
       expect(http.cancelCodexDevice).toHaveBeenCalledOnce()
       const cancelledAt = vi.mocked(http.cancelCodexDevice).mock.invocationCallOrder[0] ?? Infinity
       expect(
@@ -1242,11 +1242,11 @@ describe('owner settings route', () => {
       )
       if (state === 'usable') {
         expect(
-          await screen.findByRole('button', { name: 'Use Codex for cover observations' }),
+          await screen.findByRole('button', { name: 'Use Codex for cover review' }),
         ).toBeEnabled()
         expect(screen.getByRole('button', { name: 'Replace Codex sign-in' })).toBeEnabled()
         expect(screen.getByRole('button', { name: 'Clear Codex sign-in' })).toBeEnabled()
-        expect(screen.getByText('Advisory availability: ready to use')).toBeVisible()
+        expect(screen.getByText('Status: ready to use')).toBeVisible()
         return
       }
       expect(await screen.findByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
@@ -1333,18 +1333,16 @@ describe('owner settings route', () => {
       .mockResolvedValue(reviewerView)
     http.recheckCodex = vi.fn(async () => codexDevice('failed', 'permission_or_profile'))
     renderRoute('/settings?group=reviewer', http)
-    expect(
-      await screen.findByRole('button', { name: 'Use Codex for cover observations' }),
-    ).toBeEnabled()
+    expect(await screen.findByRole('button', { name: 'Use Codex for cover review' })).toBeEnabled()
 
     await pressCheck(user)
-    expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
+    expect(await screen.findByText('Status: failed')).toBeVisible()
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(
       'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.',
     )
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Use Codex for cover observations' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use Codex for cover review' })).toBeNull()
     // React keeps the pressed Check's node across the branch switch, so focus stays on it.
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
@@ -1401,7 +1399,7 @@ describe('owner settings route', () => {
       expect(screen.queryByText(/Replace the sign-in and retry/u)).toBeNull()
 
       await act(async () => release(reviewerView))
-      expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
+      expect(await screen.findByText('Status: failed')).toBeVisible()
       await waitFor(() => expect(check).not.toHaveAttribute('aria-disabled'))
       expect(screen.getAllByRole('alert')).toHaveLength(1)
       expect(screen.getByRole('alert')).toHaveTextContent(unmanaged)
@@ -1436,10 +1434,10 @@ describe('owner settings route', () => {
       )
 
       await pressCheck(user)
-      expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+      expect(await screen.findByText('Status: ready to use')).toBeVisible()
       await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
       expect(screen.queryByRole('alert')).toBeNull()
-      expect(screen.getByRole('button', { name: 'Use Codex for cover observations' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Use Codex for cover review' })).toBeEnabled()
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toHaveFocus(),
       )
@@ -1460,10 +1458,10 @@ describe('owner settings route', () => {
       .mockResolvedValue(passive('ready'))
     http.recheckCodex = vi.fn(async () => codexDevice('ready'))
     renderRoute('/settings?group=reviewer', http)
-    expect(await screen.findByText('Advisory availability: sign-in cancelled')).toBeVisible()
+    expect(await screen.findByText('Status: sign-in cancelled')).toBeVisible()
 
     await pressCheck(user)
-    expect(await screen.findByText('Advisory availability: ready to sign in')).toBeVisible()
+    expect(await screen.findByText('Status: ready to sign in')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Replace or create Codex sign-in' })).toBeVisible()
   })
 
@@ -1479,7 +1477,7 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await pressCheck(user)
-    expect(await screen.findByText('Reviewer access is unavailable.')).toBeVisible()
+    expect(await screen.findByText('Reviewer settings could not be loaded.')).toBeVisible()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
     expect(http.getReviewerAccess).toHaveBeenCalledTimes(2)
   })
@@ -1498,7 +1496,7 @@ describe('owner settings route', () => {
     await pickModel(user, 'Cover model', 'dots-studio/dots-3-note-preview:free')
     await user.type(screen.getByLabelText('OpenRouter API key'), 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
-    expect(screen.getByText('Advisory availability: checking')).toBeVisible()
+    expect(screen.getByText('Status: checking')).toBeVisible()
     finish({
       ...reviewerView,
       revision: 4,
@@ -1514,7 +1512,7 @@ describe('owner settings route', () => {
         tier: 'free',
       },
     })
-    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+    expect(await screen.findByText('Status: ready to use')).toBeVisible()
   })
 
   it('uses the replacement deselection revision before Codex reselection', async () => {
@@ -1555,9 +1553,13 @@ describe('owner settings route', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Replace Codex sign-in' }))
     await user.click(screen.getByRole('button', { name: 'Confirm replace Codex sign-in' }))
-    expect(await screen.findByText(/Current selection:/u)).toHaveTextContent('No reviewer')
-    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Use Codex for cover observations' }))
+    expect(
+      await within(await screen.findByRole('region', { name: 'Cover reviewer' })).findByText(
+        /^Selected:/u,
+      ),
+    ).toHaveTextContent('No reviewer')
+    expect(await screen.findByText('Status: ready to use')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Use Codex for cover review' }))
     expect(http.selectReviewer).toHaveBeenCalledWith('codex', 4)
   })
 
@@ -1580,7 +1582,7 @@ describe('owner settings route', () => {
       'host_unsupported',
       'host_evidence_unavailable',
       true,
-      'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
+      'Mechanical Librarian cannot read the host’s free memory. Fix the host or container memory reporting before using Codex.',
     ],
     [
       'host_unsupported',
@@ -1592,7 +1594,7 @@ describe('owner settings route', () => {
       'host_unsupported',
       'headroom_below_1_gib',
       true,
-      'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
+      'Less than 1 GB of memory is free. Free some memory or raise the container limit.',
     ],
   ] as const)(
     'keeps mapped unhealthy Codex state %s manageable',
@@ -1618,9 +1620,7 @@ describe('owner settings route', () => {
         expect(check).toBeEnabled()
       }
       expect(clear).toBeEnabled()
-      expect(
-        screen.getByRole('button', { name: 'Use Codex for cover observations' }),
-      ).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Use Codex for cover review' })).toBeDisabled()
       if (expectedReason) {
         expect(screen.getAllByRole('alert')).toHaveLength(1)
         expect(screen.getByRole('alert')).toHaveTextContent(expectedReason)
@@ -1682,7 +1682,10 @@ describe('owner settings route', () => {
   it.each([
     ['response_too_large', /answer too large to read\. Retry later, or choose another model\./u],
     ['timed_out', /did not answer in time\. Check network access, then retry\./u],
-    ['data_policy_refused', /Change your privacy settings on OpenRouter, or choose a model/u],
+    [
+      'data_policy_refused',
+      /Change your privacy settings on OpenRouter, or choose another model\./u,
+    ],
     ['image_limit_exceeded', /fewer images than a cover review sends\. Choose another vision/u],
   ] as const)('says what to change for an OpenRouter %s status', async (state, copy) => {
     const http = createHttp()
@@ -1716,7 +1719,7 @@ describe('owner settings route', () => {
       },
     }))
     const { queryClient } = renderRoute('/settings?group=reviewer', http)
-    await screen.findByText('Advisory availability: not supported on this host')
+    await screen.findByText('Status: not supported on this host')
 
     act(() => {
       queryClient.setQueryData(['reviewer-access', 'codex-device'], {
@@ -1730,13 +1733,13 @@ describe('owner settings route', () => {
 
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
+      'Less than 1 GB of memory is free. Free some memory or raise the container limit.',
     )
     expect(
       screen.queryByText(/installed Codex sign-in could not be validated/u),
     ).not.toBeInTheDocument()
     // The bound and the headroom beside it read in one unit (#1286).
-    expect(screen.getByText('Available reviewer headroom: 2 GB')).toBeVisible()
+    expect(screen.getByText('Free memory for Codex: 2 GB')).toBeVisible()
     expect(window.document.body).not.toHaveTextContent(/GiB|MiB/u)
   })
 
@@ -1763,12 +1766,12 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
-    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+    expect(await screen.findByText('Status: ready to use')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Clear Codex sign-in' }))
     await user.click(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' }))
-    expect(await screen.findByText('Advisory availability: ready to sign in')).toBeVisible()
+    expect(await screen.findByText('Status: ready to sign in')).toBeVisible()
     expect(
-      screen.queryByRole('button', { name: 'Use Codex for cover observations' }),
+      screen.queryByRole('button', { name: 'Use Codex for cover review' }),
     ).not.toBeInTheDocument()
   })
 
@@ -2336,7 +2339,7 @@ it('discloses description prices before activation and preserves the cover task 
     name: 'Use this OpenRouter model for descriptions',
   })
   expect(enable).toBeDisabled()
-  expect(screen.getByRole('link', { name: /Review cleanup preferences/ })).toHaveAttribute(
+  expect(screen.getByRole('link', { name: /Set description advice in Policy/ })).toHaveAttribute(
     'href',
     '/policy?section=curation#description-advice',
   )
@@ -2413,7 +2416,7 @@ it('discloses an unavailable description request price and still saves the model
   expect(await screen.findByText(prices, { selector: 'dd' })).toBeVisible()
   await user.click(enable)
   expect(
-    await screen.findByText('Selected: example/text-b. Advisory availability: ready to use.'),
+    await screen.findByText('Selected: example/text-b on OpenRouter. Status: ready to use.'),
   ).toBeVisible()
   expect(http.configureOpenRouter).toHaveBeenCalledWith({
     expected_revision: 3,
@@ -2438,24 +2441,26 @@ it('inspects the exact contained description model before selection without star
   renderRoute('/settings?group=reviewer', http)
   const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
   expect(use).toBeDisabled()
-  await userEvent
-    .setup()
-    .click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Check Codex model' }))
   expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
-  expect(screen.getByText(/per-request monetary estimate is unavailable/)).toBeVisible()
+  expect(
+    screen.getByText(/Advice counts against your plan’s usage limits, so no cost is shown/),
+  ).toBeVisible()
   expect(use).toBeEnabled()
   const identity = screen.getByText('a'.repeat(64))
   expect(identity).not.toBeVisible()
-  await userEvent.setup().click(screen.getByText('Inspect contained profile identity'))
+  await userEvent.setup().click(screen.getByText('Show checksum'))
   expect(identity).toBeVisible()
   expect(
-    screen.getByRole('link', { name: 'Check current write consent in Activity' }),
+    screen.getByRole('link', { name: 'Review write permissions in Activity' }),
   ).toHaveAttribute('href', '/activity')
-  expect(screen.getByText(/Adviser availability does not grant permission/)).toBeVisible()
+  expect(
+    screen.getByText(/Advice is written to your library only with your write permission/),
+  ).toBeVisible()
   expect(http.selectReviewer).not.toHaveBeenCalled()
 })
 
-it('reloads reviewer access and says a description adviser change could not be confirmed', async () => {
+it('reloads reviewer access and says no answer came back for a description adviser change', async () => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => view())
   http.getReviewerAccess = vi.fn(async () => ({
@@ -2472,15 +2477,15 @@ it('reloads reviewer access and says a description adviser change could not be c
   renderRoute('/settings?group=reviewer', http)
   const user = userEvent.setup()
   const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
-  await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+  await user.click(screen.getByRole('button', { name: 'Check Codex model' }))
   await waitFor(() => expect(use).toBeEnabled())
   const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
   await user.click(use)
 
-  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const description = screen.getByRole('region', { name: 'Description adviser' })
   const alert = await within(description).findByRole('alert')
   expect(alert).toHaveTextContent(
-    'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+    'No answer came back. Check whether the description adviser change was saved before trying again.',
   )
   // The failure sits under the pressed button (#1663).
   expect(alert.previousElementSibling).toBe(use)
@@ -2521,7 +2526,7 @@ it.each(['fresh usable', 'Check-cached usable'] as const)(
     })
     renderRoute('/settings?group=reviewer', http)
     const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
-    await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+    await user.click(screen.getByRole('button', { name: 'Check Codex model' }))
     expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
     if (shape === 'Check-cached usable')
       await user.click(screen.getByRole('button', { name: 'Check existing Codex sign-in' }))
@@ -2530,16 +2535,16 @@ it.each(['fresh usable', 'Check-cached usable'] as const)(
     use.focus()
     await user.keyboard('{Enter}')
 
-    const description = screen.getByRole('region', { name: 'Optional description adviser' })
+    const description = screen.getByRole('region', { name: 'Description adviser' })
     const alert = await within(description).findByRole('alert')
     expect(alert).toHaveTextContent(
-      'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
+      'Codex sign-in is unavailable. Check or replace the sign-in, then try again.',
     )
     // The refusal sits under Use Codex, not at the foot of the OpenRouter row (#1663).
     expect(alert.previousElementSibling).toBe(use)
     expect(within(description).queryByText(/model, key and available pricing/u)).toBeNull()
-    expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
-    expect(screen.queryByText('Advisory availability: ready to use')).toBeNull()
+    expect(await screen.findByText('Status: failed')).toBeVisible()
+    expect(screen.queryByText('Status: ready to use')).toBeNull()
     expect(use).toBeDisabled()
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toHaveFocus(),
@@ -2571,9 +2576,11 @@ it('offers a reload, not another try, when reviewer access meets a newer build',
   })
   renderRoute('/settings?group=reviewer', http)
 
-  expect(await screen.findByText('Reviewer access was not loaded.', { exact: false })).toBeVisible()
+  expect(
+    await screen.findByText('Reviewer settings were not loaded.', { exact: false }),
+  ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
-  expect(screen.queryByText('Reviewer access is unavailable.')).toBeNull()
+  expect(screen.queryByText('Reviewer settings could not be loaded.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
 
@@ -2591,9 +2598,9 @@ it.each(['mismatch', 'success'] as const)(
       return reviewerView
     })
     renderRoute('/settings?group=reviewer', http)
-    const alert = (await screen.findByText('Reviewer access is unavailable.')).closest<HTMLElement>(
-      '[role="alert"]',
-    )
+    const alert = (
+      await screen.findByText('Reviewer settings could not be loaded.')
+    ).closest<HTMLElement>('[role="alert"]')
     if (!alert) throw new Error('the reviewer access alert is required')
     await user.click(within(alert).getByRole('button', { name: 'Try again' }))
     const target =
@@ -2620,13 +2627,13 @@ it('keeps focus off the page while the reviewer access Try again reads (#1742)',
     return reviewerView
   })
   renderRoute('/settings?group=reviewer', http)
-  const alert = (await screen.findByText('Reviewer access is unavailable.')).closest<HTMLElement>(
-    '[role="alert"]',
-  )
+  const alert = (
+    await screen.findByText('Reviewer settings could not be loaded.')
+  ).closest<HTMLElement>('[role="alert"]')
   if (!alert) throw new Error('the reviewer access alert is required')
   await user.click(within(alert).getByRole('button', { name: 'Try again' }))
   // A first-read retry renders the loading line in place of the alert.
-  const reading = await screen.findByText('Reading reviewer access…')
+  const reading = await screen.findByText('Loading reviewer settings…')
   expect(globalThis.document.body).not.toHaveFocus()
   expect(globalThis.document.activeElement).toContainElement(reading)
   release()
@@ -2663,13 +2670,15 @@ it.each([
     renderRoute('/settings?group=reviewer', http)
     const user = userEvent.setup()
     const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
-    const inspect = screen.getByRole('button', { name: 'Inspect contained description model' })
+    const inspect = screen.getByRole('button', { name: 'Check Codex model' })
     await user.click(inspect)
     await waitFor(() => expect(use).toBeEnabled())
     await user.click(use)
-    const description = screen.getByRole('region', { name: 'Optional description adviser' })
+    const description = screen.getByRole('region', { name: 'Description adviser' })
     const unconfirmed = await within(description).findByRole('alert')
-    expect(unconfirmed).toHaveTextContent('The description adviser change could not be confirmed.')
+    expect(unconfirmed).toHaveTextContent(
+      'No answer came back. Check whether the description adviser change was saved',
+    )
     expect(unconfirmed.previousElementSibling).toBe(use)
 
     // Pending is aria-disabled now, so the native state no longer shows settling (#1663).
@@ -2677,11 +2686,11 @@ it.each([
     await user.click(inspect)
     await waitFor(() =>
       expect(within(description).getByRole('alert')).toHaveTextContent(
-        'Description adviser setup could not complete.',
+        'Description adviser setup did not complete.',
       ),
     )
     expect(within(description).getAllByRole('alert')).toHaveLength(1)
-    expect(within(description).getByRole('alert')).not.toHaveTextContent('could not be confirmed')
+    expect(within(description).getByRole('alert')).not.toHaveTextContent('No answer came back')
     expect(within(description).getByRole('alert').previousElementSibling).toBe(inspect)
     expect(http.describeContainedDescription).toHaveBeenCalledTimes(2)
   },
@@ -2717,9 +2726,9 @@ it.each([
   const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
   await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
 
-  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const description = screen.getByRole('region', { name: 'Description adviser' })
   const alert = await within(description).findByRole('alert')
-  expect(alert).toHaveTextContent('Description adviser setup could not complete.')
+  expect(alert).toHaveTextContent('Description adviser setup did not complete.')
   expect(alert.previousElementSibling).toBe(
     screen.getByRole('button', { name: 'Test description model and prices' }),
   )
@@ -2773,7 +2782,7 @@ it('shows a failed OpenRouter description selection under its button, above Refr
   await waitFor(() => expect(use).toBeEnabled())
   await user.click(use)
 
-  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const description = screen.getByRole('region', { name: 'Description adviser' })
   const alert = await within(description).findByRole('alert')
   expect(within(description).getAllByRole('alert')).toHaveLength(1)
   expect(alert.previousElementSibling).toBe(use)
@@ -2796,7 +2805,7 @@ it('shows a failed description refresh under Refresh (#1663)', async () => {
   })
   await user.click(refresh)
 
-  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const description = screen.getByRole('region', { name: 'Description adviser' })
   const alert = await within(description).findByRole('alert')
   expect(within(description).getAllByRole('alert')).toHaveLength(1)
   expect(alert.previousElementSibling).toBe(refresh)
@@ -2829,7 +2838,7 @@ it.each([false, true])(
     const { queryClient } = renderRoute('/settings?group=reviewer', http)
     const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+    await user.click(screen.getByRole('button', { name: 'Check Codex model' }))
     expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
     expect(use).toBeDisabled()
     if (hostBlocked) {
@@ -2859,13 +2868,11 @@ it('presents peer reviewer tasks with one shared sign-in and labelled descriptio
   http.getSettings = vi.fn(async () => view())
   http.getReviewerAccess = vi.fn(async () => reviewerView)
   renderRoute('/settings?group=reviewer', http)
-  const cover = await screen.findByRole('region', { name: 'Optional cover reviewer' })
-  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  const cover = await screen.findByRole('region', { name: 'Cover reviewer' })
+  const description = screen.getByRole('region', { name: 'Description adviser' })
+  expect(within(cover).getByRole('heading', { level: 3, name: 'Cover reviewer' })).toBeVisible()
   expect(
-    within(cover).getByRole('heading', { level: 3, name: 'Optional cover reviewer' }),
-  ).toBeVisible()
-  expect(
-    within(description).getByRole('heading', { level: 3, name: 'Optional description adviser' }),
+    within(description).getByRole('heading', { level: 3, name: 'Description adviser' }),
   ).toBeVisible()
   expect(cover.contains(description)).toBe(false)
   expect(within(cover).queryByRole('heading', { name: 'Shared Codex sign-in' })).toBeNull()
@@ -2874,7 +2881,7 @@ it('presents peer reviewer tasks with one shared sign-in and labelled descriptio
   expect(screen.getAllByRole('button', { name: 'Check existing Codex sign-in' })).toHaveLength(1)
   expect(
     within(description).getByLabelText('Shared OpenRouter API key'),
-  ).toHaveAccessibleDescription(/Leave the key blank to use the saved credential/)
+  ).toHaveAccessibleDescription(/Leave blank to use the saved key/)
   expect(within(description).getByRole('combobox', { name: 'Description model' })).toBeVisible()
   expect(
     within(description).getByRole('button', { name: 'Use this OpenRouter model for descriptions' }),
@@ -2926,12 +2933,14 @@ it.each(['clear', 'start'] as const)(
         name: command === 'clear' ? 'Confirm clear Codex sign-in' : 'Confirm replace Codex sign-in',
       }),
     )
-    expect(await screen.findByText(/The change could not be fully confirmed/u)).toHaveTextContent(
-      'Your prior sign-in or reviewer selection may have changed',
-    )
+    expect(
+      await screen.findByText(/The Codex sign-in change was not confirmed/u),
+    ).toHaveTextContent('Check whether the sign-in changed before trying again.')
     await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
     expect(http.getCodexDevice).toHaveBeenCalledOnce()
-    expect(screen.getByText(/Current selection:/u)).toHaveTextContent('No reviewer')
+    expect(
+      within(screen.getByRole('region', { name: 'Cover reviewer' })).getByText(/^Selected:/u),
+    ).toHaveTextContent('No reviewer')
     expect(command === 'clear' ? http.clearCodex : http.startCodexDevice).toHaveBeenCalledOnce()
     expect(command === 'clear' ? http.startCodexDevice : http.clearCodex).not.toHaveBeenCalled()
   },
@@ -2968,7 +2977,7 @@ it.each([
     expect(await screen.findByText(message)).toBeVisible()
     expect(http.getCodexDevice).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Replace or create Codex sign-in' })).toBeDisabled()
-    expect(screen.getByText('Advisory availability: not set up on this host')).toBeVisible()
+    expect(screen.getByText('Status: not set up on this host')).toBeVisible()
   },
 )
 
@@ -3039,19 +3048,19 @@ it('separates measured cover cost from observed rates and never lends prices to 
     },
   }))
   renderRoute('/settings?group=reviewer', http)
-  const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
+  const cover = within(await screen.findByRole('region', { name: 'Cover reviewer' }))
   expect(
     cover.getByText('Cover review: about $0.64, including about 2.7 cover images per book.'),
   ).toBeVisible()
   expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
   expect(
-    cover.getByText(/0.000001 per input token; Unavailable per output token; 0 per image/u),
+    cover.getByText(/0.000001 per input token, Unavailable per output token, 0 per image/u),
   ).toBeVisible()
   expect(cover.queryByText(/2023|1700000000|sample|Maximum-size/u)).toBeNull()
   const user = userEvent.setup()
   await pickModel(user, 'Cover model', 'Custom model ID')
   await user.type(cover.getByRole('textbox', { name: 'Cover model ID' }), 'example/unsaved')
-  expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
+  expect(cover.getByText('Validate this model to see its prices.')).toBeVisible()
   expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
 })
@@ -3136,7 +3145,7 @@ it.each<[string, ReviewerAccessView, HeldCommand, readonly string[], boolean]>([
   ],
   ['Continue without a reviewer', configuredOpenRouter, 'selectReviewer', [], false],
   [
-    'Use Codex for cover observations',
+    'Use Codex for cover review',
     { ...reviewerView, codex: { ...reviewerView.codex, state: 'usable', reason: null } },
     'selectReviewer',
     [],
@@ -3193,18 +3202,13 @@ it.each<
   ]
 >([
   ['Continue without description advice', describedOpenRouter, 'selectReviewer', nothingToPrepare],
-  [
-    'Inspect contained description model',
-    usableCodex,
-    'describeContainedDescription',
-    nothingToPrepare,
-  ],
+  ['Check Codex model', usableCodex, 'describeContainedDescription', nothingToPrepare],
   [
     'Use Codex for descriptions',
     usableCodex,
     'selectReviewer',
     async (user) => {
-      await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+      await user.click(screen.getByRole('button', { name: 'Check Codex model' }))
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Use Codex for descriptions' })).toBeEnabled(),
       )
@@ -3246,7 +3250,7 @@ it.each<
     const held = vi.fn(() => new Promise<never>(() => undefined))
     Object.assign(http, { [command]: held })
     renderRoute('/settings?group=reviewer', http)
-    await screen.findByRole('region', { name: 'Optional description adviser' })
+    await screen.findByRole('region', { name: 'Description adviser' })
     await prepare(user)
 
     const button = screen.getByRole('button', { name })
@@ -3310,7 +3314,7 @@ it.each([
     async () => {
       throw new ApiError(503, 'reviewer_access_unavailable')
     },
-    'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+    'No answer came back. Check whether the reviewer change was saved before trying again.',
   ],
 ] as const)(
   'keeps Continue without a reviewer focused after %s, with its failure under it (#1584)',
@@ -3327,7 +3331,9 @@ it.each([
     const button = await screen.findByRole('button', { name: 'Continue without a reviewer' })
     await user.click(button)
     await waitFor(() =>
-      expect(screen.getByText(/Current selection:/u)).toHaveTextContent('No reviewer'),
+      expect(
+        within(screen.getByRole('region', { name: 'Cover reviewer' })).getByText(/^Selected:/u),
+      ).toHaveTextContent('No reviewer'),
     )
     // The settled state its own press created keeps the button focusable.
     expect(button).not.toBeDisabled()
@@ -3336,7 +3342,7 @@ it.each([
     await user.click(button)
     expect(http.selectReviewer).toHaveBeenCalledOnce()
     if (copy === null) {
-      expect(screen.queryByText(/The change could not be fully confirmed/u)).toBeNull()
+      expect(screen.queryByText(/No answer came back/u)).toBeNull()
       return
     }
     const alert = await screen.findByText(copy)
@@ -3357,7 +3363,7 @@ it.each([
     async () => {
       throw new ApiError(503, 'reviewer_access_unavailable')
     },
-    'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+    'No answer came back. Check whether the description adviser change was saved before trying again.',
   ],
   [
     'an answer the browser cannot read',
@@ -3369,7 +3375,7 @@ it.each([
         reason: 'required',
       })
     },
-    'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.',
+    'No answer came back. Check whether the description adviser change was saved before trying again.',
   ],
 ] as const)(
   'keeps Continue without description advice focused after %s, with its failure under it (#1663)',
@@ -3417,10 +3423,10 @@ it('shows a Use Codex failure under its button, not in the sign-in row (#1584)',
     throw new ApiError(409, 'credential_unavailable')
   })
   renderRoute('/settings?group=reviewer', http)
-  const button = await screen.findByRole('button', { name: 'Use Codex for cover observations' })
+  const button = await screen.findByRole('button', { name: 'Use Codex for cover review' })
   await user.click(button)
   const alert = await screen.findByText(
-    'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
+    'Codex sign-in is unavailable. Check or replace the sign-in, then try again.',
   )
   expect(button.nextElementSibling).toBe(alert)
   expect(screen.getAllByRole('alert')).toEqual([alert])
@@ -3432,14 +3438,14 @@ it('shows a Use Codex failure under its button, not in the sign-in row (#1584)',
 const unmanagedProfileCopy =
   'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.'
 const credentialUnavailableCopy =
-  'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.'
+  'Codex sign-in is unavailable. Check or replace the sign-in, then try again.'
 const usableUnmapped: ReviewerAccessView = {
   ...reviewerView,
   codex: { ...reviewerView.codex, state: 'usable', reason: null },
 }
 const usableDevice = { ...pendingDevice, state: 'usable' as const }
 it.each(['fresh usable', 'Check-cached usable', 'description-mapped'] as const)(
-  're-reads access after a refused Use Codex for cover observations (%s, #1617)',
+  're-reads access after a refused Use Codex for cover review (%s, #1617)',
   async (shape) => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -3462,15 +3468,15 @@ it.each(['fresh usable', 'Check-cached usable', 'description-mapped'] as const)(
     if (shape === 'Check-cached usable') {
       ;(await screen.findByRole('button', { name: 'Check existing Codex sign-in' })).focus()
       await user.keyboard('{Enter}')
-      expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
+      expect(await screen.findByText('Status: ready to use')).toBeVisible()
     }
-    const use = await screen.findByRole('button', { name: 'Use Codex for cover observations' })
+    const use = await screen.findByRole('button', { name: 'Use Codex for cover review' })
     await waitFor(() => expect(use).toBeEnabled())
     use.focus()
     await user.keyboard('{Enter}')
 
-    expect(await screen.findByText('Advisory availability: failed')).toBeVisible()
-    expect(screen.queryByText('Advisory availability: ready to use')).toBeNull()
+    expect(await screen.findByText('Status: failed')).toBeVisible()
+    expect(screen.queryByText('Status: ready to use')).toBeNull()
     if (shape === 'description-mapped') {
       // A description mapping keeps the row: the refusal stays under its
       // now-disabled button, and focus moves off it to Replace.
@@ -3485,7 +3491,7 @@ it.each(['fresh usable', 'Check-cached usable', 'description-mapped'] as const)(
     }
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(unmanagedProfileCopy)
-    expect(screen.queryByRole('button', { name: 'Use Codex for cover observations' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use Codex for cover review' })).toBeNull()
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toHaveFocus(),
     )
