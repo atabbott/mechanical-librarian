@@ -39,7 +39,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
-    MEASURED_REPLACEMENT_IDENTITY,
+    REPLACEMENT_TARGET_STATES,
 )
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
@@ -741,9 +741,11 @@ def _cover_automatic_decision_value(
         or resolved["destinations"]["cover_order"] != "automatic"
     ):
         raise FieldEffectError("authority_binding")
-    # A measured replacement changes a populated cover; any other automatic
-    # cover authority is a fill of a known-empty one (ADR-0093).
-    measured = decision.qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+    # A replacement changes a populated cover, under the identity of its
+    # actual target state: measured for a confirmed current cover (ADR-0093),
+    # unconfirmed for any other (ADR-0094). Any other automatic cover
+    # authority is a fill of a known-empty one.
+    measured = decision.qualification_identity in REPLACEMENT_TARGET_STATES
     target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
     empty = target.state in {
         TargetFieldState.MISSING,
@@ -792,7 +794,12 @@ def _cover_automatic_decision_value(
         or stage.get("reason") != decision.reason
         or policy_report.get("recommended_candidate_reference")
         != decision.candidate_reference
-        or (not measured and policy_report.get("actual_target_state") != "known_empty")
+        or policy_report.get("actual_target_state")
+        != (
+            REPLACEMENT_TARGET_STATES[cast("str", decision.qualification_identity)]
+            if measured
+            else "known_empty"
+        )
     ):
         raise FieldEffectError("authority_binding")
     if (

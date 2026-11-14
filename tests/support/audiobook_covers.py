@@ -50,18 +50,29 @@ def audiobook_cover_environment(
     unknown_incumbent: bool = False,
     option: str = "fixed_source_order",
     measured_record: str | None = None,
+    unconfirmed_record: str | None = None,
 ) -> Iterator[Any]:
-    """Prepare one audiobook comparison; ``measured_record`` stands in for the
-    measured replacement's qualification record, which no shipped build has."""
-    with mock.patch.object(
-        cover_qualification_policy,
-        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
-        measured_record,
+    """Prepare one audiobook comparison; ``measured_record`` and
+    ``unconfirmed_record`` stand in for the replacement identities'
+    qualification records, which no shipped build has."""
+    with (
+        mock.patch.object(
+            cover_qualification_policy,
+            "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+            measured_record,
+        ),
+        mock.patch.object(
+            cover_qualification_policy,
+            "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+            unconfirmed_record,
+        ),
     ):
         yield from _environment(out, sizes, unknown_incumbent, option)
 
 
 SYNTHETIC_MEASURED_RECORD = "5" * 64
+# Stands in for the unconfirmed replacement's record, which no build has (#1362).
+SYNTHETIC_UNCONFIRMED_RECORD = "6" * 64
 
 
 def _environment(

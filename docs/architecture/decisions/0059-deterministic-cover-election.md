@@ -4,7 +4,8 @@
 - Date: 2026-08-28
 - Owners: project maintainers
 - Supersedes: ADR-0049 reviewer-dependent recommendation and manual-only cover authority
-- Superseded by: ADR-0093 in part: which cover replaces a populated current cover
+- Superseded by: ADR-0093 in part: which cover replaces a populated current cover;
+  ADR-0094 in part: missing or inconsistent incumbent facts no longer abstain
 
 ## Context
 

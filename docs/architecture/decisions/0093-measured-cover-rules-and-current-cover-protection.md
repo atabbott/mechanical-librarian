@@ -104,6 +104,10 @@ review first.
 No size difference between different arts ever replaces a readable current
 cover that has no detectable issue.
 
+ADR-0094 replaced the first delivery's rule that an unreadable current cover is
+never switched automatically: one that is missing, or whose exact bytes are
+bound, may now be.
+
 The cover packet keeps one image per preview, so a larger original whose
 preview is the current cover's own is bound to the current cover rather than
 reviewed. The stage still sees it: the largest such original, when its short

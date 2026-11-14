@@ -536,7 +536,17 @@ the current cover's own picture that the stage took. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
 
-Issue #1355's activation B takes the clean-rebuild branch too, after #1853, so
+Issue #1362's typed current-cover read also takes the clean-rebuild branch.
+In `cover-policy-report-v5` the stage outcome follows that read (an unreadable
+cover may be switched, a read that settled nothing decides nothing) and may
+record the `current_contradicted` issue.
+`cover-automatic-decision-v5` admits the separate unconfirmed replacement
+identity and binds its own qualification record. A stored policy report or
+automatic decision carries the earlier meaning. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.
+
+Issue #1355's activation B takes the clean-rebuild branch too, after #1853 and #1859, so
 each version it moves takes the next number free on main. `metadata-report-v81`
 keeps each provider's refused WORK answers (`identity_refused_candidates`,
 `identity_refused_truncated`) and each lane's `identity_refused_new`, which a

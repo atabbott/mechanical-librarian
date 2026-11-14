@@ -22,6 +22,9 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
     expand_cover_consideration,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    cover_pre_value,
+)
 from mechanical_librarian.adapters.persistence.retained_covers import (
     live_retained_cover,
     release_kept_retained_covers,
@@ -53,13 +56,16 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_qualification_policy import (
-    MEASURED_REPLACEMENT_IDENTITY,
-    measured_replacement_record,
+    REPLACEMENT_TARGET_STATES,
+    replacement_record,
 )
 from mechanical_librarian.domain.deterministic_cover_election import (
     strictly_better_cover_rank,
 )
-from mechanical_librarian.domain.field_effect import FieldEffectOperation
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectError,
+    FieldEffectOperation,
+)
 from mechanical_librarian.domain.human_decision import (
     AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
@@ -103,10 +109,12 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         """Mint automatic authority for the stage's fill or admitted replacement.
 
         A fill of a known-empty cover keeps the fixed-source-order path. A
-        replacement of a populated cover is admitted only under the measured
-        rules' shadow identity, with room for its original in the retained
-        store and no owner choice or hold on the field; otherwise it stays the
-        suggestion the policy report records (ADR-0093).
+        replacement of a populated cover is admitted only under a shadow
+        identity with its own record: the measured one for a confirmed current
+        cover (ADR-0093), the unconfirmed one for any other (ADR-0094). It
+        needs room for its original in the retained store, unless the write
+        replaces nothing (a 404 cover), and no owner choice or hold on the
+        field; otherwise it stays the suggestion the policy report records.
         """
         basis = self._cover_admission_basis(document)
         if basis is None:
@@ -156,9 +164,26 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 except AudiobookQualificationError:
                     return
         elif stage["outcome"] == "replace":
+            qualification_identity = next(
+                (
+                    identity
+                    for identity, state in REPLACEMENT_TARGET_STATES.items()
+                    if policy_report.get("actual_target_state") == state
+                ),
+                None,
+            )
+            try:
+                # A cover Audiobookshelf answered 404 for is written as
+                # known-empty, so nothing is kept and no room is needed.
+                keeps_original = cover_pre_value(report) is not None
+            except FieldEffectError:
+                return
             if (
-                measured_replacement_record() is None
-                or not retained_cover_store_has_room(self._connection)
+                replacement_record(qualification_identity) is None
+                or (
+                    keeps_original
+                    and not retained_cover_store_has_room(self._connection)
+                )
                 or self._connection.execute(
                     "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
                     "AND destination='cover' AND active=1",
@@ -167,7 +192,6 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 is not None
             ):
                 return
-            qualification_identity = MEASURED_REPLACEMENT_IDENTITY
         else:
             return
         self._mint_cover_authority(
@@ -366,7 +390,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         """Record one automatic selection over the case's proposal alternative.
 
         Never over an owner's choice; a fill replaces an earlier automatic
-        choice only with a strictly better rank, while a measured replacement
+        choice only with a strictly better rank, while a replacement
         supersedes it.
         """
         connection_name, library_name, item_id = lineage
@@ -415,7 +439,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if prior is not None and (
             prior["kind"] == "owner"
             or (
-                qualification_identity != MEASURED_REPLACEMENT_IDENTITY
+                qualification_identity not in REPLACEMENT_TARGET_STATES
                 and not strictly_better_cover_rank(
                     candidate["deterministic_rank_key"], prior.get("rank_key")
                 )
