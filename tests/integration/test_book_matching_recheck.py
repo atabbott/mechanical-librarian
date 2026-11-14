@@ -347,6 +347,27 @@ def test_reconciliation_makes_no_external_request(
     assert _work(library) == ("complete", "complete")
 
 
+def test_a_case_whose_file_changed_waits_for_the_next_scan(
+    library: _Library,
+) -> None:
+    """A case whose item's file changed while its rescan failed has no current
+    report for that file: re-projecting it would go stale, so a save neither
+    counts it nor touches its work (re-review 2)."""
+    connection = library.root._connection
+    connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='failed',"
+        "failure_code='failed',outcome=NULL,review_case_id=NULL,"
+        "proposal_set_id=NULL,report_id=NULL,file_identity=? WHERE item_id='item-1'",
+        ("e" * 64,),
+    )
+    _save(library, "title_and_creator", at=40)
+    assert matching_check_counts(connection, "title_and_creator") == (1, 0, 0)
+    assert _work(library) == ("extraction", "failed")
+    library.now[0] = 41
+    library.drain()
+    assert library.external == []
+
+
 def test_a_case_whose_report_is_no_longer_current_waits_for_the_next_scan(
     library: _Library,
 ) -> None:

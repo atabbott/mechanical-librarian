@@ -156,6 +156,11 @@ _MATCHING_UNCHECKED_SQL = (
     "JOIN current_metadata_report_lineages l ON l.connection_name=c.connection_name "
     "AND l.library_name=c.library_name AND l.item_id=c.item_id "
     "AND l.report_id=c.report_id "
+    # As `_schedule_current_shadow_work`: the case's report is also current
+    # for the item's file now, so re-projecting it cannot go stale.
+    "JOIN current_metadata_reports f ON f.connection_name=c.connection_name "
+    "AND f.library_name=c.library_name AND f.item_id=c.item_id "
+    "AND f.file_identity=w.file_identity AND f.report_id=c.report_id "
     "WHERE c.review_case_id IS NOT NULL AND " + _MATCHING_LEVEL_SQL + "<>? "
 )
 
@@ -169,12 +174,12 @@ def request_matching_check(
     """Check current cover comparisons against Book matching (#1355).
 
     Every current case whose comparison was made under another level, and
-    whose report is still its item's current report, is checked through its
-    item's one preparation work, from stored data only: no stage that reads
-    the file, Audiobookshelf or a provider runs again. A work that completed
-    the case, or whose projection gave up, is projected again (#1573), so no
-    case is retired and the projection prepares the cover comparison again,
-    reusing the stored observer output. A work that gave up at a stored-data
+    whose report is still current for its item and its file, is checked
+    through its item's one preparation work, from stored data only: no stage
+    that reads the file, Audiobookshelf or a provider runs again. A work that
+    completed the case, or whose projection gave up, is projected again
+    (#1573), so no case is retired and the projection prepares the cover
+    comparison again, reusing the stored observer output. A work that gave up at a stored-data
     stage (provider, proposal or admission) is retried there. Any other work
     that is neither queued nor running, such as one that names another case,
     went stale, or failed extraction, is bound to the current case and
@@ -247,8 +252,9 @@ def matching_check_counts(
     otherwise could not be checked; saving the setting again retries it. A
     case whose item has no preparation work, because it left the library and
     awaits retirement at the next scan, or whose report is no longer its
-    item's current report, because the next scan replaces it, is not counted
-    as either: only that scan, not a save, can bring it up to date.
+    item's current report or the current report for its item's file, because
+    the next scan replaces it, is not counted as either: only that scan, not
+    a save, can bring it up to date.
     """
     current = connection.execute(
         "SELECT count(*) FROM current_review_case_lineages "
