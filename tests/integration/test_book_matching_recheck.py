@@ -306,6 +306,38 @@ def test_a_work_that_failed_before_projection_is_retried_by_saving_again(
     assert _current_level(library) == "title_and_creator"
 
 
+@pytest.mark.parametrize(
+    "work",
+    (
+        # A completed work whose row names another case than the current one.
+        "stage='complete',state='complete',outcome='no_case',review_case_id=NULL",
+        # A rescan whose proposal went stale under it.
+        "stage='proposal',state='stale',failure_code='stale',outcome=NULL,"
+        "review_case_id=NULL,proposal_set_id=NULL",
+    ),
+    ids=("names_another_case", "stale_before_projection"),
+)
+def test_a_work_neither_projection_nor_stage_retry_can_reach_is_prepared_again(
+    library: _Library, level: _Level, work: str
+) -> None:
+    """A current case whose item's work cannot simply be projected again or
+    retried at its stage is prepared again from extraction, so the Policy
+    line's remedy is never a dead end (experience review)."""
+    connection = library.root._connection
+    connection.execute(
+        "UPDATE review_preparation_work SET " + work + " WHERE item_id='item-1'"
+    )
+    level.value = WorkIdentityLevel.TITLE_AND_CREATOR
+    _save(library, "title_and_creator", at=40)
+    assert matching_check_counts(connection, "title_and_creator") == (1, 1, 0)
+    assert _work(library) == ("extraction", "queued")
+    library.now[0] = 41
+    library.drain()
+    assert matching_check_counts(connection, "title_and_creator") == (1, 0, 0)
+    assert _current_level(library) == "title_and_creator"
+    assert _work(library) == ("complete", "complete")
+
+
 # --- 9. The unverified-match gates -------------------------------------------
 
 

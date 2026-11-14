@@ -171,9 +171,12 @@ def request_matching_check(
     no case is retired and each projection prepares the cover comparison
     again, reusing the stored observer output. A work that gave up at an
     earlier stage, as a failed rescan does, is retried at that stage, and
-    its projection then prepares the comparison. A work already queued or
-    running is left to finish. Every save runs this, so saving again
-    retries whatever gave up.
+    its projection then prepares the comparison. Any other work that is not
+    queued or running, such as one whose row names another case or whose
+    stage went stale, is prepared again from extraction, so no current case
+    is left with nothing to retry. A work already queued or running is left
+    to finish. Every save runs this, so saving again retries whatever gave
+    up.
     """
     rows = connection.execute(
         "SELECT DISTINCT w.work_id,w.scan_id,w.stage,w.state,"
@@ -190,8 +193,10 @@ def request_matching_check(
             or (stage == "projection" and state in {"failed", "stale"})
         ):
             projections.append((work_id, scan_id))
-        elif state == "failed" and stage != "complete":
+        elif state == "failed" and stage not in {"complete", "projection"}:
             _retry_failed_stage(connection, work_id, scan_id, updated_at)
+        else:
+            _prepare_again(connection, work_id, scan_id, updated_at)
     requeue_projection_work(
         connection, projections, updated_at, PreparationTrigger.MATCHING_CHANGED
     )
@@ -206,6 +211,25 @@ def _retry_failed_stage(
         "UPDATE review_preparation_work SET state='queued',attempt=0,"
         "recovery_attempt=0,retry_not_before=0,failure_code=NULL,failure_root=NULL,"
         "updated_at=? WHERE work_id=?",
+        (updated_at, work_id),
+    )
+    connection.execute(
+        "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+        "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+        (updated_at, scan_id),
+    )
+
+
+def _prepare_again(
+    connection: sqlite3.Connection, work_id: str, scan_id: str, updated_at: int
+) -> None:
+    """Prepare a work again from extraction, as a fresh scan would."""
+    connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+        "attempt=0,recovery_attempt=0,retry_not_before=0,report_id=NULL,"
+        "recovery_source_report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
+        "failure_code=NULL,failure_root=NULL,outcome=NULL,updated_at=? "
+        "WHERE work_id=?",
         (updated_at, work_id),
     )
     connection.execute(
