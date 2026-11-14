@@ -973,6 +973,12 @@ describe('Application shell', () => {
       expect(notice).toHaveTextContent(expected)
       expect(notice).not.toHaveTextContent('private.example')
       expect(notice).not.toHaveTextContent('token')
+      // A remedy in Settings → Audiobookshelf links to that section (#1765).
+      if (code === 'tls' || code === 'authentication')
+        expect(
+          within(notice).getByRole('link', { name: 'Settings → Audiobookshelf' }),
+        ).toHaveAttribute('href', '/settings?group=connection')
+      else expect(within(notice).queryByRole('link')).toBeNull()
     },
   )
 

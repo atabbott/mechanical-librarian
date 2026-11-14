@@ -269,7 +269,7 @@ describe('owner settings route', () => {
     expect(screen.getByRole('link', { name: 'Get a Hardcover key' })).toBeVisible()
     expect(screen.getByText('Configured · ····abcd')).toBeVisible()
     expect(screen.getByRole('textbox', { name: 'Contact email' })).toHaveAccessibleDescription(
-      /Sent only to Open Library, as it asks; never kept in reports/,
+      /Sent to Open Library with each lookup, as it asks/,
     )
     expect(screen.queryByText('Cover evidence')).not.toBeInTheDocument()
     expect(screen.queryByRole('group', { name: /cover evidence/i })).not.toBeInTheDocument()
@@ -410,7 +410,7 @@ describe('owner settings route', () => {
     const metadata = screen.getByText('a-very_long-library-name').closest('.settings-record-meta')
     expect(metadata).not.toBeNull()
     expect(metadata).toHaveTextContent('Local identifier: a-very_long-library-name')
-    expect(metadata).toHaveTextContent('Audiobookshelf identifier: books')
+    expect(metadata).not.toHaveTextContent('Audiobookshelf identifier')
     expect(
       screen.getByRole('group', {
         name: 'Sources for Ebooks & Audiobooks: Collected Editions',
@@ -478,7 +478,7 @@ describe('owner settings route', () => {
         throw new ApiError(409, 'settings_revision_stale')
       })
       renderRoute('/settings', http)
-      expect(await screen.findByRole('alert')).toHaveTextContent('could not safely read')
+      expect(await screen.findByRole('alert')).toHaveTextContent('If trying again does not help')
       await user.click(screen.getByRole('button', { name: 'Try again' }))
       expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
       await user.clear(screen.getByDisplayValue('https://library.invalid'))
@@ -538,7 +538,7 @@ describe('owner settings route', () => {
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     const recovered = await screen.findByText(
-      'Current settings reloaded. Review the values before saving again.',
+      'Saved settings loaded. Check whether your changes are there before saving again.',
     )
     expect(recovered.closest('[role="alert"]')).toHaveFocus()
     expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
@@ -573,13 +573,15 @@ describe('owner settings route', () => {
     await user.type(endpoint, 'https://submitted.invalid')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
-    const uncertain = await screen.findByText(/Save outcome is uncertain and Settings could not/)
+    const uncertain = await screen.findByText(
+      /No answer came back, and the saved settings could not be loaded/,
+    )
     expect(uncertain.closest('[role="alert"]')).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Retry settings reload' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Load saved settings' })).toBeVisible()
     expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
     // Nothing is still coming, so the tray does not say it is waiting (#1742).
-    expect(screen.queryByText(/Waiting for current settings/u)).toBeNull()
+    expect(screen.queryByText(/Checking what was saved/u)).toBeNull()
     expect(http.writeSettings).toHaveBeenCalledOnce()
   })
 
@@ -611,9 +613,9 @@ describe('owner settings route', () => {
       expect(element.closest('[role="alert"]')).toBeNull()
       await waitFor(() => expect(reload).toHaveFocus())
       expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
-      expect(screen.queryByRole('button', { name: 'Retry settings reload' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Load saved settings' })).toBeNull()
       expect(screen.queryByText(/could not be reloaded/u)).toBeNull()
-      expect(screen.queryByText(/Waiting for current settings/u)).toBeNull()
+      expect(screen.queryByText(/Checking what was saved/u)).toBeNull()
     }
 
     it('offers the reload when the reconciling read meets a newer build', async () => {
@@ -627,7 +629,7 @@ describe('owner settings route', () => {
       expect(http.writeSettings).toHaveBeenCalledOnce()
     })
 
-    it('moves focus to the reload when Retry settings reload meets a newer build', async () => {
+    it('moves focus to the reload when Load saved settings meets a newer build', async () => {
       const http = createHttp()
       http.getSettings = vi
         .fn()
@@ -635,7 +637,7 @@ describe('owner settings route', () => {
         .mockRejectedValueOnce(new ApiError(503, 'settings_unavailable'))
         .mockRejectedValue(new BuildMismatchError())
       const user = await saveUncertain(http)
-      await user.click(await screen.findByRole('button', { name: 'Retry settings reload' }))
+      await user.click(await screen.findByRole('button', { name: 'Load saved settings' }))
       await expectStale()
     })
   })
@@ -695,8 +697,10 @@ describe('owner settings route', () => {
     await user.clear(endpoint)
     expect(endpoint).toHaveFocus()
     expect(endpoint).toHaveAttribute('aria-invalid', 'true')
-    expect(endpoint).toHaveAccessibleDescription(/endpoint must contain 1–2,048 characters/)
-    expect(screen.getByRole('alert')).toHaveTextContent('endpoint must contain')
+    expect(endpoint).toHaveAccessibleDescription(
+      /Enter an Audiobookshelf endpoint of up to 2,048 characters/,
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter an Audiobookshelf endpoint')
 
     await user.click(screen.getByRole('button', { name: 'Replace Audiobookshelf access key' }))
     const targetSecret = screen.getByLabelText('Replacement Audiobookshelf access key')
@@ -708,7 +712,9 @@ describe('owner settings route', () => {
     const email = screen.getByRole('textbox', { name: 'Contact email' })
     await user.clear(email)
     expect(email).toHaveAttribute('aria-invalid', 'true')
-    expect(email).toHaveAccessibleDescription(/needs a contact email while enabled/)
+    expect(email).toHaveAccessibleDescription(
+      /Enter a contact email for Open Library, or turn it off/,
+    )
     await user.click(segment('Use Open Library', 'Off'))
     expect(email).not.toHaveAttribute('aria-invalid')
     await user.click(segment('Use Open Library', 'On'))
@@ -726,7 +732,9 @@ describe('owner settings route', () => {
     const libraryId = screen.getByRole('textbox', { name: 'Audiobookshelf library ID' })
     await user.clear(libraryId)
     expect(libraryId).toHaveAttribute('aria-invalid', 'true')
-    expect(libraryId).toHaveAccessibleDescription(/identifier must contain 1–128 characters/)
+    expect(libraryId).toHaveAccessibleDescription(
+      /Enter an Audiobookshelf library ID of up to 128 characters/,
+    )
 
     await user.click(screen.getByRole('button', { name: /Background work/ }))
     const timeout = screen.getByRole('spinbutton', { name: 'Request timeout' })
@@ -1931,7 +1939,7 @@ describe('owner settings route', () => {
         screen.getByRole('button', { name: 'Keep configured Audiobookshelf access key' }),
       ).toHaveFocus(),
     )
-    expect(screen.getByRole('alert')).toHaveTextContent('home requires an access key.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Audiobookshelf needs an access key.')
     expect(http.writeSettings).not.toHaveBeenCalled()
   })
 
@@ -2009,24 +2017,27 @@ describe('owner settings route', () => {
     http.getSettings = vi.fn(async () => view())
     renderRoute('/settings?group=background', http)
     await user.click(await screen.findByText('Response and file size limits'))
-    const archive = screen.getByRole('spinbutton', { name: 'Source archive limit' })
+    const archive = screen.getByRole('spinbutton', { name: 'Ebook file limit' })
     await user.clear(archive)
     await user.type(archive, '1048576')
     await user.click(screen.getByText('Response and file size limits'))
     await user.click(screen.getByRole('button', { name: /Appearance/ }))
     await user.click(screen.getByRole('button', { name: 'Review changes' }))
     await user.click(
-      within(screen.getByRole('list')).getByRole('button', { name: /Source archive limit/ }),
+      within(screen.getByRole('list')).getByRole('button', { name: /Ebook file limit/ }),
     )
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Background work' })).toBeVisible()
     await waitFor(() =>
-      expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveFocus(),
+      expect(screen.getByRole('spinbutton', { name: 'Ebook file limit' })).toHaveFocus(),
     )
   })
 
   it.each([
-    [new ApiError(422, 'invalid_settings'), /Nothing was saved; your changes are still here/],
+    [
+      new ApiError(422, 'invalid_settings'),
+      /^Nothing was saved\. Check the values and save again\.$/,
+    ],
     [new CsrfRenewedError(), /^Your session was refreshed\. Press again\.$/],
   ])('keeps every edit when the server rejects a save with %s', async (failure, copy) => {
     const user = userEvent.setup()
@@ -2092,16 +2103,14 @@ describe('owner settings route', () => {
         ),
       )
     }
-    expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveValue(256)
+    expect(screen.getByRole('spinbutton', { name: 'Ebook file limit' })).toHaveValue(256)
     expect(
-      screen.getByRole('spinbutton', { name: 'Source archive limit' }).parentElement,
+      screen.getByRole('spinbutton', { name: 'Ebook file limit' }).parentElement,
     ).toHaveTextContent('MB')
     expect(window.document.body).not.toHaveTextContent(/\bbytes\b|KiB|MiB/u)
 
     await act(async () => router.navigate({ to: '/settings', search: { group: 'access' } }))
-    expect(await screen.findByRole('spinbutton', { name: 'Owner session lifetime' })).toHaveValue(
-      43_200,
-    )
+    expect(await screen.findByRole('spinbutton', { name: 'Sign-in length' })).toHaveValue(43_200)
   })
 
   it('saves an untouched document byte-identically', async () => {
@@ -2219,6 +2228,7 @@ describe('owner settings route', () => {
     await user.type(polling, '1')
     expect(polling).not.toHaveAttribute('aria-invalid', 'true')
     const timeout = screen.getByRole('spinbutton', { name: 'Request timeout' })
+    expect(timeout).toHaveAccessibleDescription(/1 to 60 seconds/u)
     await user.clear(timeout)
     await user.type(timeout, '61')
     expect(timeout).toHaveAccessibleDescription(/Request timeout must be from 1 to 60 seconds\./u)
@@ -2231,13 +2241,13 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=background', http)
 
     await user.click(await screen.findByText('Response and file size limits'))
-    const audio = screen.getByRole('spinbutton', { name: 'Audiobook source limit' })
+    const audio = screen.getByRole('spinbutton', { name: 'Audiobook file limit' })
     // Sizes read in MB (1,048,576 bytes), never as raw bytes (#1286).
     expect(audio).toHaveValue(8192)
     // Its own ceiling, not the EPUB archive's: an audiobook is read by header
     // and is routinely larger than any archive this build admits.
     expect(audio).toHaveAttribute('max', '16384')
-    expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveAttribute(
+    expect(screen.getByRole('spinbutton', { name: 'Ebook file limit' })).toHaveAttribute(
       'max',
       '256',
     )
@@ -2246,7 +2256,7 @@ describe('owner settings route', () => {
     await user.type(audio, '0.0009')
     expect(audio).toHaveAttribute('aria-invalid', 'true')
     expect(audio).toHaveAccessibleDescription(
-      /Audiobook source limit must be from 0\.000977 MB \(1 KB\) to 16,384 MB \(16 GB\)\./u,
+      /Audiobook file limit must be from 0\.000977 MB \(1 KB\) to 16,384 MB \(16 GB\)\./u,
     )
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
     await waitFor(() => expect(audio).toHaveFocus())
@@ -2534,7 +2544,7 @@ it('offers a reload, not another try, when settings meet a newer build', async (
   // The shell notice states the build mismatch; the page does not repeat it.
   expect(screen.queryByText(/Mechanical Librarian was updated/u)).toBeNull()
   expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
-  expect(screen.queryByText('Settings are unavailable.')).toBeNull()
+  expect(screen.queryByText('Settings could not be loaded')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 })
 
@@ -3490,9 +3500,9 @@ describe('library languages in Settings (#1466)', () => {
     })
     renderRoute('/settings?group=libraries', http)
 
-    expect(await screen.findByText('No language is declared for this library.')).toBeVisible()
+    expect(await screen.findByText('No languages yet.')).toBeVisible()
     expect(
-      screen.getByText(/Audiobook matching reads them; nothing is written into an item/),
+      screen.getByText('First is preferred. Changing this prepares the library again.'),
     ).toBeVisible()
     const picker = screen.getByRole('combobox', { name: `Add a language to ${title}` })
     await user.click(picker)
@@ -3525,7 +3535,7 @@ describe('library languages in Settings (#1466)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Review changes' }))
     const change = screen.getByText(`${title}: languages`).closest('li')
-    expect(change).toHaveTextContent('None declared')
+    expect(change).toHaveTextContent('No languages')
     expect(change).toHaveTextContent('becomes French (fr)')
     // The review link goes back to the row, onto a control that can be used.
     await user.click(within(change as HTMLElement).getByRole('button'))
@@ -3544,7 +3554,7 @@ describe('library languages in Settings (#1466)', () => {
     renderRoute('/settings?group=libraries', http)
 
     await user.click(await screen.findByRole('button', { name: 'Remove German (de)' }))
-    expect(screen.getByText('No language is declared for this library.')).toBeVisible()
+    expect(screen.getByText('No languages yet.')).toBeVisible()
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: `Add a language to ${title}` })).toHaveFocus(),
     )
@@ -3566,14 +3576,14 @@ describe('library languages in Settings (#1466)', () => {
     const picker = await screen.findByRole('combobox', { name: `Add a language to ${title}` })
     expect(picker).toBeDisabled()
     expect(picker).toHaveAccessibleDescription(
-      'A library declares at most 8 languages. Remove one to add another.',
+      'A library can have up to 8 languages. Remove one to add another.',
     )
     expect(
-      screen.getByText('A library declares at most 8 languages. Remove one to add another.'),
+      screen.getByText('A library can have up to 8 languages. Remove one to add another.'),
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Remove Swedish (sv)' }))
     expect(picker).toBeEnabled()
-    expect(screen.queryByText(/declares at most 8 languages/)).toBeNull()
+    expect(screen.queryByText(/can have up to 8 languages/)).toBeNull()
   })
 
   it('withholds a language the list already names under another tag', async () => {
@@ -3622,9 +3632,7 @@ describe('library languages in Settings (#1466)', () => {
     cleanup()
     http.getSettings = vi.fn(async () => view('file'))
     renderRoute('/settings?group=libraries', http)
-    expect(
-      await screen.findByText('The configuration file declares no language for this library.'),
-    ).toBeVisible()
+    expect(await screen.findByText('No languages.')).toBeVisible()
   })
 })
 
@@ -3691,7 +3699,7 @@ describe('settings provider throttling (#1282)', () => {
     http.getSettings = vi.fn(async () => view())
     http.getPreparation = vi.fn(async () => throttled())
     renderRoute('/settings?group=background', http)
-    for (const name of ['Request timeout', 'Library polling interval', 'Shutdown budget'])
+    for (const name of ['Request timeout', 'Library polling interval', 'Shutdown grace period'])
       expect(await screen.findByRole('spinbutton', { name })).toBeVisible()
     expect(screen.queryByText('Provider recovery generation')).toBeNull()
     expect(screen.queryByRole('spinbutton', { name: /recovery/i })).toBeNull()
@@ -3782,7 +3790,7 @@ describe('settings provider throttling (#1282)', () => {
     const failing = createHttp()
     failing.getPreparation = vi.fn(async () => throttled())
     renderRoute('/settings', failing)
-    expect(await screen.findByText('Settings are unavailable.')).toBeVisible()
+    expect(await screen.findByText('Settings could not be loaded')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull()
     expect(failing.retryProviderRecovery).not.toHaveBeenCalled()
   })

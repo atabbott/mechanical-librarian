@@ -51,6 +51,7 @@ import type {
 import { recoverableLazy } from './chunkRecovery'
 import { CountPhrases } from './components/CountPhrases'
 import { LiveStreamNotice } from './components/LiveStreamNotice'
+import { SettingsPathText } from './components/SettingsPathText'
 import {
   preparationInvalidationDebtKey,
   useLiveInvalidation,
@@ -448,7 +449,7 @@ export const ConnectionNotice = ({
     >
       <div>
         <strong>{title}</strong>
-        <span>{copy}</span>
+        <span>{<SettingsPathText text={copy} />}</span>
       </div>
       <dl>
         <div>

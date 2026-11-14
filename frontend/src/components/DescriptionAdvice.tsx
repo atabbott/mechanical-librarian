@@ -4,6 +4,7 @@ import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { DescriptionAdviceView } from '../api/http'
 import { useReviewContext } from '../router'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
+import { SettingsPathText } from './SettingsPathText'
 
 export const DescriptionAdvicePreparation = ({
   advice,
@@ -31,7 +32,8 @@ export const DescriptionAdvicePreparation = ({
     <div className="description-advice-preparation">
       {!advice.candidate ? (
         <p role="status">
-          {advice.engine} · {advice.model}. {descriptionAdviceStatus(advice)}
+          {advice.engine} · {advice.model}.{' '}
+          <SettingsPathText text={descriptionAdviceStatus(advice)} />
         </p>
       ) : null}
       {!busy ? (

@@ -92,7 +92,7 @@ const Secret = ({
         <strong>{presence.indicator ?? 'Configured'}</strong>
         {confirmingClear ? (
           <div role="alert" className="settings-clear-confirmation">
-            <span>Confirm removal. This integration will not be used for later work.</span>
+            <span>The key is removed when you save.</span>
             <button
               type="button"
               onClick={() => {
@@ -232,11 +232,7 @@ const LibraryLanguages = ({
       })}
     </ol>
   ) : (
-    <p className="settings-empty-associations">
-      {locked
-        ? 'The configuration file declares no language for this library.'
-        : 'No language is declared for this library.'}
-    </p>
+    <p className="settings-empty-associations">{locked ? 'No languages.' : 'No languages yet.'}</p>
   )
   if (locked) return list
   return (
@@ -259,7 +255,7 @@ const LibraryLanguages = ({
       </div>
       {full ? (
         <p className="settings-empty-associations" id={controlId(`${fieldId}.limit`)}>
-          A library declares at most {libraryLanguageLimit} languages. Remove one to add another.
+          A library can have up to {libraryLanguageLimit} languages. Remove one to add another.
         </p>
       ) : null}
     </div>
@@ -333,7 +329,6 @@ export default function SettingsPage() {
     return (
       <section className="settings-state" aria-busy="true" data-route-focus tabIndex={-1}>
         <h1>Loading settings…</h1>
-        <p>Reading saved settings.</p>
       </section>
     )
   // Another try cannot read settings from a newer server build: reload instead.
@@ -347,8 +342,8 @@ export default function SettingsPage() {
   if (query.isError && query.data === undefined)
     return (
       <section className="settings-state" data-route-focus tabIndex={-1}>
-        <h1>Settings are unavailable.</h1>
-        <p role="alert">The server could not safely read the current settings.</p>
+        <h1>Settings could not be loaded</h1>
+        <p role="alert">If trying again does not help, restart the Mechanical Librarian service.</p>
         <button type="button" onClick={() => void query.refetch()}>
           Try again
         </button>
@@ -370,19 +365,19 @@ export default function SettingsPage() {
           ref={reconciliationTarget}
         >
           {reconciliation === 'checking' ? (
-            <p>Save outcome is uncertain. Reloading saved settings before another save.</p>
+            <p>No answer came back. Loading the saved settings to check what was saved.</p>
           ) : reconciliation === 'failed' ? (
             <>
               <p>
-                Save outcome is uncertain and Settings could not be reloaded. Do not save again
-                until the current settings are available.
+                No answer came back, and the saved settings could not be loaded. Load them before
+                you save again.
               </p>
               <button type="button" onClick={() => void reconcileUncertainSave()}>
-                Retry settings reload
+                Load saved settings
               </button>
             </>
           ) : (
-            <p>Current settings reloaded. Review the values before saving again.</p>
+            <p>Saved settings loaded. Check whether your changes are there before saving again.</p>
           )}
         </div>
       ) : null}
@@ -611,21 +606,18 @@ const SettingsEditor = ({
       ? // Once the reload has ended, the message above the form says what is true.
         reloadEnded
         ? null
-        : 'Save outcome uncertain. Waiting for current settings.'
+        : 'Checking what was saved…'
       : status === 'failed'
-        ? refusalCopy(
-            mutation.error,
-            'The server rejected these values. Nothing was saved; your changes are still here.',
-          )
+        ? refusalCopy(mutation.error, 'Nothing was saved. Check the values and save again.')
         : status === 'stale'
-          ? 'Settings changed elsewhere. Loading the newer saved values under your changes.'
+          ? 'Settings changed elsewhere. Loading the newer values and keeping your changes.'
           : status === 'unconfirmed'
-            ? 'Settings changed elsewhere, but the newer values could not be confirmed. Your changes are still here; save again to retry.'
+            ? 'Settings changed elsewhere, and the newer values could not be loaded. Save again to retry.'
             : status === 'rebased' && settled
               ? 'Settings changed elsewhere, and your edits now show the newer saved values. Nothing is left to save.'
               : status === 'rebased'
                 ? conflicts
-                  ? `Settings changed elsewhere. Your other changes were kept; ${String(conflicts)} ${conflicts === 1 ? 'edit was' : 'edits were'} also changed elsewhere and now ${conflicts === 1 ? 'shows' : 'show'} the newer saved value.`
+                  ? `Settings changed elsewhere. ${String(conflicts)} of your edits ${conflicts === 1 ? 'now shows the newer saved value' : 'now show the newer saved values'}, and your other changes were kept.`
                   : 'Settings changed elsewhere. Your changes were kept on top of the newer saved values.'
                 : status === 'invalid' || errors.length
                   ? `${String(errors.length)} ${errors.length === 1 ? 'value needs' : 'values need'} fixing before saving: ${errors[0]?.message ?? ''}`
@@ -700,9 +692,7 @@ const SettingsEditor = ({
       {locked ? (
         <section className="settings-file-banner" role="status">
           <strong>Managed by /data/config.json</strong>
-          <p>
-            These values are read-only while this deployment is managed by its configuration file.
-          </p>
+          <p>To change a value, edit the file and restart the service.</p>
         </section>
       ) : null}
       {settled ? (
@@ -756,7 +746,7 @@ const SettingsEditor = ({
                     <FieldRow
                       {...recordRow(`connection.${connection.name}.endpoint`)}
                       title="Audiobookshelf endpoint"
-                      description="The service address used for catalogue and metadata work."
+                      description="https://audiobookshelf.example:13378"
                     >
                       {locked ? (
                         <span>{connection.endpoint}</span>
@@ -808,9 +798,7 @@ const SettingsEditor = ({
               <>
                 {draft.providers.length === 0 ? (
                   <div className="settings-empty">
-                    <p>
-                      No metadata sources yet. More sources usually give review better evidence.
-                    </p>
+                    <p>No metadata sources yet. Add one below.</p>
                   </div>
                 ) : null}
                 {draft.providers.map((provider, index) => {
@@ -861,7 +849,7 @@ const SettingsEditor = ({
                           {...recordRow(`provider.${provider.name}.cover_enabled`)}
                           group
                           title="Cover evidence"
-                          description="Consider this source’s own cover image. Stays off while the source is off."
+                          description="Adds this source’s cover image to the covers considered for each book."
                         >
                           {locked ? (
                             <strong>{onOffWord(provider.cover_enabled)}</strong>
@@ -885,12 +873,7 @@ const SettingsEditor = ({
                         </FieldRow>
                       ) : null}
                       {provider.adapter === 'audible_catalog' ? (
-                        <FieldRow
-                          title="Marketplace order"
-                          description="Lookups try these marketplaces in this order."
-                          managed
-                          locked={locked}
-                        >
+                        <FieldRow title="Marketplace order" managed locked={locked}>
                           <strong>{provider.marketplaces.join(', ')}</strong>
                         </FieldRow>
                       ) : null}
@@ -899,7 +882,7 @@ const SettingsEditor = ({
                         <FieldRow
                           {...recordRow(`provider.${provider.name}.contact_email`)}
                           title="Contact email"
-                          description="Sent only to Open Library, as it asks; never kept in reports."
+                          description="Sent to Open Library with each lookup, as it asks."
                         >
                           {locked ? (
                             <span>{provider.contact_email ?? 'Not configured'}</span>
@@ -987,9 +970,6 @@ const SettingsEditor = ({
                             Local identifier: <code>{library.name}</code>
                           </li>
                           <li>
-                            Audiobookshelf identifier: <code>{library.library_id}</code>
-                          </li>
-                          <li>
                             Connection: <code>{library.connection}</code>
                           </li>
                           <li>
@@ -1001,7 +981,6 @@ const SettingsEditor = ({
                     <FieldRow
                       {...recordRow(`library.${library.name}.library_id`)}
                       title="Audiobookshelf library ID"
-                      description="The exact Audiobookshelf library this collection reads."
                     >
                       {locked ? (
                         <span>{library.library_id}</span>
@@ -1024,13 +1003,12 @@ const SettingsEditor = ({
                       {...recordRow(`library.${library.name}.provider_connections`)}
                       group
                       title="Sources"
-                      description="Only these sources give evidence for this library."
                     >
                       {locked ? (
                         <strong>
                           {library.provider_connections.length
                             ? library.provider_connections.join(', ')
-                            : 'Audiobookshelf evidence only'}
+                            : 'No sources'}
                         </strong>
                       ) : draft.providers.some((provider) => provider.enabled) ? (
                         <fieldset
@@ -1074,7 +1052,7 @@ const SettingsEditor = ({
                       {...recordRow(`library.${library.name}.languages`)}
                       group
                       title="Languages"
-                      description="The languages this library holds, first preferred. Audiobook matching reads them; nothing is written into an item. Changing them prepares this library’s items again."
+                      description="First is preferred. Changing this prepares the library again."
                     >
                       <LibraryLanguages
                         fieldId={`library.${library.name}.languages`}
@@ -1120,8 +1098,7 @@ const SettingsEditor = ({
             {active === 'reviewer' ? (
               <>
                 <p className="settings-immediate">
-                  Reviewer actions take effect as soon as you use them. They are not part of Save
-                  settings or Discard all.
+                  Changes here apply at once and are not part of Save settings.
                 </p>
                 <ReviewerAccessPanel http={http} />
               </>
@@ -1153,7 +1130,7 @@ const SettingsEditor = ({
                   {...recordRow('server.diagnostic_timings_enabled')}
                   group
                   title="Diagnostic timings"
-                  description="Record how long each stage takes, for support diagnostics."
+                  description="Records how long each processing stage takes, for troubleshooting."
                 >
                   {locked ? (
                     <strong>{onOffWord(draft.server.diagnostic_timings_enabled)}</strong>
@@ -1176,12 +1153,7 @@ const SettingsEditor = ({
             ) : null}
             {active === 'appearance' ? (
               <>
-                <FieldRow
-                  {...recordRow('reduced_motion')}
-                  group
-                  title="Motion"
-                  description="Reduced whenever this setting or your system asks for it."
-                >
+                <FieldRow {...recordRow('reduced_motion')} group title="Motion">
                   {locked ? (
                     <strong>{motionWord(draft.reduced_motion)}</strong>
                   ) : (
@@ -1204,7 +1176,7 @@ const SettingsEditor = ({
                 </FieldRow>
                 <FieldRow
                   title="Theme"
-                  description="Light or dark is set for this browser from the theme button at the top of the page. It applies at once and is not part of Save settings."
+                  description="Set with the theme button at the top of the page."
                 >
                   <span className="settings-immediate-value">Browser only</span>
                 </FieldRow>
