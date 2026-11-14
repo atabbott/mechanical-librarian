@@ -96,7 +96,7 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
 def owner_cover_selection_kind(
     outcome: str, candidate: Mapping[str, object] | None
 ) -> tuple[str | None, str | None]:
-    """A ``cover-selection-authority-v3`` choice's candidate kind and retained plan.
+    """A cover-selection authority choice's candidate kind and retained plan.
 
     Only an accept names a kind: ``retained`` with its switch's plan for the
     original an automatic switch replaced, else ``candidate``. Keep and reject

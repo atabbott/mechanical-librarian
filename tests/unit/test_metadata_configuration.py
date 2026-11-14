@@ -1037,7 +1037,7 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
 
 
 def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> None:
-    """The optional audio ceiling remains optional within current `config-v11`.
+    """The optional audio ceiling remains optional within the current config.
 
     `LimitsInput` is closed, so a key added to it would reject every document
     written before it existed had it not carried a default. Both shapes an

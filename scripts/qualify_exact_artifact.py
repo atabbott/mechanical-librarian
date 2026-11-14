@@ -1718,7 +1718,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except QualificationFailure as error:
         # The evidence record goes to standard error and the narrative account
-        # to standard output, so no consumer of `exact-artifact-evidence-v4`
+        # to standard output, so no consumer of the exact-artifact evidence
         # sees narrative text on its stream and the record stays path-free.
         #
         # The record is written first, and the order is a guard. A consumer

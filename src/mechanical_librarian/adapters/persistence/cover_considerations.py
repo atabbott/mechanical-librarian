@@ -1065,7 +1065,7 @@ def _owner_selection_document(
     selection_id: str,
     supersedes_selection_id: str | None,
 ) -> str:
-    """The canonical ``cover-selection-authority-v3`` document of one owner choice."""
+    """The canonical cover-selection authority document of one owner choice."""
     candidate_kind, retained_plan_id = owner_cover_selection_kind(
         decision.outcome, selected
     )

@@ -1,4 +1,4 @@
-"""Regenerate the deterministic config-v11 JSON Schema reference."""
+"""Regenerate the deterministic JSON Schema reference for the current config."""
 
 from pathlib import Path
 

@@ -1,6 +1,6 @@
 """Closed, report-local identity classification for retained cover previews.
 
-This projection is intentionally separate from ``cover-review-packet-v2``.  It
+This projection is intentionally separate from the cover-review packet.  It
 uses no provider client, semantic image interpretation, persistence, or policy
 input; source pixels only authenticate the already-retained report evidence to
 the exact packet candidate transport.
