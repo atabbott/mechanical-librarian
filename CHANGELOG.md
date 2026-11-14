@@ -184,6 +184,12 @@ brackets are GitHub issues.
   what to check, the writing box says whether a change was written, and a
   cover comparison that could not be loaded names the button that tries again
   (#1765, #1791).
+- Settings reads plainly. Field hints show the accepted range instead of a
+  sentence about the field, the theme, reviewer and languages lines are
+  shorter, a lost save says "No answer came back", and errors say what to
+  enter instead of naming an internal identifier. "Settings → Reviewer" and
+  "Settings → Audiobookshelf" in reviewer errors and the library connection
+  notice are links to that section (#1765).
 - Description work saved while preparation is paused now starts as soon as
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also

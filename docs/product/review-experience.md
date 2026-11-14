@@ -547,8 +547,10 @@ says so.
 
 Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
-is the `?group=` URL value. Wider than 760 pixels, a section index sits beside
-the page, and at 760 or narrower a selector replaces it.
+is the `?group=` URL value. A message elsewhere that names Settings → Reviewer
+or Settings → Audiobookshelf links to that section. Wider than 760 pixels, a
+section index sits beside the page, and at 760 or narrower a selector replaces
+it.
 
 The page edits one draft of all settings, and each section counts its changes,
 indirect ones too. While anything is unsaved, a bottom tray shared with Policy

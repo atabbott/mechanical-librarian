@@ -5968,10 +5968,14 @@ describe('Library route', () => {
           timed_out: /Retry, or choose a faster model in Settings → Reviewer\./u,
         } as const
         if (reviewerFailureCode) {
-          const detail = screen.getByText(failureCopy[reviewerFailureCode])
-          expect(detail).toHaveClass('reviewer-unavailable-detail')
           // The remedy sits directly under the unavailable line it explains.
-          expect(detail.previousElementSibling).toHaveTextContent('Visual review is unavailable.')
+          const detail = screen.getByText('Visual review is unavailable.').nextElementSibling
+          expect(detail).toHaveClass('reviewer-unavailable-detail')
+          expect(detail).toHaveTextContent(failureCopy[reviewerFailureCode])
+          // Its Settings → Reviewer path links to that section (#1765).
+          expect(
+            within(detail as HTMLElement).getByRole('link', { name: 'Settings → Reviewer' }),
+          ).toHaveAttribute('href', '/settings?group=reviewer')
         } else expect(screen.queryByText(/The reviewer|No provider for this model/u)).toBeNull()
       } else {
         expect(
@@ -13924,8 +13928,14 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
       )
       if (state === 'requested' || state === 'running')
         expect(screen.getByText(/Preparing description advice/)).toBeVisible()
-      if (state === 'failed')
+      if (state === 'failed') {
         expect(screen.getByText(/The description adviser is unavailable/)).toBeVisible()
+        // Its Settings → Reviewer path links to that section (#1765).
+        expect(screen.getByRole('link', { name: 'Settings → Reviewer' })).toHaveAttribute(
+          'href',
+          '/settings?group=reviewer',
+        )
+      }
       if (state === 'succeeded') {
         expect(choices[1]).toBeEnabled()
         expect(choices[1]).toHaveAttribute('aria-checked', 'false')
