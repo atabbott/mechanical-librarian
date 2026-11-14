@@ -1446,6 +1446,9 @@ def test_owner_confirmed_unknown_cover_lifecycle(
     payload = dict(
         proposal_id=proposal["proposal_id"],
         target_fingerprint=case.target_fingerprint,
+        offered_alternatives_digest=next(
+            field for field in inspected["fields"] if field["destination"] == "cover"
+        )["offer_digest"],
         destination="cover",
         outcome="accept",
         selected_value={"kind": "cover", "value": candidates[0]["artifact_id"]},

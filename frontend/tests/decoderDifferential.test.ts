@@ -1151,6 +1151,7 @@ const decision: DecisionCommand = {
   outcome: 'accept',
   proposalId: 'p',
   targetFingerprint: 't',
+  offerDigest: 'offer-digest',
   idempotencyKey: 'k',
 }
 type Binding = NonNullable<DecisionCommand['authoredDescription']>['binding']

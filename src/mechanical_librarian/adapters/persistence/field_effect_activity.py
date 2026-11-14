@@ -75,6 +75,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
 )
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    stored_level_offer_documents,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
     _episode_decision_sql,
@@ -592,7 +595,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if type(decision) is AuthoredDescriptionDecision:
             value = self._description_authority_value(decision)
         elif type(decision) is HumanDecision:
-            decision.validate_for(case)
+            # A choice of a level alternative stands in the stored offer its
+            # digest binds; the check validates, it never decides (#1355).
+            decision.validate_for(
+                case,
+                stored_level_offer_documents(self._connection, case.review_case_id),
+            )
             value = decision.selected_value
         else:
             automatic = cast(AutomaticDecision | CoverAutomaticDecision, decision)

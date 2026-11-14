@@ -43,6 +43,9 @@ _READERS: dict[str, str] = {
     "identity_refused_candidates": "producer",
     "application/metadata_report.py::_rung_union": "producer",
     "application/metadata_report.py::_aggregate_identity_refused": "producer",
+    # The review API cites a refused product's evidence when a level choice
+    # names it (S10 "Readers", amendment 2): evidence only, never an offer.
+    "application/review_web.py::_evidence_by_reference": "review_api_evidence",
     # A retry successor keeps each carried lane's own records (AC6).
     "application/provider_retry_successor.py::"
     "GenerateProviderRetrySuccessor._merged.result": "producer",
@@ -121,3 +124,59 @@ def test_only_the_level_reconciliation_reads_the_level_tables() -> None:
         ):
             found[short] = _LEVEL_TABLE_MODULES.get(short, "unreviewed")
     assert found == _LEVEL_TABLE_MODULES
+
+
+# Who reads a case's stored level offers and composes them (S10 "Offer
+# binding" and "Readers", amendment 2). Retained validation and the executor's
+# authority check read every stored level through one helper; the review API
+# reads the current offer through the decision store; composition is the
+# review case's, used by the validator and the review API's read.
+_OFFER_HELPERS = frozenset(
+    {"stored_level_offers", "stored_level_offer_documents", "current_level_offer"}
+)
+_OFFER_READERS = {
+    # Retained-decision readers, the command's current offer and the review
+    # API's current-offer read (`review_case_level_offer`).
+    "adapters/persistence/decisions.py": "retained_validation_and_command",
+    # Browse and attention projections, their cache key and the detail
+    # snapshot's current offer.
+    "adapters/persistence/review_projections.py": "review_projections",
+    # The executor's authority check (`_authority_source`).
+    "adapters/persistence/field_effect_activity.py": "executor_authority",
+}
+_OFFER_COMPOSERS = {
+    "domain/review_case.py": "composition",
+    "domain/human_decision.py": "validator",
+    "application/review_web.py": "review_api",
+}
+
+
+def _names(path: Path, wanted: frozenset[str]) -> bool:
+    return any(
+        (isinstance(node, ast.Name) and node.id in wanted)
+        or (isinstance(node, ast.Attribute) and node.attr in wanted)
+        or (
+            isinstance(node, ast.alias)
+            and (node.asname or node.name).split(".")[-1] in wanted
+        )
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+    )
+
+
+def test_only_amendment_two_reads_the_stored_level_offers() -> None:
+    readers: dict[str, str] = {}
+    composers: dict[str, str] = {}
+    for path in sorted(
+        (*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py"))
+    ):
+        short = (
+            path.relative_to(ROOT).as_posix().removeprefix("src/mechanical_librarian/")
+        )
+        if short == "adapters/persistence/level_reconciliation.py":
+            continue
+        if _names(path, _OFFER_HELPERS):
+            readers[short] = _OFFER_READERS.get(short, "unreviewed")
+        if _names(path, frozenset({"compose_offer"})):
+            composers[short] = _OFFER_COMPOSERS.get(short, "unreviewed")
+    assert readers == _OFFER_READERS
+    assert composers == _OFFER_COMPOSERS

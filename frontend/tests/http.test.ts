@@ -8,6 +8,7 @@ import {
   caseDetail,
   caseHistory,
   choiceContext,
+  fieldChoiceContext,
   coverAutomaticDecision,
   coverCandidate,
   coverConsideration,
@@ -992,7 +993,7 @@ describe('ReviewApiClient', () => {
   it('preserves present and null series sequences and refuses an absent one', async () => {
     const detail = (
       series: readonly Record<string, unknown>[],
-      choiceContexts: unknown = [choiceContext()],
+      choiceContexts: unknown = [fieldChoiceContext()],
     ) =>
       readCase(
         caseDetail({
@@ -1216,13 +1217,13 @@ describe('ReviewApiClient', () => {
       decision_actions: ['keep_current', 'accept'],
       proposed_values: [{ kind: 'text', value: 'Alternative' }],
       choice_contexts: [
-        choiceContext({ rationale: 'Current evidence.' }),
-        choiceContext({
+        fieldChoiceContext({ rationale: 'Current evidence.' }),
+        fieldChoiceContext({
           alternative_id: 'eligible',
           rationale: 'Eligible evidence.',
           selection: 'proposed',
         }),
-        choiceContext({
+        fieldChoiceContext({
           alternative_id: 'preserves-target',
           rationale: 'Retained non-selectable evidence.',
           selection: 'proposed',
@@ -1244,7 +1245,7 @@ describe('ReviewApiClient', () => {
     expect(
       (
         await readCase(
-          response([field({ choice_contexts: [choiceContext({ evidence: [languageRow] })] })]),
+          response([field({ choice_contexts: [fieldChoiceContext({ evidence: [languageRow] })] })]),
         )
       ).fields[0]?.choiceContexts[0]?.evidence,
     ).toEqual([languageRow])
@@ -1253,7 +1254,7 @@ describe('ReviewApiClient', () => {
         response([
           field({
             choice_contexts: [
-              choiceContext({ evidence: [{ ...languageRow, language: undefined }] }),
+              fieldChoiceContext({ evidence: [{ ...languageRow, language: undefined }] }),
             ],
           }),
         ]),
@@ -2442,6 +2443,7 @@ describe('ReviewApiClient', () => {
       outcome: 'keep_current',
       proposalId: 'proposal-1',
       targetFingerprint: 'fingerprint-1',
+      offerDigest: 'offer-digest',
       idempotencyKey: 'same-decision',
     })
 
@@ -3653,6 +3655,7 @@ it('sends an ordinary chooser authored command only to the bound authored select
     outcome: 'accept',
     proposalId: field.proposalId,
     targetFingerprint: field.targetFingerprint,
+    offerDigest: field.offerDigest,
     selectedValue: { kind: 'text', value: candidate.output.description },
     idempotencyKey: 'owner-choice-idempotency',
     authoredDescription: { candidateId: candidate.candidate_id, binding: advice.binding },
@@ -3668,6 +3671,32 @@ it('sends an ordinary chooser authored command only to the bound authored select
     })
     expect(new Headers(options.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
   }
+})
+
+it('binds a choice to the offer the field showed (#1355)', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const served = payload.fields.find((item) => item.destination === 'series')
+  const field = (await readCase(payload)).fields.find((item) => item.destination === 'series')
+  if (!served || !field) throw new Error('fixture requires its series field')
+  expect(field.offerDigest).toBe(served.offer_digest)
+  const fetchMock = vi.fn<typeof fetch>(async () => Response.json({}, { status: 500 }))
+  const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+  await client
+    .recordDecision('case-1', {
+      destination: 'series',
+      outcome: 'keep_current',
+      proposalId: field.proposalId,
+      targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
+      idempotencyKey: 'offer-bound-choice',
+    })
+    .catch(() => undefined)
+  const options = fetchMock.mock.calls[0]?.[1]
+  if (!options) throw new Error('decision request was not sent')
+  expect(JSON.parse(options.body as string)).toMatchObject({
+    offered_alternatives_digest: served.offer_digest,
+    target_fingerprint: served.target_fingerprint,
+  })
 })
 
 it.each([undefined, 'applying', 'verified'])(
@@ -3812,6 +3841,7 @@ it('validates the closed decision confirmation and maps its case exactly once', 
     outcome: 'keep_current' as const,
     proposalId: 'proposal-1',
     targetFingerprint: 'fingerprint-1',
+    offerDigest: 'offer-digest',
     idempotencyKey: 'same-decision',
   }
   const casePayload = { ...payload, review_case_id: 'case-1', current: false }
@@ -3873,6 +3903,7 @@ it.each(['decisions', 'description-advice/selection'])(
       outcome: 'accept' as const,
       proposalId: field.proposalId,
       targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
       selectedValue: {
         kind: 'text' as const,
         value: field.descriptionAdvice.candidate.output.description,
@@ -3966,6 +3997,7 @@ it.each(['invalid JSON', 'interrupted body'])(
         outcome: 'accept',
         proposalId: 'proposal-1',
         targetFingerprint: 'fingerprint-1',
+        offerDigest: 'offer-digest',
         idempotencyKey: 'owner-choice-idempotency',
         selectedValue: { kind: 'cover', value: `cover_${'a'.repeat(64)}` },
         considerationId: `cover_consideration_${'b'.repeat(64)}`,
@@ -4871,6 +4903,7 @@ describe('case-detail write decoding (#1688)', () => {
       outcome: 'accept',
       proposalId: field.proposalId,
       targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
       selectedValue: { kind: 'text', value: candidate.output.description },
       idempotencyKey: 'decoded-decision',
       ...(authored

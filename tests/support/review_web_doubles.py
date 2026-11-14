@@ -496,6 +496,10 @@ class FakeReviewRepository:
     ) -> tuple[str, str]:
         raise ValueError("description preparation is not configured")
 
+    def review_case_level_offer(self, review_case_id: str) -> str | None:
+        """The double stores no Book matching offers: every field is live."""
+        return None
+
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return next(
             (

@@ -2342,6 +2342,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return self._decisions.find_human_decision(idempotency_digest)
 
+    def review_case_level_offer(self, review_case_id: str) -> str | None:
+        return self._decisions.review_case_level_offer(review_case_id)
+
     def record_human_decision(
         self,
         decision: HumanDecision,

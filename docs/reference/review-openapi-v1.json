@@ -5618,6 +5618,11 @@
             "title": "Destination",
             "type": "string"
           },
+          "offered_alternatives_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Offered Alternatives Digest",
+            "type": "string"
+          },
           "outcome": {
             "enum": [
               "accept",
@@ -5654,7 +5659,8 @@
           "destination",
           "outcome",
           "proposal_id",
-          "target_fingerprint"
+          "target_fingerprint",
+          "offered_alternatives_digest"
         ],
         "title": "_DecisionRequest",
         "type": "object"
@@ -5989,6 +5995,21 @@
               }
             ],
             "title": "Managed By File"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unreconciled_case",
+                  "digest_mismatch"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "required": [
@@ -6196,6 +6217,84 @@
           "option"
         ],
         "title": "_ExplicitQualification",
+        "type": "object"
+      },
+      "_FieldChoiceContext": {
+        "additionalProperties": false,
+        "properties": {
+          "alternative_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Id"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/_ChoiceEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "match_basis": {
+            "anyOf": [
+              {
+                "const": "title_and_author",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Basis"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "recommendation": {
+            "enum": [
+              "no_recommendation",
+              "recommended"
+            ],
+            "title": "Recommendation",
+            "type": "string"
+          },
+          "recommendation_reason": {
+            "title": "Recommendation Reason",
+            "type": "string"
+          },
+          "selection": {
+            "enum": [
+              "current",
+              "proposed"
+            ],
+            "title": "Selection",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alternative_id",
+          "evidence",
+          "limitations",
+          "rationale",
+          "recommendation",
+          "recommendation_reason",
+          "selection",
+          "match_basis"
+        ],
+        "title": "_FieldChoiceContext",
         "type": "object"
       },
       "_GenresQualification": {
@@ -6714,6 +6813,74 @@
         "title": "_HistoryDescriptionItem",
         "type": "object"
       },
+      "_HistoryMatchingChangedItem": {
+        "additionalProperties": false,
+        "description": "A field asked again because Book matching changed its offer (#1355).",
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "kind": {
+            "const": "asked_again_matching",
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "origin": {
+            "const": "book_matching",
+            "title": "Origin",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "matching-changed-history-event-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "destination",
+          "kind",
+          "occurred_at",
+          "origin",
+          "review_case_id",
+          "schema_version"
+        ],
+        "title": "_HistoryMatchingChangedItem",
+        "type": "object"
+      },
       "_HistoryPreviewItem": {
         "additionalProperties": false,
         "properties": {
@@ -6802,6 +6969,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryAutomaticItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryMatchingChangedItem"
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryCoverItem"
@@ -10457,7 +10627,7 @@
           },
           "choice_contexts": {
             "items": {
-              "$ref": "#/components/schemas/_ChoiceContext"
+              "$ref": "#/components/schemas/_FieldChoiceContext"
             },
             "title": "Choice Contexts",
             "type": "array"
@@ -10686,6 +10856,11 @@
             "title": "Notices",
             "type": "array"
           },
+          "offer_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Offer Digest",
+            "type": "string"
+          },
           "owner_control": {
             "anyOf": [
               {
@@ -10758,6 +10933,7 @@
           "provenance",
           "preservation_only",
           "corroboration_sources",
+          "offer_digest",
           "proposal_id",
           "target_fingerprint",
           "uncertainty"

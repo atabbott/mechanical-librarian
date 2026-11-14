@@ -32,6 +32,10 @@ from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    current_level_offer,
+    stored_level_offer_documents,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
     _active_generation_automatic_sql,
@@ -74,6 +78,7 @@ from mechanical_librarian.domain.human_decision import (
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
+    current_offer,
 )
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
@@ -399,7 +404,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             for row in rows:
                 decision = HumanDecision.from_json(row[10])
                 if scope is None:
-                    scope = DecisionScope.of(case)
+                    scope = DecisionScope.of(
+                        case,
+                        stored_level_offer_documents(
+                            self._connection, case.review_case_id
+                        ),
+                    )
                 decision.validate_in(scope)
                 if (
                     decision.decision_id,
@@ -432,6 +442,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
             return tuple(documents)
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
+
+    @local_operation
+    def review_case_level_offer(self, review_case_id: str) -> str | None:
+        """The case's level offer at its reconciled level, or None (#1355)."""
+        try:
+            return current_level_offer(self._connection, review_case_id)
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "review case level offer is unavailable"
+            ) from error
 
     @local_operation
     def find_human_decision(self, idempotency_digest: str) -> str | None:
@@ -517,6 +537,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
             target = case.target
+            offer = self._require_current_offer(case)
             decision.validate_new_for(
                 case,
                 dict(
@@ -528,6 +549,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ).get(decision.destination)
                 if decision.outcome == "owner_entered"
                 else None,
+                offer,
             )
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
@@ -762,6 +784,68 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ).fetchone():
                 raise HumanDecisionError("already_decided")
         return previous, authored, automatic
+
+    def _require_current_offer(self, case: ReviewCase) -> tuple[dict[str, object], ...]:
+        """The case's current offer, read inside the command's transaction.
+
+        A choice stands only in the offer its field shows now (#1355, S10), so
+        the digest check that follows sees exactly what the write binds.
+        """
+        try:
+            return current_offer(
+                case, current_level_offer(self._connection, case.review_case_id)
+            )
+        except ReviewCaseValueError as error:
+            raise MetadataReportError("review case level offer is invalid") from error
+
+    def _matching_changed_history(
+        self, review_case_id: str, limit: int
+    ) -> list[tuple[int, int, str, dict[str, object]]]:
+        """History's events for Book matching's cause rows (#1355, AC2).
+
+        A cause row writes no decision event, so History reads it from the
+        decision itself, as "asked again", never as the owner's withdrawal.
+        """
+        events: list[tuple[int, int, str, dict[str, object]]] = []
+        for (
+            decision_id,
+            destination,
+            occurred_at,
+            ordinal,
+            document,
+        ) in self._connection.execute(
+            "SELECT decision_id,destination,occurred_at,ordinal,document "
+            "FROM human_decisions WHERE review_case_id=? AND "
+            "json_extract(document,'$.cause') IS NOT NULL "
+            "ORDER BY occurred_at DESC,ordinal DESC LIMIT ?",
+            (review_case_id, limit),
+        ).fetchall():
+            cause = HumanDecision.from_json(document)
+            if (
+                cause.decision_id != decision_id
+                or cause.review_case_id != review_case_id
+                or cause.destination != destination
+                or cause.occurred_at != occurred_at
+                or cause.cause != "matching_changed"
+            ):
+                raise MetadataReportError("review history is invalid")
+            events.append(
+                (
+                    occurred_at,
+                    int(ordinal),
+                    "matching:" + decision_id,
+                    {
+                        "decision_id": decision_id,
+                        "destination": destination,
+                        "kind": "asked_again_matching",
+                        "occurred_at": occurred_at,
+                        "origin": "book_matching",
+                        "review_case_id": review_case_id,
+                        "schema_version": "matching-changed-history-event-v1",
+                    },
+                )
+            )
+        return events
 
     def _require_withdrawable(self, decision: HumanDecision) -> None:
         """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
@@ -1258,6 +1342,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         },
                     )
                 )
+            events.extend(self._matching_changed_history(review_case_id, limit))
             for decision_id, destination, occurred_at, document in automatic_rows:
                 value = json.loads(document)
                 if (

@@ -34,6 +34,7 @@ const field = (coverConsideration: NonNullable<Field['coverConsideration']> | nu
   proposedValues: [],
   provenance: [],
   targetFingerprint: 'fingerprint-cover',
+  offerDigest: 'offer-digest',
 })
 
 const candidate = (

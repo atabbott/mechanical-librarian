@@ -501,6 +501,7 @@ def test_genre_ask_authenticated_command_refuses_forged_values(tmp_path):
                 "outcome": "accept",
                 "proposal_id": field["proposal_id"],
                 "target_fingerprint": field["target_fingerprint"],
+                "offered_alternatives_digest": field["offer_digest"],
                 "selected_value": field["proposed_values"][0],
             }
             before = repository.get_review_case_decisions(case_id)

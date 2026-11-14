@@ -1084,10 +1084,12 @@ class _InstalledPreparationRun:
             title = title_fields[0]
             proposal_id = title.get("proposal_id")
             target_fingerprint = title.get("target_fingerprint")
+            offered = title.get("offer_digest")
             current = title.get("current")
             proposed_values = title.get("proposed_values")
             assert isinstance(proposal_id, str), _projection_shape(title)
             assert isinstance(target_fingerprint, str), _projection_shape(title)
+            assert isinstance(offered, str), _projection_shape(title)
             assert isinstance(current, dict), _projection_shape(title)
             assert isinstance(proposed_values, list), _projection_shape(title)
             current_value = current.get("value")
@@ -1116,6 +1118,7 @@ class _InstalledPreparationRun:
                     "proposal_id": proposal_id,
                     "selected_value": proposed,
                     "target_fingerprint": target_fingerprint,
+                    "offered_alternatives_digest": offered,
                 },
             )
         assert response.status_code == 200, response.text

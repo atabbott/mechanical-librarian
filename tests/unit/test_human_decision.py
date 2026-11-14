@@ -79,7 +79,7 @@ def test_all_five_outcomes_are_canonical_and_exact_version_bound(
         occurred_at=1_000,
     )
     assert HumanDecision.from_json(decision.to_json()) == decision
-    assert json.loads(decision.to_json())["schema_version"] == "human-decision-v3"
+    assert json.loads(decision.to_json())["schema_version"] == "human-decision-v4"
     decision.validate_for(case)
     decision.validate_new_for(case)
 
@@ -327,7 +327,11 @@ def test_retained_preservation_accept_remains_readable_without_reopening_command
         {
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
-            "proposals": (preserved,),
+            # The other fields stay: a choice binds its field's whole offer.
+            "proposals": tuple(
+                preserved if value["proposal_id"] == preserved["proposal_id"] else value
+                for value in case.proposals
+            ),
             "media_kind": case.media_kind,
         },
     )()
@@ -361,7 +365,11 @@ def test_retained_nonaccept_keeps_the_command_validator_error_identity(
         {
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
-            "proposals": (resolved,),
+            # The other fields stay: a choice binds its field's whole offer.
+            "proposals": tuple(
+                resolved if value["proposal_id"] == resolved["proposal_id"] else value
+                for value in case.proposals
+            ),
             "media_kind": case.media_kind,
         },
     )()

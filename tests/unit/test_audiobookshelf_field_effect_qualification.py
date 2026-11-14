@@ -738,6 +738,7 @@ def test_installed_cover_accept_satisfies_the_decision_contract(
         "destination": "cover",
         "proposal_id": "review_proposal_" + "b" * 64,
         "target_fingerprint": "c" * 64,
+        "offer_digest": "f" * 64,
     }
     selected_cover: dict[str, object] = {
         "artifact_id": "artifact",
@@ -765,11 +766,13 @@ def test_installed_non_cover_accept_carries_no_cover_confirmation() -> None:
         "destination": "description",
         "proposal_id": "review_proposal_" + "b" * 64,
         "target_fingerprint": "c" * 64,
+        "offer_digest": "f" * 64,
     }
     payload = _installed_accept_payload(field, {"kind": "text", "value": "x"})
 
     assert "cover_confirmation" not in payload
     assert "consideration_id" not in payload
+    assert payload["offered_alternatives_digest"] == "f" * 64
 
 
 def test_missing_persisted_automatic_series_authority_fails_qualification() -> None:

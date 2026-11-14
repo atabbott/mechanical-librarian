@@ -7,8 +7,11 @@ a manual field) and its reconciled-level marker are written from stored data
 alone, with no external request. At ``identifier`` nothing is written, and no
 marker reads as ``identifier``.
 
-``stored_level_offers`` is the one reader of stored level offers. The level
-storage is read by no automatic decision, consent, planning or executor path.
+``stored_level_offers``, ``stored_level_offer_documents`` and
+``current_level_offer`` are the one reader of stored level offers (amendment
+2): retained-decision validation, the decision command and the review API's
+composition. The level storage is read by no automatic decision, consent,
+planning or field-effect write path.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from mechanical_librarian.domain.proposal_set import POLICY_VERSION, ProposalSet
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
-    current_offer,
+    compose_offer,
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
@@ -139,19 +142,91 @@ def stored_level_offers(
     """A case's stored level offers, every level, each validated (amendment 2).
 
     Offers are never deleted, so a choice bound to an earlier level's offer can
-    be checked against it. This is the only reader of
-    ``review_case_level_offers``.
+    be checked against it. With ``stored_level_offer_documents`` and
+    ``current_level_offer``, this is the only reader of
+    ``review_case_level_offers``: validation and composition only, never a
+    decision.
     """
+    return _offer_rows(connection, case.review_case_id, case.proposals)
+
+
+def stored_level_offer_documents(
+    connection: sqlite3.Connection, review_case_id: str
+) -> tuple[str, ...]:
+    """The documents of a case's stored level offers, for retained validation.
+
+    Only the row's own columns are checked here: ``DecisionScope`` composes
+    each document over the case's projected proposals, which validates it
+    whole, so no reader projects a case twice.
+    """
+    return tuple(_offer_documents_by_level(connection, review_case_id).values())
+
+
+def current_level_offer(
+    connection: sqlite3.Connection, review_case_id: str
+) -> str | None:
+    """The offer row at the level the case was last reconciled at, or None.
+
+    The reconciled level is ``COALESCE(marker, offer row level, 'identifier')``,
+    the marker first because reconciliation always writes it. ``None`` means the
+    fields offer their live proposals. The caller composes the document over
+    the case (``current_offer``), which validates it whole.
+    """
+    offers = _offer_documents_by_level(connection, review_case_id)
+    marker = connection.execute(
+        "SELECT reconciled_level FROM review_case_level_reconciliation "
+        "WHERE review_case_id=?",
+        (review_case_id,),
+    ).fetchone()
+    if marker is not None:
+        level = marker[0]
+    elif len(offers) == 1:
+        (level,) = offers
+    else:
+        level = WorkIdentityLevel.IDENTIFIER.value
+    return offers.get(level)
+
+
+def _offer_documents_by_level(
+    connection: sqlite3.Connection, review_case_id: str
+) -> dict[str, str]:
+    documents: dict[str, str] = {}
+    for level, level_proposal_set_id, reconciled, document in connection.execute(
+        "SELECT work_identity_level,level_proposal_set_id,reconciled_level,document "
+        "FROM review_case_level_offers WHERE review_case_id=? "
+        "ORDER BY work_identity_level",
+        (review_case_id,),
+    ).fetchall():
+        try:
+            raw = json.loads(document)
+            if (
+                type(raw) is not dict
+                or reconciled != level
+                or raw.get("work_identity_level") != level
+                or raw.get("level_proposal_set_id") != level_proposal_set_id
+            ):
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise MetadataReportError("review case level offer is invalid") from error
+        documents[level] = document
+    return documents
+
+
+def _offer_rows(
+    connection: sqlite3.Connection,
+    review_case_id: str,
+    proposals: tuple[dict[str, object], ...],
+) -> tuple[tuple[str, str], ...]:
     rows = connection.execute(
         "SELECT work_identity_level,level_proposal_set_id,reconciled_level,document "
         "FROM review_case_level_offers WHERE review_case_id=? "
         "ORDER BY work_identity_level",
-        (case.review_case_id,),
+        (review_case_id,),
     ).fetchall()
     offers: list[tuple[str, str]] = []
     for level, level_proposal_set_id, reconciled, document in rows:
         try:
-            current_offer(case, document)
+            compose_offer(review_case_id, proposals, document)
             raw = json.loads(document)
         except (ReviewCaseValueError, json.JSONDecodeError) as error:
             raise MetadataReportError("review case level offer is invalid") from error
@@ -251,8 +326,10 @@ def _decision_policy(
 
 
 __all__ = [
+    "current_level_offer",
     "read_level_decision_notes",
     "read_level_proposal_set",
     "reconcile_case_level_in_transaction",
+    "stored_level_offer_documents",
     "stored_level_offers",
 ]

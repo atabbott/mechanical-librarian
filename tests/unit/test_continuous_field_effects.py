@@ -752,6 +752,8 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
         "review_case_id": "review_case_" + "b" * 64,
         "selected_value": selected,
         "target_fingerprint": "c" * 64,
+        "cause": None,
+        "offered_alternatives_digest": "0" * 64,
     }
     request_digest = hashlib.sha256(
         json.dumps(
@@ -782,6 +784,7 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
         request_digest,
         101,
         "apply",
+        "0" * 64,
     )
 
     class Repository(_PagedRepository):
@@ -2286,6 +2289,8 @@ def _decisions(count: int):
             "review_case_id": review_case_id,
             "selected_value": selected,
             "target_fingerprint": "b" * 64,
+            "cause": None,
+            "offered_alternatives_digest": "0" * 64,
         }
         request_digest = digest(request)
         decision_id = "human_decision_" + digest(
@@ -2307,6 +2312,7 @@ def _decisions(count: int):
             request_digest,
             index,
             "apply",
+            "0" * 64,
         )
 
     return [make_decision(index) for index in range(1, count + 1)]

@@ -503,7 +503,10 @@ rejected before mutation and needs a clean rebuild; no adoption is supplied.
 Its activation B takes the clean-rebuild branch too. `metadata-report-v80`
 keeps each provider's refused WORK answers (`identity_refused_candidates`,
 `identity_refused_truncated`) and each lane's `identity_refused_new`, which a
-v79 producer never read again once refused, so a v79 report is refused. Every
-earlier application database is rejected before mutation and needs a clean
-rebuild; no adoption is supplied.
+v79 producer never read again once refused, so a v79 report is refused. Owner
+decisions move to `human-decision-v4`, which binds the digest of the field
+offer a choice was made in and a closed `cause`, both in its request digest, so
+a v3 decision is refused on readback; the `human_decisions` table does not
+change. Every earlier application database is rejected before mutation and
+needs a clean rebuild; no adoption is supplied.
 

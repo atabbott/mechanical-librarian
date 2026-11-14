@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Mapping, Self, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
@@ -22,6 +22,7 @@ from mechanical_librarian.domain.review_case import (
     LEVEL_COMBINATION_DESTINATIONS,
     ReviewCase,
     ReviewCaseValueError,
+    compose_offer,
     proposal_media_kind,
     review_proposals,
 )
@@ -56,6 +57,17 @@ RECORDED_ONLY_REASON = (
     "recorded, not applied — decided before audiobook writes were available"
 )
 HumanDecisionAction = Literal["accept", "keep_current"]
+HUMAN_DECISION_SCHEMA = "human-decision-v4"
+# Why a decision row exists when the owner did not make it: absent for every
+# owner choice; `matching_changed` for the reconciliation's valueless row that
+# asks a field again after Book matching changed its offer (#1355, S10).
+DECISION_CAUSES = frozenset({"matching_changed"})
+# Why a choice's offer no longer stands (#1355): the case still waits for its
+# Book matching check, or the field's offer is not the one the choice saw.
+OFFER_CHANGED_REASONS = frozenset({"unreconciled_case", "digest_mismatch"})
+# A cover choice binds its consideration, not this digest (AC16).
+_UNBOUND_OFFER_DESTINATIONS = frozenset({"cover"})
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 OFFER_DIGEST_SCHEMA = "offered-alternatives-v1"
@@ -79,10 +91,10 @@ def offer_digest(
         else (destination,)
     )
     by_destination = {proposal.get("destination"): proposal for proposal in offer}
-    if any(member not in by_destination for member in members):
+    if destination not in by_destination:
         raise HumanDecisionError("invalid")
     data: list[dict[str, object]] = []
-    for member in members:
+    for member in (value for value in members if value in by_destination):
         proposal = by_destination[member]
         result = proposal.get("result")
         lineage = proposal.get("lineage", {})
@@ -204,10 +216,16 @@ def admitted_applications(media_kind: str) -> frozenset[str]:
 
 
 class HumanDecisionError(ValueError):
-    """A fixed, value-free decision validation or state failure."""
+    """A fixed, value-free decision validation or state failure.
 
-    def __init__(self, code: str) -> None:
+    Only ``offer_changed`` carries a closed ``reason`` (#1355).
+    """
+
+    def __init__(self, code: str, reason: str | None = None) -> None:
+        if (code == "offer_changed") != (reason in OFFER_CHANGED_REASONS):
+            raise ValueError("offer change reason is invalid")
         self.code = code
+        self.reason = reason
         super().__init__(code)
 
 
@@ -681,18 +699,29 @@ class DecisionScope:
     target_fingerprint: str
     proposals: tuple[dict[str, object], ...]
     applications: frozenset[str]
+    # Each stored level offer of the case composed over its proposals, every
+    # level, never deleted: a retained choice is checked in the offer its
+    # bound digest names (#1355, AC1).
+    offers: tuple[tuple[dict[str, object], ...], ...] = ()
 
     @classmethod
-    def of(cls, case: ReviewCase) -> Self:
+    def of(cls, case: ReviewCase, offer_documents: tuple[str, ...] = ()) -> Self:
+        proposals = case.proposals
         return cls(
             case.review_case_id,
             case.target_fingerprint,
-            case.proposals,
+            proposals,
             admitted_applications(case.media_kind),
+            _composed_offers(case.review_case_id, proposals, offer_documents),
         )
 
     @classmethod
-    def of_browse_case(cls, review_case_id: str, case: dict[str, object]) -> Self:
+    def of_browse_case(
+        cls,
+        review_case_id: str,
+        case: dict[str, object],
+        offer_documents: tuple[str, ...] = (),
+    ) -> Self:
         """Project the bounded case envelope used by browse projections."""
         target_fingerprint = case.get("target_fingerprint")
         proposal_set_id = case.get("proposal_set_id")
@@ -717,7 +746,22 @@ class DecisionScope:
             target_fingerprint,
             proposals,
             admitted_applications(media_kind),
+            _composed_offers(review_case_id, proposals, offer_documents),
         )
+
+
+def _composed_offers(
+    review_case_id: str,
+    proposals: tuple[dict[str, object], ...],
+    offer_documents: tuple[str, ...],
+) -> tuple[tuple[dict[str, object], ...], ...]:
+    try:
+        return tuple(
+            compose_offer(review_case_id, proposals, document)
+            for document in offer_documents
+        )
+    except ReviewCaseValueError as error:
+        raise HumanDecisionError("invalid") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,6 +778,12 @@ class HumanDecision:
     request_digest: str
     occurred_at: int
     application: str
+    # The field's current offer as the case showed it at decision time
+    # (#1355, S10): a choice stands only in that offer.
+    offered_alternatives_digest: str
+    # Absent for an owner's choice; `matching_changed` for the valueless row
+    # the Book matching reconciliation appends.
+    cause: str | None = None
 
     @staticmethod
     def idempotency_digest_for(idempotency_key: str) -> str:
@@ -755,6 +805,7 @@ class HumanDecision:
         outcome: str,
         selected_value: dict[str, object] | None,
         idempotency_key: str,
+        offered_alternatives_digest: str | None = None,
     ) -> bool:
         return (
             self.review_case_id == review_case_id
@@ -765,6 +816,7 @@ class HumanDecision:
             and self.outcome == outcome
             and self.selected_value == selected_value
             and self.idempotency_digest == self.idempotency_digest_for(idempotency_key)
+            and offered_alternatives_digest in {None, self.offered_alternatives_digest}
         )
 
     @classmethod
@@ -781,7 +833,15 @@ class HumanDecision:
         idempotency_key: str,
         occurred_at: int,
         previous: object = None,
+        offer: tuple[dict[str, object], ...] | None = None,
+        offered_alternatives_digest: str | None = None,
     ) -> Self:
+        """Form an owner's choice in the field's current offer.
+
+        ``offer`` is the case's ``current_offer`` (its live proposals when
+        omitted). ``offered_alternatives_digest`` is the offer the page showed;
+        omitted, it is the current offer's own digest.
+        """
         if (
             actor != "owner"
             or outcome not in _OUTCOMES
@@ -791,10 +851,11 @@ class HumanDecision:
             or target_fingerprint != case.target_fingerprint
         ):
             raise HumanDecisionError("invalid")
+        offered = case.proposals if offer is None else offer
         proposal = next(
             (
                 value
-                for value in case.proposals
+                for value in offered
                 if value["destination"] == destination
                 and value["proposal_id"] == proposal_id
             ),
@@ -802,66 +863,124 @@ class HumanDecision:
         )
         if proposal is None:
             raise HumanDecisionError("stale")
+        current_digest = offer_digest(offered, destination)
+        if offered_alternatives_digest is None:
+            offered_alternatives_digest = current_digest
+        _require_offer(destination, offered_alternatives_digest, current_digest)
         validate_decision_action(proposal, outcome, selected_value)
         if outcome == "owner_entered":
             validate_owner_value(case, proposal, selected_value, previous)
-        idempotency_digest = cls.idempotency_digest_for(idempotency_key)
-        application = "apply"
-        request = {
-            "actor": actor,
-            "application": application,
-            "destination": destination,
-            "idempotency_digest": idempotency_digest,
-            "outcome": outcome,
-            "proposal_id": proposal_id,
-            "review_case_id": case.review_case_id,
-            "selected_value": selected_value,
-            "target_fingerprint": target_fingerprint,
-        }
-        request_digest = _sha256(_canonical(request))
-        decision_id = "human_decision_" + _sha256(
-            _canonical({"request_digest": request_digest, "occurred_at": occurred_at})
-        )
-        value = cls(
-            decision_id,
+        value = cls._formed(
             case.review_case_id,
             proposal_id,
             target_fingerprint,
             destination,
-            actor,
+            outcome,
+            selected_value,
+            cls.idempotency_digest_for(idempotency_key),
+            occurred_at,
+            offered_alternatives_digest,
+            None,
+        )
+        value._validate_for(
+            case.review_case_id,
+            case.target_fingerprint,
+            (offered,),
+            applications=admitted_applications(case.media_kind),
+        )
+        return value
+
+    @classmethod
+    def _formed(
+        cls,
+        review_case_id: str,
+        proposal_id: str,
+        target_fingerprint: str,
+        destination: str,
+        outcome: str,
+        selected_value: dict[str, object] | None,
+        idempotency_digest: str,
+        occurred_at: int,
+        offered_alternatives_digest: str,
+        cause: str | None,
+    ) -> Self:
+        value = cls(
+            "",
+            review_case_id,
+            proposal_id,
+            target_fingerprint,
+            destination,
+            "owner",
             outcome,
             selected_value,
             idempotency_digest,
-            request_digest,
+            "",
             occurred_at,
-            application,
+            "apply",
+            offered_alternatives_digest,
+            cause,
         )
-        value.validate_for(case)
-        return value
+        request_digest = value._expected_request_digest()
+        return replace(
+            value,
+            decision_id=_decision_id(request_digest, occurred_at),
+            request_digest=request_digest,
+        )
 
-    def validate_for(self, case: ReviewCase) -> None:
-        """Validate a retained immutable fact against its canonical case."""
-        self.validate_in(DecisionScope.of(case))
+    def _expected_request_digest(self) -> str:
+        return _sha256(
+            _canonical(
+                {
+                    "actor": self.actor,
+                    "application": self.application,
+                    "cause": self.cause,
+                    "destination": self.destination,
+                    "idempotency_digest": self.idempotency_digest,
+                    "offered_alternatives_digest": self.offered_alternatives_digest,
+                    "outcome": self.outcome,
+                    "proposal_id": self.proposal_id,
+                    "review_case_id": self.review_case_id,
+                    "selected_value": self.selected_value,
+                    "target_fingerprint": self.target_fingerprint,
+                }
+            )
+        )
+
+    def validate_for(
+        self, case: ReviewCase, offer_documents: tuple[str, ...] = ()
+    ) -> None:
+        """Validate a retained immutable fact against its canonical case.
+
+        ``offer_documents`` are the case's stored level offers, every level.
+        """
+        self.validate_in(DecisionScope.of(case, offer_documents))
 
     def validate_in(self, scope: DecisionScope) -> None:
         """Validate a retained immutable fact in its case's projected scope."""
         self._validate_for(
             scope.review_case_id,
             scope.target_fingerprint,
-            scope.proposals,
+            (scope.proposals, *scope.offers),
             applications=scope.applications,
         )
 
-    def validate_new_for(self, case: ReviewCase, previous: object = None) -> None:
+    def validate_new_for(
+        self,
+        case: ReviewCase,
+        previous: object = None,
+        offer: tuple[dict[str, object], ...] | None = None,
+    ) -> None:
         """Validate a newly submitted command against the current owner envelope.
 
-        ``previous`` is what the field held before its latest verified write.
+        ``offer`` is the case's current offer (its live proposals when
+        omitted); ``previous`` is what the field held before its latest
+        verified write.
         """
-        proposals = case.proposals
+        proposals = case.proposals if offer is None else offer
         self._validate_for(
             case.review_case_id,
             case.target_fingerprint,
-            list(proposals),
+            (proposals,),
             new_command=True,
             applications=admitted_applications(case.media_kind),
         )
@@ -881,68 +1000,88 @@ class HumanDecision:
         self,
         review_case_id: str,
         target_fingerprint: str,
-        proposals: list[object] | tuple[dict[str, object], ...],
+        offers: tuple[tuple[dict[str, object], ...] | list[object], ...],
         *,
         new_command: bool = False,
         applications: frozenset[str],
     ) -> None:
-        proposal = next(
-            (
-                value
-                for value in proposals
-                if type(value) is dict
-                if value["destination"] == self.destination
-                and value["proposal_id"] == self.proposal_id
-            ),
-            None,
-        )
+        """Check the fact in the offer its digest names.
+
+        ``offers`` starts with the live (or, for a new command, the current)
+        offer; a retained fact may also stand in a stored level offer.
+        """
+        live = offers[0]
         if (
             self.review_case_id != review_case_id
             or self.target_fingerprint != target_fingerprint
-            or proposal is None
+            or _proposal(live, self.destination, self.proposal_id) is None
             or self.application not in applications
-            or (new_command and self.application != "apply")
+            or (new_command and (self.application != "apply" or self.cause))
         ):
             raise HumanDecisionError("stale")
-        validator = (
-            validate_decision_action
-            if new_command
-            else _validate_retained_decision_action
-        )
-        validator(proposal, self.outcome, self.selected_value)
-        request = {
-            "actor": self.actor,
-            "application": self.application,
-            "destination": self.destination,
-            "idempotency_digest": self.idempotency_digest,
-            "outcome": self.outcome,
-            "proposal_id": self.proposal_id,
-            "review_case_id": self.review_case_id,
-            "selected_value": self.selected_value,
-            "target_fingerprint": self.target_fingerprint,
-        }
-        expected_request = _sha256(_canonical(request))
-        expected_id = "human_decision_" + _sha256(
-            _canonical(
-                {"request_digest": expected_request, "occurred_at": self.occurred_at}
+        offer = self._bound_offer(offers, new_command)
+        proposal = _proposal(offer, self.destination, self.proposal_id)
+        assert proposal is not None
+        if self.cause is not None:
+            # A cause row is valueless and withdraws whatever the field held,
+            # description and cover included (#1355, AC2).
+            if self.outcome != "withdraw" or self.selected_value is not None:
+                raise HumanDecisionError("invalid")
+        elif new_command:
+            validate_decision_action(proposal, self.outcome, self.selected_value)
+        else:
+            _validate_retained_decision_action(
+                proposal, self.outcome, self.selected_value
             )
-        )
-        if self.request_digest != expected_request or self.decision_id != expected_id:
+        if self.request_digest != self._expected_request_digest() or (
+            self.decision_id != _decision_id(self.request_digest, self.occurred_at)
+        ):
             raise HumanDecisionError("invalid")
+
+    def _bound_offer(
+        self,
+        offers: tuple[tuple[dict[str, object], ...] | list[object], ...],
+        new_command: bool,
+    ) -> tuple[dict[str, object], ...] | list[object]:
+        """The offer this fact's digest names (#1355, AC1).
+
+        A new command stands only in the current offer. A retained fact stands
+        in the live offer or any stored level offer whose digest it bound. A
+        cover choice binds its consideration instead (AC16).
+        """
+        if self.destination in _UNBOUND_OFFER_DESTINATIONS:
+            return offers[0]
+        if new_command:
+            _require_offer(
+                self.destination,
+                self.offered_alternatives_digest,
+                offer_digest(_mappings(offers[0]), self.destination),
+            )
+            return offers[0]
+        for offer in offers:
+            if (
+                _proposal(offer, self.destination, self.proposal_id) is not None
+                and offer_digest(_mappings(offer), self.destination)
+                == self.offered_alternatives_digest
+            ):
+                return offer
+        raise HumanDecisionError("invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
             "actor": self.actor,
             "application": self.application,
+            "cause": self.cause,
             "decision_id": self.decision_id,
             "destination": self.destination,
             "idempotency_digest": self.idempotency_digest,
             "occurred_at": self.occurred_at,
+            "offered_alternatives_digest": self.offered_alternatives_digest,
             "outcome": self.outcome,
             "proposal_id": self.proposal_id,
             "request_digest": self.request_digest,
             "review_case_id": self.review_case_id,
-            "schema_version": "human-decision-v3",
+            "schema_version": HUMAN_DECISION_SCHEMA,
             "selected_value": self.selected_value,
             "target_fingerprint": self.target_fingerprint,
         }
@@ -956,23 +1095,8 @@ class HumanDecision:
             raw = json.loads(serialized)
             if (
                 type(raw) is not dict
-                or set(raw)
-                != {
-                    "actor",
-                    "application",
-                    "decision_id",
-                    "destination",
-                    "idempotency_digest",
-                    "occurred_at",
-                    "outcome",
-                    "proposal_id",
-                    "request_digest",
-                    "review_case_id",
-                    "schema_version",
-                    "selected_value",
-                    "target_fingerprint",
-                }
-                or raw["schema_version"] != "human-decision-v3"
+                or set(raw) != _DOCUMENT_KEYS
+                or raw["schema_version"] != HUMAN_DECISION_SCHEMA
             ):
                 raise ValueError
             value = cls(
@@ -988,31 +1112,25 @@ class HumanDecision:
                 raw["request_digest"],
                 raw["occurred_at"],
                 raw["application"],
-            )
-            request = {
-                "actor": value.actor,
-                "application": value.application,
-                "destination": value.destination,
-                "idempotency_digest": value.idempotency_digest,
-                "outcome": value.outcome,
-                "proposal_id": value.proposal_id,
-                "review_case_id": value.review_case_id,
-                "selected_value": value.selected_value,
-                "target_fingerprint": value.target_fingerprint,
-            }
-            expected_request = _sha256(_canonical(request))
-            expected_id = "human_decision_" + _sha256(
-                _canonical(
-                    {
-                        "request_digest": expected_request,
-                        "occurred_at": value.occurred_at,
-                    }
-                )
+                raw["offered_alternatives_digest"],
+                raw["cause"],
             )
             if (
                 re.fullmatch(r"human_decision_[0-9a-f]{64}", value.decision_id) is None
-                or value.decision_id != expected_id
-                or value.request_digest != expected_request
+                or type(value.occurred_at) is not int
+                or value.occurred_at < 0
+                or any(
+                    type(item) is not str or _DIGEST.fullmatch(item) is None
+                    for item in (
+                        value.idempotency_digest,
+                        value.request_digest,
+                        value.target_fingerprint,
+                        value.offered_alternatives_digest,
+                    )
+                )
+                or value.request_digest != value._expected_request_digest()
+                or value.decision_id
+                != _decision_id(value.request_digest, value.occurred_at)
                 or re.fullmatch(r"review_case_[0-9a-f]{64}", value.review_case_id)
                 is None
                 or re.fullmatch(r"review_proposal_[0-9a-f]{64}", value.proposal_id)
@@ -1022,25 +1140,81 @@ class HumanDecision:
                 or value.actor != "owner"
                 or value.outcome not in _OUTCOMES
                 or value.application not in APPLICATIONS
-                or type(value.occurred_at) is not int
-                or value.occurred_at < 0
-                or any(
-                    type(item) is not str
-                    or len(item) != 64
-                    or re.fullmatch(r"[0-9a-f]{64}", item) is None
-                    for item in (
-                        value.idempotency_digest,
-                        value.request_digest,
-                        value.target_fingerprint,
-                    )
-                )
                 or (value.outcome in VALUE_OUTCOMES)
                 != (type(value.selected_value) is dict)
+                or (
+                    value.cause is not None
+                    and (
+                        value.cause not in DECISION_CAUSES
+                        or value.outcome != "withdraw"
+                        or value.selected_value is not None
+                    )
+                )
             ):
                 raise ValueError
             return value
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise HumanDecisionError("invalid") from error
+
+
+_DOCUMENT_KEYS = frozenset(
+    {
+        "actor",
+        "application",
+        "cause",
+        "decision_id",
+        "destination",
+        "idempotency_digest",
+        "occurred_at",
+        "offered_alternatives_digest",
+        "outcome",
+        "proposal_id",
+        "request_digest",
+        "review_case_id",
+        "schema_version",
+        "selected_value",
+        "target_fingerprint",
+    }
+)
+
+
+def _decision_id(request_digest: str, occurred_at: int) -> str:
+    return "human_decision_" + _sha256(
+        _canonical({"request_digest": request_digest, "occurred_at": occurred_at})
+    )
+
+
+def _require_offer(destination: str, bound: str, current: str) -> None:
+    """Refuse a choice formed in an offer the field no longer shows (#1355)."""
+    if destination in _UNBOUND_OFFER_DESTINATIONS:
+        if type(bound) is not str or _DIGEST.fullmatch(bound) is None:
+            raise HumanDecisionError("invalid")
+        return
+    if bound != current:
+        raise HumanDecisionError("offer_changed", "digest_mismatch")
+
+
+def _proposal(
+    offer: tuple[dict[str, object], ...] | list[object],
+    destination: str,
+    proposal_id: str,
+) -> dict[str, object] | None:
+    return next(
+        (
+            value
+            for value in offer
+            if type(value) is dict
+            and value["destination"] == destination
+            and value["proposal_id"] == proposal_id
+        ),
+        None,
+    )
+
+
+def _mappings(
+    offer: tuple[dict[str, object], ...] | list[object],
+) -> list[Mapping[str, object]]:
+    return [value for value in offer if type(value) is dict]
 
 
 def _canonical(value: object) -> str:

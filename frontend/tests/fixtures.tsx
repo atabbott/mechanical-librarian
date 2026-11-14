@@ -135,6 +135,7 @@ export const detail: CaseDetailView = {
       choiceContexts: [],
       proposalId: 'proposal-1',
       targetFingerprint: 'fingerprint-1',
+      offerDigest: 'offer-digest',
       humanDecision: null,
       automaticDecision: null,
       automaticWithheldReason: null,

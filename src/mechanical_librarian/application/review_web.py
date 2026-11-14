@@ -69,6 +69,7 @@ from mechanical_librarian.domain.human_decision import (
     decision_actions,
     genre_subset_available,
     list_union,
+    offer_digest,
     owner_text,
     owner_value_admitted,
     owner_value_suggestions,
@@ -105,6 +106,8 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     _freeze_json_object,
     _thaw_json_object,
+    compose_offer,
+    current_offer,
 )
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
@@ -197,10 +200,14 @@ class BrowseObservationOwner(Protocol):
 
 
 class ReviewWebError(RuntimeError):
-    """A fixed, value-free review-browser failure."""
+    """A fixed, value-free review-browser failure.
 
-    def __init__(self, code: str) -> None:
+    Only ``offer_changed`` carries a closed ``reason`` (#1355).
+    """
+
+    def __init__(self, code: str, reason: str | None = None) -> None:
         self.code = code
+        self.reason = reason
         super().__init__(code)
 
 
@@ -286,6 +293,9 @@ class CurrentReviewCaseSnapshot:
     # Held destinations whose requested checks finished with failures. The
     # hold stays and nothing retries those checks, so the owner can ask again.
     return_failed_destinations: tuple[str, ...] = ()
+    # The case's level offer at the level it was last reconciled at, or None
+    # when its fields offer their live proposals (#1355, S10).
+    level_offer_document: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,7 +474,13 @@ def _case_facts(
 def _scope(
     scope: DecisionScope, convert: Callable[[dict[str, object]], dict[str, object]]
 ) -> DecisionScope:
-    return replace(scope, proposals=tuple(convert(value) for value in scope.proposals))
+    return replace(
+        scope,
+        proposals=tuple(convert(value) for value in scope.proposals),
+        offers=tuple(
+            tuple(convert(value) for value in offer) for offer in scope.offers
+        ),
+    )
 
 
 # A ReviewCase already holds its content frozen and hands out detached copies.
@@ -542,6 +558,7 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
     ) -> str: ...
 
     def find_human_decision(self, idempotency_digest: str) -> str | None: ...
+    def review_case_level_offer(self, review_case_id: str) -> str | None: ...
     def previous_field_values(
         self, connection: str, library: str, work_id: str
     ) -> tuple[tuple[str, object], ...]: ...
@@ -1003,8 +1020,10 @@ class InspectCurrentReviewCase:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision
                     if decision.outcome == "withdraw":
-                        # A withdrawn field is undecided again (ADR-0085).
-                        del decisions[decision.destination]
+                        # A withdrawn field is undecided again (ADR-0085). A
+                        # Book matching cause row reads the same way: no
+                        # human decision (#1355, AC2).
+                        decisions.pop(decision.destination, None)
                 else:
                     destination = str(projected["destination"])
                     if (
@@ -1063,8 +1082,16 @@ class InspectCurrentReviewCase:
         # of the report, so rebuilding it inside the loop multiplied the only
         # cost on that path by the number of fields under review.
         evidence = _evidence_by_reference(report)
-        # Projected once: each `case.proposals` re-parses the proposal set (#1215).
+        # Projected once: each `case.proposals` re-parses the proposal set
+        # (#1215). Each field shows its current offer: its live proposal, or
+        # the case's level offer where Book matching substitutes it (#1355).
         proposals = case.proposals
+        try:
+            proposals = compose_offer(
+                case.review_case_id, proposals, snapshot.level_offer_document
+            )
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
         publication_date_present = any(
             value["destination"] == "publishedDate" for value in proposals
         )
@@ -1177,6 +1204,7 @@ class InspectCurrentReviewCase:
             target_fields[destination],
             automatic_decision,
             evidence,
+            cast("dict[str, object]", proposal.get("lineage", {})),
         )
         selected_advice = (
             snapshot.description_advice.get("selected_advice")
@@ -1307,6 +1335,8 @@ class InspectCurrentReviewCase:
                 reasons,
             ),
             "owner_control": owner_control,
+            # The offer a choice binds: its value, proposal and rule (#1355).
+            "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],
             "target_fingerprint": case.target_fingerprint,
             "uncertainty": (
@@ -1713,6 +1743,7 @@ class RecordHumanDecision:
         idempotency_key: str,
         consideration_id: str | None = None,
         cover_confirmation: dict[str, object] | None = None,
+        offered_alternatives_digest: str | None = None,
     ) -> dict[str, object]:
         try:
             idempotency_digest = HumanDecision.idempotency_digest_for(idempotency_key)
@@ -1737,6 +1768,7 @@ class RecordHumanDecision:
                     outcome=outcome,
                     selected_value=selected_value,
                     idempotency_key=idempotency_key,
+                    offered_alternatives_digest=offered_alternatives_digest,
                 ):
                     raise ReviewWebError("idempotency_conflict")
                 try:
@@ -1810,8 +1842,18 @@ class RecordHumanDecision:
                     ).get(destination)
                 except Exception as error:
                     raise ReviewWebError("persistence") from error
+            try:
+                # The field's offer as it stands now; the store reads it again
+                # inside the write (#1355, S10).
+                offer = current_offer(
+                    case, self._repository.review_case_level_offer(review_case_id)
+                )
+            except Exception as error:
+                raise ReviewWebError("persistence") from error
             decision = HumanDecision.create(
                 case,
+                offer=offer,
+                offered_alternatives_digest=offered_alternatives_digest,
                 proposal_id=proposal_id,
                 target_fingerprint=target_fingerprint,
                 destination=destination,
@@ -1854,7 +1896,7 @@ class RecordHumanDecision:
         except ReviewWebError:
             raise
         except HumanDecisionError as error:
-            raise ReviewWebError(error.code) from None
+            raise ReviewWebError(error.code, error.reason) from None
         except Exception as error:
             # Last resort over the whole command. Every store call now carries
             # its own ``persistence`` handler, so what reaches here touched no
@@ -2667,8 +2709,14 @@ def _choice_contexts(
     target: dict[str, object],
     automatic_decision: dict[str, object] | None = None,
     evidence: dict[str, dict[str, str | None]] | None = None,
+    lineage: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
-    """Project retained proposal lineage into owner-readable choice context."""
+    """Project retained proposal lineage into owner-readable choice context.
+
+    ``lineage`` names the alternatives Book matching offers (#1355): their
+    ``match_basis`` is ``title_and_author``, and every other choice's is null.
+    """
+    lineage = {} if lineage is None else lineage
     local_value_present = target.get("state") == "value" and _current_value_present(
         target.get("value")
     )
@@ -2714,6 +2762,7 @@ def _choice_contexts(
                 "Your settings keep the current value." if current_recommended else ""
             ),
             "selection": "current",
+            "match_basis": None,
         }
     ]
     for alternative in alternatives:
@@ -2744,6 +2793,9 @@ def _choice_contexts(
                     "Your settings choose this value." if recommended else ""
                 ),
                 "selection": "proposed",
+                "match_basis": "title_and_author"
+                if alternative_id in lineage
+                else None,
             }
         )
     return contexts
@@ -3167,6 +3219,9 @@ def _evidence_by_reference(
         for candidate in [
             *provider["recording_lookup_candidates"],
             *provider["candidates"],
+            # A level alternative cites a refused answer's claims; only a
+            # level offer names them, so live fields never find these (#1355).
+            *provider["identity_refused_candidates"],
         ]:
             assert type(candidate) is dict
             candidate_identity = candidate["identity"]

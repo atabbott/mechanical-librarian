@@ -167,6 +167,13 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : null}
       </article>
     )
+  // Its History sentence lands with the review copy (#1355 P5).
+  if (item.category === 'matching_changed')
+    return (
+      <article className="diagnostic-entry">
+        <h3>{destinationLabel(item.destination)}</h3>
+      </article>
+    )
   // The heading says what happened; a sentence under it would only repeat it
   // (#1765).
   if (item.category === 'transition')

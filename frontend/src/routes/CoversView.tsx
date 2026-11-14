@@ -132,6 +132,7 @@ const coverCommand = (
   proposalId: field.proposalId,
   selectedValue,
   targetFingerprint: field.targetFingerprint,
+  offerDigest: field.offerDigest,
   idempotencyKey: requestKey(),
   ...(field.coverConsideration
     ? {

@@ -704,10 +704,12 @@ class _ReviewField(_ClosedModel):
     notices: list[str]
     owner_control: _OwnerControl | None
     proposed_values: list[_ProposedValue]
-    choice_contexts: list["_ChoiceContext"]
+    choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
     preservation_only: bool
     corroboration_sources: list[str]
+    # The digest a choice on this field binds (#1355, S10).
+    offer_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
@@ -732,6 +734,12 @@ class _ChoiceContext(_ClosedModel):
     recommendation: Literal["no_recommendation", "recommended"]
     recommendation_reason: str
     selection: Literal["current", "proposed"]
+
+
+class _FieldChoiceContext(_ChoiceContext):
+    # A choice Book matching offers names its basis; the copy stays in the
+    # browser (#1355).
+    match_basis: Literal["title_and_author"] | None
 
 
 class _TargetIdentity(_ClosedModel):
@@ -964,6 +972,18 @@ class _HistoryAutomaticItem(_ClosedModel):
     selected_value: _ProposedValue | None
 
 
+class _HistoryMatchingChangedItem(_ClosedModel):
+    """A field asked again because Book matching changed its offer (#1355)."""
+
+    decision_id: str
+    destination: _TargetDestination
+    kind: Literal["asked_again_matching"]
+    occurred_at: _Instant
+    origin: Literal["book_matching"]
+    review_case_id: str
+    schema_version: Literal["matching-changed-history-event-v1"]
+
+
 class _HistoryCoverItem(_ClosedModel):
     consideration_id: str
     consideration: _CoverConsiderationResponse
@@ -1019,6 +1039,7 @@ class _HistoryResponse(_ClosedModel):
         | _HistoryDecisionItem
         | _HistoryPreviewItem
         | _HistoryAutomaticItem
+        | _HistoryMatchingChangedItem
         | _HistoryCoverItem
         | _HistoryDescriptionItem
     ] = Field(max_length=150)
@@ -1037,6 +1058,8 @@ class _SessionResponse(_ClosedModel):
 class _ErrorCode(_ClosedModel):
     code: str
     managed_by_file: Literal["/data/config.json"] | None = None
+    # Only `offer_changed` says why (#1355).
+    reason: Literal["unreconciled_case", "digest_mismatch"] | None = None
 
 
 class _ErrorResponse(_ClosedModel):
@@ -1882,6 +1905,8 @@ class _DecisionRequest(_ClosedModel):
     consideration_id: StrictStr | None = Field(
         default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
     )
+    # The field's `offer_digest` as the page showed it (#1355, S10).
+    offered_alternatives_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
@@ -2796,7 +2821,13 @@ def create_review_app(
             and detail.get("managed_by_file") == "/data/config.json"
             else None
         )
-        return _error(error.status_code, str(code), managed_by_file)
+        reason = detail.get("reason") if type(detail) is dict else None
+        return _error(
+            error.status_code,
+            str(code),
+            managed_by_file,
+            reason if code == "offer_changed" and type(reason) is str else None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(
@@ -4042,6 +4073,7 @@ def _register_case_and_effect_routes(
                     cover_confirmation=None
                     if payload.cover_confirmation is None
                     else payload.cover_confirmation.model_dump(mode="json"),
+                    offered_alternatives_digest=payload.offered_alternatives_digest,
                 )
             )
         )
@@ -5258,20 +5290,36 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
+            # Distinct from `stale`: the case stands, its field's offer moved
+            # (#1355).
+            "offer_changed": 409,
         }.get(error.code, 503)
-        raise HTTPException(status, detail={"code": error.code}) from None
+        reason = getattr(error, "reason", None)
+        raise HTTPException(
+            status,
+            detail={
+                "code": error.code,
+                **(
+                    {"reason": reason}
+                    if error.code == "offer_changed" and type(reason) is str
+                    else {}
+                ),
+            },
+        ) from None
 
 
 def _error(
     status_code: int,
     code: str,
     managed_by_file: Literal["/data/config.json"] | None = None,
+    reason: str | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         {
             "error": {
                 "code": code,
                 **({"managed_by_file": managed_by_file} if managed_by_file else {}),
+                **({"reason": reason} if reason else {}),
             },
             "schema_version": "review-error-v1",
         },

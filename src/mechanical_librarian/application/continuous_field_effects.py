@@ -38,7 +38,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     project_decision_value,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_SCHEMA,
+    HumanDecision,
+)
 from mechanical_librarian.domain.metadata_report import (
     MAX_REPORT_BYTES,
     MetadataReport,
@@ -2019,7 +2022,7 @@ class ContinuousGuardedApplication:
             raise FieldEffectError("authority_binding")
         if raw.get("schema_version") == "authored-description-decision-v1":
             return AuthoredDescriptionDecision.from_json(document)
-        if raw.get("schema_version") == "human-decision-v3":
+        if raw.get("schema_version") == HUMAN_DECISION_SCHEMA:
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":
             return AutomaticDecision.from_json(document)

@@ -688,6 +688,9 @@ export interface ReviewFieldView {
   choiceContexts: readonly ChoiceContextView[]
   proposalId: string
   targetFingerprint: string
+  // The digest of what this field offers now; a choice sends it back so the
+  // server refuses one made against an offer that has since changed (#1355).
+  offerDigest: string
   humanDecision: ResponseSchema<'_DecisionProjection'> | null
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
@@ -869,6 +872,12 @@ export type HistoryItemView = (
   | {
       category: 'preview'
       dispositions: readonly { count: number; outcome: PreviewDisposition }[]
+    }
+  | {
+      // Book matching changed what this field offers, so it asks again
+      // (#1355). The line itself lands with the History copy.
+      category: 'matching_changed'
+      destination: TargetDestination
     }
   | {
       category: 'cover'
@@ -1175,6 +1184,7 @@ export interface DecisionCommand {
   proposalId: string
   selectedValue?: Schema<'_ProposedValue'> | null
   targetFingerprint: string
+  offerDigest: string
   idempotencyKey: string
   considerationId?: string
   coverConfirmation?: { expected_selection_id: string | null; confirm_unverified_match: boolean }
@@ -1841,6 +1851,7 @@ export class ReviewApiClient implements ReviewHttp {
       idempotencyKey,
       proposalId,
       targetFingerprint,
+      offerDigest,
       selectedValue,
       destination,
       outcome,
@@ -1855,6 +1866,7 @@ export class ReviewApiClient implements ReviewHttp {
         proposal_id: proposalId,
         selected_value: selectedValue ?? null,
         target_fingerprint: targetFingerprint,
+        offered_alternatives_digest: offerDigest,
         consideration_id: considerationId ?? null,
         cover_confirmation: coverConfirmation ?? null,
       },
@@ -2775,6 +2787,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
   proposalId: field.proposal_id,
   targetFingerprint: field.target_fingerprint,
+  offerDigest: field.offer_digest,
   humanDecision: field.human_decision,
   inventoryRole: field.inventory_role,
   automaticDecision: field.automatic_decision,
@@ -2870,6 +2883,8 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       previousValue: item.previous_value,
       selectedValue: item.selected_value,
     }
+  if (item.schema_version === 'matching-changed-history-event-v1')
+    return { category: 'matching_changed', occurredAt, destination: item.destination }
   if (item.schema_version === 'preview-history-event-v1')
     return {
       category: 'preview',

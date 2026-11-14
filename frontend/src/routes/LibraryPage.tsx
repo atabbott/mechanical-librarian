@@ -1417,6 +1417,7 @@ export default function LibraryPage({
       proposalId: field.proposalId,
       selectedValue,
       targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
       idempotencyKey,
       ...(field.coverConsideration
         ? {

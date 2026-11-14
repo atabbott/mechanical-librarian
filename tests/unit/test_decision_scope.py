@@ -104,6 +104,8 @@ def _sealed(decision: HumanDecision, **changes: object) -> HumanDecision:
             "review_case_id",
             "selected_value",
             "target_fingerprint",
+            "cause",
+            "offered_alternatives_digest",
         )
     }
     digest = human_decision._sha256(human_decision._canonical(request))
@@ -349,7 +351,7 @@ def _old_validate_for_browse_case(
     decision._validate_for(
         review_case_id,
         target_fingerprint,
-        proposals,
+        (proposals,),
         applications=admitted_applications(media_kind),
     )
 

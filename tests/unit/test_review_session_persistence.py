@@ -528,6 +528,7 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
                 "proposal_id": field["proposal_id"],
                 "selected_value": None,
                 "target_fingerprint": field["target_fingerprint"],
+                "offered_alternatives_digest": field["offer_digest"],
             }
 
             def submit(value: tuple[str, str]) -> int:

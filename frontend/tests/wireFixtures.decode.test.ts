@@ -12,6 +12,7 @@ import {
   d__ActivityEvent,
   d__AttentionItem,
   d__ChoiceContext,
+  d__FieldChoiceContext,
   d__CoverAutomaticDecisionProjection,
   d__CoverCandidate,
   d__CoverIdentity,
@@ -117,6 +118,7 @@ const roots: readonly (readonly [Builder, string, string, number])[] = [
 ]
 const components: readonly (readonly [Builder, D<unknown>])[] = [
   ['choiceContext', d__ChoiceContext],
+  ['fieldChoiceContext', d__FieldChoiceContext],
   ['targetIdentity', d__TargetIdentity],
   ['targetField', d__TargetField],
   ['reviewField', d__ReviewField],

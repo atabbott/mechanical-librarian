@@ -99,7 +99,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
+| `human-decision-v4` | An owner decision, including `owner_entered` and `withdraw` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`) and may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
 | `cover-consideration-v7` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back; it stores the would-admit note, which nothing shows |
 | `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |

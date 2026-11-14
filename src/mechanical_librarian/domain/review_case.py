@@ -725,12 +725,14 @@ def level_offer_document(
             "work_identity_level": level,
         }
     )
-    _level_offer_fields(case, document)
+    _level_offer_fields(case.review_case_id, case.proposals, document)
     return document
 
 
 def _level_offer_fields(
-    case: ReviewCase, document: str
+    review_case_id: str,
+    case_proposals: tuple[dict[str, object], ...],
+    document: str,
 ) -> tuple[str, dict[str, dict[str, object]]]:
     """Validate one stored level offer against its exact case."""
     if type(document) is not str or len(document.encode("utf-8")) > (
@@ -744,7 +746,7 @@ def _level_offer_fields(
     destinations = [value.value for value in TargetDestination]
     proposals = {
         cast("str", value["destination"]): cast("str", value["proposal_id"])
-        for value in case.proposals
+        for value in case_proposals
     }
     if (
         type(raw) is not dict
@@ -757,7 +759,7 @@ def _level_offer_fields(
             "work_identity_level",
         }
         or raw["schema_version"] != LEVEL_OFFER_SCHEMA
-        or raw["review_case_id"] != case.review_case_id
+        or raw["review_case_id"] != review_case_id
         or raw["work_identity_level"] not in WIDER_WORK_IDENTITY_LEVELS
         or type(raw["level_proposal_set_id"]) is not str
         or _LEVEL_PROPOSAL_SET_ID.fullmatch(raw["level_proposal_set_id"]) is None
@@ -828,10 +830,22 @@ def current_offer(
     """
     if type(case) is not ReviewCase:
         raise ReviewCaseValueError("review case is invalid")
-    proposals = case.proposals
+    return compose_offer(case.review_case_id, case.proposals, offer_document)
+
+
+def compose_offer(
+    review_case_id: str,
+    proposals: tuple[dict[str, object], ...],
+    offer_document: str | None,
+) -> tuple[dict[str, object], ...]:
+    """``current_offer`` over a case's id and projected proposals.
+
+    Browse projects a case's proposals without building the case, so it
+    composes the same offer from them.
+    """
     if offer_document is None:
         return proposals
-    level, fields = _level_offer_fields(case, offer_document)
+    level, fields = _level_offer_fields(review_case_id, proposals, offer_document)
     offered: list[dict[str, object]] = []
     for proposal in proposals:
         field = fields.get(cast("str", proposal["destination"]))
@@ -899,6 +913,7 @@ __all__ = [
     "MAX_LEVEL_OFFER_BYTES",
     "MAX_REVIEW_CASE_BYTES",
     "WIDER_WORK_IDENTITY_LEVELS",
+    "compose_offer",
     "current_offer",
     "level_offer_document",
     "REVIEW_ADMISSION_SCHEMA",
