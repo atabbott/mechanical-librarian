@@ -346,7 +346,7 @@ def _cover_selection(
         else json.dumps(
             {
                 "decision_document": json.dumps(
-                    {"schema_version": "cover-automatic-decision-v3"}
+                    {"schema_version": "cover-automatic-decision-v4"}
                 )
             }
         )
@@ -574,6 +574,11 @@ def test_package_and_case_reports_are_read_as_before_when_they_differ(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Library reads a package's own report and Attention its case's (#1232)."""
+    # Held covers ask; suggested ones would not be attention (#1363 S9).
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
     fixture = OwnerResponsivenessFixture(tmp_path, 30, mixed=True)
     try:
         repository = fixture.repository

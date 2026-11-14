@@ -118,6 +118,39 @@ def _stages(row: tuple[object, ...], offset: int) -> tuple[tuple[str, int], ...]
     )
 
 
+def request_cover_preparation(connection: sqlite3.Connection, now: int) -> None:
+    """Ask for a scan of each library with a prepared cover, in the caller's transaction.
+
+    A Current covers change moves the cover policy, but no work's catalogue
+    facts change, so nothing else prepares its cover again. The scan's
+    discovery queues each work whose cover comparison was prepared under
+    another cover policy (#1363). A queued scan or a running one already asked
+    to scan again is not asked twice, and paused preparation is not asked,
+    as for description advice; the next scan does the same.
+    """
+    if connection.execute(
+        "SELECT paused FROM review_preparation_control WHERE singleton=1"
+    ).fetchone() == (1,):
+        return
+    rows = connection.execute(
+        "SELECT s.connection_name,s.library_name,s.library_id,s.producer_fingerprint "
+        "FROM review_preparation_scans s WHERE s.scan_id=(SELECT latest.scan_id "
+        "FROM review_preparation_scans latest "
+        "WHERE latest.connection_name=s.connection_name "
+        "AND latest.library_name=s.library_name "
+        "ORDER BY latest.requested_at DESC,latest.scan_id DESC LIMIT 1) "
+        "AND EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+        "JOIN current_cover_considerations cover "
+        "ON cover.review_case_id=lineage.review_case_id "
+        "WHERE lineage.connection_name=s.connection_name "
+        "AND lineage.library_name=s.library_name) "
+        "ORDER BY s.connection_name,s.library_name"
+    ).fetchall()
+    repository = SQLiteReviewScanRepository(connection)
+    for target, library, library_id, producer in rows:
+        repository.request_review_scan(target, library, library_id, producer, now)
+
+
 class SQLiteReviewScanRepository(ConnectionScoped):
     """Admit, pause, recover and gate the scans review preparation may run."""
 

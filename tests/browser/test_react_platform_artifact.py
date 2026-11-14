@@ -1379,9 +1379,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             comparison = page.get_by_role("region", name="Choose a cover")
             comparison.get_by_text(label, exact=True).wait_for()
-            comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
-            # The recommended card carries its reason, so the header has no
-            # caption (#1765).
+            # A fill is recommended; a suggestion over a populated cover is
+            # "Switch suggested" (#1363). Neither header has a caption: the
+            # recommended card carries its reason (#1765) and a suggestion's
+            # fault pill is its only reason.
+            comparison.get_by_text(
+                "Recommended cover ready"
+                if case_id == "case-3"
+                else "Switch suggested",
+                exact=True,
+            ).wait_for()
             expect(comparison.locator(":scope > header > small")).to_have_count(0)
             for choice in comparison.locator("[role=radio]").all():
                 expect(choice).to_be_enabled()
@@ -2546,7 +2553,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert page.evaluate(_SHORT_SUMMARIES) == []
         cover_policy = page.get_by_role("region", name="Cover")
         cover_policy.get_by_text(
-            "Use a confirmed cover. Audiobooks replace a small current cover only with a clearly larger one.",
+            "Use a confirmed cover. A current cover is replaced only as Current covers allows.",
             exact=True,
         ).wait_for()
         automatic_cover = cover_policy.get_by_role("button", name="Automatic")
@@ -2554,16 +2561,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(cover_policy.get_by_role("button", name="Ask me")).to_have_attribute(
             "aria-pressed", "true"
         )
+        # One option is left, so it is shown and not offered: the measured
+        # rules and Current covers decide replacement (#1363).
         cover_representation = cover_policy.get_by_role("combobox", name="Cover option")
-        expect(cover_representation).to_be_enabled()
+        expect(cover_representation).to_be_disabled()
         expect(cover_representation).to_have_text("Fill from confirmed covers")
-        cover_representation.click()
-        expect(page.get_by_role("option")).to_have_text(
-            ["Fill from confirmed covers", "Replace with a clearly larger cover"]
-        )
-        page.get_by_role(
-            "option", name="Fill from confirmed covers", exact=True
-        ).click()
         automatic_cover.click()
         expect(automatic_cover).to_have_attribute("aria-pressed", "true")
         cover_policy.get_by_role("button", name="Ask me").click()

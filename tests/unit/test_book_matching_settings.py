@@ -61,7 +61,7 @@ def _row_counts(connection: sqlite3.Connection) -> dict[str, int]:
 
 def test_the_document_holds_book_matching_and_defaults_to_identifier() -> None:
     document = _document()
-    assert document.schema_version == "owner-settings-v5"
+    assert document.schema_version == "owner-settings-v6"
     assert document.matching.work_identity == "identifier"
     for level in ("Identifier", "exact", "", 1):
         with pytest.raises(ValidationError):

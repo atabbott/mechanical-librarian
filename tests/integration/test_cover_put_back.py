@@ -61,6 +61,9 @@ from tests.support.field_effects import (
     effects as effects,
 )
 from tests.unit.test_cover_retention import _automatic_cover
+from tests.unit.test_cover_retention import (
+    _measured_record as _measured_record,  # autouse: a switch is the measured replacement
+)
 from tests.unit.test_not_matched_lens import (
     _audiobook,
     _completes_without_identity,
@@ -515,3 +518,56 @@ def test_the_scan_request_runs_after_the_write_commits(
     application.apply(switch.plan.plan_id)
 
     assert observed == ["verified"]
+
+
+def test_a_retained_put_back_leaks_nothing_to_events_or_the_bundle(
+    effects: _EffectEnvironment,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The retained path and the original's bytes stay private (#1363, A15)."""
+    from mechanical_librarian.adapters.operational_evidence import SupportBundle
+    from mechanical_librarian.application.operations import (
+        support_preparation_incidents,
+    )
+
+    application = _application(effects, [])
+    switch = _switch(effects, application)
+    assert application.apply(switch.plan.plan_id).state == "verified"
+    put_back = _plan(
+        effects, "cover", pre=SWITCHED, desired="cover_" + ORIGINAL_DIGEST, suffix="7"
+    )
+    _owner_put_back(effects, put_back.plan.authority.decision_id, switch.plan.plan_id)
+    assert application.apply(put_back.plan.plan_id).state == "verified"
+    repository = effects.repository
+    bundle = (
+        SupportBundle(
+            (
+                (
+                    "operational_incidents",
+                    lambda: support_preparation_incidents(
+                        repository.operational_snapshot()
+                    ),
+                ),
+            )
+        )
+        .export()
+        .decode()
+    )
+    activity = json.dumps(
+        repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+    )
+    written = capsys.readouterr()
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    surfaces = "\n".join((written.out, written.err, logged, bundle, activity))
+    # Control: the original was kept under the retained root.
+    assert any(_root(effects).iterdir())
+    for leaked in (
+        str(_root(effects)),
+        "retained-covers",
+        ORIGINAL[:16].hex(),
+        ORIGINAL[:16].decode("latin-1"),
+    ):
+        assert leaked not in surfaces

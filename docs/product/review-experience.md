@@ -433,8 +433,15 @@ then open choices under Choose. Kept lists books that keep their current cover
 while you can still choose another. All is a wall of every cover, with each
 title and author.
 
-To decide counts exactly the works whose cover field is in Attention, and the
-counts follow each decision. Pages hold 50 books, and Show more covers loads the
+A suggested switch is a cover the measured cover rules would replace
+([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)),
+held for you because Current covers or the missing qualification does not let
+it switch by itself. Its row carries a pill naming the fault, such as "Under
+300 px" or "Square on an ebook", and its book reads "Suggested because" and
+the reason. To decide counts the works whose cover field is in Attention plus
+the suggested switches; Library's Needs attention counts only the first,
+because a suggestion is optional. A readable cover with no fault is kept
+without asking and appears under Kept. The counts follow each decision. Pages hold 50 books, and Show more covers loads the
 next. It starts after the last book shown, so a decision never makes you miss
 one. The URL keeps the tab and the open book. A wall tile reads "No cover" when
 the cover field is empty and "Image unavailable" when the library's cover cannot
@@ -452,7 +459,10 @@ back, the book says so and asks you to check before choosing again.
 
 Switched lists automatic cover writes you have not answered since, newest first.
 Each row shows Before and Now with each cover's size, and a write that filled an
-empty cover reads "No cover" under Before. A replacement stays listed only while
+empty cover reads "No cover" under Before. A replacement names its fault in a
+pill and says why in one line, such as "The cover was 200 × 300 px, under 300
+px on its short side." A Show menu above the list narrows it to one fault; a
+fill has no fault, so it appears only under All. A replacement stays listed only while
 Mechanical Librarian keeps a copy of the old cover
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
 Keep records that you keep the current cover, releases that copy and marks the

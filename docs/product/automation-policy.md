@@ -134,8 +134,7 @@ audiobook "none" never takes the ebook entry.
 | `description_fill` | `replace_safe_plain_text` | none | description: fill, preserve, replace |
 | `isbn_form` | `preserve_exact` (default) | fill | isbn: fill, preserve |
 | `isbn_form` | `prefer_isbn13` | fill | isbn: fill, normalize, replace |
-| `cover_order` | `fixed_source_order` (default) | fill or replace | none |
-| `cover_order` | `replace_if_strictly_better` | fill | cover: replace |
+| `cover_order` | `fixed_source_order` (default) | fill | none |
 | `asin` | `preserve_exact` (default) | none | asin: fill |
 | `asin` | `ebook_manifestation` | none | none |
 | `explicit` | `unsupported` (default) | none | none |
@@ -417,18 +416,50 @@ vote, with their source and state. They never confirm a value.
 ## Cover
 
 A cover must belong to the same work but need not be the same edition, and UK
-and US variants are interchangeable. Ebook covers are chosen by fixed rules,
+and US variants are interchangeable. Covers are chosen by fixed, measured rules,
 without the optional reviewer
-([ADR-0059](../architecture/decisions/0059-deterministic-cover-election.md)).
-Only covers confirmed for the same edition or book take part. Same edition
-ranks first, then portrait shape, pixel area, width, height, source order and a
-stable reference. The reviewer's notes can explain a cover but never put one
-forward, rank it or approve it. Automatic needs a confirmed cover and no lookup
-for that report running or being checked. Lookups waiting to retry do not hold
-it back. `replace_if_strictly_better` fills only an ebook cover known to be
-empty. A strictly better cover found later may replace an automatic choice.
-Once you choose a cover, Automatic no longer changes it. What you may choose is
-in the [review experience](review-experience.md#covers).
+([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
+Only covers confirmed for the same edition or book take part. The rules drop
+the wrong shape for the medium (square art for an ebook; book-shaped art for an
+audiobook when square art at least 300 pixels on its short side exists), keep
+the sharpest copy of the same art, and drop covers under 300 pixels on the
+short side. What is left ranks same edition first, then pixel area, width,
+height, source order and a stable reference. Sizes are read as the image
+displays. The reviewer's notes can explain a cover but never put one forward,
+rank it or approve it.
+
+The current cover stays unless it has a fault: the wrong shape, under 300
+pixels, unreadable, a sharper copy of the same art available, or an edition
+labelled in a language the library does not hold. A title that names a
+different book from most covers holds the cover until the title is settled.
+Size alone never replaces a readable cover that has no fault.
+
+Policy → Curation → Current covers says what happens to a current cover today,
+while no release can replace one automatically (below):
+
+| Replace a current cover | What happens |
+| --- | --- |
+| Only with a fault (default) | A cover with a fault gets a suggested replacement. Other covers are kept. |
+| When another is preferred | A cover gets a suggested replacement when another is preferred, including a cover you set in Audiobookshelf. |
+| Never | Covers are never replaced automatically. A cover with a fault gets a suggested replacement. |
+
+Saving Current covers compares each prepared cover again on the next scan,
+which the save requests, so the suggestions follow the new setting.
+
+Prefer the edition's cover, off by default, suggests a cover from the book's
+own edition over a cover of the book in general; only When another is
+preferred lets it switch automatically.
+
+Replacing a cover automatically needs its own qualification, which no release
+has yet, so today every such replacement is a suggestion in Covers' To decide.
+It also needs room to keep the replaced cover to put back; while that store is
+full, the replacement is suggested. Automatic fills only an ebook cover known
+to be empty, with a confirmed cover and no lookup for that report running or
+being checked; lookups waiting to retry do not hold it back. An audiobook cover
+is never filled or replaced automatically. Once you choose a cover, Automatic
+no longer changes it, and changing Current covers stops any automatic change
+not yet written. What you may choose is in the
+[review experience](review-experience.md#covers).
 
 Book matching in Policy, set wider than "Confirmed matches only", lets a cover
 from a source record with the book's title and author be labelled "Same title
@@ -436,11 +467,6 @@ and author" for you to choose. Such a cover never takes part in an automatic
 choice under any option, including the deterministic switches and fills and
 automatic mode, until the owner-run qualification in #1418 passes
 ([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
-
-An audiobook cover is replaced only when the current cover's known shorter edge
-is under 300 pixels. The new cover must be eligible, portrait or square, and at
-least 500 pixels and twice the old edge on its shorter side. A current cover
-that is adequate, of unknown size or out of date is kept.
 
 The previous cover is kept as rollback evidence before any write.
 

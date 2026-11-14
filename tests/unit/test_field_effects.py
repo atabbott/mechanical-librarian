@@ -98,7 +98,10 @@ from mechanical_librarian.domain.readable_activity import (
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support import audiobookshelf_targets
-from tests.support.audiobook_covers import audiobook_cover_environment
+from tests.support.audiobook_covers import (
+    SYNTHETIC_MEASURED_RECORD,
+    audiobook_cover_environment,
+)
 from tests.support.audiobook_reports import (
     publish_audiobook_preview,
     synthetic_audiobook_bibliographic_report,
@@ -2024,7 +2027,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             ).fetchone()[0],
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
-            "schema_version": "cover-consideration-v7",
+            "schema_version": "cover-consideration-v8",
             "supersedes_id": None,
         },
         separators=(",", ":"),
@@ -6221,9 +6224,22 @@ def test_pair_admission_boundaries(tmp_path, field, mode):
         "consent",
     ),
 )
-def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negative):
+def test_guarded_audiobook_cover_replacement_boundaries(
+    tmp_path, effects, negative, monkeypatch
+):
+    # An undersized square cover is the measured rules' replacement, admitted
+    # under a synthetic qualification record (#1363).
+    from mechanical_librarian.domain import cover_qualification_policy
+
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
     with audiobook_cover_environment(
-        tmp_path / "cover", [(80, 120), (640, 960)]
+        tmp_path / "cover",
+        [(200, 200), (600, 600)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
     ) as state:
         assert len(state.decisions) == 1
         target_case = audiobookshelf_targets.FieldEffectTargetCase()
@@ -7854,7 +7870,8 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             source,
             report,
             ("cover_order",),
-            selected_options={"cover_order": "replace_if_strictly_better"},
+            # The retained plan's replacement option is retired (#1363 Q11).
+            selected_options={"cover_order": "fixed_source_order"},
         )
         assert case_id != fixture["consideration"]["review_case_id"]
         # The retained decision's earlier F46 digest no longer decodes.

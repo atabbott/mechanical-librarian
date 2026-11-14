@@ -118,15 +118,14 @@
   ],
   "consented_libraries": [],
   "counts": {},
-  "current_waiting": null,
   "enabled_libraries": [],
   "events": [
     {
       "author_label": "Mick Herron",
       "category": "automatic",
       "change": "Description advice could not be prepared",
-      "change_detail": "Description advice could not be prepared",
       "change_id": "description_attempt_00000000000000000000000000000002",
+      "change_detail": "Description advice could not be prepared",
       "check_group": null,
       "destination": "description",
       "diagnostic": null,
@@ -147,27 +146,27 @@
         },
         {
           "label": "Adviser",
-          "value": "codex \u00b7 gpt-5.6-sol"
+          "value": "codex · gpt-5.6-sol"
         }
       ],
       "failure": "unavailable",
       "field_label": "Description",
+      "policy_changes": [],
       "library": "ebooks",
       "note": null,
       "occurred_at": 1002,
       "origin": "adviser",
-      "policy_changes": [],
       "state": "failed",
       "transition_id": null,
-      "work_id": "item-1",
-      "work_label": "Real Tigers"
+      "work_label": "Real Tigers",
+      "work_id": "item-1"
     },
     {
       "author_label": "Mick Herron",
       "category": "automatic",
       "change": "Description advice prepared for review",
-      "change_detail": "Description advice prepared for review",
       "change_id": "description_attempt_00000000000000000000000000000001",
+      "change_detail": "Description advice prepared for review",
       "check_group": null,
       "destination": "description",
       "diagnostic": null,
@@ -184,27 +183,27 @@
         },
         {
           "label": "Adviser",
-          "value": "codex \u00b7 gpt-5.6-sol"
+          "value": "codex · gpt-5.6-sol"
         }
       ],
       "failure": null,
       "field_label": "Description",
+      "policy_changes": [],
       "library": "ebooks",
       "note": null,
       "occurred_at": 10,
       "origin": "adviser",
-      "policy_changes": [],
       "state": "succeeded",
       "transition_id": null,
-      "work_id": "item-1",
-      "work_label": "Real Tigers"
+      "work_label": "Real Tigers",
+      "work_id": "item-1"
     },
     {
       "author_label": "Mick Herron",
       "category": "automatic",
       "change": "Kept Existing description.",
-      "change_detail": "Kept Description as Existing description.",
       "change_id": "automatic_decision_189b8f8c1510108ce2b213db1135dd32ba140357b948c8e121b5d004e199a6a0",
+      "change_detail": "Kept Description as Existing description.",
       "check_group": "report_3f25c8e880662dd9479bef1dd929a749b2e7c17e0f86f09e1ec4a43c59769811",
       "destination": "description",
       "diagnostic": null,
@@ -234,22 +233,22 @@
       ],
       "failure": null,
       "field_label": "Description",
+      "policy_changes": [],
       "library": "ebooks",
       "note": null,
       "occurred_at": 4,
       "origin": "automatic_policy",
-      "policy_changes": [],
       "state": "recorded",
       "transition_id": null,
-      "work_id": "item-1",
-      "work_label": "Real Tigers"
+      "work_label": "Real Tigers",
+      "work_id": "item-1"
     },
     {
       "author_label": "Author details are not recorded",
       "category": "policy",
       "change": "10 changes activated",
-      "change_detail": "10 changes activated",
       "change_id": "policy_transition_8fb80737b8d3d29c9ac74b4819c2de4156f36839490f97da6d5a3ea54462da5c",
+      "change_detail": "10 changes activated",
       "check_group": null,
       "destination": "policy",
       "diagnostic": null,
@@ -267,64 +266,60 @@
       ],
       "failure": null,
       "field_label": "Policy",
-      "library": "Library policy",
-      "note": null,
-      "occurred_at": 2,
-      "origin": "policy",
       "policy_changes": [
         {
           "field": "Authors and narrators",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Cover",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Publication date and year",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Genres",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "ISBN",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Language",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Publisher",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Series memberships",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Subtitle",
-          "next": "Ask me",
+          "setting": "Setting",
           "previous": "Automatic",
-          "setting": "Setting"
+          "next": "Ask me"
         },
         {
           "field": "Title and subtitle",
@@ -333,17 +328,21 @@
           "setting": "Setting"
         }
       ],
+      "library": "Library policy",
+      "note": null,
+      "occurred_at": 2,
+      "origin": "policy",
       "state": "completed",
       "transition_id": null,
-      "work_id": "Library policy",
-      "work_label": "Library policy"
+      "work_label": "Library policy",
+      "work_id": "Library policy"
     },
     {
       "author_label": "Author details are not recorded",
       "category": "policy",
       "change": "0 changes activated",
-      "change_detail": "0 changes activated",
       "change_id": "policy_transition_45a1fe63849ae68024cfad271ae6af31d922a7869de6e05c137124e24bb6e087",
+      "change_detail": "0 changes activated",
       "check_group": null,
       "destination": "policy",
       "diagnostic": null,
@@ -361,15 +360,15 @@
       ],
       "failure": null,
       "field_label": "Policy",
+      "policy_changes": [],
       "library": "Library policy",
       "note": null,
       "occurred_at": 0,
       "origin": "policy",
-      "policy_changes": [],
       "state": "completed",
       "transition_id": null,
-      "work_id": "Library policy",
-      "work_label": "Library policy"
+      "work_label": "Library policy",
+      "work_id": "Library policy"
     }
   ],
   "example": null,
@@ -384,6 +383,7 @@
     "range_days": 30,
     "total": 5
   },
+  "current_waiting": null,
   "owner_action_required": 0,
   "paused": false,
   "prepared": {

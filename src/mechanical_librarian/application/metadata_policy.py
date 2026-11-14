@@ -652,13 +652,15 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
                 else "fill_or_respell"
                 if field == "language_rendering"
                 else "fill"
-                if (field == "cover_order" and option == "replace_if_strictly_better")
-                or field
+                # A cover is only filled: a current one is replaced by the
+                # measured rules under their own identity (#1363).
+                if field
                 in {
                     "subtitle",
                     "description_fill",
                     "isbn_form",
                     "series",
+                    "cover_order",
                 }
                 or option == "fill_empty"
                 else "add"

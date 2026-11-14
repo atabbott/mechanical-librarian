@@ -2655,13 +2655,14 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     ).read_text()
                 )["cover_considerations_sql"],
             )
-        # Their owner selection CHECK named v2, before #1363's Put back.
+        # Their owner selection CHECK named v2, before #1363's Put back, and
+        # their automatic one decision v3, before the measured rules' reason.
         old.setattr(
             persistence_schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",
             persistence_schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
                 "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
-            ),
+            ).replace("'cover-automatic-decision-v4'", "'cover-automatic-decision-v3'"),
         )
         # The earlier producers predate #1245's report discriminator; the v20
         # producer wrote report v54.

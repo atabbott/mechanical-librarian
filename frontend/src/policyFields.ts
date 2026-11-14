@@ -187,12 +187,10 @@ export const fields: readonly FieldDefinition[] = [
   {
     key: 'cover_order',
     label: 'Cover',
-    meaning:
-      'Use a confirmed cover. Audiobooks replace a small current cover only with a clearly larger one.',
-    options: ['fixed_source_order', 'replace_if_strictly_better'],
+    meaning: 'Use a confirmed cover. A current cover is replaced only as Current covers allows.',
+    options: ['fixed_source_order'],
     optionLabels: {
       fixed_source_order: 'Fill from confirmed covers',
-      replace_if_strictly_better: 'Replace with a clearly larger cover',
     },
     chapter: 'curation',
   },
@@ -415,14 +413,6 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     transformation: 'uses the frozen identity, aspect, size and packet tie-break order',
     effect: 'fills an empty Cover',
     fallback: 'preserves an existing Cover',
-  },
-  'cover_order:replace_if_strictly_better': {
-    admitted: 'confirmed audiobook covers with a known small incumbent',
-    transformation: 'selects the first eligible cover in the existing confirmed order',
-    effect:
-      'replaces a current cover under 300 pixels on its shorter edge with one at least 500 pixels and twice as large on that edge',
-    fallback:
-      'keeps a current cover that is large enough or of unknown size. The new cover must be portrait or square',
   },
   'asin:preserve_exact': {
     admitted: 'an already admitted exact ASIN',

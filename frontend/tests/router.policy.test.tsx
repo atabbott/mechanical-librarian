@@ -2064,7 +2064,11 @@ it('saves description preferences independently next to Cover guidance and keeps
     'aria-pressed',
     'true',
   )
-  expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toBe(region)
+  // Current covers sits between Cover and Description advice (#1363).
+  expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toHaveAccessibleName(
+    'Current covers',
+  )
+  expect(screen.getByRole('region', { name: 'Current covers' }).nextElementSibling).toBe(region)
   expect(region.nextElementSibling).toHaveAccessibleName('Book matching')
   expect(region.nextElementSibling?.nextElementSibling).toHaveAccessibleName('ASIN')
   await userEvent.setup().click(choice('Remove marketing material', 'Off'))
@@ -2091,6 +2095,195 @@ it('saves description preferences independently next to Cover guidance and keeps
     },
   })
   expect(within(region).getByRole('link')).toHaveAttribute('href', '/settings?group=reviewer')
+})
+
+it('saves current cover settings with their own button (#1363)', async () => {
+  const http = createHttp()
+  const initial = view()
+  http.getSettings = vi.fn(async () => initial)
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => ({
+    ...initial,
+    document: savedDocument(write.document),
+  }))
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const protection = await within(region).findByRole('group', { name: 'Replace a current cover' })
+  expect(
+    within(protection)
+      .getAllByRole('button')
+      .map((button) => button.textContent),
+  ).toEqual(['Only with a fault', 'When another is preferred', 'Never'])
+  expect(within(protection).getByRole('button', { name: 'Only with a fault' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(
+    within(region).getByText(
+      'A cover with a fault gets a suggested replacement. Other covers are kept.',
+    ),
+  ).toBeVisible()
+  expect(within(region).getByRole('status')).toHaveTextContent(
+    'Saved with their own button, not with the policy.',
+  )
+  const user = userEvent.setup()
+  // Each line is true while no release can replace a cover automatically.
+  await user.click(within(protection).getByRole('button', { name: 'When another is preferred' }))
+  expect(
+    within(region).getByText(
+      'A cover gets a suggested replacement when another is preferred, including a cover you set in Audiobookshelf.',
+    ),
+  ).toBeVisible()
+  await user.click(within(protection).getByRole('button', { name: 'Never' }))
+  expect(
+    within(region).getByText(
+      'Covers are never replaced automatically. A cover with a fault gets a suggested replacement.',
+    ),
+  ).toBeVisible()
+  const edition = within(region).getByRole('group', { name: "Prefer the edition's cover" })
+  await user.click(within(edition).getByRole('button', { name: 'On' }))
+  expect(
+    within(region).getByText(
+      "A cover from this book's edition is suggested over a cover of the book in general.",
+    ),
+  ).toBeVisible()
+  expect(within(region).getByRole('status')).toHaveTextContent(
+    'Unsaved. These save with their own button, not with the policy.',
+  )
+  await user.click(within(region).getByRole('button', { name: 'Save cover settings' }))
+  await waitFor(() =>
+    expect(within(region).getByRole('status')).toHaveTextContent('Cover settings saved.'),
+  )
+  expect(http.writeSettings).toHaveBeenCalledWith({
+    expected_revision: 3,
+    secrets: [],
+    document: {
+      ...initial.document,
+      revision: 4,
+      cover_preferences: {
+        ...initial.document.cover_preferences,
+        current_protection: 'proposals_only',
+        prefer_edition: true,
+      },
+    },
+  })
+})
+
+it("says a failed cover settings read or save in the settings sections' words (#1363)", async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let reads = 0
+  http.getSettings = vi.fn(async () => {
+    reads += 1
+    if (reads === 1) throw new ApiError(503, 'settings_unavailable')
+    return initial
+  })
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+    throw new ApiError(409, 'settings_revision_conflict')
+  })
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const alert = await within(region).findByRole('alert')
+  expect(alert).toHaveTextContent(/^Cover settings could not be loaded\.Retry cover settings$/)
+  await user.click(within(alert).getByRole('button', { name: 'Retry cover settings' }))
+  const protection = await within(region).findByRole('group', { name: 'Replace a current cover' })
+  await user.click(within(protection).getByRole('button', { name: 'Never' }))
+  await user.click(within(region).getByRole('button', { name: 'Save cover settings' }))
+  const refusal = await within(region).findByRole('alert')
+  expect(refusal).toHaveTextContent(
+    /^Cover settings were not saved\. Reload them, then try again\.Reload cover settings$/,
+  )
+})
+
+it.each(['covers', 'advice'] as const)(
+  "takes another section's save silently, and says only unsaved edits are stale (#1363, %s first)",
+  async (first) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const initial = view()
+    let current = initial
+    http.getSettings = vi.fn(async () => current)
+    http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+      current = { ...initial, document: savedDocument(write.document) }
+      return current
+    })
+    renderRoute('/policy?section=curation', http)
+    const covers = await screen.findByRole('region', { name: 'Current covers' })
+    const advice = screen.getByRole('region', { name: 'Description advice' })
+    const protection = await within(covers).findByRole('group', {
+      name: 'Replace a current cover',
+    })
+    const marketing = await within(advice).findByRole('group', {
+      name: 'Remove marketing material',
+    })
+    const saveCovers = async () => {
+      await user.click(within(protection).getByRole('button', { name: 'Never' }))
+      await user.click(within(covers).getByRole('button', { name: 'Save cover settings' }))
+      await waitFor(() =>
+        expect(within(covers).getByRole('status')).toHaveTextContent('Cover settings saved.'),
+      )
+    }
+    const saveAdvice = async () => {
+      await user.click(within(marketing).getByRole('button', { name: 'Off' }))
+      await user.click(within(advice).getByRole('button', { name: 'Save description preferences' }))
+      await waitFor(() =>
+        expect(within(advice).getByRole('status')).toHaveTextContent(
+          'Description preferences saved.',
+        ),
+      )
+    }
+    await (first === 'covers' ? saveCovers() : saveAdvice())
+    // The other section had nothing unsaved, so it took the newer settings
+    // without a message, and its own save follows on from them.
+    expect(within(covers).queryByRole('alert')).toBeNull()
+    expect(within(advice).queryByRole('alert')).toBeNull()
+    await (first === 'covers' ? saveAdvice() : saveCovers())
+    const last = vi.mocked(http.writeSettings).mock.lastCall?.[0]
+    expect(last?.expected_revision).toBe(4)
+    expect(last?.document.revision).toBe(5)
+    expect(last?.document.cover_preferences.current_protection).toBe('proposals_only')
+    expect(last?.document.description_advice.remove_marketing).toBe(false)
+  },
+)
+
+it('says unsaved cover settings are stale after another section saves (#1363)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let current = initial
+  http.getSettings = vi.fn(async () => current)
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => {
+    current = { ...initial, document: savedDocument(write.document) }
+    return current
+  })
+  renderRoute('/policy?section=curation', http)
+  const covers = await screen.findByRole('region', { name: 'Current covers' })
+  const advice = screen.getByRole('region', { name: 'Description advice' })
+  const protection = await within(covers).findByRole('group', { name: 'Replace a current cover' })
+  await user.click(within(protection).getByRole('button', { name: 'Never' }))
+  const marketing = await within(advice).findByRole('group', {
+    name: 'Remove marketing material',
+  })
+  await user.click(within(marketing).getByRole('button', { name: 'Off' }))
+  await user.click(within(advice).getByRole('button', { name: 'Save description preferences' }))
+  expect(await within(covers).findByRole('alert')).toHaveTextContent(
+    /^Cover settings were not saved\. Reload them, then try again\.Reload cover settings$/,
+  )
+})
+
+it('shows file-managed current cover settings read-only (#1363)', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view('file'))
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>()
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  expect(
+    within(region).getByText('These settings are managed by deployment configuration.'),
+  ).toBeVisible()
+  for (const button of within(region).getAllByRole('button', { pressed: false }))
+    expect(button).toBeDisabled()
+  expect(within(region).getByRole('button', { name: 'Save cover settings' })).toBeDisabled()
+  expect(http.writeSettings).not.toHaveBeenCalled()
 })
 
 it.each([

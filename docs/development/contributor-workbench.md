@@ -152,7 +152,7 @@ the same packet, identity, observation and policy modules
   `plausible_match`, `unknown` and `conflict` candidates are never eligible. A
   supplied observation report must bind to the exact packet and reviewer
   profile and is retained, but neither the observations nor the three
-  `cover-policy-v1` booleans (avoid promotional text, avoid tie-in branding,
+  advisory `cover-policy-v2` booleans (avoid promotional text, avoid tie-in branding,
   prefer minimal composition) can admit, exclude or reorder a candidate. It
   never dispatches a reviewer.
 

@@ -963,7 +963,7 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
     store.promote(_BOOTSTRAP, _OWNER)
 
     encoded = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v5"' in encoded
+    assert '"schema_version":"owner-settings-v6"' in encoded
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -995,7 +995,7 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
     )
     connection.execute(
         "CREATE TRIGGER fail_owner_promotion BEFORE UPDATE ON owner_settings "
-        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v5' "
+        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v6' "
         "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
     )
 

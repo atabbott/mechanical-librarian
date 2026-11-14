@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, Never
+from unittest import mock
 
 from mechanical_librarian.adapters import cover_artifacts as decoder
 from mechanical_librarian.adapters.field_effect_authority import (
@@ -16,6 +17,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
+from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -45,7 +47,27 @@ def audiobook_cover_environment(
     sizes: list[tuple[int, int]],
     *,
     unknown_incumbent: bool = False,
-    option: str = "replace_if_strictly_better",
+    option: str = "fixed_source_order",
+    measured_record: str | None = None,
+) -> Iterator[Any]:
+    """Prepare one audiobook comparison; ``measured_record`` stands in for the
+    measured replacement's qualification record, which no shipped build has."""
+    with mock.patch.object(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        measured_record,
+    ):
+        yield from _environment(out, sizes, unknown_incumbent, option)
+
+
+SYNTHETIC_MEASURED_RECORD = "5" * 64
+
+
+def _environment(
+    out: Path,
+    sizes: list[tuple[int, int]],
+    unknown_incumbent: bool,
+    option: str,
 ) -> Iterator[Any]:
     out.mkdir(mode=0o700)
     originals = [synthetic_image("PNG", size) for size in sizes]

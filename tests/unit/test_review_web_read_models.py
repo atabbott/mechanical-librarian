@@ -306,8 +306,10 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "policy_preferences": {
             "avoid_promotional_text": False,
             "avoid_tie_in_branding": False,
+            "current_protection": "protected",
+            "prefer_edition": False,
             "prefer_minimal_composition": False,
-            "schema_version": "cover-policy-v1",
+            "schema_version": "cover-policy-v2",
         },
         "policy_reference": "cover_policy_" + "2" * 64,
         "provider_fetching": False,
@@ -317,7 +319,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v7",
+        "schema_version": "cover-consideration-v8",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -455,6 +457,160 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
     assert 401 == revoked.status_code
     assert "no-store, private" == revoked.headers["cache-control"]
     assert reads == covers.image.call_count
+
+
+def test_a_full_packet_with_a_larger_copy_and_a_put_back_reaches_the_browser(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    # Codex R1 on #1363: twelve reviewed previews, the larger copy of the
+    # current picture and the retained original make fourteen cards, which the
+    # retry answer and the work detail must both carry.
+    sources = (
+        _cover_source(1, _cover_preview(1), incumbent=True),
+        _cover_source(2, _cover_preview(2), embedded=True),
+    )
+    base = _cover_report(sources)
+    incumbent_artifact = sources[0].artifact
+    assert incumbent_artifact is not None
+    report = MetadataReport.create(
+        target=TargetFacts(
+            base.target.connection,
+            base.target.library,
+            base.target.item,
+            tuple(
+                TargetField(
+                    field.destination,
+                    TargetFieldState.VALUE,
+                    incumbent_artifact.artifact_id,
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in base.target.fields
+            ),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        cover_sources=base.cover_sources,
+    )
+    case = ReviewCase.create(evaluate_report(report), report)
+    repository = FakeReviewRepository(case, report)
+
+    def card(ordinal: int, kind: str) -> dict[str, object]:
+        reference = f"cover_ref_{ordinal:064x}"
+        retained = kind == "retained"
+        return {
+            "artifact_id": f"cover_{ordinal:064x}",
+            "candidate_kind": kind,
+            "deterministic_citations": [reference],
+            "deterministic_rank": None,
+            "deterministic_rank_key": None
+            if retained
+            else [1, 0, -960000, -800, -1200, ordinal, reference],
+            "height": 1200,
+            "identity": None
+            if retained
+            else {
+                "candidate_reference": reference,
+                "evidence_references": [],
+                "outcome": "verified_work_match",
+                "preview_reference": f"cover_preview_{ordinal:064x}",
+                "reasons": [],
+            },
+            "incumbent": ordinal == 0,
+            "match_reason": None,
+            "match_state": "match_not_confirmed" if retained else "same_book",
+            "observation": None,
+            "original_sha256": f"{ordinal:064x}",
+            "ordinal": ordinal,
+            "preview_sha256": f"{ordinal + 100:064x}",
+            "reference": reference,
+            "selectable": ordinal != 0,
+            "manual_eligible": ordinal != 0,
+            "source_kinds": ["retained"]
+            if retained
+            else ["epub"]
+            if kind == "larger_copy"
+            else ["abs"]
+            if ordinal == 0
+            else ["hardcover"],
+            "state": "available",
+            "transport_sha256": f"{ordinal + 200:064x}",
+            "width": 800,
+        }
+
+    candidates = [
+        *(card(ordinal, "candidate") for ordinal in range(12)),
+        card(12, "larger_copy"),
+        card(13, "retained"),
+    ]
+    view = {
+        "candidates": candidates,
+        "consideration_id": "cover_consideration_" + "b" * 64,
+        "choice_contexts": [],
+        "current": True,
+        "incumbent": {
+            "reference": candidates[0]["reference"],
+            "state": "available",
+        },
+        "omissions": [],
+        "policy": None,
+        "policy_preferences": {
+            "avoid_promotional_text": False,
+            "avoid_tie_in_branding": False,
+            "current_protection": "protected",
+            "prefer_edition": False,
+            "prefer_minimal_composition": False,
+            "schema_version": "cover-policy-v2",
+        },
+        "policy_reference": "cover_policy_" + "2" * 64,
+        "provider_fetching": False,
+        "ready": True,
+        "reviewer_access_revision": None,
+        "reviewer_engine": None,
+        "reviewer_model": None,
+        "reviewer_status": "unavailable",
+        "reviewer_unavailable_reason": None,
+        "schema_version": "cover-consideration-v8",
+        "supersedes_id": None,
+        "target_fingerprint": case.target_fingerprint,
+    }
+    covers = Mock()
+    covers.project.return_value = view
+    covers.project_for_review.return_value = (view, "current")
+    covers.ensure.return_value = view
+    web.client.close()
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(web.hash_path),
+            session_lifetime_seconds=600,
+        ),
+        clock=lambda: web.now,
+        cover_considerations=covers,
+    )
+    web.client = TestClient(app, base_url="https://review.test")
+    login = web.login()
+    retried = web.client.post(
+        f"/api/v1/review-cases/{case.review_case_id}/cover-considerations/retry",
+        headers={**web.origin, "X-CSRF-Token": str(login["csrf_token"])},
+    )
+    assert 200 == retried.status_code, retried.text
+    assert [row["candidate_kind"] for row in retried.json()["candidates"]] == [
+        *(["candidate"] * 12),
+        "larger_copy",
+        "retained",
+    ]
+    detail = web.client.get(f"/api/v1/review-cases/{case.review_case_id}")
+    assert 200 == detail.status_code, detail.text
+    cover = next(
+        field for field in detail.json()["fields"] if field["destination"] == "cover"
+    )
+    assert len(cover["cover_consideration"]["candidates"]) == 14
 
 
 def test_shutdown_timeout_preserves_shared_repository_for_live_worker(
@@ -3355,7 +3511,8 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
     ]
     available = {entry["identity"] for entry in entries if entry["automatic_available"]}
     assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(available) == 71
+    # #1363 retired the audiobook cover replacement, F46's only cover option.
+    assert len(available) == 70
     assert {
         entry["destination"] for entry in entries if entry["automatic_available"]
     } == {
@@ -3366,7 +3523,6 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
         "series",
         "genres",
         "asin",
-        "cover",
         "publishedDate",
         "description",
         "explicit",
@@ -4602,7 +4758,7 @@ def _retry_settings_document(generation: int):
 
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

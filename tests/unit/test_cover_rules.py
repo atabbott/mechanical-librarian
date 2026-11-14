@@ -78,7 +78,7 @@ def _candidate(
     identity: str = WORK,
     ordinal: int = 0,
     measures: CoverMeasures | None = None,
-    non_english_edition: bool = False,
+    edition_outside_library_languages: bool = False,
     omnibus_volume: bool = False,
     title_differs: bool = False,
 ) -> CoverRuleCandidate:
@@ -89,7 +89,7 @@ def _candidate(
         height=size[1],
         packet_ordinal=ordinal,
         measures=measures,
-        non_english_edition=non_english_edition,
+        edition_outside_library_languages=edition_outside_library_languages,
         omnibus_volume=omnibus_volume,
         title_differs=title_differs,
     )
@@ -100,7 +100,7 @@ def _current(
     *,
     identity: str | None = WORK,
     measures: CoverMeasures | None = None,
-    non_english_edition: bool = False,
+    edition_outside_library_languages: bool = False,
 ) -> CurrentCover:
     if size is None:
         return CurrentCover("current", identity, readable=False)
@@ -111,7 +111,7 @@ def _current(
         width=size[0],
         height=size[1],
         measures=measures,
-        non_english_edition=non_english_edition,
+        edition_outside_library_languages=edition_outside_library_languages,
     )
 
 
@@ -384,7 +384,8 @@ def test_a_chain_of_near_matches_never_makes_another_art_a_copy() -> None:
     assert set(fault_free.ranked) == {"near", "far"}
 
     faulty = _elect(
-        candidates, current=_current(measures=_measures(), non_english_edition=True)
+        candidates,
+        current=_current(measures=_measures(), edition_outside_library_languages=True),
     )
     assert faulty.issues == (CoverIssue.EDITION_LANGUAGE,)
     assert (faulty.outcome, faulty.choice) == (CoverOutcome.REPLACE, "far")
@@ -393,7 +394,9 @@ def test_a_chain_of_near_matches_never_makes_another_art_a_copy() -> None:
 def test_a_fault_of_the_art_is_not_replaced_by_another_copy_of_it() -> None:
     copy = _candidate("copy", PORTRAIT, identity=EDITION, measures=_measures())
     other = _candidate("other", (1000, 1500), measures=_measures(art=1))
-    current = _current((800, 1200), measures=_measures(), non_english_edition=True)
+    current = _current(
+        (800, 1200), measures=_measures(), edition_outside_library_languages=True
+    )
 
     election = _elect((copy, other), current=current)
     assert election.ranked == ("copy", "other")
@@ -427,7 +430,11 @@ def _art_fault_cases() -> list[tuple[str, CurrentCover, tuple[int, int], CoverIs
     return [
         (
             "edition_language",
-            _current((800, 1200), measures=_measures(), non_english_edition=True),
+            _current(
+                (800, 1200),
+                measures=_measures(),
+                edition_outside_library_languages=True,
+            ),
             (1200, 1800),
             CoverIssue.EDITION_LANGUAGE,
         ),
@@ -510,7 +517,9 @@ def test_an_undersized_cover_is_cured_by_a_copy_that_clears_the_floor() -> None:
 
     foreign = _elect(
         (copy, other),
-        current=_current(small, measures=_measures(), non_english_edition=True),
+        current=_current(
+            small, measures=_measures(), edition_outside_library_languages=True
+        ),
     )
     assert foreign.issues == (CoverIssue.BELOW_FLOOR, CoverIssue.EDITION_LANGUAGE)
     assert foreign.choice == "other"
@@ -565,13 +574,15 @@ def test_omnibus_excludes_a_member_volume_only_for_an_omnibus() -> None:
     assert single.choice == "volume"
 
 
-def test_a_non_english_edition_is_excluded_and_faults_the_current_cover() -> None:
+def test_a_edition_outside_library_languages_is_excluded_and_faults_the_current_cover() -> (
+    None
+):
     election = _elect(
         (
-            _candidate("foreign", (800, 1200), non_english_edition=True),
+            _candidate("foreign", (800, 1200), edition_outside_library_languages=True),
             _candidate("english", PORTRAIT, measures=_measures(art=1)),
         ),
-        current=_current(non_english_edition=True),
+        current=_current(edition_outside_library_languages=True),
     )
 
     assert election.excluded == (("foreign", CoverExclusion.EDITION_LANGUAGE),)
@@ -583,9 +594,11 @@ def test_the_first_failing_check_names_an_exclusion() -> None:
     small = COVER_FLOOR_SHORT_EDGE - 1
     election = _elect(
         (
-            _candidate("all", (small, small), non_english_edition=True),
+            _candidate("all", (small, small), edition_outside_library_languages=True),
             _candidate(
-                "language-volume", omnibus_volume=True, non_english_edition=True
+                "language-volume",
+                omnibus_volume=True,
+                edition_outside_library_languages=True,
             ),
             _candidate("square-volume", SQUARE, omnibus_volume=True),
         ),
@@ -656,7 +669,7 @@ def test_issues_are_recorded_in_priority_order() -> None:
     small = COVER_FLOOR_SHORT_EDGE - 1
     election = _elect(
         (_candidate("art", measures=_measures(art=1)),),
-        current=_current((small, small), non_english_edition=True),
+        current=_current((small, small), edition_outside_library_languages=True),
     )
 
     assert election.issues == (
@@ -762,7 +775,11 @@ def _fixtures() -> list[tuple[str, Callable[..., MeasuredCoverElection]]]:
         ("unreadable", partial(_elect, (ALTERNATIVE,), current=_current(None))),
         (
             "edition_language",
-            partial(_elect, (ALTERNATIVE,), current=_current(non_english_edition=True)),
+            partial(
+                _elect,
+                (ALTERNATIVE,),
+                current=_current(edition_outside_library_languages=True),
+            ),
         ),
         (
             "sharper_copy",
@@ -855,7 +872,9 @@ def test_the_result_does_not_depend_on_candidate_order() -> None:
         lambda: _candidate("x", PORTRAIT, title_differs=1),  # type: ignore[arg-type]  # reason: proves the exact-type check
         lambda: CurrentCover("current", WORK, readable=True),
         lambda: CurrentCover("current", WORK, readable=False, width=1, height=1),
-        lambda: CurrentCover("current", WORK, readable=False, non_english_edition=True),
+        lambda: CurrentCover(
+            "current", WORK, readable=False, edition_outside_library_languages=True
+        ),
         lambda: CurrentCover("current", "unverified", readable=True, width=1, height=1),
         lambda: _candidate("x", PORTRAIT, identity=["verified_work_match"]),  # type: ignore[arg-type]  # reason: proves the exact-type check
         lambda: CurrentCover("current", {}, readable=True, width=1, height=1),  # type: ignore[arg-type]  # reason: as above

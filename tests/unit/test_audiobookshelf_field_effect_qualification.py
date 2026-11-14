@@ -217,7 +217,7 @@ def test_generated_field_effect_configuration_admits_the_current_schema(
     def admit(path: Path) -> None:
         document = json.loads(path.read_text(encoding="utf-8"))
         admitted = ConfigurationInput.model_validate(document)
-        assert admitted.schema_version == "config-v10"
+        assert admitted.schema_version == "config-v11"
         raise _ConfigurationAdmitted
 
     monkeypatch.setattr(qualification, "load_configuration_file", admit)

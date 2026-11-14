@@ -190,7 +190,7 @@ class SetupStateDocument(_Closed):
             raise SetupStateError("setup state is incomplete")
         return OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v5",
+                "schema_version": "owner-settings-v6",
                 "revision": 1,
                 "connections": [self.connection.model_dump()],
                 "providers": [item.model_dump() for item in self.providers],

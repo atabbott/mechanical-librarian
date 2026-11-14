@@ -116,6 +116,43 @@ _DECIDING_SQL = (
     "AND f.item_id=ml.item_id AND f.report_id=ml.report_id "
     "AND f.destination='cover' AND " + _ATTENTION_FACT_CURRENT_SQL + ")"
 )
+# The measured stage's outcome and reason for the work's cover, as a JSON
+# pair, when it suggests a switch or holds one, its current comparison is
+# current under the live authority, and the owner has not answered it, nor
+# automation admitted the switch. A suggestion the owner can choose is
+# optional work: it is listed under To decide as "Switch suggested", never in
+# Library's attention (#1363, S9). A hold carries its reason to the row's
+# pill. It binds the cover authority again.
+_STAGE_SQL = (
+    "(SELECT json_array(json_extract(pointed.currentness_document,"
+    "'$.cover_stage.outcome'),json_extract(pointed.currentness_document,"
+    "'$.cover_stage.reason')) "
+    "FROM current_cover_considerations pointer JOIN cover_considerations pointed "
+    "ON pointed.consideration_id=pointer.consideration_id "
+    "WHERE pointer.review_case_id=ml.review_case_id "
+    "AND json_extract(pointed.currentness_document,'$.cover_stage.outcome') "
+    "IN ('suggest','replace','hold') "
+    "AND json_extract(pointed.document,'$.policy_reference')=? "
+    "AND ml_cover_consideration_current(pointed.currentness_document,?)=1 "
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "WHERE current.connection_name=ml.connection_name "
+    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
+    "AND (answered.kind='owner' OR answered.consideration_id=pointed.consideration_id)))"
+)
+# The measured rule's reason an automatic switch recorded, and the edition
+# language that reason names, from the decision and its comparison.
+_SWITCH_REASON_SQL = (
+    "SELECT json_extract(json_extract(selection.document,'$.decision_document'),"
+    "'$.reason'),json_extract(json_extract(consideration.document,"
+    "'$.policy_report_document'),'$.stage.language') "
+    "FROM field_effects effect JOIN cover_selection_authorities selection "
+    "ON selection.decision_id=effect.decision_id AND selection.kind='automatic' "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=selection.consideration_id "
+    "WHERE effect.plan_id=?"
+)
 _COVER_OUTCOME_SQL = (
     "(SELECT json_extract(cover_result.value,'$.outcome') "
     "FROM review_cases rc,json_each(rc.document,'$.results') cover_result "
@@ -140,15 +177,28 @@ _WORKS_SQL = (
     "ml.connection_name,ml.library_name,ml.item_id,"
     + _CHOOSABLE_SQL
     + " AS choosable,switch.plan_id,switch.switched_at,switch.sequence,"
-    "switch.original_digest,switch.replacement,CASE WHEN "
+    "switch.original_digest,switch.replacement,ml.suggestion_reason,"
+    "ml.hold_reason,CASE WHEN "
     + _DECIDING_SQL
     + " THEN CASE WHEN "
     + _COVER_OUTCOME_SQL
     + "='unresolved_choice' THEN 'choice' ELSE 'proposal' END "
+    # A suggestion with no decision the owner can record, such as an
+    # unreadable current cover the comparison cannot act on, is not To
+    # decide; it is listed where its other facts put it (S9, Q16).
+    "WHEN ml.suggestion_reason IS NOT NULL AND "
+    + _CHOOSABLE_SQL
+    + "=1 THEN 'proposal' "
     "WHEN switch.plan_id IS NOT NULL THEN 'auto' WHEN "
     + _CHOOSABLE_SQL
     + "=1 THEN 'kept' ELSE 'none' END AS cover_group "
-    "FROM current_review_packages ml "
+    "FROM (SELECT staged.*,CASE WHEN json_extract(staged.cover_stage,'$[0]') "
+    "IN ('suggest','replace') THEN json_extract(staged.cover_stage,'$[1]') END "
+    "AS suggestion_reason,CASE WHEN json_extract(staged.cover_stage,'$[0]')="
+    "'hold' THEN json_extract(staged.cover_stage,'$[1]') END AS hold_reason "
+    "FROM (SELECT ml.*,"
+    + _STAGE_SQL
+    + " AS cover_stage FROM current_review_packages ml) staged) ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
     "JOIN metadata_report_browse_facts facts ON facts.report_id=mr.report_id "
     "LEFT JOIN switch ON switch.connection_name=ml.connection_name "
@@ -236,6 +286,21 @@ def _put_back(
     return PutBack(state, failure)
 
 
+def _switch_reason(
+    connection: sqlite3.Connection, plan_id: str
+) -> tuple[str | None, str | None]:
+    """The reason a switch recorded and the language it names; a fill has none."""
+    row = connection.execute(_SWITCH_REASON_SQL, (plan_id,)).fetchone()
+    if row is None:
+        return None, None
+    reason, language = row
+    if (reason is not None and type(reason) is not str) or (
+        language is not None and type(language) is not str
+    ):
+        raise MetadataReportError("review covers are unavailable")
+    return reason, language
+
+
 def read_cover_page(
     connection: sqlite3.Connection,
     view: CoverView,
@@ -249,7 +314,9 @@ def read_cover_page(
     With ``review_case_id`` the page holds only that book, if the tab has it.
     """
     where = [_VIEW_FILTER_SQL[view]]
-    parameters: list[object] = list(cover_authority)
+    # The authority is bound for attention, then for the suggestion.
+    authority = (*cover_authority, *cover_authority)
+    parameters: list[object] = list(authority)
     if after is not None:
         where.append(
             "("
@@ -267,7 +334,9 @@ def read_cover_page(
     rows = connection.execute(
         _WORKS_SQL + "SELECT review_case_id,report_document,cover_group,choosable,"
         "switched_at,plan_id,original_digest,replacement,"
-        "connection_name,library_name,item_id," + _VIEW_KEY_SQL[view] + " FROM work "
+        "connection_name,library_name,item_id,suggestion_reason,hold_reason,"
+        + _VIEW_KEY_SQL[view]
+        + " FROM work "
         "WHERE "
         + " AND ".join(where)
         + " ORDER BY "
@@ -278,7 +347,7 @@ def read_cover_page(
     grouped = dict(
         connection.execute(
             _WORKS_SQL + "SELECT cover_group,count(*) FROM work GROUP BY cover_group",
-            cover_authority,
+            authority,
         ).fetchall()
     )
     if any(group not in COVER_GROUPS for group in grouped):
@@ -290,17 +359,23 @@ def read_cover_page(
         )
         # The work's target, for its owner's current Put back (#1363, Q18).
         target = (row[8], row[9], row[10])
-        key = row[11:]
+        suggestion, hold = row[11], row[12]
+        key = row[13:]
         if (
             type(case_id) is not str
             or type(report) is not str
             or group not in COVER_GROUPS
             or choosable not in (0, 1)
             or any(type(value) not in (int, str) for value in key)
+            or (suggestion is not None and type(suggestion) is not str)
+            or (hold is not None and type(hold) is not str)
         ):
             raise MetadataReportError("review covers are unavailable")
         auto = group == "auto"
         replaced = auto and digest is not None
+        reason, language = (
+            _switch_reason(connection, cast(str, plan_id)) if auto else (None, None)
+        )
         page.append(
             CoverRow(
                 case_id,
@@ -322,6 +397,10 @@ def read_cover_page(
                     _PUT_BACK_OFFERED_SQL, (case_id, plan_id)
                 ).fetchone()[0]
                 == 1,
+                reason,
+                language,
+                suggestion if group == "proposal" else None,
+                None if auto else hold,
             )
         )
     return CoverPageSnapshot(

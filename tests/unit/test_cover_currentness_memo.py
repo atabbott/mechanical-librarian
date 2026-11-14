@@ -71,6 +71,8 @@ def _facts(item: str, fetching: bool = False, replay: str = _REPLAY) -> str:
             "provider_fetching": fetching,
             "manual_ready": True,
             "replay_reference": replay,
+            # The measured stage's outcome, which attention reads (#1363).
+            "cover_stage": {"outcome": "keep", "reason": None},
         }
     )
 
@@ -92,6 +94,7 @@ _REFUSED = (
     _facts("a").replace(_REPLAY, "cover_replay_short"),
     _facts("a").replace('"manual_ready":true', '"manual_ready":1'),
     _facts("a")[:-1] + ',"extra":1}',
+    _facts("a").replace('"outcome":"keep"', '"outcome":"other"'),
 )
 
 
@@ -102,7 +105,8 @@ def _pre_1237_currentness(
     replay_reference: str,
     provider_fetching: Callable[[str, str, str, str], bool],
 ) -> CoverConsiderationCurrentness:
-    """`cover_currentness_from_facts` at 96deda67, verbatim but for its name."""
+    """`cover_currentness_from_facts` at 96deda67, verbatim but for its name
+    and the stage the measured rules added to the facts (#1363)."""
     if (
         type(document) is not str
         or type(replay_reference) is not str
@@ -122,7 +126,9 @@ def _pre_1237_currentness(
                 "provider_fetching",
                 "manual_ready",
                 "replay_reference",
+                "cover_stage",
             }
+            or value["cover_stage"] != {"outcome": "keep", "reason": None}
             or any(
                 type(value[key]) is not str or not value[key]
                 for key in (
@@ -550,13 +556,23 @@ def test_browse_with_a_warm_memo_equals_browse_without_one(
         return seen
 
     states: dict[str, set[str]] = {"fixture": compare()}
-    # A verified current cover is kept without asking (#1310), so browse
+    # A verified current cover is kept without asking (#1310), and a cover the
+    # measured rules suggest switching is not attention (#1363), so browse
     # reads the currentness of every other case's cover.
+    stage = (
+        "(SELECT json_extract(c.currentness_document,'$.cover_stage.outcome') "
+        "FROM current_cover_considerations current JOIN cover_considerations c "
+        "ON c.consideration_id=current.consideration_id "
+        "WHERE current.review_case_id=rc.review_case_id)"
+    )
     asking = connection.execute(
-        "SELECT count(*) FROM review_cases rc WHERE NOT EXISTS (SELECT 1 "
+        "SELECT count(*) FROM review_cases rc WHERE " + stage + "='hold' OR ("
+        "NOT EXISTS (SELECT 1 "
         "FROM json_each(rc.document,'$.results') result,"
         "json_each(result.value,'$.reasons') reason "
-        "WHERE reason.value='current_cover_verified')"
+        "WHERE reason.value='current_cover_verified') AND COALESCE("
+        + stage
+        + ",'') NOT IN ('suggest','replace'))"
     ).fetchone()[0]
     assert 0 < asking < len(cases)
     assert _held(memo) >= asking

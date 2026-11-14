@@ -16,6 +16,11 @@ from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
+from mechanical_librarian.adapters.retained_covers import (
+    MAXIMUM_ORIGINAL_BYTES,
+    MAXIMUM_RETAINED_BYTES,
+    MAXIMUM_RETAINED_ENTRIES,
+)
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
@@ -157,6 +162,26 @@ def live_retained_cover(
     return None if row is None else (str(row[0]), str(row[1]), str(row[2]))
 
 
+def retained_cover_store_has_room(connection: sqlite3.Connection) -> bool:
+    """Whether one more original of the largest size would fit the store's bound.
+
+    Counts each digest still bound and not yet removed once, as the store
+    keeps it once. A switch is admitted only while it fits, so the write-time
+    retention check stays a race guard rather than a routine stop (#1363 Q7).
+    """
+    entries, total = connection.execute(
+        "SELECT count(*),coalesce(sum(byte_count),0) FROM ("
+        "SELECT max(binding.byte_count) AS byte_count FROM retained_cover_bindings binding "
+        "WHERE NOT EXISTS (SELECT 1 FROM retained_cover_removals removal "
+        "WHERE removal.plan_id=binding.plan_id AND removal.state='completed') "
+        "GROUP BY binding.original_digest)"
+    ).fetchone()
+    return (
+        int(entries) < MAXIMUM_RETAINED_ENTRIES
+        and int(total) <= MAXIMUM_RETAINED_BYTES - MAXIMUM_ORIGINAL_BYTES
+    )
+
+
 class SQLiteRetainedCoverRepository(ConnectionScoped):
     """Record bindings and run the removal obligation for retained originals."""
 
@@ -283,5 +308,6 @@ __all__ = [
     "SQLiteRetainedCoverRepository",
     "release_put_back_retained_cover",
     "release_unlisted_retained_covers",
+    "retained_cover_store_has_room",
     "schedule_retained_cover_removal",
 ]
