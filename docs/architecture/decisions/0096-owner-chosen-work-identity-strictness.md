@@ -330,8 +330,10 @@ amendment when it lands.
   pending cover effect chosen under another level closes stale with
   `matching_changed`. Each comparison records its level as the top-level
   `work_identity_level`, so one with no classified preview is counted and
-  re-checked too, and a work whose preparation gave up before projection is
-  retried at its own stage.
+  re-checked too. A work whose preparation failed before projection is
+  retried at its own stage, and any other work that cannot simply be
+  projected again is prepared again from extraction, so saving again always
+  has something to retry.
 - **Lineage.** A cover row records the rule `work_identity:<level>` for the
   strictest level met, plus the reason `creator_initials_folded` only when
   the dotted-initials fold was needed to meet it, as ADR-0067 and ADR-0068 do
