@@ -24,7 +24,7 @@ from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
 TERMINAL_FAILURE_COPY = (
-    "A source refused its API key. "
+    "A source refused access. "
     "<img src=x onerror=window.__terminalFailureExecuted=true> "
     + "UnbrokenTerminalPreparationCondition"
     * 12
@@ -108,7 +108,7 @@ TERMINAL_LIBRARY_WORK = _work(
         "media_health": [],
         "provider": "hardcover-main",
         "reason": TERMINAL_FAILURE_COPY,
-        "recovery": "Replace it in Settings → Metadata sources, then scan this library again.",
+        "recovery": "Check it in Settings → Metadata sources, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -120,13 +120,13 @@ TERMINAL_LIBRARY_WORK = _work(
             "provider_requests": 1,
             "lane_kind": "work",
             "provider": "hardcover-main",
-            "reason": "A source refused its API key.",
+            "reason": "A source refused access.",
             "status": "authentication",
         }
     ],
     summary={
         "fields": [],
-        "reason": "A source refused its API key.",
+        "reason": "A source refused access.",
         "state": "preparation_failed",
     },
 )

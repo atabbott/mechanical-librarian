@@ -198,7 +198,7 @@ brackets are GitHub issues.
 - Server messages read plainly. Two setup source descriptions drop "work
   identity" and "corroborate", the OpenRouter notes state the free-model limits
   and data use in short sentences, key and Open Library email errors say what
-  to enter, a source that refuses its key says "API key", and the wrong-address
+  to enter, a source that refuses access says what to check, and the wrong-address
   and missing-files pages say what to open or rebuild (#1765).
 - Description work saved while preparation is paused now starts as soon as
   preparation resumes. Before, it waited for the next library poll, and a
