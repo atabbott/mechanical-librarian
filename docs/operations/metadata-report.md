@@ -487,7 +487,9 @@ cover" marker and is ignored. Any other entry that is not a cover id still
 makes the list `rejected`.
 
 An Audiobookshelf cover source whose bytes the decoder refused carries
-`original_digest`, the SHA-256 of those bytes; every other source's is null. A
+`original_digest`, the SHA-256 of those bytes, and so does a `retained` source
+whose kept original the decoder refused, which has no artifact (#1362); every
+other source's is null. A
 cover write binds the current cover's bytes: the retrieved artifact's digest,
 or this one. A declared cover Audiobookshelf answers 404 for is written as
 empty, and any other unread cover is not written over.

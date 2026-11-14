@@ -473,7 +473,8 @@ another cover.
 
 Once a replaced cover's work is prepared again after its switch, you can choose
 the old cover. Its row then also offers Put back, and the comparison names the
-old cover Replaced cover. Put back records choosing the
+old cover Replaced cover. An unreadable one shows "Image unavailable" there and
+under Before (#1362). Put back records choosing the
 old cover, and its write uploads it from the kept copy. The row reads Put back
 while that write runs, and leaves Switched when the write is verified, which
 releases the copy. If the cover was changed in Audiobookshelf first, the row

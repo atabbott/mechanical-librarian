@@ -5009,3 +5009,62 @@ def test_a_work_route_date_reads_as_the_books_first_publication() -> None:
             "source": "Hardcover",
         }
     ]
+
+
+def _retained_cover_candidate(**changed: object) -> dict[str, object]:
+    """A retained candidate the decoder refused, as the API states it (#1362)."""
+    return {
+        "artifact_id": "cover_" + "9" * 64,
+        "candidate_kind": "retained",
+        "deterministic_citations": ["cover_ref_" + "1" * 64],
+        "deterministic_rank": None,
+        "deterministic_rank_key": None,
+        "height": None,
+        "identity": None,
+        "incumbent": False,
+        "match_state": "match_not_confirmed",
+        "match_reason": None,
+        "observation": None,
+        "original_sha256": "9" * 64,
+        "ordinal": 2,
+        "preview_sha256": None,
+        "reference": "cover_ref_" + "1" * 64,
+        "selectable": True,
+        "manual_eligible": True,
+        "source_kinds": ["retained"],
+        "state": "available",
+        "transport_sha256": None,
+        "width": None,
+        **changed,
+    }
+
+
+_PREVIEW = {
+    "height": 600,
+    "preview_sha256": "a" * 64,
+    "transport_sha256": "a" * 64,
+    "width": 400,
+}
+
+
+def test_only_a_retained_cover_candidate_may_have_no_preview() -> None:
+    from mechanical_librarian.interfaces.web.app import _CoverCandidate
+
+    _CoverCandidate.model_validate(_retained_cover_candidate())
+    _CoverCandidate.model_validate(_retained_cover_candidate(**_PREVIEW))
+    for key in _PREVIEW:
+        # A partial set is never a candidate the page can show or not show.
+        with pytest.raises(ValidationError):
+            _CoverCandidate.model_validate(
+                _retained_cover_candidate(**{**_PREVIEW, key: None})
+            )
+    for kind, sources in (("candidate", ["hardcover"]), ("larger_copy", ["abs"])):
+        with pytest.raises(ValidationError):
+            _CoverCandidate.model_validate(
+                _retained_cover_candidate(candidate_kind=kind, source_kinds=sources)
+            )
+        _CoverCandidate.model_validate(
+            _retained_cover_candidate(
+                candidate_kind=kind, source_kinds=sources, **_PREVIEW
+            )
+        )

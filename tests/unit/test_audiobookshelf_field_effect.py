@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Iterator
@@ -11,6 +12,10 @@ import httpx
 import pytest
 from scripts.qualify_audiobookshelf_field_effect import DESCRIPTION_LANDINGS
 
+from mechanical_librarian.adapters.cover_artifacts import (
+    CoverDecodeRejected,
+    decode_cover,
+)
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
@@ -21,8 +26,13 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
     AudiobookshelfFieldEffectCapabilities,
     AudiobookshelfFieldEffectTarget,
 )
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
+from mechanical_librarian.adapters.retained_covers import (
+    ContentAddressedOriginals,
+    RetainedCoverStore,
+)
 from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     TargetServiceUnavailable,
@@ -1148,3 +1158,24 @@ def test_a_description_read_is_bounded_before_it_is_rendered(
         stored if read == "stored" else "x" * (MAX_DESCRIPTION_CHARACTERS - 7)
     )
     assert observed.version == field_value_version("description", observed.value)
+
+
+def test_an_original_the_decoder_refuses_is_put_back_from_the_retained_store(
+    case: _Case,
+) -> None:
+    """Only signature-valid bytes reach the decoder, so the upload sniff
+    accepts an original the decoder refused (#1362, S11)."""
+    with pytest.raises(CoverDecodeRejected):
+        decode_cover(_PNG)
+    digest = hashlib.sha256(_PNG).hexdigest()
+    root = Path(case.directory.name) / "retained"
+    RetainedCoverStore(root).keep(digest, _PNG)
+    # The artifact store holds no copy: the original is in the retained store.
+    case.target._artifacts = ContentAddressedOriginals(
+        CoverArtifactStore(Path(case.directory.name) / "empty"), root
+    )
+    plan = _plan("cover", None, "cover_" + digest)
+
+    assert case.target.apply(plan).outcome == "accepted"
+    assert case.cover_bytes == _PNG
+    assert case.target.read(plan).value == "cover_" + digest

@@ -31,7 +31,13 @@ from mechanical_librarian.application.review_covers import (
 )
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain import field_effect
-from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -97,9 +103,12 @@ def _library(
     readable_current: bool = True,
     title: str | None = None,
     put_back: bool = False,
+    undecodable: bool = False,
 ) -> Iterator[_Library]:
     """With ``put_back``, item-1's current cover is a verified automatic switch
-    whose original is listed, and its report offers that original (#1363)."""
+    whose original is listed, and its report offers that original (#1363).
+    With ``undecodable`` too, the decoder refused that original, so the
+    report offers it by its digest with no preview (#1362)."""
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     base, _ = _qualified_cover_report(root, readable_current=readable_current)
     artifacts = CoverArtifactStore(root / "artifacts")
@@ -119,10 +128,18 @@ def _library(
             providers=base.providers,
             cover_sources=(
                 *base.cover_sources,
-                retained_source(switch.plan.plan_id, _ORIGINAL),
+                CoverSource(
+                    cover_source_id(CoverSourceKind.RETAINED, switch.plan.plan_id),
+                    CoverSourceKind.RETAINED,
+                    CoverSourceState.DECODE_FAILED,
+                    original_digest=_ORIGINAL.original_digest,
+                )
+                if undecodable
+                else retained_source(switch.plan.plan_id, _ORIGINAL),
             ),
         )
-        artifacts.stage_preview(_ORIGINAL, _ORIGINAL_PREVIEW)
+        if not undecodable:
+            artifacts.stage_preview(_ORIGINAL, _ORIGINAL_PREVIEW)
         list_switch(
             repository._connection,
             switch,
@@ -900,3 +917,82 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
             assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
             # The recorded Put back's comparison still offers the original.
             assert row["switched"]["put_back_offered"] is True
+
+
+def test_an_original_that_does_not_decode_shows_no_preview_and_can_be_put_back(
+    tmp_path: Path,
+) -> None:
+    """The kept original the decoder refused (#1362, S11): its card and the
+    Switched row's Before have no image, and Put back still records."""
+    with _library(tmp_path, put_back=True, undecodable=True) as library:
+        case_id = library.cases["item-1"]
+        with _client(library) as (client, headers):
+            detail = client.get(f"/api/v1/review-cases/{case_id}")
+            assert detail.status_code == 200, detail.text
+            field = next(
+                value
+                for value in detail.json()["fields"]
+                if value["destination"] == "cover"
+            )
+            consideration = field["cover_consideration"]
+            (original,) = (
+                candidate
+                for candidate in consideration["candidates"]
+                if candidate["candidate_kind"] == "retained"
+            )
+            assert original["artifact_id"] == _ORIGINAL.artifact_id
+            assert original["original_sha256"] == _ORIGINAL.original_digest
+            assert (
+                original["height"],
+                original["width"],
+                original["preview_sha256"],
+                original["transport_sha256"],
+            ) == (None, None, None, None)
+            assert (original["selectable"], original["manual_eligible"]) == (
+                True,
+                True,
+            )
+            image = client.get(
+                f"/api/v1/review-cases/{case_id}/cover-considerations/"
+                f"{consideration['consideration_id']}/images/{original['reference']}"
+            )
+            assert image.status_code == 404, image.text
+
+            (listed,) = client.get("/api/v1/covers?view=switched").json()["items"]
+            assert listed["switched"]["before"] is None
+            assert listed["switched"]["filled"] is False
+            assert listed["switched"]["put_back_offered"] is True
+
+            response = client.post(
+                f"/api/v1/review-cases/{case_id}/decisions",
+                headers={**headers, "Idempotency-Key": "put-back-undecodable-0001"},
+                json={
+                    "destination": "cover",
+                    "outcome": "accept",
+                    "proposal_id": field["proposal_id"],
+                    "selected_value": {
+                        "kind": "cover",
+                        "value": original["artifact_id"],
+                    },
+                    "target_fingerprint": field["target_fingerprint"],
+                    "consideration_id": consideration["consideration_id"],
+                    "cover_confirmation": {
+                        "expected_selection_id": field["current_cover_selection_id"],
+                        "confirm_unverified_match": True,
+                    },
+                },
+            )
+            assert response.status_code == 200, response.text
+            plan_id = library.repository._connection.execute(
+                "SELECT plan_id FROM retained_cover_listings"
+            ).fetchone()[0]
+            owner = library.repository._connection.execute(
+                "SELECT json_extract(document,'$.candidate_kind'),"
+                "json_extract(document,'$.retained_plan_id'),"
+                "json_extract(document,'$.candidate_artifact_id') "
+                "FROM cover_selection_authorities WHERE kind='owner'"
+            ).fetchall()
+            assert owner == [("retained", plan_id, _ORIGINAL.artifact_id)]
+            (row,) = client.get("/api/v1/covers?view=switched").json()["items"]
+            assert row["switched"]["before"] is None
+            assert row["switched"]["put_back"] == {"state": "planned", "failure": None}

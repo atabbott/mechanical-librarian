@@ -831,8 +831,12 @@ class _SelectedCover(NamedTuple):
     review_case_id: str
 
 
-def _selected_cover(root: Path, *, current_404: bool = False) -> _SelectedCover:
-    """With ``current_404`` Audiobookshelf answers 404 for the declared cover."""
+def _selected_cover(
+    root: Path, *, current_404: bool = False, current_refused: str | None = None
+) -> _SelectedCover:
+    """With ``current_404`` Audiobookshelf answers 404 for the declared cover;
+    with ``current_refused`` the decoder refused the bytes it served, whose
+    digest that is."""
     incumbent_preview = _preview(1)
     alternative_preview = _preview(2)
     sources = (
@@ -847,6 +851,16 @@ def _selected_cover(root: Path, *, current_404: bool = False) -> _SelectedCover:
             sources[1],
         )
         if current_404
+        else (
+            CoverSource(
+                sources[0].source_id,
+                CoverSourceKind.ABS,
+                CoverSourceState.DECODE_FAILED,
+                original_digest=current_refused,
+            ),
+            sources[1],
+        )
+        if current_refused is not None
         else sources
     )
     fields = tuple(
@@ -1279,6 +1293,75 @@ def test_a_choice_over_a_cover_audiobookshelf_cannot_find_is_a_fill(
         assert repository._connection.execute(
             "SELECT count(*) FROM retained_cover_bindings"
         ).fetchone() == (0,)
+    finally:
+        repository.close()
+
+
+def test_a_choice_over_a_cover_the_decoder_refused_binds_its_bytes(
+    tmp_path: Path,
+) -> None:
+    # An owner choice over a current cover the decoder refused goes through
+    # the persisted authority to a plan bound to the refused bytes' digest,
+    # which is what the write keeps for Put back (#1362, PR 1 review finding 4).
+    os.chmod(tmp_path, 0o700)
+    refused = "7" * 64
+    selected = _selected_cover(tmp_path, current_refused=refused)
+    repository = selected.repository
+    try:
+        assert selected.consideration["incumbent"]["state"] == "unavailable"
+        repository.record_human_decision(
+            selected.decision,
+            cover_consideration_id=str(selected.consideration["consideration_id"]),
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
+        )
+        authority = PersistedFieldEffectAuthority(repository)
+        snapshot = authority.resolve(selected.decision)
+        assert (snapshot.pre_value, snapshot.target_version) == (
+            "cover_" + refused,
+            field_value_version("cover", "cover_" + refused),
+        )
+        consent = FakeConsentCurrentness(
+            repository.field_effect_consent_envelope_identity
+        )
+        consent.allow(
+            connection=snapshot.connection,
+            library=snapshot.library,
+            destination=snapshot.destination,
+        )
+        application = GuardedFieldApplication(
+            repository,
+            FakeTargetService(),
+            FakeBackupReadiness(),
+            FakeCapabilityObserver(CAPABILITY),
+            authority,
+            PersistedEffectDependencies(repository),
+            consent,
+            PrivateCoverRecoveryStore(tmp_path / "recovery", lambda _plan: None),
+            FakeForwardReevaluation(),
+            Clock(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+        )
+        operation = application.plan(
+            selected.decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        assert operation.plan.pre_value == "cover_" + refused
+        assert operation.plan.desired_value == selected.selected_value["value"]
     finally:
         repository.close()
 

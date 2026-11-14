@@ -456,7 +456,8 @@ function LibraryCoverChoicesContent({
           }}
         >
           <span className="library-cover-image">
-            {cover.imageFailed(candidate.reference) ? (
+            {/* A kept original the decoder refused has no preview to ask for (#1362). */}
+            {candidate.previewSha256 === null || cover.imageFailed(candidate.reference) ? (
               <span role="img" aria-label="Cover unavailable">
                 Image unavailable
               </span>
@@ -499,9 +500,11 @@ function LibraryCoverChoicesContent({
                 ? ' · recording not confirmed'
                 : ''}
             </strong>
-            <span className="cover-dimensions">
-              {`${String(candidate.width)} × ${String(candidate.height)} px`}
-            </span>
+            {candidate.width === null || candidate.height === null ? null : (
+              <span className="cover-dimensions">
+                {`${String(candidate.width)} × ${String(candidate.height)} px`}
+              </span>
+            )}
             {retained ? null : (
               <span className="cover-sources">
                 {(candidate.incumbent ? currentSourceKinds : candidate.sourceKinds)
