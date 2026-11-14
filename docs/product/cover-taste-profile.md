@@ -14,19 +14,23 @@ To decide. You have chosen {n}.", linking to To decide. A first profile needs
 25 recorded choices and a later one 10 more; at most 4 are scheduled a day.
 
 While a first profile is written, "Writing your taste profile" is the
-heading, and the tab checks again every 5 seconds. A failed build says what
+heading, and the tab checks again every 5 seconds. A build that starts while
+the tab is open appears without a reload. A failed build says what
 failed in one line under "No taste profile yet", or above the profile in use,
 such as "The taste profile could not be written." ("could not be updated"
 beside a profile), and offers Try again. A daily limit or an unconfirmed
 charge names the local time to try again after, and Try again waits until
 then. Try again counts against the daily limit, and focus moves to the
-build's state. With no model chosen, the tab names Settings instead.
+build's state. With no model chosen, the tab names Settings instead. Once one
+is chosen, a build that failed for lack of a model reads "could not be written"
+or "could not be updated" and offers Try again. The 10 more choices count from
+the last build that did not fail that way.
 
 A profile shows its version, the day it was built, how many decisions it read
 and its rules as "{n} of 40". Its numbered rules sit under four headings: What
 you’re drawn to, What you avoid, How you trade them off, and When to keep or
-switch. A heading with no rules is hidden. Versions lists every version, newest
-first, the one in use marked "(in use)", each "Built {date} from {n}
+switch. A heading with no rules is hidden. Versions, beside the rules above
+1024 pixels, lists every version, newest first, the one in use marked "(in use)", each "Built {date} from {n}
 decisions".
 
 ## Settings
@@ -36,6 +40,6 @@ writes the taste profile, from recommended models measured for it. It says
 what OpenRouter receives, and Test taste profile model and prices shows the
 model's prices per input token, output token, image and request before Use
 for taste profile saves it. Continue without a taste profile stops taste
-profiles and keeps cover review and description advice. It also states the daily limit, "Mechanical
-Librarian asks for at most 8 taste profiles a day.", which the configuration
-sets ([configuration](../reference/configuration.md#taste-profile)).
+profiles and keeps cover review and description advice. It also states the
+daily limit, "Mechanical Librarian asks for at most 8 taste profiles a day.",
+which the configuration sets ([configuration](../reference/configuration.md#taste-profile)).
