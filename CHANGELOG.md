@@ -76,6 +76,8 @@ brackets are GitHub issues.
   unless reduced motion is set. Each recent completion is one row: the title
   is the link, labelled Prepared or Couldn't finish. The rate reads in works a
   minute (#1516).
+- Settings → Reviewer counts its example costs and cover requests in works, as
+  setup does (#1852).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
