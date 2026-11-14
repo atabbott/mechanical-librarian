@@ -119,7 +119,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "f62c5bf15f4c9acf600d4130acaf8ab1482982b3327a6983237829f10945e09e"
+        "offer_digest": "06c497ce28d4eff3f9b0b31eea4f431aec113a39ef0c99ba035fc356c500f07e"
       },
       {
         "classification": "needs_attention",
@@ -219,7 +219,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "63be1add58956636926a07e3d6804155b4d87b5d35999b92651027cfa8149fb8"
+        "offer_digest": "647414cbd3f1998c1402288bff01f6e877c8d422ce43efaf5e09f6b76096e473"
       },
       {
         "classification": "needs_attention",
@@ -325,7 +325,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "fef68d879ca7c02465f918e685a5ffad3001e3ad534e03d32b2c82fb2ec89151"
+        "offer_digest": "e96e2011f30b0420bf4040c186dc0cbbb248a3621ff28c0eeb7ede531b77fd76"
       },
       {
         "classification": "needs_attention",
@@ -379,7 +379,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "fef68d879ca7c02465f918e685a5ffad3001e3ad534e03d32b2c82fb2ec89151"
+        "offer_digest": "e96e2011f30b0420bf4040c186dc0cbbb248a3621ff28c0eeb7ede531b77fd76"
       },
       {
         "classification": "needs_attention",
@@ -478,7 +478,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "d2190f2007ec109649c7860a683948399852b93513ba17e23cb6174c26a9a7d0"
+        "offer_digest": "5ff217fd161a6271926083d26faebb1619140b2dce8864e79d676af5a4415390"
       },
       {
         "classification": "needs_attention",
@@ -532,7 +532,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "fef68d879ca7c02465f918e685a5ffad3001e3ad534e03d32b2c82fb2ec89151"
+        "offer_digest": "e96e2011f30b0420bf4040c186dc0cbbb248a3621ff28c0eeb7ede531b77fd76"
       },
       {
         "classification": "unsupported",
@@ -586,7 +586,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "377e962bf59e60fde15a8c70bfd9593591d35475762ba7e17dcc136b69ef30fd"
+        "offer_digest": "a150f0ddffa0c3a52798f82ba0fb79bf584b4aa385c28911273da10fcac26071"
       },
       {
         "classification": "unsupported",
@@ -640,7 +640,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "d4f12dd28cb12f54c748146f6ea38a71caa549ef091d96b3a2763e3340b55f52"
+        "offer_digest": "8d96b56a4b11280b6ffa78cb4be58f46a2fdf0daf1087a320daca38f395f6eda"
       },
       {
         "classification": "unsupported",
@@ -694,7 +694,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "e961e667797762dab25e76372b0144cd7f2758695bcdb44e05b9c30f74f38ec1"
+        "offer_digest": "c5ed8c6c0fe620fd78b50256a0468acc231f33a6c5291f5480bcfdc2bb0931db"
       },
       {
         "classification": "unsupported",
@@ -748,7 +748,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "f66ddcc4b9b78146886284f32829c87262a7ed9643b591d184e35b01c597ebd2"
+        "offer_digest": "c85c4193b64d1e1820481a27c932d38062907e85ce5970c07e50fd1b9edaf64c"
       },
       {
         "classification": "manual_fallback",
@@ -802,7 +802,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "26269223dad8e80ed9d010354f41834cbf256a504b0c50d3d109196713d35428"
+        "offer_digest": "abbcfb24a2522ea5d4f5716a4358dd8fc889d0ff346e3f2483dc62824b34e534"
       },
       {
         "classification": "unsupported",
@@ -856,7 +856,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "826c1584826896a5266574557d2516d13f3e66dd07d96d3c38938bfb3092209b"
+        "offer_digest": "32cf0a0ead947a5dcfc5747db9f9143f763761ecd21bcd19d90f46b5d9812059"
       },
       {
         "classification": "unsupported",
@@ -910,7 +910,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "bedb76fb6e39cc3f7eebf7ccb2f861b09c1910868ae74cd0ed54dbe2c8032b07"
+        "offer_digest": "e166d3678d0a962e528cf84fc15df24f2bde09a339729a77be03d9f02403925b"
       },
       {
         "classification": "unsupported",
@@ -964,7 +964,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "7c7f09d467c5e4928114472ca70478fa92d8800f880be31cf5dd139a43955236"
+        "offer_digest": "18ff696eefe2def0b1f6b85cb792d6bf21da5ff4d93db5dd982632da0bd67c5a"
       },
       {
         "classification": "unsupported",
@@ -1018,7 +1018,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "0850a477d0c6af5b703851ba7280062c713e87781eed24e52d32a7208326897e"
+        "offer_digest": "ff9366beeab7218792da98e4867635c6f6046b15e4f5fbf6a88eb39d72fc6995"
       }
     ],
     "media_health": [],
