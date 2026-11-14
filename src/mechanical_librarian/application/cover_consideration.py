@@ -125,10 +125,27 @@ _CONSIDERATION_FIELDS = frozenset(
         "schema_version",
         "supersedes_id",
         "target_fingerprint",
+        "work_identity_level",
         "would_admit",
     }
 )
 _LEVEL_MATCH = "title_creator_work_match"
+
+
+def _validate_consideration_level(value: dict[str, object]) -> None:
+    """The level a consideration was made under, at top level (#1355).
+
+    It is recorded even when no preview was classified, so the Book matching
+    re-check can find, count and retry every comparison of another level; an
+    identity document, when present, names the same level.
+    """
+    level = value.get("work_identity_level")
+    identity_document = value.get("identity_document")
+    if level not in {item.value for item in WorkIdentityLevel} or (
+        type(identity_document) is str
+        and json.loads(identity_document).get("work_identity_level") != level
+    ):
+        raise ValueError("cover consideration level is invalid")
 
 
 def cover_consideration_replay_digest(
@@ -370,6 +387,7 @@ def _validated_cover_consideration(
         )
     ):
         raise ValueError("cover consideration document is invalid")
+    _validate_consideration_level(value)
     identity = dict(value)
     identity.pop("consideration_id")
     identity.pop("created_at")
@@ -1322,7 +1340,8 @@ class CoverConsiderationService:
         own Book matching level in place of the configured one: the same
         observer contract, profile, reviewer identity and policy. Only identity
         and policy adjudication then run again, and no reviewer request is
-        made, whatever the stored reviewer status was.
+        made, whatever the stored reviewer status was, unless providers were
+        still fetching when it was made.
         """
         previous = self._store.latest_cover_consideration_document(review_case_id)
         if previous is None:
@@ -1339,6 +1358,9 @@ class CoverConsiderationService:
             return None
         if (
             saved_level is self._level
+            # A comparison made while providers were fetching never had the
+            # review that follows fetching, so its output is not reused.
+            or value["provider_fetching"] is not False
             or value["packet_document"] != packet_document
             or value["replay_reference"]
             != self._replay_reference(dynamic_identity, self._policy, saved_level)
@@ -1711,6 +1733,7 @@ class CoverConsiderationService:
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": supersedes_id,
             "target_fingerprint": report.target.fingerprint,
+            "work_identity_level": self._level.value,
             "would_admit": _would_admit(
                 report,
                 candidates,

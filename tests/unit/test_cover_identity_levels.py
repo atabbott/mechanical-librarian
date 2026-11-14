@@ -335,7 +335,11 @@ def test_no_review_api_view_carries_would_admit() -> None:
 
 
 def _reviewing_service(
-    case: Any, level: WorkIdentityLevel, dispatches: list[str]
+    case: Any,
+    level: WorkIdentityLevel,
+    dispatches: list[str],
+    *,
+    fetching: bool = False,
 ) -> CoverConsiderationService:
     from tests.unit.test_cover_consideration import (
         ReviewerDispatch,
@@ -360,6 +364,7 @@ def _reviewing_service(
         reviewer_identity=lambda: (7, "openrouter", "example/vision", profile),
         reviewer_revision_current=lambda revision: revision == 7,
         work_identity_level=level,
+        provider_fetching=lambda _report: fetching,
     )
 
 
@@ -398,6 +403,28 @@ def test_a_level_change_refreshes_the_comparison_without_a_reviewer_request(
     assert current["replay_reference"] != saved["replay_reference"]
 
 
+def test_a_comparison_made_while_sources_were_fetching_is_reviewed_afresh() -> None:
+    """A comparison made while providers were still fetching never had the
+    observer review that follows fetching; a level change must not reuse its
+    output in place of that review (reviewer observation 1)."""
+    from tests.unit.test_cover_consideration import _Case
+
+    case = _Case()
+    case_id = "review_case_" + "8" * 64
+    dispatches: list[str] = []
+    before = _reviewing_service(case, _IDENTIFIER, dispatches, fetching=True)
+    before.ensure(case_id, case.report.to_json(), dict(case.proposal))
+    assert json.loads(case.store.current[case_id])["provider_fetching"] is True
+    requests = len(dispatches)
+
+    after = _reviewing_service(case, _WIDE, dispatches)
+    after.ensure(case_id, case.report.to_json(), dict(case.proposal))
+    assert len(dispatches) == requests + 1
+    current = json.loads(case.store.current[case_id])
+    assert current["provider_fetching"] is False
+    assert current["work_identity_level"] == "title_and_creator"
+
+
 # --- 14. Persistence versions -------------------------------------------------
 
 
@@ -427,6 +454,13 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
 
     refused({**value, "schema_version": "cover-consideration-v6"})
     refused({key: item for key, item in value.items() if key != "would_admit"})
+    # The level is recorded at top level and agrees with the identity document.
+    assert value["work_identity_level"] == "title_and_creator_exact"
+    refused({k: item for k, item in value.items() if k != "work_identity_level"})
+    with pytest.raises(ValueError, match="cover consideration level is invalid"):
+        _validated_cover_consideration(
+            canonical_json_text({**value, "work_identity_level": "identifier"})
+        )
     policy_v2 = {
         **json.loads(value["policy_report_document"]),
         "schema_version": "cover-policy-report-v2",
