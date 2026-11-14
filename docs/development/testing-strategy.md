@@ -294,6 +294,13 @@ These rules apply to every new test, beside the code economy rules in
   that effect does not appear in the scenario, prove the interval in a focused
   test; do not weaken the assertion. A timer-count delta is not proof. Use
   real timers only where no timer is measured.
+- **Import a document's current version; never spell it.** Each versioned
+  document's label (such as an owner-settings or config version) is one
+  constant in the module that owns it, and Python tests and scripts import it.
+  `tests/architecture/test_document_versions.py` pins each literal once and
+  fails on any other copy, so a version bump edits the constant and its pin
+  line. Older or next versions in refusal tests and frozen fixtures stay
+  literal.
 
 ## Fixtures, hostile input and privacy
 
