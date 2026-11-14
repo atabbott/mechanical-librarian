@@ -10693,8 +10693,10 @@ def test_policy_default_sample_route_reads_retained_ordinary_asin(
             "/api/v1/metadata-policy/preview-mode/outcomes?limit=10"
         )
         assert response.status_code == 200
-        assert response.json()["items"] == [
-            {**json.loads(row[-1]), "evaluated_at": row[-2]}
-        ]
+        # The stored outcome set reaches the browser without its storage
+        # version (#1847).
+        stored = json.loads(row[-1])
+        del stored["schema_version"]
+        assert response.json()["items"] == [{**stored, "evaluated_at": row[-2]}]
     finally:
         next(context, None)

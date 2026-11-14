@@ -6591,15 +6591,22 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
                 "/api/v1/metadata-policy/preview-mode/outcomes?limit=20"
             )
             assert sample.status_code == 200
-            assert sample.json() == app.state.review_application.policy.shadow_sample(
-                20
-            )
+            # The browser reads each stored outcome set without its storage
+            # version (#1847).
+            browser_sample = app.state.review_application.policy.shadow_sample(20)
+            browser_sample["items"] = [
+                {key: value for key, value in item.items() if key != "schema_version"}
+                for item in browser_sample["items"]
+            ]
+            assert sample.json() == browser_sample
+            stored = json.loads(outcome.to_json())
+            del stored["schema_version"]
             assert next(
                 item
                 for item in sample.json()["items"]
                 if item["outcome_set_id"] == outcome.outcome_set_id
             ) == {
-                **json.loads(outcome.to_json()),
+                **stored,
                 "evaluated_at": dict(repository.list_shadow_outcomes(20))[
                     outcome.to_json()
                 ],
