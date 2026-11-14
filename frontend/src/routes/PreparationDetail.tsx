@@ -1,6 +1,7 @@
 // The Library's preparation run: its row above the works and its detail in the
 // workspace. Moved out of the Library route under the route-size rule (#1571).
 import { Link } from '@tanstack/react-router'
+import { useEffect, useRef, useState } from 'react'
 
 import { BookMark } from '../components/BookMark'
 import { CountPhrases } from '../components/CountPhrases'
@@ -114,6 +115,43 @@ const preparationPassage = [
   ['compared', 'Sources compared'],
   ['checked', 'Automatic choices checked'],
 ] as const
+
+// The stage bars glide to each new count (#1516). The value moves, not a
+// width, so the bar stays a native <progress> with no style attribute, which
+// the page's `style-src 'self'` policy would refuse in markup.
+const GLIDE_MS = 300
+const reducedMotion = () =>
+  document.documentElement.dataset.reducedMotion === 'always-reduced' ||
+  (typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+
+const GlidingProgress = ({ label, value, max }: { label: string; value: number; max: number }) => {
+  const [shown, setShown] = useState(value)
+  const shownValue = useRef(value)
+  useEffect(() => {
+    const from = shownValue.current
+    if (from === value) return
+    if (reducedMotion()) {
+      shownValue.current = value
+      setShown(value)
+      return
+    }
+    let start: number | null = null
+    let frame = requestAnimationFrame(function step(now) {
+      start ??= now
+      const progress = Math.min((now - start) / GLIDE_MS, 1)
+      // Ease out: most of the distance early, settling onto the count.
+      const next = progress === 1 ? value : from + (value - from) * (1 - (1 - progress) ** 3)
+      shownValue.current = next
+      setShown(next)
+      if (progress < 1) frame = requestAnimationFrame(step)
+    })
+    // A count arriving mid-glide starts from where the bar is.
+    return () => cancelAnimationFrame(frame)
+  }, [value])
+  // The label always states the real count, wherever the bar is.
+  return <progress aria-label={label} max={max} value={shown} />
+}
 
 export const PreparationSummary = ({
   presentation,
@@ -321,18 +359,19 @@ export const PreparationDetail = ({
           {!recoveryRequired && !reconnecting && presentation.state === 'running' ? (
             <strong>
               {presentation.throughput_per_minute > 0
-                ? `${presentation.throughput_per_minute.toFixed(1)} books/min over the last five minutes`
-                : 'No book finished in the last five minutes'}
+                ? `${presentation.throughput_per_minute.toFixed(1)} works a minute`
+                : 'Nothing finished in the last five minutes'}
             </strong>
           ) : null}
         </div>
-        <dl className="preparation-passage">
+        {/* A new run's bars start where it is, not gliding from the last run's. */}
+        <dl className="preparation-passage" key={presentation.run_id}>
           {preparationPassage.map(([field, label]) => (
             <div key={field}>
               <dt>{label}</dt>
               <dd>
-                <progress
-                  aria-label={`${label}: ${String(presentation.passage[field])} of ${String(presentation.total)}`}
+                <GlidingProgress
+                  label={`${label}: ${String(presentation.passage[field])} of ${String(presentation.total)}`}
                   max={Math.max(presentation.total, 1)}
                   value={presentation.passage[field]}
                 />
@@ -357,28 +396,28 @@ export const PreparationDetail = ({
         <section aria-labelledby="recent-completions-title">
           <div className="preparation-section-heading">
             <h3 id="recent-completions-title">Recent completions</h3>
-            <span>{String(outcomeTotal)} books</span>
+            <span>{String(outcomeTotal)} finished</span>
           </div>
           {presentation.recent_completions.length ? (
             <ul className="preparation-completions">
               {presentation.recent_completions.map((completion, index) => (
+                // One line per book, so every row is the same height: the title
+                // is the link, and the name shown is the only thing this row has
+                // to search with (#1516).
                 <li key={`${completion.name}:${String(completion.completed_at)}:${String(index)}`}>
-                  <span>
-                    {completion.name}{' '}
-                    {/*
-                     * The link sits inside the name so it wraps with it, and the
-                     * name shown is the only thing this row has to search with.
-                     */}
-                    <Link
-                      to="/library"
-                      search={{ lens: 'all', q: boundedSearchName(completion.name) }}
-                    >
-                      Find in Works
-                    </Link>
-                  </span>
-                  <strong>
-                    {completion.outcome === 'ready' ? 'Prepared' : 'Stopped before finishing'}
-                  </strong>
+                  <Link
+                    to="/library"
+                    search={{ lens: 'all', q: boundedSearchName(completion.name) }}
+                  >
+                    <span>{completion.name}</span>
+                  </Link>
+                  {/*
+                   * First-finish history, so never the run count's phrase for
+                   * books as they stand now (#1366); the owner's wording (#1516).
+                   */}
+                  <small className={`outcome-${completion.outcome}`}>
+                    {completion.outcome === 'ready' ? 'Prepared' : "Couldn't finish"}
+                  </small>
                 </li>
               ))}
             </ul>

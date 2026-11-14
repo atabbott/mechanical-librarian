@@ -71,6 +71,11 @@ brackets are GitHub issues.
   needs an API key while it is on, in setup and Settings: an install that has
   Google Books on with no key must add a key or turn Google Books off before
   Settings can be saved (#1516, #1765).
+- Library's preparation panel moves less. Its status line plays its wipe only
+  when the run's state changes, and its stage bars glide to each new count
+  unless reduced motion is set. Each recent completion is one line: the title
+  is the link, labelled Prepared or Couldn't finish. The rate reads in works a
+  minute (#1516).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

@@ -218,7 +218,11 @@ export default function LibraryPage({
       ? null
       : (preparationState.data?.presentation ?? null)
   const preparationSelected = presentation !== null && search.preparation === presentation.run_id
-  const animateChange = usePreparationChange(presentation, preparationSelected)
+  const animateChange = usePreparationChange(
+    presentation,
+    preparationState.data?.recovery_required ?? false,
+    preparationSelected,
+  )
   const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<{ q: string | null; attention?: boolean } | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
