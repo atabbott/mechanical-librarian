@@ -90,7 +90,8 @@ class CoverFinalHost(StrEnum):
 
 # The states in which the constrained decoder refused bytes it was given. Only
 # an Audiobookshelf source in one of them records the bytes' digest, so a cover
-# write can bind exactly what it replaces (#1362).
+# write can bind exactly what it replaces, and so does a retained original in
+# one of them, so it can still be put back (#1362).
 DECODER_REJECTED_STATES = frozenset(
     {
         CoverSourceState.DECODE_FAILED,
@@ -312,16 +313,17 @@ class CoverSource:
     timeout_scope: str | None = None
     provenance: CoverProvenance | None = None
     final_host: CoverFinalHost | None = None
-    # The SHA-256 of the exact bytes Audiobookshelf served when the decoder
-    # refused them. A retrieved source's digest is its artifact's; a transient
-    # or reader-refused source read no bytes worth binding and records none.
+    # The SHA-256 of the exact bytes Audiobookshelf served, or the retained
+    # store holds, when the decoder refused them. A retrieved source's digest
+    # is its artifact's; a transient or reader-refused source read no bytes
+    # worth binding and records none.
     original_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.original_digest is not None and (
             type(self.original_digest) is not str
             or _DIGEST.fullmatch(self.original_digest) is None
-            or self.kind is not CoverSourceKind.ABS
+            or self.kind not in {CoverSourceKind.ABS, CoverSourceKind.RETAINED}
             or self.state not in DECODER_REJECTED_STATES
         ):
             raise CoverEvidenceError("cover source digest is inconsistent")
@@ -355,9 +357,11 @@ class CoverSource:
         ):
             raise CoverEvidenceError("cover final host is inconsistent")
         if self.kind is CoverSourceKind.RETAINED:
-            if (
-                self.provenance is not None
-                or self.state is not CoverSourceState.RETRIEVED
+            # A retained original is either decoded, or kept byte for byte
+            # after the decoder refused it and bound by its digest (#1362).
+            if self.provenance is not None or (
+                self.state is not CoverSourceState.RETRIEVED
+                and self.original_digest is None
             ):
                 raise CoverEvidenceError("retained cover source is invalid")
         elif self.kind in LOCAL_COVER_SOURCE_KINDS:

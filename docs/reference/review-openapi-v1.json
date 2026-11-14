@@ -4167,9 +4167,16 @@
             "title": "Deterministic Rank Key"
           },
           "height": {
-            "minimum": 0.0,
-            "title": "Height",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
           },
           "identity": {
             "anyOf": [
@@ -4233,8 +4240,15 @@
             "type": "string"
           },
           "preview_sha256": {
-            "title": "Preview Sha256",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Sha256"
           },
           "reference": {
             "title": "Reference",
@@ -4272,13 +4286,27 @@
             "type": "string"
           },
           "transport_sha256": {
-            "title": "Transport Sha256",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transport Sha256"
           },
           "width": {
-            "minimum": 0.0,
-            "title": "Width",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
           }
         },
         "required": [

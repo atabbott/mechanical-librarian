@@ -4331,3 +4331,36 @@ def test_a_retained_original_a_listed_edition_also_shows_is_one_alternative(
     (alternative,) = offered
     assert listed.source_id in alternative.evidence_references
     assert (retained.source_id in alternative.evidence_references) is current
+
+
+def test_a_retained_original_the_decoder_refused_is_never_an_omission() -> None:
+    """The owner's way back is never reviewer input (#1362, S18)."""
+    payloads = (_preview(1), _preview(2))
+    sources = (_source(1, payloads[0]), _source(2, payloads[1]))
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, "effect_plan_" + "a" * 64),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.DECODE_FAILED,
+        original_digest="9" * 64,
+    )
+    # Control: any other source the decoder refused is still named.
+    refused = CoverSource(
+        cover_source_id(CoverSourceKind.EPUB, "refused"),
+        CoverSourceKind.EPUB,
+        CoverSourceState.DECODE_FAILED,
+    )
+    report = _report((*sources, retained, refused))
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+
+    named = {value["reference"] for value in json.loads(packet.document)["omissions"]}
+    assert cover_source_reference(report.report_id, refused.source_id) in named
+    assert cover_source_reference(report.report_id, retained.source_id) not in named
+    assert retained.source_id not in packet.document

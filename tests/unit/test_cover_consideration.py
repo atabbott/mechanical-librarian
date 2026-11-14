@@ -26,6 +26,7 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
 )
+from mechanical_librarian.application.cover_packets import cover_source_reference
 from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
 )
@@ -866,7 +867,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_cdc29298562f11b3db8ddfef077093fdddc1a89222aa8a56d3404d19a12455b6"
+        "cover_replay_3953c1868216d5340d1ddab05566939f4f0aeba89c7b91964c4d151dbb675a2b"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -909,7 +910,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_07c50a4cb35334ffb2acd44936fa6af5e1934f787caaba512603ff6ce1370d4c"
+        "cover_replay_997b51a80bb6f284f0c3c8c6243a90c51e33ef34d8b10a44b312d642e8393cb1"
     )
     assert (
         replayed_qualified.ensure(
@@ -2190,7 +2191,10 @@ def _with_cover(
                 TargetField(
                     field.destination,
                     state,
-                    held if state is TargetFieldState.VALUE else None,
+                    # A cover the decoder refused still names a value.
+                    (held or "current-cover")
+                    if state is TargetFieldState.VALUE
+                    else None,
                 )
                 if field.destination is TargetDestination.COVER
                 else field
@@ -2380,6 +2384,171 @@ def test_a_retained_original_never_fills_an_empty_cover(case: _Case) -> None:
         candidate["candidate_kind"] == "candidate"
         for candidate in projected["candidates"]
     )
+    assert all(
+        candidate["candidate_kind"] == "candidate"
+        for candidate in json.loads(case.store.current[case_id])["candidates"]
+    )
+
+
+_UNDECODABLE_DIGEST = "9" * 64
+
+
+def _undecodable_retained_report(
+    case: _Case,
+) -> tuple[MetadataReport, tuple[str, str, str]]:
+    """A switch's original the decoder refused, kept by its digest (#1362)."""
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_UNDECODABLE_DIGEST,
+    )
+    return (
+        _over_a_cover((*case.sources, source)),
+        (_UNDECODABLE_DIGEST, _PLAN, _DECISION),
+    )
+
+
+def test_an_undecodable_retained_original_is_a_candidate_with_no_preview(
+    case: _Case,
+) -> None:
+    """Put back of an original the decoder refused (#1362, S11)."""
+    report, binding = _undecodable_retained_report(case)
+    service, _, _ = _retaining_service(case, binding, lambda _digest: None)
+    case_id = "review_case_" + "n" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    document = case.store.current[case_id]
+    retained = json.loads(document)["candidates"][-1]
+    assert retained["candidate_kind"] == "retained"
+    assert (retained["artifact_id"], retained["original_sha256"]) == (
+        "cover_" + _UNDECODABLE_DIGEST,
+        _UNDECODABLE_DIGEST,
+    )
+    assert (
+        retained["height"],
+        retained["width"],
+        retained["preview_sha256"],
+        retained["transport_sha256"],
+    ) == (None, None, None, None)
+    # It is a card of its own, never an omission a reviewer or the page
+    # would read as a cover not shown (#1362, S18).
+    retained_reference = retained["reference"]
+    assert all(
+        omission["reference"] != retained_reference
+        for omission in [
+            *json.loads(document)["omissions"],
+            *json.loads(cast(str, json.loads(document)["packet_document"]))[
+                "omissions"
+            ],
+            *cast("list[dict[str, object]]", projected["omissions"]),
+        ]
+    )
+    # The stored document rebuilds exactly, so it reads back unchanged.
+    offered = service.project_historical(document)["candidates"][-1]
+    assert offered == projected["candidates"][-1]
+    assert (offered["selectable"], offered["manual_eligible"]) == (True, True)
+    with pytest.raises(CoverConsiderationError, match="not_found"):
+        service.image(
+            case_id, str(projected["consideration_id"]), str(offered["reference"])
+        )
+    service.validate_decision(
+        case_id,
+        projected["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": offered["artifact_id"]},
+    )
+    service.require_owner_cover(document, offered["artifact_id"])
+
+
+def test_an_undecodable_retained_original_with_nothing_to_review_is_no_omission(
+    case: _Case,
+) -> None:
+    """With no readable cover at all there is no packet; the original is
+    still offered and is still not named as a cover not shown (#1362)."""
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.DECODE_FAILED,
+        original_digest="7" * 64,
+    )
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_UNDECODABLE_DIGEST,
+    )
+    report = _with_cover(
+        _report((current, retained)), TargetFieldState.VALUE, (current, retained)
+    )
+    service, _, _ = _retaining_service(
+        case, (_UNDECODABLE_DIGEST, _PLAN, _DECISION), lambda _digest: None
+    )
+    case_id = "review_case_" + "p" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    stored = json.loads(case.store.current[case_id])
+    assert stored["packet_document"] is None
+    assert [item["candidate_kind"] for item in stored["candidates"]] == ["retained"]
+    assert [omission["reference"] for omission in projected["omissions"]] == [
+        cover_source_reference(report.report_id, current.source_id)
+    ]
+    service.project_historical(case.store.current[case_id])
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        pytest.param({"width": 400}, id="width"),
+        pytest.param({"preview_sha256": "a" * 64}, id="preview"),
+        pytest.param({"original_sha256": "8" * 64}, id="digest"),
+        pytest.param({"artifact_id": "cover_" + "8" * 64}, id="artifact_id"),
+    ),
+)
+def test_a_tampered_undecodable_retained_candidate_is_refused(
+    case: _Case, tamper: dict[str, object]
+) -> None:
+    report, binding = _undecodable_retained_report(case)
+    service, _, _ = _retaining_service(case, binding)
+    case_id = "review_case_" + "o" * 64
+    service.ensure(case_id, report.to_json(), case.proposal)
+    document = json.loads(case.store.current[case_id])
+    document["candidates"][-1] = {**document["candidates"][-1], **tamper}
+
+    with pytest.raises(ValueError, match="cover consideration"):
+        service.project_historical(json.dumps(document))
+
+
+def test_an_undecodable_retained_original_that_is_the_current_cover_is_not_offered(
+    case: _Case,
+) -> None:
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_UNDECODABLE_DIGEST,
+    )
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_UNDECODABLE_DIGEST,
+    )
+    sources = (
+        *(source for source in case.sources if source.kind is not CoverSourceKind.ABS),
+        current,
+        retained,
+    )
+    report = _with_cover(_report(sources), TargetFieldState.VALUE, sources)
+    service, _, _ = _retaining_service(
+        case, (_UNDECODABLE_DIGEST, _PLAN, _DECISION), lambda _digest: None
+    )
+    case_id = "review_case_" + "q" * 64
+
+    service.ensure(case_id, report.to_json(), case.proposal)
+
     assert all(
         candidate["candidate_kind"] == "candidate"
         for candidate in json.loads(case.store.current[case_id])["candidates"]

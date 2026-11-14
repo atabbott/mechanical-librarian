@@ -748,7 +748,8 @@ export interface CoverCandidateView {
   deterministicCitations: readonly string[]
   deterministicRank: number | null
   deterministicRankKey: readonly (number | string)[] | null
-  height: number
+  /** Null, with `previewSha256` and `width`, only for a retained original the decoder refused (#1362). */
+  height: number | null
   identity: Readonly<Record<string, unknown>> | null
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
@@ -761,13 +762,13 @@ export interface CoverCandidateView {
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
-  previewSha256: string
+  previewSha256: string | null
   reference: string
   selectable: boolean
   manualEligible: boolean
   sourceKinds: readonly CoverSourceKind[]
   state: 'acceptable' | 'available' | 'excluded' | 'recommended'
-  width: number
+  width: number | null
 }
 export interface CoverConsiderationView {
   choiceContexts: readonly ChoiceContextView[]
@@ -3018,12 +3019,20 @@ const mapCoverObservation = (
 /**
  * The retained original as the owner's way back (#1363, D2): never the
  * current cover, never reviewed or ranked, and choosable exactly while the
- * server still offers it, which it does only while its copy is kept.
+ * server still offers it, which it does only while its copy is kept. One the
+ * decoder refused has no size or preview at all (#1362).
  */
 const mapRetainedCandidate = (
   candidate: CoverConsiderationDto['candidates'][number],
 ): CoverCandidateView => {
+  const previewless = [
+    candidate.height,
+    candidate.width,
+    candidate.preview_sha256,
+    candidate.transport_sha256,
+  ].filter((value) => value === null).length
   if (
+    (previewless !== 0 && previewless !== 4) ||
     candidate.identity !== null ||
     candidate.incumbent ||
     candidate.match_state !== 'match_not_confirmed' ||
@@ -3097,8 +3106,16 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const manualEligible = candidate.manual_eligible
     if (manualEligible !== (!incumbent && contradiction === undefined))
       throw new ApiError(502, 'contradictory_cover_manual_eligibility')
-    const { reference } = candidate
+    const { reference, height, width } = candidate
     const previewSha256 = candidate.preview_sha256
+    // Only a retained original may have no preview (#1362).
+    if (
+      height === null ||
+      width === null ||
+      previewSha256 === null ||
+      candidate.transport_sha256 === null
+    )
+      throw new ApiError(502, 'missing_cover_preview')
     const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
     const matchState = candidate.match_state
     // match-state and unconfirmed-unranked; X59 (a confirmed incumbent is
@@ -3127,7 +3144,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
       deterministicRankKey,
-      height: candidate.height,
+      height,
       identity,
       incumbent,
       matchState,
@@ -3141,7 +3158,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       manualEligible,
       sourceKinds: candidate.source_kinds,
       state: candidate.state,
-      width: candidate.width,
+      width,
     }
   })
   // unique-references, X58 (distinct artifacts) and ordinal-position, which
