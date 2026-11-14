@@ -64,6 +64,10 @@ in [Deployment](../operations/deployment.md).
 
 ## Current versions
 
+<!-- The identifiers on this page come from the code. After a version move, run
+`uv run python scripts/compatibility_versions.py --write`; the documentation
+integrity check fails until then. Descriptions name no version number. -->
+
 These are the exact versions this build reads and writes. Any other value is
 refused.
 
@@ -71,10 +75,10 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `config-v11` | The file-mode configuration document at `/data/config.json` ([schema](config-v11.schema.json)) |
+| `config-v11` | The file-mode configuration document at `/data/config.json` ([schema](config.schema.json)) |
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
 | `owner-settings-v6` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) and Current covers |
-| `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). An unfinished `setup-state-v4` setup is refused at startup |
+| `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). A setup left unfinished by an earlier build is refused at startup |
 | `reviewer-access-v3` | Optional reviewer access for cover review and description advice |
 
 ### Reports, proposals and policy
@@ -83,7 +87,7 @@ refused.
 | --- | --- |
 | `metadata-report-v81` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
-| `fixed-conservative-v46` | The proposal policy |
+| `fixed-conservative-v47` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
@@ -103,7 +107,7 @@ refused.
 | --- | --- |
 | `human-decision-v4` | An owner decision, including `owner_entered` and `withdraw` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`) and may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
-| `cover-consideration-v8` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows |
+| `cover-consideration-v9` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows |
 | `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
 | `cover-policy-v2` | The cover policy, including when a current cover may be replaced and whether an edition's cover is preferred |
 | `cover-policy-report-v4` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |
@@ -133,8 +137,8 @@ of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v5`, `review-preparation-v2`, `review-case-detail-v7`,
-`review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v3`,
+`review-library-v5`, `review-preparation-v2`, `review-case-detail-v8`,
+`review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v4`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
 `review-session-v1`, which the server sets.

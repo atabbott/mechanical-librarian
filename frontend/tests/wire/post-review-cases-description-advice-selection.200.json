@@ -4,8 +4,8 @@
     "confirmation": {
       "case": {
         "audiobook_review_scope": null,
-        "checking": false,
         "check_given_up": false,
+        "checking": false,
         "comparison_notices": [],
         "current": true,
         "fields": [
@@ -77,10 +77,10 @@
             "navigation_role": "attention",
             "needs_attention": true,
             "notices": ["unique_typed_candidate"],
-            "offer_digest": "7bb2254eb2ec85654cd922c61f3b9c87d23242a87f705c87901cef1065f9fe37",
+            "offer_digest": "19da5c34a2093188025407498bc96afa651eaaa1397c18250aa289e7c1194126",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_7645fe61646ac93d6cc65bdb90e4b544f1dcc3769fd90d6939dd14c0a5001ac0",
+            "proposal_id": "review_proposal_9f0924167440e0e2865fb9318e4fb327ffcc211e8262280719c47e56d199c2a0",
             "proposed_values": [
               {
                 "kind": "series",
@@ -161,7 +161,7 @@
             "navigation_role": "attention",
             "needs_attention": true,
             "notices": ["unique_typed_candidate"],
-            "offer_digest": "73ce63e53d96884eb1e227c95ce485b2e7d78508431771666691444f981deb33",
+            "offer_digest": "7e9c13f5f998a08ec6f06ca0ce170333f879fcb81d2eef9cfbc688433aab60af",
             "owner_control": {
               "entry": null,
               "subset": {
@@ -178,7 +178,7 @@
               "withdraw": null
             },
             "preservation_only": false,
-            "proposal_id": "review_proposal_d0d13456f99ff68b4cc4743ff6e15a54948239f1cf3d82ffac188d7799c8b41a",
+            "proposal_id": "review_proposal_b4273da385c10e7ab92af1ec00b5319889ace0f78ca31350bce56be4a3c0beb4",
             "proposed_values": [
               {
                 "kind": "list",
@@ -265,10 +265,10 @@
             "navigation_role": "attention",
             "needs_attention": true,
             "notices": ["manifestation_verification_required"],
-            "offer_digest": "2af8b1c43cf9040b4262d490ec9cdde8d4f059ef72e3722d55be4c95695fbd01",
+            "offer_digest": "56c90eb0d5372bfe6faa1efac371e353b2da36abf77929b178cf02734a9c275b",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_fd49eebbb65dc2960bd1547f31f9db6250dbf554a06c0bc3e3f86df0332f51ec",
+            "proposal_id": "review_proposal_81ffd0a74b77da40388753f473fe7ab3df73790f0cd14e452ad63e1b1c891a65",
             "proposed_values": [
               {
                 "kind": "text",
@@ -358,7 +358,7 @@
             "navigation_role": "attention",
             "needs_attention": false,
             "notices": ["positive_preservation_evidence"],
-            "offer_digest": "7bb2254eb2ec85654cd922c61f3b9c87d23242a87f705c87901cef1065f9fe37",
+            "offer_digest": "19da5c34a2093188025407498bc96afa651eaaa1397c18250aa289e7c1194126",
             "owner_control": {
               "entry": {
                 "max_characters": 512,
@@ -368,7 +368,7 @@
               "withdraw": null
             },
             "preservation_only": true,
-            "proposal_id": "review_proposal_0db182edd396c7c443de216c681f94a37d5931c3d99291afe1e8cf0c19fd5640",
+            "proposal_id": "review_proposal_94b3c0c9836ab262e84a12b2b5b0bf4f0d8d30b48f0a43d2754c87de25fa49e1",
             "proposed_values": [],
             "provenance": [
               "provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"
@@ -421,10 +421,10 @@
             "navigation_role": "attention",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
-            "offer_digest": "7bb2254eb2ec85654cd922c61f3b9c87d23242a87f705c87901cef1065f9fe37",
+            "offer_digest": "19da5c34a2093188025407498bc96afa651eaaa1397c18250aa289e7c1194126",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_2c8e3401fef72289df04f8bc49445370296ccfe1e9b929c336f45390a626ea52",
+            "proposal_id": "review_proposal_f80b6c10371e172ef643b62685ec3986f363e3a2148e71744f39467d058f379a",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -505,10 +505,10 @@
             "navigation_role": "attention",
             "needs_attention": false,
             "notices": ["positive_preservation_evidence"],
-            "offer_digest": "28681ae34b554f6c8a55bdb26a8dac37c1b86efadd3607b2749b242d962c9636",
+            "offer_digest": "8d61e6ec788c46426f82853343f662678d3bd10df7b01ca8d63862a295387063",
             "owner_control": null,
             "preservation_only": true,
-            "proposal_id": "review_proposal_bd185ba4e9900add24f9a96ef392a8de0bb842736ca1cd25a9049ea0914e4530",
+            "proposal_id": "review_proposal_f6f0c8cf78b90e158337fb55036b3a14cc8a41cd846152feed948315803e79f1",
             "proposed_values": [],
             "provenance": [
               "provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"
@@ -561,10 +561,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
-            "offer_digest": "7823292386ce897d37149f86363ac53c841ccc492463172bcbc91abc0f066b48",
+            "offer_digest": "89f5f91c0263c198a42f16f01a1c7d157b08d50355684723f1cbc01d69c835a2",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_3f117221b5691e09059384afb6cac45d5e25321502dc4402f50c8191caf46867",
+            "proposal_id": "review_proposal_119103f463c2956157a3053a0fda58259be370b6064a470634b815df4a6543dd",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -615,10 +615,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
-            "offer_digest": "bd95b0727aa01fc068717d050f97bddb81b8908d137d1e06b42dbbd556de04f3",
+            "offer_digest": "ac48841c82812db23461be37c3429b71665d2b36b26166d25777f30990c98e7c",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_08cd2cb120c50e2ec9d1f6aefddfa06285d1477b0b9da4e8955954de72ee9b2f",
+            "proposal_id": "review_proposal_47aed806aaaf79efe181d5396b575181f1bba8bd029657684ad1805601f389c1",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -685,9 +685,9 @@
                 "access_revision": 2,
                 "policy_generation": 2,
                 "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+                "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
                 "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-                "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+                "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
                 "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
               },
               "candidate": {
@@ -708,8 +708,7 @@
                 "provenance": "authored_content",
                 "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
                 "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-                "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-                "schema_version": "description-advice-candidate-v1"
+                "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
               },
               "current": true,
               "engine": "codex",
@@ -720,9 +719,9 @@
                   "access_revision": 2,
                   "policy_generation": 2,
                   "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                  "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+                  "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
                   "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-                  "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+                  "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
                   "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
                 },
                 "candidate": {
@@ -743,8 +742,7 @@
                   "provenance": "authored_content",
                   "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
                   "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-                  "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-                  "schema_version": "description-advice-candidate-v1"
+                  "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
                 },
                 "current": true
               },
@@ -754,9 +752,9 @@
                   "access_revision": 2,
                   "policy_generation": 2,
                   "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                  "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+                  "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
                   "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-                  "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+                  "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
                   "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
                 },
                 "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -767,8 +765,7 @@
                 "origin": "human",
                 "outcome": "accept",
                 "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-                "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-                "schema_version": "authored-description-decision-v1"
+                "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
               },
               "state": "succeeded"
             },
@@ -786,10 +783,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["populated_subjective_field", "populated_value_meets_floor"],
-            "offer_digest": "d004b3c6440ed5c976fb583358515157d0e4aa6c091bc2cc5d077fc36f0ea0b8",
+            "offer_digest": "097ffde9818e320c8e759df89e847dd9d9439e95fb13e9b7ffb49758e372dbd7",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_4b6f49ce1367e019f5496bfc06c2af4cb090e443f28b694f5dd3196a614e5085",
+            "proposal_id": "review_proposal_1bb1c80fd33c432c324d7d9d7747f08834103d8037d4836b5c3a3389a9c9dc82",
             "proposed_values": [
               {
                 "kind": "text",
@@ -847,10 +844,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
-            "offer_digest": "79d6127728531f9bfe2e1c9de528faf2c9ece1ebcfe5ceb39c7093249844b9a7",
+            "offer_digest": "0db2e7b94a6a2b2844694422a5824cb056058df9a6d88ca9cfef03cd5641e5ad",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_831f71188fdbe8e0380014a0752581559ffb7845a5a5f3a568b4564e86f39a6a",
+            "proposal_id": "review_proposal_e2adad6eb4bbcb3cf75227cf7d13c82834068ebf1cb7dc0054b51cdb029bda0e",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -901,10 +898,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
-            "offer_digest": "f127f4980fb171db7d5d73806932feec6a5d9df6540b0b5b4c3df8b0f4785ef4",
+            "offer_digest": "972f962b683200167590437d8d89d8d9f82d541f76f0ebf48a50978b1e9bf3c6",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_c14838d410b7dbaae18978b52eab152ddcc751463e2d3f636c6884ee2e2416ab",
+            "proposal_id": "review_proposal_b2fbc386fecde97d84f39542da3d2025fc9243b8eaeec87cac7c47cd1c74eb61",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -972,10 +969,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["unique_typed_candidate"],
-            "offer_digest": "ba0c12e0d22143c3930db9c9f6bf4a1e394d161f29565048903b64155a16275b",
+            "offer_digest": "bfcb6cb487fdf6bf81e378ac8e61202e46423480158387d3fe1d20912b42f745",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_0db3f7424a8ed37cea1c1c39cf7d5e50879cdc514b962657b3111edb10469157",
+            "proposal_id": "review_proposal_85786a0100a2e43e9c2aa090e46492bac393aa0d5335dc331cfac4395dc6888b",
             "proposed_values": [
               {
                 "kind": "list",
@@ -1033,10 +1030,10 @@
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
-            "offer_digest": "0ff6304a71e10b8809d902df2e831c7398d79e4f76d9a2b56c8b96cbd694e557",
+            "offer_digest": "0dad399dac7265413b052af66fce15aa37fc398d07b79c9f4a95936b6adcb1d2",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_ea7d1a1b5850c4d4a55adbc2b7a932c1bc923dd3fe97b284ed1a4b007c2ede2a",
+            "proposal_id": "review_proposal_b68bcb9134f609bb919f9e096fc0bfcc330b5a8991c2e756a1457911ca34e9df",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -1046,8 +1043,8 @@
         "media_health": [],
         "recording_admission_basis": null,
         "recording_identity_basis": null,
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
-        "schema_version": "review-case-detail-v7",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
+        "schema_version": "review-case-detail-v8",
         "target": {
           "authors": ["Mick Herron"],
           "connection": "primary",
@@ -1066,6 +1063,6 @@
     "schema_version": "description-selection-ack-v1"
   },
   "method": "POST",
-  "path": "/api/v1/review-cases/review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6/description-advice/selection",
+  "path": "/api/v1/review-cases/review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc/description-advice/selection",
   "status": 200
 }

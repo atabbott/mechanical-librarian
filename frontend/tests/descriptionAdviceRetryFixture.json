@@ -6,9 +6,9 @@
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+      "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
       "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-      "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+      "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
@@ -21,9 +21,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
@@ -44,8 +44,7 @@
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
         "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-        "schema_version": "description-advice-candidate-v1"
+        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true
     },
@@ -55,9 +54,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -68,8 +67,7 @@
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-      "schema_version": "authored-description-decision-v1"
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
     "state": "failed"
   },
@@ -80,9 +78,9 @@
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+      "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
       "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-      "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+      "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
@@ -95,9 +93,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
@@ -118,8 +116,7 @@
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
         "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-        "schema_version": "description-advice-candidate-v1"
+        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true
     },
@@ -129,9 +126,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -142,8 +139,7 @@
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-      "schema_version": "authored-description-decision-v1"
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
     "state": "interrupted"
   },
@@ -154,9 +150,9 @@
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+      "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
       "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-      "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+      "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
@@ -169,9 +165,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
@@ -192,8 +188,7 @@
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
         "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-        "schema_version": "description-advice-candidate-v1"
+        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true
     },
@@ -203,9 +198,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -216,8 +211,7 @@
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-      "schema_version": "authored-description-decision-v1"
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
     "state": "requested"
   },
@@ -228,9 +222,9 @@
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+      "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
       "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-      "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+      "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": null,
@@ -243,9 +237,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
@@ -266,8 +260,7 @@
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
         "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-        "schema_version": "description-advice-candidate-v1"
+        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true
     },
@@ -277,9 +270,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -290,8 +283,7 @@
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-      "schema_version": "authored-description-decision-v1"
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
     "state": "running"
   },
@@ -302,9 +294,9 @@
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+      "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
       "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-      "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+      "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": {
@@ -325,8 +317,7 @@
       "provenance": "authored_content",
       "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
       "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-      "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-      "schema_version": "description-advice-candidate-v1"
+      "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
     },
     "current": true,
     "engine": "codex",
@@ -337,9 +328,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
@@ -360,8 +351,7 @@
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
         "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-        "schema_version": "description-advice-candidate-v1"
+        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true
     },
@@ -371,9 +361,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -384,8 +374,7 @@
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-      "schema_version": "authored-description-decision-v1"
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
     "state": "succeeded"
   },
@@ -396,9 +385,9 @@
       "access_revision": 2,
       "policy_generation": 2,
       "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-      "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+      "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
       "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-      "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+      "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
     },
     "candidate": {
@@ -419,8 +408,7 @@
       "provenance": "authored_content",
       "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
       "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-      "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-      "schema_version": "description-advice-candidate-v1"
+      "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
     },
     "current": true,
     "engine": "codex",
@@ -431,9 +419,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate": {
@@ -454,8 +442,7 @@
         "provenance": "authored_content",
         "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
         "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-        "schema_version": "description-advice-candidate-v1"
+        "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true
     },
@@ -465,9 +452,9 @@
         "access_revision": 2,
         "policy_generation": 2,
         "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-        "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+        "proposal_set_id": "proposal_set_9d1580c2b2ea67a2257ae07be83dad800cfacd663f1a9281ee9df96f6baca173",
         "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
-        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
+        "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
         "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
       },
       "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -478,8 +465,7 @@
       "origin": "human",
       "outcome": "accept",
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-      "schema_version": "authored-description-decision-v1"
+      "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
     "state": "succeeded"
   }

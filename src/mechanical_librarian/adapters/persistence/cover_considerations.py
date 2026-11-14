@@ -61,6 +61,7 @@ from mechanical_librarian.domain.deterministic_cover_election import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
+    AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
@@ -476,7 +477,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 "decision_id": decision.decision_id,
                 "kind": "automatic",
                 "rank_key": list(decision.rank_key),
-                "schema_version": "cover-selection-authority-v1",
+                "schema_version": AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
                 "selection_id": selection_id,
                 "supersedes_selection_id": None
                 if prior is None

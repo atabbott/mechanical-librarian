@@ -76,6 +76,7 @@ from mechanical_librarian.domain.field_effect import (
     decision_value_kind,
 )
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_SCHEMA,
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
@@ -598,7 +599,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
             event_id = (
                 "human_decision_event_"
                 + hashlib.sha256(
-                    ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+                    (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode(
+                        "utf-8"
+                    )
                 ).hexdigest()
             )
             event_document = _canonical_json(
@@ -611,7 +614,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     "occurred_at": decision.occurred_at,
                     "outcome": decision.outcome,
                     "review_case_id": decision.review_case_id,
-                    "schema_version": "human-decision-event-v1",
+                    "schema_version": HUMAN_DECISION_EVENT_SCHEMA,
                 }
             )
             self._connection.execute(
@@ -1279,7 +1282,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         "review_case_id",
                         "schema_version",
                     }
-                    or value["schema_version"] != "human-decision-event-v1"
+                    or value["schema_version"] != HUMAN_DECISION_EVENT_SCHEMA
                     or (
                         value["event_id"],
                         value["decision_id"],

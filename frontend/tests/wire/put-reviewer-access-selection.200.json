@@ -54,8 +54,7 @@
           "total_cost_usd": "0.063641500",
           "works": 100
         }
-      ],
-      "schema_version": "reviewer-cost-evidence-v2"
+      ]
     },
     "cover_metadata": null,
     "data_use_caveat": "Cover requests go only to OpenRouter providers that do not collect request data. Those providers may still keep requests for a time, so read their data policies before you choose a model.",
@@ -86,7 +85,7 @@
     "openrouter_key_configured": false,
     "recommendations": ["openai/gpt-6-luna"],
     "revision": 6,
-    "schema_version": "reviewer-access-view-v2"
+    "schema_version": "reviewer-access-view-v3"
   },
   "method": "PUT",
   "path": "/api/v1/reviewer-access/selection",

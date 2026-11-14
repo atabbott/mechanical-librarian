@@ -498,6 +498,14 @@ configuration fingerprints are unchanged, so a stored report could never bind
 such a cover. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
 
+Issue #1362's Put back of an original the decoder refused also takes the
+clean-rebuild branch. `fixed-conservative-v47` offers such an original back by
+its digest over a populated cover, and `cover-consideration-v9` lists it as a
+retained candidate with no size or preview. A stored proposal or consideration
+never offers it, and both carry forward while their inputs are unchanged.
+Every earlier application database is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.
+
 Issue #1355's activation A takes the clean-rebuild branch. `config-v10` adds
 `review.work_identity`, and `owner-settings-v5` adds its store-managed
 equivalent, `matching.work_identity`; a v9 file and a v4 settings document are

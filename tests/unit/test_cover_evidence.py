@@ -658,3 +658,72 @@ def test_only_refused_audiobookshelf_bytes_carry_a_digest(
             timeout_scope=("attempted" if state is CoverSourceState.TIMEOUT else None),
             original_digest=digest,
         )
+
+
+_RETAINED_PLAN = "effect_plan_" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    "state",
+    sorted(DECODER_REJECTED_STATES),
+    ids=[state.value for state in sorted(DECODER_REJECTED_STATES)],
+)
+def test_a_retained_original_the_decoder_refused_is_kept_by_its_digest(
+    state: CoverSourceState,
+) -> None:
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _RETAINED_PLAN),
+        CoverSourceKind.RETAINED,
+        state,
+        original_digest=_REFUSED,
+    )
+
+    assert source.artifact is None
+    assert source.bytes_digest == _REFUSED
+    assert source.to_data()["original_digest"] == _REFUSED
+    assert publication_ready((source,)) is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "state", "digest", "artifact"),
+    (
+        (CoverSourceKind.RETAINED, CoverSourceState.DECODE_FAILED, None, False),
+        (CoverSourceKind.RETAINED, CoverSourceState.TIMEOUT, _REFUSED, False),
+        (CoverSourceKind.RETAINED, CoverSourceState.UNAVAILABLE, None, False),
+        (CoverSourceKind.RETAINED, CoverSourceState.RETRIEVED, _REFUSED, True),
+        (CoverSourceKind.OPEN_LIBRARY, CoverSourceState.DECODE_FAILED, _REFUSED, False),
+        (CoverSourceKind.HARDCOVER, CoverSourceState.OVERSIZED, _REFUSED, False),
+    ),
+    ids=(
+        "retained_refused_without_digest",
+        "retained_transient",
+        "retained_unavailable",
+        "retained_artifact_and_digest",
+        "open_library_digest",
+        "hardcover_digest",
+    ),
+)
+def test_only_a_refused_retained_or_audiobookshelf_source_carries_a_digest(
+    kind: CoverSourceKind,
+    state: CoverSourceState,
+    digest: str | None,
+    artifact: bool,
+) -> None:
+    with pytest.raises(CoverEvidenceError):
+        CoverSource(
+            cover_source_id(kind, _RETAINED_PLAN),
+            kind,
+            state,
+            (
+                CoverArtifact.create(b"original", b"preview", "image/png", 1, 1)
+                if artifact
+                else None
+            ),
+            timeout_scope=("attempted" if state is CoverSourceState.TIMEOUT else None),
+            provenance=(
+                None
+                if kind is CoverSourceKind.RETAINED
+                else CoverProvenance("provider", CoverDesignation.WORK, "work-1")
+            ),
+            original_digest=digest,
+        )

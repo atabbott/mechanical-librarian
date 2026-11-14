@@ -5915,6 +5915,66 @@ describe('Library route', () => {
       ).toHaveTextContent('800 × 1200 px')
     })
 
+    it('shows a kept original that does not decode as Image unavailable and puts it back (#1362)', async () => {
+      const user = userEvent.setup()
+      const http = coverHttp((consideration) => {
+        const last = consideration.candidates.at(-1)
+        if (last === undefined) throw new Error('fixture')
+        return {
+          candidates: [
+            ...consideration.candidates,
+            {
+              ...last,
+              artifactId: `cover_${'9'.repeat(64)}`,
+              candidateKind: 'retained' as const,
+              deterministicRank: null,
+              deterministicRankKey: null,
+              height: null,
+              identity: null,
+              incumbent: false,
+              manualEligible: true,
+              matchState: 'match_not_confirmed' as const,
+              observation: null,
+              ordinal: consideration.candidates.length,
+              originalSha256: '9'.repeat(64),
+              previewSha256: null,
+              reference: `cover_ref_${'9'.repeat(64)}`,
+              selectable: true,
+              sourceKinds: ['retained'] as const,
+              state: 'available' as const,
+              width: null,
+            },
+          ],
+          // The server names no omission for the retained original (#1362).
+          omissions: [],
+        }
+      })
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const card = within(group).getByRole('radio', { name: 'Choose Replaced cover' })
+      // The same "Image unavailable" as a preview that fails to load, and no
+      // image is ever requested for it, nor a size stated.
+      expect(within(card).getByRole('img', { name: 'Cover unavailable' })).toHaveTextContent(
+        'Image unavailable',
+      )
+      expect(card.querySelector('img')).toBeNull()
+      expect(card.querySelector('.cover-dimensions')).toBeNull()
+      expect(document.querySelector('.library-cover-excluded')).toBeNull()
+      expect(
+        [...document.querySelectorAll('img')].some((image) =>
+          image.getAttribute('src')?.endsWith(encodeURIComponent(`cover_ref_${'9'.repeat(64)}`)),
+        ),
+      ).toBe(false)
+      await user.click(card)
+      await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+      expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+        outcome: 'accept',
+        selectedValue: { kind: 'cover', value: `cover_${'9'.repeat(64)}` },
+      })
+    })
+
     it('counts merged duplicate images apart from unavailable candidates', async () => {
       renderRoute(
         '/library?lens=all&preview=case-1&field=cover',
@@ -6554,10 +6614,9 @@ describe('Library route', () => {
         ] as const) {
           cleanup()
           const access: ReviewerAccessView = {
-            schema_version: 'reviewer-access-view-v2',
+            schema_version: 'reviewer-access-view-v3',
             cover_metadata: null,
             cost_evidence: {
-              schema_version: 'reviewer-cost-evidence-v2',
               models: [],
             },
             revision: 9,
@@ -7008,9 +7067,9 @@ describe('Library route', () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const access: ReviewerAccessView = {
-      schema_version: 'reviewer-access-view-v2',
+      schema_version: 'reviewer-access-view-v3',
       cover_metadata: null,
-      cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+      cost_evidence: { models: [] },
       revision: 9,
       mapping: { engine: 'codex' },
       description_mapping: null,
@@ -7120,9 +7179,9 @@ describe('Library route', () => {
 
   // A retry-capable reviewer for the #1595 cover alert tests below.
   const retryAccess: ReviewerAccessView = {
-    schema_version: 'reviewer-access-view-v2',
+    schema_version: 'reviewer-access-view-v3',
     cover_metadata: null,
-    cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+    cost_evidence: { models: [] },
     revision: 9,
     mapping: { engine: 'codex' },
     description_mapping: null,
@@ -13820,7 +13879,6 @@ it('offers advised text in the ordinary Description chooser with its immutable a
               ...advice,
               selected_advice: { candidate, binding: advice.binding, current: true },
               selection: {
-                schema_version: 'authored-description-decision-v1',
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
                 binding: advice.binding,
@@ -14077,7 +14135,6 @@ it.each(['verified', 'no_change_required'] as const)(
         current: outcome === 'no_change_required',
       },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
@@ -14135,7 +14192,6 @@ it.each([
       application_outcome: outcome,
       selected_advice: { candidate: advice.candidate, binding: advice.binding, current },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
@@ -14244,7 +14300,6 @@ it.each(['human', 'automatic_policy'] as const)(
           current: scenario.current,
         },
         selection: {
-          schema_version: 'authored-description-decision-v1',
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
           candidate_id: field.descriptionAdvice.candidate.candidate_id,
           binding: advice.binding,
@@ -14300,7 +14355,6 @@ it.each([true, false])(
       application_outcome: null,
       selected_advice: { candidate, binding: advice.binding, current: true },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: candidate.candidate_id,
         binding: advice.binding,

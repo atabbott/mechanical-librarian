@@ -30,8 +30,14 @@ from mechanical_librarian.domain.validation import owner_text_value
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
+# An automatic cover choice keeps the first selection version.
+AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
 HUMAN_DECISION_SCHEMA: Final = "human-decision-v4"
+HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
+HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
+    "human-decision-event-v1"
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 # ``reject`` is readable history only; the last two are F59's owner commands

@@ -46,6 +46,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     TERMINAL_STATES,
     EffectAuthority,
@@ -1318,7 +1319,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             "origin",
             "plan_id",
             "pre_value",
-            schema_version=literal("field-effect-event-v1"),
+            schema_version=literal(FIELD_EFFECT_EVENT_SCHEMA),
             sequence=bounded_integer(1),
             attempt=bounded_integer(0, 3),
             occurred_at=non_negative_integer,
@@ -1350,14 +1351,14 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                             for key, value in raw.items()
                             if key != "subtitle_companion"
                         },
-                        "schema_version": "field-effect-event-v1",
+                        "schema_version": FIELD_EFFECT_EVENT_SCHEMA,
                     }
                 )
                 or raw.get("schema_version")
                 != (
                     "field-effect-title-subtitle-event-v1"
                     if operation.plan.subtitle_companion is not None
-                    else "field-effect-event-v1"
+                    else FIELD_EFFECT_EVENT_SCHEMA
                 )
                 or ("subtitle_companion" in raw)
                 != (operation.plan.subtitle_companion is not None)

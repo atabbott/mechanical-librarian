@@ -757,7 +757,8 @@ export interface CoverCandidateView {
   deterministicCitations: readonly string[]
   deterministicRank: number | null
   deterministicRankKey: readonly (number | string)[] | null
-  height: number
+  /** Null, with `previewSha256` and `width`, only for a retained original the decoder refused (#1362). */
+  height: number | null
   identity: Readonly<Record<string, unknown>> | null
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
@@ -770,13 +771,13 @@ export interface CoverCandidateView {
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
-  previewSha256: string
+  previewSha256: string | null
   reference: string
   selectable: boolean
   manualEligible: boolean
   sourceKinds: readonly CoverSourceKind[]
   state: 'acceptable' | 'available' | 'excluded' | 'recommended'
-  width: number
+  width: number | null
 }
 export interface CoverConsiderationView {
   choiceContexts: readonly ChoiceContextView[]
@@ -2871,57 +2872,11 @@ export const mapEvidence = (value: EvidenceDto): EvidenceView => ({
   sourceLedger: value.source_ledger.map(mapProviderOutcome),
 })
 
-const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
-  if ('checkpoint' in item)
-    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+const mapCoverHistoryItem = (
+  item: Extract<HistoryDto['items'][number], { readonly consideration: unknown }>,
+  index: number,
+): HistoryItemView => {
   const occurredAt = item.occurred_at
-  // Each item kind has its own event schema, named by its version.
-  if (item.schema_version === 'description-advice-history-v1')
-    return {
-      category: 'description',
-      occurredAt,
-      outcome: item.kind,
-      state: item.state,
-      model: item.model,
-      engine: item.engine,
-      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
-      selected: item.kind === 'description_selected',
-      chosenBy:
-        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
-    }
-  // Only an owner decision states what it may go on to do; a retained F45
-  // decision is the only one that carries a reason (#968).
-  if (item.schema_version === 'human-decision-event-v1')
-    return {
-      category: 'owner',
-      applicationReason: item.application_reason,
-      outcome: item.outcome,
-      occurredAt,
-      destination: item.destination,
-      previousValue: item.previous_value,
-      selectedValue: item.selected_value,
-    }
-  if (item.schema_version === 'automatic-decision-history-event-v1')
-    return {
-      category: 'automatic',
-      outcome: item.outcome,
-      occurredAt,
-      destination: item.destination,
-      previousValue: item.previous_value,
-      selectedValue: item.selected_value,
-    }
-  if (item.schema_version === 'matching-changed-history-event-v1')
-    return { category: 'matching_changed', occurredAt, destination: item.destination }
-  if (item.schema_version === 'preview-history-event-v1')
-    return {
-      category: 'preview',
-      occurredAt,
-      // The decoder holds each key to the disposition names (propertyNames).
-      dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
-        count,
-        outcome: outcome as PreviewDisposition,
-      })),
-    }
   const { consideration, decision } = item
   const decisionOutcome = decision?.outcome
   const ownerOutcome =
@@ -2969,6 +2924,62 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
     reviewerStatus: consideration.reviewer_status,
     supersedesAutomatic:
       decision?.outcome === 'candidate' && decision.supersedes_decision_id !== null,
+  }
+}
+
+const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
+  if ('checkpoint' in item)
+    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+  // A cover item is told apart by its consideration; it carries no version of
+  // its own, because its event's version stays in the store (#1847).
+  if ('consideration' in item) return mapCoverHistoryItem(item, index)
+  const occurredAt = item.occurred_at
+  // Each other item kind has its own event schema, named by its version.
+  if (item.schema_version === 'description-advice-history-v1')
+    return {
+      category: 'description',
+      occurredAt,
+      outcome: item.kind,
+      state: item.state,
+      model: item.model,
+      engine: item.engine,
+      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
+      selected: item.kind === 'description_selected',
+      chosenBy:
+        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
+    }
+  // Only an owner decision states what it may go on to do; a retained F45
+  // decision is the only one that carries a reason (#968).
+  if (item.schema_version === 'human-decision-event-v1')
+    return {
+      category: 'owner',
+      applicationReason: item.application_reason,
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'automatic-decision-history-event-v1')
+    return {
+      category: 'automatic',
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'matching-changed-history-event-v1')
+    return { category: 'matching_changed', occurredAt, destination: item.destination }
+  // What is left is the preview event.
+  return {
+    category: 'preview',
+    occurredAt,
+    // The decoder holds each key to the disposition names (propertyNames).
+    dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
+      count,
+      outcome: outcome as PreviewDisposition,
+    })),
   }
 }
 
@@ -3042,12 +3053,20 @@ const mapCoverObservation = (
 /**
  * The retained original as the owner's way back (#1363, D2): never the
  * current cover, never reviewed or ranked, and choosable exactly while the
- * server still offers it, which it does only while its copy is kept.
+ * server still offers it, which it does only while its copy is kept. One the
+ * decoder refused has no size or preview at all (#1362).
  */
 const mapRetainedCandidate = (
   candidate: CoverConsiderationDto['candidates'][number],
 ): CoverCandidateView => {
+  const previewless = [
+    candidate.height,
+    candidate.width,
+    candidate.preview_sha256,
+    candidate.transport_sha256,
+  ].filter((value) => value === null).length
   if (
+    (previewless !== 0 && previewless !== 4) ||
     candidate.identity !== null ||
     candidate.incumbent ||
     candidate.match_state !== 'match_not_confirmed' ||
@@ -3121,8 +3140,16 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const manualEligible = candidate.manual_eligible
     if (manualEligible !== (!incumbent && contradiction === undefined))
       throw new ApiError(502, 'contradictory_cover_manual_eligibility')
-    const { reference } = candidate
+    const { reference, height, width } = candidate
     const previewSha256 = candidate.preview_sha256
+    // Only a retained original may have no preview (#1362).
+    if (
+      height === null ||
+      width === null ||
+      previewSha256 === null ||
+      candidate.transport_sha256 === null
+    )
+      throw new ApiError(502, 'missing_cover_preview')
     const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
     const matchState = candidate.match_state
     // match-state and unconfirmed-unranked; X59 (a confirmed incumbent is
@@ -3151,7 +3178,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
       deterministicRankKey,
-      height: candidate.height,
+      height,
       identity,
       incumbent,
       matchState,
@@ -3165,7 +3192,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       manualEligible,
       sourceKinds: candidate.source_kinds,
       state: candidate.state,
-      width: candidate.width,
+      width,
     }
   })
   // unique-references, X58 (distinct artifacts) and ordinal-position, which

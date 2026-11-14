@@ -99,7 +99,6 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
-from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
 from mechanical_librarian.interfaces.web.app import owner_password_binding
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.support.review_web_doubles import (
@@ -306,7 +305,8 @@ def test_settings_file_authority_transport_is_private_and_locked(
         "/api/v1/settings",
         json={
             "expected_revision": 1,
-            "document": document.model_dump() | {"revision": 2},
+            "document": document.model_dump(exclude={"schema_version"})
+            | {"revision": 2},
             "secrets": [],
         },
         headers={
@@ -379,7 +379,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     web.cleanup.enter_context(web.client)
     valid = {
         "expected_revision": 1,
-        "document": document.model_dump() | {"revision": 2},
+        "document": document.model_dump(exclude={"schema_version"}) | {"revision": 2},
         "secrets": [],
     }
     unauthenticated = web.client.patch(
@@ -465,7 +465,9 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
             {"options": {"date_precision": "full_date"}, "destinations": {}},
         ),
     ):
-        forbidden_document = document.model_dump() | {"revision": 2}
+        forbidden_document = document.model_dump(exclude={"schema_version"}) | {
+            "revision": 2
+        }
         forbidden_document["libraries"][0][field] = changed
         forbidden = web.client.patch(
             "/api/v1/settings",
@@ -492,7 +494,9 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         ["de", "en", "fr", "es", "it", "nl", "pt", "sv", "da"],
         [1],
     ):
-        invalid_document = document.model_dump() | {"revision": 2}
+        invalid_document = document.model_dump(exclude={"schema_version"}) | {
+            "revision": 2
+        }
         invalid_document["libraries"][0]["languages"] = languages
         refused = web.client.patch(
             "/api/v1/settings",
@@ -506,11 +510,27 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         assert refused.status_code == 422
         assert refused.json()["error"]["code"] == "invalid"
         assert OwnerSettingsStore(connection).read().document.revision == 1
+    # The browser's body has no storage version, so the document's own
+    # cross-field checks run on the request body itself and refuse it before
+    # anything is stored (#1847).
+    base = document.model_dump(exclude={"schema_version"}) | {"revision": 2}
+    for broken in (
+        base | {"connections": [*base["connections"], *base["connections"]]},
+        base | {"libraries": [base["libraries"][0] | {"connection": "absent"}]},
+    ):
+        refused = web.client.patch(
+            "/api/v1/settings",
+            json={"expected_revision": 1, "document": broken, "secrets": []},
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        assert refused.status_code == 422
+        assert refused.json()["error"]["code"] == "invalid"
+        assert OwnerSettingsStore(connection).read().document.revision == 1
     response = web.client.patch(
         "/api/v1/settings",
         json={
             "expected_revision": 1,
-            "document": document.model_dump()
+            "document": document.model_dump(exclude={"schema_version"})
             | {
                 "revision": 2,
                 "provider_recovery_generation": 2,
@@ -608,7 +628,7 @@ def test_book_matching_saves_only_through_the_guarded_settings_write(
         base_url="https://review.test",
     )
     web.cleanup.enter_context(web.client)
-    wider = document.model_dump() | {
+    wider = document.model_dump(exclude={"schema_version"}) | {
         "revision": 2,
         "matching": {"work_identity": "title_and_creator"},
     }
@@ -3184,20 +3204,14 @@ def _shadow_mentions(value: object, pointer: str = "") -> Iterator[tuple[str, st
         yield pointer, value
 
 
-def test_openapi_names_shadow_only_in_the_stored_outcome_set_version() -> None:
-    # The read-time API says "preview". The one "shadow" left is the stored,
-    # hashed outcome-set version, which the browser receives unchanged.
+def test_openapi_never_names_shadow() -> None:
+    # The read-time API says "preview". The stored outcome set's version, the
+    # last "shadow", stays in the store (#1847).
     document = json.loads(
         Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
     )
 
-    assert set(_shadow_mentions(document)) == {
-        (
-            "/components/schemas/_PreviewOutcomeSetResponse/properties"
-            "/schema_version/const",
-            SHADOW_OUTCOME_SCHEMA,
-        )
-    }
+    assert set(_shadow_mentions(document)) == set()
 
 
 def test_openrouter_request_validation_redacts_the_write_only_key() -> None:
@@ -3770,27 +3784,19 @@ def test_current_audiobook_qualification_inventory_crosses_closed_api_contract()
             _AudiobookQualification.model_validate({**records[0], "identity": identity})
 
 
-def test_preview_sample_response_refuses_genuine_predecessor_outcome():
-    from pydantic import ValidationError
-
-    from mechanical_librarian.interfaces.web.app import _PreviewSampleResponse
+def test_preview_sample_refuses_genuine_predecessor_outcome_before_the_browser():
+    # The browser's copy carries no storage version (#1847), so the stored
+    # outcome set's parser is what refuses a predecessor, before any response.
+    from mechanical_librarian.domain.shadow_outcome import (
+        ShadowOutcomeError,
+        ShadowOutcomeSet,
+    )
 
     document = Path("tests/support/audiobook_predecessors/outcome.json").read_bytes()
     outcome = json.loads(document)
     assert outcome["schema_version"] == "shadow-outcome-set-v5"
-    sample = {
-        "authority": "none",
-        "items": [{**outcome, "evaluated_at": 2000}],
-        "next_cursor": None,
-        "schema_version": "preview-outcome-sample-v1",
-    }
-    with pytest.raises(ValidationError) as failure:
-        _PreviewSampleResponse.model_validate(sample)
-    assert any(
-        error["loc"] == ("items", 0, "schema_version")
-        and error["type"] == "literal_error"
-        for error in failure.value.errors()
-    )
+    with pytest.raises(ShadowOutcomeError):
+        ShadowOutcomeSet.from_json(document.decode("utf-8"))
     assert (
         Path("tests/support/audiobook_predecessors/outcome.json").read_bytes()
         == document

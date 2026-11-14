@@ -307,9 +307,8 @@ never restates the reason already shown, and a decision carries no reminder
 that writes are protected. A disclosure never chooses a value.
 
 At a wider [Book matching](../reference/configuration.md#book-matching) value,
-a field that needs you may offer values whose sources read "same title and
-author". Its choices wait during a check, and History says when a field asked
-again.
+a field that needs you may offer "same title and author" values; History says
+when it asked again.
 
 When a field set to Automatic gets no automatic choice, the canvas says why
 until the cause goes. An unknown reason reads as unknown. A hold from an
@@ -477,7 +476,8 @@ another cover.
 
 Once a replaced cover's work is prepared again after its switch, you can choose
 the old cover. Its row then also offers Put back, and the comparison names the
-old cover Replaced cover. Put back records choosing the
+old cover Replaced cover. An unreadable one shows "Image unavailable" there and
+under Before (#1362). Put back records choosing the
 old cover, and its write uploads it from the kept copy. The row reads Put back
 while that write runs, and leaves Switched when the write is verified, which
 releases the copy. If the cover was changed in Audiobookshelf first, the row

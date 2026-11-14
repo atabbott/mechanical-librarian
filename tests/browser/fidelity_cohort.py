@@ -19,16 +19,10 @@ from mechanical_librarian.adapters.persistence.owner_settings import _settings_v
 from mechanical_librarian.application.continuous_field_effects import (
     CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
 )
-from mechanical_librarian.application.cover_consideration import (
-    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+from mechanical_librarian.application.metadata_policy import (
+    PREVIEW_OUTCOME_SAMPLE_SCHEMA,
+    rich_qualification,
 )
-from mechanical_librarian.application.cover_policy import (
-    POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
-)
-from mechanical_librarian.application.cover_policy import (
-    SCHEMA_VERSION as COVER_POLICY_REPORT_SCHEMA,
-)
-from mechanical_librarian.application.metadata_policy import rich_qualification
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
 )
@@ -39,15 +33,12 @@ from mechanical_librarian.application.review_web import (
     REVIEW_LIBRARY_SCHEMA,
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
-from mechanical_librarian.domain.metadata_policy import (
-    POLICY_SCHEMA_VERSION as METADATA_POLICY_PROFILE_SCHEMA,
-)
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
 )
-from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
+from mechanical_librarian.interfaces.web.app import METADATA_POLICY_NOTEBOOK_SCHEMA
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
@@ -1089,7 +1080,6 @@ def _case(case_id: str) -> dict[str, object]:
                         "policy_reference": "cover-policy-synthetic",
                         "reasons": ["policy_satisfied"],
                         "recommended_candidate_reference": "cover-ref-choice",
-                        "schema_version": COVER_POLICY_REPORT_SCHEMA,
                         # The measured rules fill an empty cover and suggest
                         # replacing an undersized one (#1363).
                         "stage": {
@@ -1110,7 +1100,6 @@ def _case(case_id: str) -> dict[str, object]:
                         "current_protection": "protected",
                         "prefer_edition": False,
                         "prefer_minimal_composition": False,
-                        "schema_version": COVER_POLICY_SCHEMA,
                     },
                     "policy_reference": "cover-policy-synthetic",
                     "provider_fetching": False,
@@ -1125,7 +1114,6 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": COVER_CONSIDERATION_SCHEMA,
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"
@@ -1789,7 +1777,6 @@ def _shadow_outcome_set(
 ) -> dict[str, object]:
     """Return one preview outcome set with every member the server sends."""
     return {
-        "schema_version": SHADOW_OUTCOME_SCHEMA,
         "authority": "none",
         "posture": "preview",
         "outcome_set_id": outcome_set_id,
@@ -1850,7 +1837,9 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 ],
             }
         )
-        return _settings_view(document, {}).model_dump(mode="json")
+        return _settings_view(document, {}).model_dump(
+            mode="json", exclude={"document": {"schema_version"}}
+        )
     if path == "/api/v1/review-preparation":
         return {
             "schema_version": REVIEW_PREPARATION_SCHEMA,
@@ -2042,7 +2031,6 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                         "kind": "automatic_prepared",
                         "occurred_at": 1_754_858_400,
                         "review_case_id": case_id,
-                        "schema_version": "cover-consideration-event-v1",
                     }
                 )
             return {
@@ -2059,7 +2047,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         return payload
     if path == "/api/v1/metadata-policy/state":
         return {
-            "schema_version": "metadata-policy-notebook-v1",
+            "schema_version": METADATA_POLICY_NOTEBOOK_SCHEMA,
             "policy_id": "policy-active-1",
             "audiobook_qualification": [
                 dict(value)
@@ -2067,7 +2055,6 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ],
             "rich_qualification": list(_RICH_QUALIFICATION),
             "profile": {
-                "schema_version": METADATA_POLICY_PROFILE_SCHEMA,
                 "name": "Household metadata policy",
                 "options": {
                     "title_layout": "title_and_subtitle",
@@ -2111,7 +2098,6 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/metadata-policy/drafts":
         return {
             "policy_id": "policy_" + "d" * 64,
-            "schema_version": METADATA_POLICY_PROFILE_SCHEMA,
         }
     if path == "/api/v1/metadata-policy/preview":
         fields = [
@@ -2233,7 +2219,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/metadata-policy/preview-mode/outcomes":
         return {
-            "schema_version": "preview-outcome-sample-v1",
+            "schema_version": PREVIEW_OUTCOME_SAMPLE_SCHEMA,
             "authority": "none",
             "items": [
                 _shadow_outcome_set("preview-1", ("title", "authors")),

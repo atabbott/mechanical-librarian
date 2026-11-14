@@ -98,11 +98,13 @@ def _root(effects: _EffectEnvironment) -> Path:
 
 
 def _application(
-    effects: _EffectEnvironment, rescans: list[tuple[str, str]]
+    effects: _EffectEnvironment,
+    rescans: list[tuple[str, str]],
+    original: bytes = ORIGINAL,
 ) -> GuardedFieldApplication:
     """The guarded writer as composition builds it, reading the real original."""
     recovery = PrivateCoverRecoveryStore(
-        Path(effects.temporary.name) / "recovery-originals", lambda _: ORIGINAL
+        Path(effects.temporary.name) / "recovery-originals", lambda _: original
     )
     return GuardedFieldApplication(
         effects.repository,
@@ -129,7 +131,9 @@ def _application(
 
 
 def _switch(
-    effects: _EffectEnvironment, application: GuardedFieldApplication
+    effects: _EffectEnvironment,
+    application: GuardedFieldApplication,
+    original_digest: str = ORIGINAL_DIGEST,
 ) -> FieldEffectOperation:
     automatic = _automatic_cover()
     effects.authority.automatic_values[automatic.decision_id] = envelope(
@@ -142,7 +146,7 @@ def _switch(
         library="books",
         work_id="book-1",
         destination="cover",
-        pre_value="cover_" + ORIGINAL_DIGEST,
+        pre_value="cover_" + original_digest,
         desired_value=envelope("cover", SWITCHED),
         target_fingerprint=automatic.target_fingerprint,
         target_version="version-1",
@@ -452,6 +456,70 @@ def test_a_put_back_releases_its_copy_only_when_its_write_verifies(
             effects.repository.retained_cover_original("primary", "books", "book-1")
             is None
         )
+
+
+# Signature-valid bytes the constrained decoder refuses.
+UNDECODABLE = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+UNDECODABLE_DIGEST = hashlib.sha256(UNDECODABLE).hexdigest()
+
+
+def test_an_original_that_does_not_decode_is_kept_offered_and_put_back(
+    effects: _EffectEnvironment,
+) -> None:
+    """The owner gets back exactly the bytes a switch replaced, whether or not
+    they decode (#1362, A5 and S11).
+
+    The switch is seeded by planning it directly under a synthetic automatic
+    authority, as every Put back proof here does: until #1362's stage change,
+    the stage itself never switches a cover it could not read.
+    """
+    artifacts = CoverArtifactStore(Path(effects.temporary.name) / "artifacts")
+    observer = CoverEvidenceObserver(
+        cast("TargetCoverReader", None), artifacts, (), _root(effects)
+    )
+    application = _application(effects, [], UNDECODABLE)
+    switch = _switch(effects, application, UNDECODABLE_DIGEST)
+    assert application.apply(switch.plan.plan_id).state == "verified"
+    assert RetainedCoverStore(_root(effects)).read(UNDECODABLE_DIGEST) == UNDECODABLE
+
+    # The next report offers it by its verified digest, with no artifact and
+    # nothing staged, so no preview of it exists anywhere.
+    binding = effects.repository.retained_cover_original("primary", "books", "book-1")
+    assert binding == (
+        UNDECODABLE_DIGEST,
+        switch.plan.plan_id,
+        switch.plan.authority.decision_id,
+    )
+    (source,) = observer._retained_source(binding, CoverDeadline.start())
+    assert (source.kind, source.artifact, source.original_digest) == (
+        CoverSourceKind.RETAINED,
+        None,
+        UNDECODABLE_DIGEST,
+    )
+    stored = Path(effects.temporary.name) / "artifacts"
+    assert not any(path.is_file() for path in stored.rglob("*"))
+
+    # Put back: the writer reads the original from the retained store, as
+    # composition's Audiobookshelf writer does, and uploads exactly those bytes.
+    uploaded: list[bytes] = []
+    effects.target.after_apply = lambda plan: uploaded.append(
+        ContentAddressedOriginals(artifacts, _root(effects)).read_original_digest(
+            cast(str, plan.desired_value).removeprefix("cover_")
+        )
+    )
+    put_back = _plan(
+        effects,
+        "cover",
+        pre=SWITCHED,
+        desired="cover_" + UNDECODABLE_DIGEST,
+        suffix="7",
+    )
+    _owner_put_back(effects, put_back.plan.authority.decision_id, switch.plan.plan_id)
+
+    assert application.apply(put_back.plan.plan_id).state == "verified"
+    assert uploaded == [UNDECODABLE]
+    assert effects.target.read(put_back.plan).value == "cover_" + UNDECODABLE_DIGEST
+    assert _removals(effects) == [(switch.plan.plan_id, "released")]
 
 
 def _progress(state: str, rescan_requested: bool) -> PipelineProgress:

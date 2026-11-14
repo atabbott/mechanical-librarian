@@ -2,11 +2,12 @@
 
 from pathlib import Path
 
-from mechanical_librarian.application.configuration import CONFIG_SCHEMA
 from mechanical_librarian.infrastructure.configuration import configuration_schema_json
 
 ROOT = Path(__file__).parents[1]
-OUTPUT = ROOT / "docs" / "reference" / f"{CONFIG_SCHEMA}.schema.json"
+# A fixed name, so a configuration version move renames nothing; the version
+# is inside the document.
+OUTPUT = ROOT / "docs" / "reference" / "config.schema.json"
 
 
 def main() -> None:

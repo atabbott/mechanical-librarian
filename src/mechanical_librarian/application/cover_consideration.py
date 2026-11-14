@@ -93,8 +93,8 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-CoverConsiderationSchemaVersion = Literal["cover-consideration-v8"]
-SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v8"
+CoverConsiderationSchemaVersion = Literal["cover-consideration-v9"]
+SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v9"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -224,7 +224,8 @@ def _retained_candidate(
     image as a reviewed candidate, so one picture is never two cards. Like the
     proposal's cover alternatives, it is offered only over a populated cover and
     never fills an empty one. It has no identity, no rank and no reviewer
-    evidence: it is a way back, never an automatic choice.
+    evidence: it is a way back, never an automatic choice. An original the
+    decoder refused is listed by its digest with no size or preview (#1362).
     """
     if binding is None or _target_cover(report).state is not TargetFieldState.VALUE:
         return None
@@ -233,6 +234,10 @@ def _retained_candidate(
         digest == incumbent_digest
         or re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id) is None
         or _DECISION_ID.fullmatch(decision_id) is None
+        or any(
+            source.kind is CoverSourceKind.ABS and source.bytes_digest == digest
+            for source in report.cover_sources
+        )
     ):
         return None
     source = next(
@@ -241,42 +246,37 @@ def _retained_candidate(
             for source in report.cover_sources
             if source.kind is CoverSourceKind.RETAINED
             and source.source_id == cover_source_id(CoverSourceKind.RETAINED, plan_id)
-            and source.artifact is not None
-            and source.artifact.original_digest == digest
+            and source.bytes_digest == digest
         ),
         None,
     )
-    if (
-        source is None
-        or source.artifact is None
-        or any(item["artifact_id"] == source.artifact.artifact_id for item in reviewed)
-    ):
+    artifact_id = "cover_" + digest
+    if source is None or any(item["artifact_id"] == artifact_id for item in reviewed):
         return None
     artifact = source.artifact
-    ordinal = len(reviewed)
     reference = cover_source_reference(report.report_id, source.source_id)
     return {
-        "artifact_id": artifact.artifact_id,
+        "artifact_id": artifact_id,
         "candidate_kind": "retained",
         "decision_id": decision_id,
         "deterministic_citations": [reference],
         "deterministic_rank": None,
         "deterministic_rank_key": None,
-        "height": artifact.height,
+        "height": None if artifact is None else artifact.height,
         "identity": None,
         "incumbent": False,
         "match_state": "match_not_confirmed",
         "observation": None,
-        "ordinal": ordinal,
-        "original_sha256": artifact.original_digest,
+        "ordinal": len(reviewed),
+        "original_sha256": digest,
         "plan_id": plan_id,
-        "preview_sha256": artifact.preview_digest,
+        "preview_sha256": None if artifact is None else artifact.preview_digest,
         "reference": reference,
         "selectable": True,
         "source_kinds": [CoverSourceKind.RETAINED.value],
         "state": "available",
-        "transport_sha256": artifact.preview_digest,
-        "width": artifact.width,
+        "transport_sha256": None if artifact is None else artifact.preview_digest,
+        "width": None if artifact is None else artifact.width,
     }
 
 
@@ -2038,6 +2038,9 @@ class CoverConsiderationService:
                 "reference": cover_source_reference(report.report_id, source.source_id),
             }
             for source in report.cover_sources
+            # A retained original is a candidate of its own, never an
+            # omission (#1362).
+            if source.kind is not CoverSourceKind.RETAINED
         ]
 
     def _project(self, document: str, *, current: bool) -> dict[str, object]:
@@ -2151,7 +2154,8 @@ class CoverConsiderationService:
             (item for item in value["candidates"] if item["reference"] == reference),
             None,
         )
-        if candidate is None:
+        # A retained original the decoder refused has no preview (#1362).
+        if candidate is None or candidate["preview_sha256"] is None:
             raise CoverConsiderationError("not_found")
         return (
             self.retained_preview(str(candidate["preview_sha256"])),

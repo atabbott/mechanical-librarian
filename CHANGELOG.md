@@ -84,7 +84,8 @@ brackets are GitHub issues.
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
-  they are not a readable image (#1853).
+  they are not a readable image (#1853). A replaced cover that is not a
+  readable image can be put back too, and reads "Image unavailable" (#1362).
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'
   covers in review. Only editions in the library's languages, with at least
   300 px on the short side, are fetched, so a library with no languages gets

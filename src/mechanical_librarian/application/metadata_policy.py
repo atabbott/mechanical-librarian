@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from threading import RLock
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_cases import ReviewCaseError
@@ -56,6 +56,10 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import ApplicationConfiguration
 
 MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
+PreviewOutcomeSampleSchemaVersion = Literal["preview-outcome-sample-v2"]
+PREVIEW_OUTCOME_SAMPLE_SCHEMA: Final[PreviewOutcomeSampleSchemaVersion] = (
+    "preview-outcome-sample-v2"
+)
 
 
 class MetadataPolicyApplicationError(RuntimeError):
@@ -963,7 +967,7 @@ class PolicyNotebook:
                     "authority": "none",
                     "items": [*items, candidate],
                     "next_cursor": None,
-                    "schema_version": "preview-outcome-sample-v1",
+                    "schema_version": PREVIEW_OUTCOME_SAMPLE_SCHEMA,
                 }
                 if (
                     len(
@@ -984,7 +988,7 @@ class PolicyNotebook:
                 "authority": "none",
                 "items": items,
                 "next_cursor": None,
-                "schema_version": "preview-outcome-sample-v1",
+                "schema_version": PREVIEW_OUTCOME_SAMPLE_SCHEMA,
             }
         except Exception as error:
             raise MetadataPolicyApplicationError(

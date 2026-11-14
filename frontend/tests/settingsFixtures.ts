@@ -1,7 +1,6 @@
 import type { SettingsView, SettingsWrite } from '../src/api/http'
 
 export const document: SettingsView['document'] = {
-  schema_version: 'owner-settings-v6',
   revision: 3,
   description_advice: {
     remove_marketing: true,

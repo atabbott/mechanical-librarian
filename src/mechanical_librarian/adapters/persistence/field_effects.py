@@ -83,6 +83,7 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
+    FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     EffectConsent,
     FieldEffectError,
@@ -1341,7 +1342,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     != (
                         "field-effect-title-subtitle-event-v1"
                         if operation.plan.subtitle_companion is not None
-                        else "field-effect-event-v1"
+                        else FIELD_EFFECT_EVENT_SCHEMA
                     )
                     or raw.get("subtitle_companion")
                     != (
@@ -2227,7 +2228,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             (operation.plan.plan_id,),
         ).fetchone()[0]
         content = {
-            "schema_version": "field-effect-event-v1",
+            "schema_version": FIELD_EFFECT_EVENT_SCHEMA,
             "plan_id": operation.plan.plan_id,
             "decision_id": operation.plan.authority.decision_id,
             "origin": operation.plan.authority.origin,

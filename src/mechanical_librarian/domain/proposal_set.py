@@ -141,7 +141,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v46"
+POLICY_VERSION = "fixed-conservative-v47"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -5482,6 +5482,42 @@ def _date_compatible_with_projection(
     return observation.value.value[:shared_length] == candidate[:shared_length]
 
 
+def _undecodable_retained_alternatives(
+    considered: tuple[CoverSource, ...],
+    target: TargetField,
+    decoded: dict[str, list[Any]],
+) -> list[ProposalAlternative]:
+    """The way back to a replaced original the decoder refused (#1362).
+
+    It is named by its bytes' digest, the same form as an artifact id, which
+    the guarded writer reads from the retained store. Like a decoded original
+    it is offered only over a populated cover, and never when it is the
+    current cover itself.
+    """
+    if target.state is not TargetFieldState.VALUE:
+        return []
+    current = {
+        source.bytes_digest
+        for source in considered
+        if source.kind is CoverSourceKind.ABS
+    }
+    return [
+        ProposalAlternative.create(
+            ProposalValue(ProposalValueKind.COVER, "cover_" + source.original_digest),
+            ProposalAssessment.REPLACES_TARGET,
+            (source.source_id,),
+            (_correlation("cover:" + source.kind.value),),
+            ProposalScope.COVER,
+        )
+        for source in considered
+        if source.kind is CoverSourceKind.RETAINED
+        and source.artifact is None
+        and source.original_digest is not None
+        and source.original_digest not in current
+        and source.original_digest not in decoded
+    ]
+
+
 def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
     considered = report.cover_sources
     if report.file.format in AUDIO_FILE_FORMATS and not any(
@@ -5563,6 +5599,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
                 ProposalScope.COVER,
             )
         )
+    alternatives.extend(_undecodable_retained_alternatives(considered, target, grouped))
     ordered = tuple(sorted(alternatives, key=lambda value: value.alternative_id))
     if target.state in {
         TargetFieldState.UNLOADED,
@@ -5635,8 +5672,10 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         for value in ordered
         if value.assessment is not ProposalAssessment.PRESERVES_TARGET
     )
+    # A retained original never fills an empty cover, so one the decoder
+    # refused leaves nothing pending.
     incomplete = any(
-        source.kind is not CoverSourceKind.ABS
+        source.kind not in {CoverSourceKind.ABS, CoverSourceKind.RETAINED}
         and source.state not in {CoverSourceState.RETRIEVED, CoverSourceState.ABSENT}
         for source in considered
     )

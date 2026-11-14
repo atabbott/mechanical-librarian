@@ -120,7 +120,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "06c497ce28d4eff3f9b0b31eea4f431aec113a39ef0c99ba035fc356c500f07e"
+        "offer_digest": "e86eea40f0c48e02cc1a0988d64466d2aa45a917705d0e8d7f100cb0dcf7def0"
       },
       {
         "classification": "needs_attention",
@@ -220,7 +220,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "647414cbd3f1998c1402288bff01f6e877c8d422ce43efaf5e09f6b76096e473"
+        "offer_digest": "aa3bd14b8c2cf7cc009cc69b8d0aab1fdb4925a048541c747261ccb6d7b8ac25"
       },
       {
         "classification": "needs_attention",
@@ -326,7 +326,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "e96e2011f30b0420bf4040c186dc0cbbb248a3621ff28c0eeb7ede531b77fd76"
+        "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f"
       },
       {
         "classification": "needs_attention",
@@ -380,7 +380,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "e96e2011f30b0420bf4040c186dc0cbbb248a3621ff28c0eeb7ede531b77fd76"
+        "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f"
       },
       {
         "classification": "needs_attention",
@@ -479,7 +479,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "5ff217fd161a6271926083d26faebb1619140b2dce8864e79d676af5a4415390"
+        "offer_digest": "221dc9ba25d55d99c14cb11ff69582f7ec10b908bebf2ed34cc919907fc6ec48"
       },
       {
         "classification": "needs_attention",
@@ -533,7 +533,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "e96e2011f30b0420bf4040c186dc0cbbb248a3621ff28c0eeb7ede531b77fd76"
+        "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f"
       },
       {
         "classification": "unsupported",
@@ -587,7 +587,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "a150f0ddffa0c3a52798f82ba0fb79bf584b4aa385c28911273da10fcac26071"
+        "offer_digest": "d8fd4421cf5a3a4ecbb1ce4ed43707700edf2fa6a2b516ebf92a2dfe716b5397"
       },
       {
         "classification": "unsupported",
@@ -641,7 +641,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "8d96b56a4b11280b6ffa78cb4be58f46a2fdf0daf1087a320daca38f395f6eda"
+        "offer_digest": "b07037849fd764eebd9e49622da48433c9a11767ffb26bb02124a83b26b08426"
       },
       {
         "classification": "unsupported",
@@ -695,7 +695,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "c5ed8c6c0fe620fd78b50256a0468acc231f33a6c5291f5480bcfdc2bb0931db"
+        "offer_digest": "4f3effd6af47ebcce203a5aa1ebf5158b304e83c5dd9412bf471a048fd9721cf"
       },
       {
         "classification": "unsupported",
@@ -749,7 +749,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "c85c4193b64d1e1820481a27c932d38062907e85ce5970c07e50fd1b9edaf64c"
+        "offer_digest": "ae0663c79471a7e576694bbc3dee6a9919f7ef9059a7e05fb08a75728d121053"
       },
       {
         "classification": "manual_fallback",
@@ -803,7 +803,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "abbcfb24a2522ea5d4f5716a4358dd8fc889d0ff346e3f2483dc62824b34e534"
+        "offer_digest": "774f8321936975e650ae662eaea5a4082c69979247ba5a2e8bb8f2c307e3ddd4"
       },
       {
         "classification": "unsupported",
@@ -857,7 +857,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "32cf0a0ead947a5dcfc5747db9f9143f763761ecd21bcd19d90f46b5d9812059"
+        "offer_digest": "ba86b44ae9ce20a33a6e52fb76a1ca64259ae994de764980e3ee581bd55ea0a7"
       },
       {
         "classification": "unsupported",
@@ -911,7 +911,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "e166d3678d0a962e528cf84fc15df24f2bde09a339729a77be03d9f02403925b"
+        "offer_digest": "1b5e09d0cfed5bdebf912c3737d49ad5d50c82550afce0221e6132d3fee3aa46"
       },
       {
         "classification": "unsupported",
@@ -965,7 +965,7 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "18ff696eefe2def0b1f6b85cb792d6bf21da5ff4d93db5dd982632da0bd67c5a"
+        "offer_digest": "6fc78d7f3e493ba2a99fbd62bd5924cc1136c4621c8e13c3e804b99dbb8f2855"
       },
       {
         "classification": "unsupported",
@@ -1019,12 +1019,12 @@
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "description_advice": null,
-        "offer_digest": "ff9366beeab7218792da98e4867635c6f6046b15e4f5fbf6a88eb39d72fc6995"
+        "offer_digest": "cdc7b26c38e0016be94cfca6064993e1b58c3b3a01244e0cd64bd2094b9b6a74"
       }
     ],
     "media_health": [],
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-detail-v7",
+    "schema_version": "review-case-detail-v8",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",
