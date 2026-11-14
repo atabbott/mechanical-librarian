@@ -952,6 +952,10 @@ def test_an_original_that_does_not_decode_shows_no_preview_and_can_be_put_back(
                 True,
                 True,
             )
+            # Never also listed as a cover not shown (#1362).
+            assert original["reference"] not in {
+                omission["reference"] for omission in consideration["omissions"]
+            }
             image = client.get(
                 f"/api/v1/review-cases/{case_id}/cover-considerations/"
                 f"{consideration['consideration_id']}/images/{original['reference']}"

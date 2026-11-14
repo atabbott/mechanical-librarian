@@ -90,7 +90,8 @@ class CoverFinalHost(StrEnum):
 
 # The states in which the constrained decoder refused bytes it was given. Only
 # an Audiobookshelf source in one of them records the bytes' digest, so a cover
-# write can bind exactly what it replaces (#1362).
+# write can bind exactly what it replaces, and so does a retained original in
+# one of them, so it can still be put back (#1362).
 DECODER_REJECTED_STATES = frozenset(
     {
         CoverSourceState.DECODE_FAILED,

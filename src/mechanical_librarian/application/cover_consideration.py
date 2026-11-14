@@ -2038,6 +2038,9 @@ class CoverConsiderationService:
                 "reference": cover_source_reference(report.report_id, source.source_id),
             }
             for source in report.cover_sources
+            # A retained original is a candidate of its own, never an
+            # omission (#1362).
+            if source.kind is not CoverSourceKind.RETAINED
         ]
 
     def _project(self, document: str, *, current: bool) -> dict[str, object]:

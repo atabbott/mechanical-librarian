@@ -5941,6 +5941,8 @@ describe('Library route', () => {
               width: null,
             },
           ],
+          // The server names no omission for the retained original (#1362).
+          omissions: [],
         }
       })
       renderRoute('/library?lens=all&preview=case-1&field=cover', http)
@@ -5955,6 +5957,7 @@ describe('Library route', () => {
       )
       expect(card.querySelector('img')).toBeNull()
       expect(card.querySelector('.cover-dimensions')).toBeNull()
+      expect(document.querySelector('.library-cover-excluded')).toBeNull()
       expect(
         [...document.querySelectorAll('img')].some((image) =>
           image.getAttribute('src')?.endsWith(encodeURIComponent(`cover_ref_${'9'.repeat(64)}`)),

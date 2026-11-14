@@ -26,6 +26,7 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
 )
+from mechanical_librarian.application.cover_packets import cover_source_reference
 from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
 )
@@ -2431,6 +2432,19 @@ def test_an_undecodable_retained_original_is_a_candidate_with_no_preview(
         retained["preview_sha256"],
         retained["transport_sha256"],
     ) == (None, None, None, None)
+    # It is a card of its own, never an omission a reviewer or the page
+    # would read as a cover not shown (#1362, S18).
+    retained_reference = retained["reference"]
+    assert all(
+        omission["reference"] != retained_reference
+        for omission in [
+            *json.loads(document)["omissions"],
+            *json.loads(cast(str, json.loads(document)["packet_document"]))[
+                "omissions"
+            ],
+            *cast("list[dict[str, object]]", projected["omissions"]),
+        ]
+    )
     # The stored document rebuilds exactly, so it reads back unchanged.
     offered = service.project_historical(document)["candidates"][-1]
     assert offered == projected["candidates"][-1]
@@ -2446,6 +2460,42 @@ def test_an_undecodable_retained_original_is_a_candidate_with_no_preview(
         {"kind": "cover", "value": offered["artifact_id"]},
     )
     service.require_owner_cover(document, offered["artifact_id"])
+
+
+def test_an_undecodable_retained_original_with_nothing_to_review_is_no_omission(
+    case: _Case,
+) -> None:
+    """With no readable cover at all there is no packet; the original is
+    still offered and is still not named as a cover not shown (#1362)."""
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.DECODE_FAILED,
+        original_digest="7" * 64,
+    )
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, _PLAN),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_UNDECODABLE_DIGEST,
+    )
+    report = _with_cover(
+        _report((current, retained)), TargetFieldState.VALUE, (current, retained)
+    )
+    service, _, _ = _retaining_service(
+        case, (_UNDECODABLE_DIGEST, _PLAN, _DECISION), lambda _digest: None
+    )
+    case_id = "review_case_" + "p" * 64
+
+    projected = service.ensure(case_id, report.to_json(), case.proposal)
+
+    stored = json.loads(case.store.current[case_id])
+    assert stored["packet_document"] is None
+    assert [item["candidate_kind"] for item in stored["candidates"]] == ["retained"]
+    assert [omission["reference"] for omission in projected["omissions"]] == [
+        cover_source_reference(report.report_id, current.source_id)
+    ]
+    service.project_historical(case.store.current[case_id])
 
 
 @pytest.mark.parametrize(
