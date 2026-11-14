@@ -37,6 +37,9 @@ from mechanical_librarian.adapters.persistence import field_effect_activity
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVITY_PAGE_CACHE_MAX_BYTES,
 )
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    cover_pre_value,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -55,6 +58,12 @@ from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
@@ -112,6 +121,7 @@ from tests.support.audiobookshelf_targets import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.cover_images import synthetic_image
+from tests.support.cover_producers import _qualified_cover_report, adapter_cover_value
 from tests.support.field_effects import (
     CAPABILITY,
     DEPENDENCY,
@@ -6267,6 +6277,12 @@ def test_guarded_audiobook_cover_replacement_boundaries(
                 capability_digest=CAPABILITY,
             )
             assert operation is not None
+            # The report states the adapter's path digest as the target value;
+            # the write binds the bytes Audiobookshelf served (#1853).
+            assert operation.plan.pre_value == (
+                "cover_" + hashlib.sha256(state.originals[0]).hexdigest()
+            )
+            assert operation.plan.pre_value != "cover_" + adapter_cover_value()
             if negative == "changed_dimensions":
                 target_case.cover_bytes = synthetic_image("PNG", (300, 450))
             elif negative == "changed_digest":
@@ -6345,6 +6361,9 @@ def test_guarded_audiobook_cover_replacement_boundaries(
                 assert target_case.cover_bytes == state.originals[1]
             else:
                 assert result.state in ("stale", "superseded", "verified")
+            if negative == "changed_dimensions":
+                # Other bytes than the bound ones: refused, nothing sent.
+                assert (result.state, result.failure) == ("stale", "target_changed")
         finally:
             target_case.close()
     with closing(open_repository(tmp_path / "cover" / "state.sqlite")) as reopened:
@@ -8097,3 +8116,128 @@ def test_owner_accepted_language_respelling_writes_the_display_name(
         effects.target._values[("primary", report.target.library, "item-1", "language")]
         == "English"
     )
+
+
+def _current_cover_report(
+    root: Path,
+    target: TargetField,
+    current: CoverSource | None,
+) -> MetadataReport:
+    """The qualified cover report with its target cover and ABS read replaced."""
+    report, _ = _qualified_cover_report(root)
+    return MetadataReport.create(
+        target=replace(
+            report.target,
+            fields=tuple(
+                target if field.destination is TargetDestination.COVER else field
+                for field in report.target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=tuple(
+            sorted(
+                (
+                    *(
+                        source
+                        for source in report.cover_sources
+                        if source.kind is not CoverSourceKind.ABS
+                    ),
+                    *((current,) if current is not None else ()),
+                ),
+                key=lambda source: source.source_id,
+            )
+        ),
+    )
+
+
+_DECLARED_COVER = TargetField(
+    TargetDestination.COVER, TargetFieldState.VALUE, adapter_cover_value()
+)
+_REFUSED_DIGEST = "e" * 64
+
+
+def _abs_read(state: CoverSourceState, **values: Any) -> CoverSource:
+    return CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "descriptor"),
+        CoverSourceKind.ABS,
+        state,
+        **values,
+    )
+
+
+def test_a_cover_write_binds_the_bytes_audiobookshelf_served(tmp_path) -> None:
+    # The target value is the adapter's path digest; the binding is the bytes'
+    # (#1853).
+    report, _ = _qualified_cover_report(tmp_path / "retrieved")
+    (current,) = (
+        source for source in report.cover_sources if source.kind is CoverSourceKind.ABS
+    )
+    assert current.artifact is not None
+    assert cover_pre_value(report) == "cover_" + current.artifact.original_digest
+    assert cover_pre_value(report) != "cover_" + adapter_cover_value()
+    refused = _current_cover_report(
+        tmp_path / "refused",
+        _DECLARED_COVER,
+        _abs_read(CoverSourceState.DECODE_FAILED, original_digest=_REFUSED_DIGEST),
+    )
+    assert cover_pre_value(refused) == "cover_" + _REFUSED_DIGEST
+
+
+@pytest.mark.parametrize(
+    ("target", "current"),
+    (
+        (_DECLARED_COVER, _abs_read(CoverSourceState.ABSENT)),
+        (
+            TargetField(TargetDestination.COVER, TargetFieldState.MISSING),
+            CoverSource(
+                cover_source_id(CoverSourceKind.ABS, "absent"),
+                CoverSourceKind.ABS,
+                CoverSourceState.ABSENT,
+            ),
+        ),
+        (TargetField(TargetDestination.COVER, TargetFieldState.NULL), None),
+        (TargetField(TargetDestination.COVER, TargetFieldState.EMPTY), None),
+    ),
+    ids=("declared_404", "missing", "null", "empty"),
+)
+def test_a_cover_with_nothing_to_replace_is_written_as_empty(
+    tmp_path, target: TargetField, current: CoverSource | None
+) -> None:
+    assert cover_pre_value(_current_cover_report(tmp_path, target, current)) is None
+
+
+@pytest.mark.parametrize(
+    ("target", "current"),
+    (
+        (
+            _DECLARED_COVER,
+            _abs_read(CoverSourceState.TIMEOUT, timeout_scope="attempted"),
+        ),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.UNAVAILABLE)),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.SOURCE_CHANGED)),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.DECODE_FAILED)),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.OVERSIZED)),
+        (_DECLARED_COVER, None),
+        (
+            TargetField(TargetDestination.COVER, TargetFieldState.MALFORMED),
+            _abs_read(CoverSourceState.ABSENT),
+        ),
+    ),
+    ids=(
+        "timeout",
+        "unavailable",
+        "source_changed",
+        "refused_without_digest",
+        "reader_oversized",
+        "no_read",
+        "malformed_target",
+    ),
+)
+def test_a_cover_read_holding_no_bytes_binds_no_write(
+    tmp_path, target: TargetField, current: CoverSource | None
+) -> None:
+    with pytest.raises(FieldEffectError, match="^authority_binding$"):
+        cover_pre_value(_current_cover_report(tmp_path, target, current))

@@ -40,6 +40,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_retention import retention_required
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
@@ -50,6 +51,7 @@ from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticD
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSource,
+    CoverSourceKind,
     CoverSourceState,
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
@@ -58,6 +60,7 @@ from mechanical_librarian.domain.cover_qualification_policy import (
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
@@ -76,6 +79,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.cover_producers import adapter_cover_value
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.unit.test_cover_packets import _preview, _report, _source
 from tests.unit.test_shadow_outcome_persistence import (
@@ -824,21 +828,29 @@ class _SelectedCover(NamedTuple):
     review_case_id: str
 
 
-def _selected_cover(root: Path) -> _SelectedCover:
+def _selected_cover(root: Path, *, current_404: bool = False) -> _SelectedCover:
+    """With ``current_404`` Audiobookshelf answers 404 for the declared cover."""
     incumbent_preview = _preview(1)
     alternative_preview = _preview(2)
     sources = (
         _source(1, incumbent_preview, incumbent=True),
         _source(2, alternative_preview, embedded=True),
     )
-    base = _report(sources)
-    incumbent = sources[0].artifact
-    assert incumbent is not None
+    base = _report(
+        (
+            CoverSource(
+                sources[0].source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT
+            ),
+            sources[1],
+        )
+        if current_404
+        else sources
+    )
     fields = tuple(
         TargetField(
             field.destination,
             TargetFieldState.VALUE,
-            incumbent.artifact_id,
+            adapter_cover_value(),
         )
         if field.destination is TargetDestination.COVER
         else field
@@ -1020,6 +1032,11 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         )
         repository.bind_cover_consideration_currentness(lambda *_: False)
         snapshot = authority.resolve(decision)
+        # The target value is the adapter's path digest; the choice binds the
+        # current cover's bytes (#1853).
+        incumbent = sources[0].artifact
+        assert incumbent is not None
+        assert snapshot.pre_value == "cover_" + incumbent.original_digest
         dependencies = PersistedEffectDependencies(repository)
         consent = FakeConsentCurrentness(
             repository.field_effect_consent_envelope_identity
@@ -1191,6 +1208,75 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             persistence_schema._COVER_CONSIDERATION_NO_UPDATE_SQL
         )
         repository._connection.commit()
+        repository.close()
+
+
+def test_a_choice_over_a_cover_audiobookshelf_cannot_find_is_a_fill(
+    tmp_path: Path,
+) -> None:
+    # A declared cover Audiobookshelf answers 404 for has nothing to replace
+    # or keep: the write is bound as empty, as the target read sees it.
+    os.chmod(tmp_path, 0o700)
+    selected = _selected_cover(tmp_path, current_404=True)
+    repository = selected.repository
+    try:
+        repository.record_human_decision(
+            selected.decision,
+            cover_consideration_id=str(selected.consideration["consideration_id"]),
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
+        )
+        authority = PersistedFieldEffectAuthority(repository)
+        snapshot = authority.resolve(selected.decision)
+        assert (snapshot.pre_value, snapshot.target_version) == (
+            None,
+            field_value_version("cover", None),
+        )
+        consent = FakeConsentCurrentness(
+            repository.field_effect_consent_envelope_identity
+        )
+        consent.allow(
+            connection=snapshot.connection,
+            library=snapshot.library,
+            destination=snapshot.destination,
+        )
+        application = GuardedFieldApplication(
+            repository,
+            FakeTargetService(),
+            FakeBackupReadiness(),
+            FakeCapabilityObserver(CAPABILITY),
+            authority,
+            PersistedEffectDependencies(repository),
+            consent,
+            PrivateCoverRecoveryStore(tmp_path / "recovery", lambda _plan: None),
+            FakeForwardReevaluation(),
+            Clock(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+        )
+        operation = application.plan(
+            selected.decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        assert operation.plan.pre_value is None
+        assert not retention_required(operation.plan)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM retained_cover_bindings"
+        ).fetchone() == (0,)
+    finally:
         repository.close()
 
 

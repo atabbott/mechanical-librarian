@@ -34,7 +34,6 @@ from mechanical_librarian.domain import field_effect
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
-    TargetDestination,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -106,13 +105,10 @@ def _library(
     repository = open_repository(root / "application.sqlite3", cross_thread=True)
     switch = None
     if put_back:
-        current = next(
-            field.value
-            for field in base.target.fields
-            if field.destination is TargetDestination.COVER
-        )
+        # The switch wrote the bytes Audiobookshelf now serves, whatever the
+        # target value names (#1853).
         switch = automatic_switch(
-            base.target, _ORIGINAL.artifact_id, cast(str, current)
+            base.target, _ORIGINAL.artifact_id, "cover_" + _abs_digest(base)
         )
         base = MetadataReport.create(
             target=base.target,

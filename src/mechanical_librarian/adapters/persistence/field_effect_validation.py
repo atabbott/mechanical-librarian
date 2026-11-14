@@ -34,6 +34,10 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.cover_qualification_policy import (
     MEASURED_REPLACEMENT_IDENTITY,
 )
@@ -671,6 +675,35 @@ def _automatic_decision_value(
     ):
         raise FieldEffectError("authority_binding")
     return value
+
+
+def cover_pre_value(report: MetadataReport) -> str | None:
+    """The pre-value every cover write over ``report``'s current cover binds.
+
+    It names the exact bytes Audiobookshelf served, as the write's own target
+    read names them (``cover_`` and their SHA-256), decoded or refused by the
+    decoder. The report's target value names only the cover's path, so it is
+    never the binding (#1362). A known-empty cover and a declared cover that
+    Audiobookshelf answered 404 for are both empty: nothing is replaced, so
+    nothing is kept. Any other read holds no bytes to bind, and no write is
+    planned over it.
+    """
+    target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
+    if target.state in {
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    }:
+        return None
+    current = [
+        source for source in report.cover_sources if source.kind is CoverSourceKind.ABS
+    ]
+    if target.state is TargetFieldState.VALUE and len(current) == 1:
+        if current[0].bytes_digest is not None:
+            return "cover_" + current[0].bytes_digest
+        if current[0].state is CoverSourceState.ABSENT:
+            return None
+    raise FieldEffectError("authority_binding")
 
 
 def _cover_automatic_decision_value(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -34,6 +35,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    DECODER_REJECTED_STATES,
     CoverArtifact,
     CoverDesignation,
     CoverEvidenceError,
@@ -140,6 +142,7 @@ class CoverEvidenceObserver:
                 ),
                 *local_sources,
             )
+        original: bytes | None = None
         try:
             original = self._target.read_cover(
                 target.cover, deadline=deadline.aggregate_deadline
@@ -179,7 +182,18 @@ class CoverEvidenceObserver:
                 source_id, CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED
             )
         except CoverDecodeRejected as error:
-            source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
+            # The bytes were read but not decoded: their digest is what a
+            # cover write binds and keeps for Put back (#1362).
+            source = CoverSource(
+                source_id,
+                CoverSourceKind.ABS,
+                error.state,
+                original_digest=(
+                    hashlib.sha256(original).hexdigest()
+                    if original is not None and error.state in DECODER_REJECTED_STATES
+                    else None
+                ),
+            )
         except CoverReadError as error:
             source = CoverSource(
                 source_id, CoverSourceKind.ABS, CoverSourceState(error.state)

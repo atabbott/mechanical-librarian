@@ -4664,11 +4664,13 @@ def require_report_current(
         )
     if not current:
         raise CurrentnessError("target or media changed")
+    # Bytes the decoder refused are bound by their recorded digest exactly as
+    # decoded bytes are by their artifact's (#1362).
     expected_cover = next(
         (
-            source.artifact.original_digest
+            source.bytes_digest
             for source in report.cover_sources
-            if source.kind is CoverSourceKind.ABS and source.artifact is not None
+            if source.kind is CoverSourceKind.ABS and source.bytes_digest is not None
         ),
         None,
     )

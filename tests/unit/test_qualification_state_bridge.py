@@ -175,8 +175,10 @@ def _v26_document(
             ).to_data()
         ]
     for cover in data["covers"]:
-        # v26 predates the closed final-host family (#1752).
+        # v26 predates the closed final-host family (#1752) and the digest of
+        # refused bytes.
         cover.pop("final_host")
+        cover.pop("original_digest")
     identity = dict(data)
     identity.pop("report_id")
     data["report_id"] = (
@@ -1418,6 +1420,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         ).to_data()
     ]
     data["covers"][0].pop("final_host")
+    data["covers"][0].pop("original_digest")
     identity = {key: value for key, value in data.items() if key != "report_id"}
     data["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
