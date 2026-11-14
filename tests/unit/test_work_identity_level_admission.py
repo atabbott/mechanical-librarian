@@ -351,6 +351,124 @@ def test_level_contradiction_matrix(
     assert level_contradiction(report, provider, record) is contradicted
 
 
+def _contributor(role: str, value: str) -> SimpleNamespace:
+    contributor = _claim(ClaimKind.CONTRIBUTOR, value, raw_order=9)
+    contributor.role = role
+    return contributor
+
+
+def _recording_report(record: SimpleNamespace) -> tuple[MetadataReport, Any]:
+    """An audiobook report whose library declares English only."""
+    report, provider = _report(record)
+    value = cast("SimpleNamespace", report)
+    value.audio = SimpleNamespace(sidecars=())
+    value.library_languages = ("en",)
+    return report, provider
+
+
+def _manifestation_report(record: SimpleNamespace) -> tuple[MetadataReport, Any]:
+    report, provider = _report(
+        record, identifier_evidence=(_identifier(IdentifierRelation.ACCEPTED),)
+    )
+    cast("SimpleNamespace", report).local_claims = (
+        _isbn_claim("9780306406157", scope=ClaimScope.EDITION),
+    )
+    return report, provider
+
+
+_CONTRADICTIONS: tuple[tuple[str, SimpleNamespace, Any, bool], ...] = (
+    (
+        "unrelated_identifier",
+        _record(),
+        lambda record: _report(
+            record, identifier_evidence=(_identifier(IdentifierRelation.UNRELATED),)
+        ),
+        True,
+    ),
+    (
+        "edition_work_contradiction",
+        _record(
+            evidence=(
+                SimpleNamespace(
+                    kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                    links=(),
+                ),
+            )
+        ),
+        _report,
+        True,
+    ),
+    (
+        "manifestation_publication_incompatible",
+        _record(
+            extra=(_isbn_claim("9780306406157", scope=ClaimScope.EDITION),),
+            evidence=(
+                SimpleNamespace(
+                    kind=ProviderEvidenceKind.EDITION_WORK_RELATION,
+                    scope=ClaimScope.EDITION,
+                    value=_OTHER_WORK,
+                    links=(),
+                ),
+            ),
+        ),
+        _manifestation_report,
+        True,
+    ),
+    (
+        "variant_marker",
+        _record(extra=(_claim(ClaimKind.SUBTITLE, "A Variant Text"),)),
+        _report,
+        False,
+    ),
+    (
+        "translation",
+        _record(extra=(_contributor("translator", "Tess Translator"),)),
+        _report,
+        False,
+    ),
+    (
+        "abridgement",
+        _record(extra=(_contributor("abridger", "Abe Abridger"),)),
+        _report,
+        False,
+    ),
+    (
+        "recording_variant_conflict",
+        _record(extra=(_claim(ClaimKind.LANGUAGE, "fr"),)),
+        _recording_report,
+        True,
+    ),
+    (
+        "creator_disagreement",
+        _record(creator_links=(SimpleNamespace(outcome=Comparison.DISAGREEMENT),)),
+        _report,
+        True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("record", "build", "composed"),
+    [case[1:] for case in _CONTRADICTIONS],
+    ids=[case[0] for case in _CONTRADICTIONS],
+)
+def test_contradiction_precedes_level_admission(
+    record: SimpleNamespace, build: Any, composed: bool
+) -> None:
+    """Each contradiction, and each own-record veto (a variant, translation or
+    abridgement), refuses the record at every wider level although its title
+    and author meet the predicate (S6)."""
+    report, provider = build(record)
+    # Without its contradiction the same record meets the exact level
+    # (`test_the_same_title_and_every_author_meets_the_exact_level`); the
+    # vetoes are the set rule's, the rest `level_contradiction`'s.
+    assert level_contradiction(report, provider, record) is composed  # type: ignore[arg-type]
+    for level in (_EXACT, _WIDE):
+        assert _admit(report, provider, record, level) == LevelAdmissionRecord(
+            None, "refused"
+        )
+
+
 def test_a_manifestation_sharing_the_isbn_family_that_contradicts_is_refused() -> None:
     local = _isbn_claim("9780306406157", scope=ClaimScope.EDITION)
     record = _record(
