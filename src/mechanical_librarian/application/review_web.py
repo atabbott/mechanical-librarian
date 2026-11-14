@@ -866,8 +866,11 @@ def _classify_field(
     # is settled the same way on every medium (#1661).
     single_source = _single_source_choice(proposal)
     # The measured stage's decision over a current comparison: a suggested
-    # switch is optional work, never attention, and a title hold always asks
-    # (#1363, S9), as `_REVIEW_FIELD_ATTENTION_REASON_SQL` reads it.
+    # switch is optional work, never attention, and a hold (a title naming
+    # another book, or a current cover whose sources do) asks (#1363 S9,
+    # #1362 S13), as `_REVIEW_FIELD_ATTENTION_REASON_SQL` reads it. Like SQL,
+    # the field's attention also needs an owner action (`has_owner_action`
+    # below), so a hold with nothing to choose shows on the book page only.
     stage_outcome = _cover_stage_outcome(destination, current_cover_consideration)
     cover_suggested = stage_outcome in {"suggest", "replace"}
     policy_settled = (

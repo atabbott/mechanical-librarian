@@ -104,13 +104,20 @@ def _library(
     title: str | None = None,
     put_back: bool = False,
     undecodable: bool = False,
+    abs_state: CoverSourceState | None = None,
+    abs_digest: str | None = None,
 ) -> Iterator[_Library]:
     """With ``put_back``, item-1's current cover is a verified automatic switch
     whose original is listed, and its report offers that original (#1363).
     With ``undecodable`` too, the decoder refused that original, so the
     report offers it by its digest with no preview (#1362)."""
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    base, _ = _qualified_cover_report(root, readable_current=readable_current)
+    base, _ = _qualified_cover_report(
+        root,
+        readable_current=readable_current,
+        abs_state=abs_state,
+        abs_digest=abs_digest,
+    )
     artifacts = CoverArtifactStore(root / "artifacts")
     repository = open_repository(root / "application.sqlite3", cross_thread=True)
     switch = None
@@ -292,7 +299,11 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
 def test_an_unreadable_current_cover_with_a_candidate_is_suggested(
     tmp_path: Path,
 ) -> None:
-    with _library(tmp_path, readable_current=False) as library:
+    # The decoder refused bytes whose digest was not recorded, so the switch
+    # cannot keep them and is only suggested (#1362 S4).
+    with _library(
+        tmp_path, readable_current=False, abs_state=CoverSourceState.DECODE_FAILED
+    ) as library:
         decide = _page(library.repository, "decide", None)
         kept = _page(library.repository, "kept", None)
         # A suggestion is To decide, never Library's Needs attention (#1363, S9).
@@ -1000,3 +1011,106 @@ def test_an_original_that_does_not_decode_shows_no_preview_and_can_be_put_back(
             (row,) = client.get("/api/v1/covers?view=switched").json()["items"]
             assert row["switched"]["before"] is None
             assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
+
+
+def _attention_mirrors(library: _Library) -> tuple[bool, bool]:
+    """The cover's attention as SQL counts it, and as the book page reads it."""
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    case_id = library.cases["item-1"]
+    counted = (
+        library.repository.read_review_library(
+            None, 25, 0, "needs_attention"
+        ).attention_total
+        == 1
+    )
+    detail = InspectCurrentReviewCase(library.repository, library.service).run(case_id)
+    cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+    return counted, cover["needs_attention"]
+
+
+@pytest.mark.parametrize(
+    ("case", "attention"),
+    (
+        ("contradicted_with_choices", True),
+        ("contradicted_without_actions", False),
+        ("title_hold_without_actions", False),
+        ("kept_unconfirmed", False),
+        ("transient_with_choices", True),
+    ),
+    ids=(
+        "contradicted_with_choices",
+        "contradicted_without_actions",
+        "title_hold_without_actions",
+        "kept_unconfirmed",
+        "transient_with_choices",
+    ),
+)
+def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, attention: bool
+) -> None:
+    """#1362 S13, R1, R2: a hold asks only while the owner has a choice to make.
+
+    A hold with nothing to choose shows on the book page but is not counted; a
+    kept unconfirmed cover is not counted; a read that settled nothing, with
+    covers to choose from, still asks under the unread-cover rule. Each case
+    runs both mirrors over the same stored facts.
+    """
+    from contextlib import nullcontext
+
+    from mechanical_librarian.application import review_web
+    from tests.support.cover_producers import incumbent_identity
+
+    identity = (
+        incumbent_identity("conflict", ("edition_work_contradiction",))
+        if case.startswith("contradicted")
+        else incumbent_identity("plausible_match")
+        if case == "kept_unconfirmed"
+        else nullcontext()
+    )
+    options: dict[str, Any] = (
+        {"readable_current": False, "abs_state": CoverSourceState.TIMEOUT}
+        if case == "transient_with_choices"
+        else {}
+    )
+    with identity, _library(tmp_path, **options) as library:
+        connection = library.repository._connection
+        stage = json.loads(
+            connection.execute(
+                "SELECT currentness_document FROM cover_considerations"
+            ).fetchone()[0]
+        )["cover_stage"]
+        if case == "title_hold_without_actions":
+            # A synthetic title hold over the stored stage both mirrors read.
+            connection.execute("DROP TRIGGER cover_considerations_no_update")
+            connection.execute(
+                "UPDATE cover_considerations SET currentness_document=json_set("
+                "currentness_document,'$.cover_stage.outcome','hold',"
+                "'$.cover_stage.reason','title_names_other_work')"
+            )
+            stage = {"outcome": "hold", "reason": "title_names_other_work"}
+        if case.endswith("without_actions"):
+            # The same proposal with no decision to take, as each mirror reads it.
+            connection.execute(
+                "UPDATE review_case_field_facts SET has_owner_decision_actions=0 "
+                "WHERE destination='cover'"
+            )
+            monkeypatch.setattr(review_web, "decision_actions", lambda _proposal: ())
+        connection.commit()
+
+        mirrors = _attention_mirrors(library)
+        held = _page(library.repository, "all", None)["items"][0]["hold"]
+
+    expected_stage = {
+        "contradicted_with_choices": ("hold", "current_contradicted"),
+        "contradicted_without_actions": ("hold", "current_contradicted"),
+        "title_hold_without_actions": ("hold", "title_names_other_work"),
+        "kept_unconfirmed": ("keep", None),
+        "transient_with_choices": ("keep", None),
+    }[case]
+    assert (stage["outcome"], stage["reason"]) == expected_stage
+    assert mirrors == (attention, attention)
+    # The hold pill names its reason whether or not it is counted.
+    assert held == (
+        {"reason": expected_stage[1]} if expected_stage[0] == "hold" else None
+    )

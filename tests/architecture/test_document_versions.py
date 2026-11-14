@@ -150,7 +150,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.cover_policy",
         "SCHEMA_VERSION",
-        "cover-policy-report-v4",
+        "cover-policy-report-v5",
     ),
     (
         "mechanical_librarian.domain.shadow_outcome",
