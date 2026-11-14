@@ -10,6 +10,7 @@ import {
   CsrfRenewedError,
   EMPTY_TARGET_TEXT,
   UncertainMutationError,
+  mapCoverConsideration,
 } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
@@ -47,6 +48,13 @@ import {
   wholeText,
 } from './fixtures'
 import { formatWhen } from '../src/dates'
+import {
+  choiceContext,
+  coverCandidate,
+  coverConsideration,
+  coverIdentity,
+  coverPolicyReport,
+} from './wireFixtures'
 
 // A finished run's status line says when it finished, as Library reads a
 // recorded time (#1765).
@@ -1477,9 +1485,13 @@ describe('Library route', () => {
 
     // Turning on Automatic prepares the current works again (#1573); that is
     // its own cause, never title recovery.
-    for (const [count, line] of [
-      [1, 'Started when Automatic was turned on'],
-      [2, 'Automatic turned on 2 times'],
+    // Saving Book matching re-checks current works the same way, as its own
+    // cause (#1355).
+    for (const [trigger, count, line] of [
+      ['automatic_confirmed', 1, 'Started when Automatic was turned on'],
+      ['automatic_confirmed', 2, 'Automatic turned on 2 times'],
+      ['matching_changed', 1, 'Started when Book matching was saved'],
+      ['matching_changed', 2, 'Book matching saved 2 times'],
     ] as const) {
       act(() => {
         queryClient.setQueryData(['review-preparation'], {
@@ -1490,7 +1502,7 @@ describe('Library route', () => {
             state: 'running',
             triggers: [
               {
-                trigger: 'automatic_confirmed' as const,
+                trigger,
                 accepted_count: count,
                 first_accepted_at: 200,
                 last_accepted_at: 200 + count,
@@ -5207,7 +5219,8 @@ describe('Library route', () => {
           matchState: 'match_not_confirmed' as const,
           selectable: false,
           manualEligible: false,
-          identity: { outcome: 'conflict', reasons: ['identity_conflict'] },
+          contradiction: 'book' as const,
+          identity: { outcome: 'conflict', reasons: ['unrelated_identifier'] },
           observation: {
             ...observation(6),
             composition: 'dense' as const,
@@ -5342,6 +5355,8 @@ describe('Library route', () => {
       comparison.querySelector('.library-cover-pinned > aside')?.firstElementChild,
     ).toHaveClass('cover-choice')
     expect(within(comparison).getByText('Other covers')).toBeVisible()
+    // The gallery counts covers, not choices: two of these five cannot be chosen (#1790).
+    expect(within(comparison).getByText('5 covers')).toBeVisible()
     expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(
       5,
     )
@@ -5865,12 +5880,15 @@ describe('Library route', () => {
       expect(card).toHaveTextContent('From the matched book, not a confirmed recording.')
       expect(card).not.toHaveTextContent('Match not confirmed')
       expect(card).not.toHaveTextContent('No source confirms this cover belongs')
-      // Other unconfirmed covers keep their title, and no line repeats it (#1765).
-      const unconfirmed = within(group).getByRole('radio', {
+      // A cover that contradicts the book says so instead (#1790).
+      const contradicting = within(group).getByRole('radio', {
         name: 'Choose Open Library cover, 800 × 1200 px (5)',
       })
-      expect(unconfirmed).toHaveTextContent('Match not confirmed')
-      expect(unconfirmed.querySelector('.choice-recommendation')).toBeNull()
+      expect(contradicting).toHaveTextContent('Contradicts this book')
+      expect(contradicting).not.toHaveTextContent('Match not confirmed')
+      expect(contradicting.querySelector('.choice-recommendation')).toHaveTextContent(
+        'A source says it belongs to a different book, so you cannot choose it.',
+      )
       // The matched-book card keeps its reason, the control for the line above.
       expect(card.querySelector('.choice-recommendation')).toHaveTextContent(
         'From the matched book, not a confirmed recording.',
@@ -5882,6 +5900,181 @@ describe('Library route', () => {
           outcome: 'accept',
           coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
         }),
+      )
+    })
+
+    it.each([
+      [[], null],
+      [['creator_initials_folded'], "An author's initials are written differently in this source."],
+    ] as const)(
+      'names a cover matched by title and author, chosen only by the owner (#1355) %#',
+      async (reasons, line) => {
+        const user = userEvent.setup()
+        const matched = `cover_transport_ref_${'5'.repeat(64)}`
+        const http = coverHttp((consideration) => ({
+          candidates: consideration.candidates.map((candidate) =>
+            candidate.reference === matched
+              ? {
+                  ...candidate,
+                  matchReason: 'title_and_author' as const,
+                  identity: { ...candidate.identity, reasons: [...reasons] },
+                }
+              : candidate,
+          ),
+        }))
+        renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+        const group = await screen.findByRole('radiogroup', {
+          name: 'Which cover should this work use?',
+        })
+        const card = within(group).getByRole('radio', {
+          name: 'Choose Open Library cover, 800 × 1200 px (4)',
+        })
+        expect(card).toHaveTextContent('Same title and author')
+        expect(card).not.toHaveTextContent('Match not confirmed')
+        expect(card).not.toHaveTextContent('Same book')
+        if (line === null) expect(card.querySelector('.choice-recommendation')).toBeNull()
+        else expect(card.querySelector('.choice-recommendation')).toHaveTextContent(line)
+        // Nothing is recommended for it; the owner's tap confirms the match.
+        await user.click(card)
+        expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
+          expect.objectContaining({
+            outcome: 'accept',
+            coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+          }),
+        )
+      },
+    )
+  })
+
+  describe('a cover that contradicts the book (#1790)', () => {
+    const unconfirmed = (reference: string, overrides: Record<string, unknown> = {}) =>
+      coverCandidate({
+        artifact_id: `artifact-${reference}`,
+        reference,
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        match_state: 'match_not_confirmed',
+        selectable: false,
+        state: 'excluded',
+        ...overrides,
+        identity: coverIdentity({
+          candidate_reference: reference,
+          preview_reference: `cover-preview-${reference}`,
+          outcome: 'unknown',
+          reasons: ['insufficient_identity_evidence'],
+          ...(overrides.identity as Record<string, unknown> | undefined),
+        }),
+      })
+    const proposed = (reference: string, overrides: Record<string, unknown> = {}) =>
+      choiceContext({ alternative_id: reference, selection: 'proposed', ...overrides })
+    // The mapper builds the consideration, so the card reads what the server
+    // sends: a recommended confirmed cover, an unconfirmed one, one from the
+    // matched book and the contradicting one.
+    const contradictionHttp = (identity: Record<string, unknown>, matchReason: string | null) => {
+      const { coverField } = coverChecks()
+      const consideration = mapCoverConsideration(
+        coverConsideration({
+          candidates: [
+            coverCandidate({ state: 'recommended' }),
+            unconfirmed('candidate-2', { ordinal: 1 }),
+            unconfirmed('candidate-3', { ordinal: 2, match_reason: 'matched_book' }),
+            unconfirmed('candidate-4', {
+              ordinal: 3,
+              identity,
+              manual_eligible: false,
+              match_reason: matchReason,
+            }),
+          ],
+          choice_contexts: [
+            choiceContext(),
+            proposed('candidate-1', {
+              recommendation: 'recommended',
+              recommendation_reason: 'The clearest cover for this book.',
+            }),
+            proposed('candidate-2'),
+            proposed('candidate-3'),
+          ],
+          policy: coverPolicyReport({
+            recommended_candidate_reference: 'candidate-1',
+            status: 'recommended',
+          }),
+          ready: true,
+        }) as Parameters<typeof mapCoverConsideration>[0],
+      )
+      return {
+        ...createHttp(),
+        recordDecision: vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined)),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [
+            {
+              ...coverField,
+              decisionActions: ['keep_current', 'accept'] as const,
+              editable: true,
+              needsAttention: true,
+              coverConsideration: consideration,
+            },
+          ],
+        })),
+      }
+    }
+    const book = 'A source says it belongs to a different book, so you cannot choose it.'
+    const edition = 'A source says it belongs to a different edition, so you cannot choose it.'
+    const creator = 'A source names a different author or contributor, so you cannot choose it.'
+
+    it.each([
+      ['a different book', 'conflict', 'unrelated_identifier', null, book],
+      ['a different work', 'conflict', 'edition_work_contradiction', null, book],
+      ['a different edition', 'conflict', 'manifestation_publication_incompatible', null, edition],
+      [
+        'a different creator',
+        'unknown',
+        'retained_creator_or_contributor_disagreement',
+        null,
+        creator,
+      ],
+      [
+        'a different creator on a matched-book cover',
+        'unknown',
+        'retained_creator_or_contributor_disagreement',
+        'matched_book',
+        creator,
+      ],
+    ])('says why it cannot be chosen: %s', async (_name, outcome, reason, matchReason, line) => {
+      const user = userEvent.setup()
+      const http = contradictionHttp({ outcome, reasons: [reason] }, matchReason)
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const cards = within(group).getAllByRole('radio')
+      expect(cards).toHaveLength(4)
+      const [recommended, unconfirmedCard, matched, contradicting] = cards
+      if (!recommended || !unconfirmedCard || !matched || !contradicting)
+        throw new Error('the cover fixture has four cards')
+      expect(contradicting.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
+      expect(contradicting.querySelector('.choice-recommendation')).toHaveTextContent(
+        new RegExp(`^${line}$`, 'u'),
+      )
+      expect(contradicting).not.toHaveTextContent('Match not confirmed')
+      expect(contradicting).not.toHaveTextContent('Same book')
+      expect(contradicting).not.toHaveTextContent('recording not confirmed')
+      expect(contradicting).toBeDisabled()
+      await user.click(contradicting)
+      expect(http.recordDecision).not.toHaveBeenCalled()
+      // The covers you can choose keep their own words.
+      expect(unconfirmedCard.querySelector('strong')).toHaveTextContent(/^Match not confirmed$/u)
+      expect(unconfirmedCard.querySelector('.choice-recommendation')).toBeNull()
+      expect(unconfirmedCard).toBeEnabled()
+      expect(matched.querySelector('strong')).toHaveTextContent(
+        /^Same book · recording not confirmed$/u,
+      )
+      expect(matched.querySelector('.choice-recommendation')).toHaveTextContent(
+        /^From the matched book, not a confirmed recording\.$/u,
+      )
+      expect(recommended.querySelector('strong')).toHaveTextContent(/^Same book$/u)
+      expect(recommended.querySelector('.choice-recommendation')).toHaveTextContent(
+        /^The clearest cover for this book\.$/u,
       )
     })
   })

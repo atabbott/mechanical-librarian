@@ -2027,7 +2027,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             ).fetchone()[0],
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
-            "schema_version": "cover-consideration-v6",
+            "schema_version": "cover-consideration-v7",
             "supersedes_id": None,
         },
         separators=(",", ":"),
@@ -3000,6 +3000,38 @@ def test_fake_target_serializes_compare_and_write_for_direct_callers(
     assert not second_thread.is_alive()
     assert outcomes["first"].outcome == "accepted"
     assert outcomes["second"].outcome == "conflict"
+
+
+def test_a_cover_chosen_under_another_book_matching_level_closes_as_matching_changed(
+    effects: _EffectEnvironment,
+) -> None:
+    """A level change closes a cover effect bound to the old level (#1355)."""
+    cover = _plan(effects, "cover", None, "cover_" + "4" * 64, "a")
+    title = _plan(effects, destination="subtitle", suffix="b")
+    effects.dependencies.current_value = False
+    effects.dependencies.matching_changed_value = True
+    assert effects.service.apply(cover.plan.plan_id).failure == "matching_changed"
+    # Only a cover names Book matching; another moved dependency stays unnamed.
+    assert effects.service.apply(title.plan.plan_id).failure == "dependency"
+    unrelated = _plan(effects, "cover", None, "cover_" + "5" * 64, "c")
+    effects.dependencies.matching_changed_value = False
+    assert effects.service.apply(unrelated.plan.plan_id).failure == "dependency"
+
+
+def test_a_reclassified_cover_effect_closes_as_matching_changed_not_authority(
+    effects: _EffectEnvironment,
+) -> None:
+    """Reclassifying under another level retires the old consideration's
+    authority too; the effect still says Book matching changed (Codex r5, 2)."""
+    cover = _plan(effects, "cover", None, "cover_" + "6" * 64, "d")
+    effects.authority.revoked.add(cover.plan.authority.decision_id)
+    effects.dependencies.current_value = False
+    effects.dependencies.matching_changed_value = True
+    assert effects.service.apply(cover.plan.plan_id).failure == "matching_changed"
+    other = _plan(effects, "cover", None, "cover_" + "7" * 64, "e")
+    effects.authority.revoked.add(other.plan.authority.decision_id)
+    effects.dependencies.matching_changed_value = False
+    assert effects.service.apply(other.plan.plan_id).failure == "authority"
 
 
 def test_preclaim_failures_are_field_local_and_pause_is_atomic(

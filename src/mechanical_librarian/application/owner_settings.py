@@ -97,7 +97,7 @@ def file_settings_projection(
     review = configuration.review
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": value.name, "endpoint": value.endpoint}
@@ -160,6 +160,7 @@ def file_settings_projection(
                 "current_protection": review.cover_current_protection,
                 "prefer_edition": review.cover_prefer_edition,
             },
+            "matching": {"work_identity": review.work_identity.value},
         }
     )
     return SettingsView(

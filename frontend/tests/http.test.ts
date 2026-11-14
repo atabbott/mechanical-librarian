@@ -933,9 +933,14 @@ describe('ReviewApiClient', () => {
         .candidates[0]?.matchReason,
     ).toBe('matched_book')
     expect('matchReason' in ((await retryCover(payload())).candidates[0] ?? {})).toBe(false)
+    // A title-and-author reason (#1355) maps without a 502, display only too.
+    expect(
+      (await retryCover(payload({ candidates: [candidate({ match_reason: 'title_and_author' })] })))
+        .candidates[0]?.matchReason,
+    ).toBe('title_and_author')
     await expect(
       retryCover(payload({ candidates: [candidate({ match_reason: 'same_book' })] })),
-    ).rejects.toMatchObject(uncertain('const@/candidates/0/match_reason'))
+    ).rejects.toMatchObject(uncertain('enum@/candidates/0/match_reason'))
   })
   it('maps only the fixed unavailable reviewer-contract reasons', async () => {
     const payload = (reviewer_unavailable_reason: unknown) =>
@@ -3087,13 +3092,18 @@ describe('ReviewApiClient', () => {
       'library_added',
       'title_recovery',
       'automatic_confirmed',
+      'matching_changed',
     ].map((trigger) => ({ ...presentation.triggers[0], trigger }))
-    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(5)
+    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(6)
     expect((await read({ triggers: [allTriggers[3]] })).presentation?.triggers[0]?.trigger).toBe(
       'title_recovery',
     )
     expect((await read({ triggers: [allTriggers[4]] })).presentation?.triggers[0]?.trigger).toBe(
       'automatic_confirmed',
+    )
+    // Saving Book matching re-checks current works as its own cause (#1355).
+    expect((await read({ triggers: [allTriggers[5]] })).presentation?.triggers[0]?.trigger).toBe(
+      'matching_changed',
     )
     await expect(
       read({ triggers: [...allTriggers, { ...allTriggers[0], trigger: 'unknown' }] }),
@@ -5989,5 +5999,104 @@ describe('the retained original as a cover candidate (#1363)', () => {
     ['another source', { source_kinds: ['open_library'] }],
   ])('refuses an original with %s', async (_name, overrides) => {
     await expect(read(retained(overrides))).rejects.toThrow(ApiError)
+  })
+})
+
+describe('a cover that contradicts the book (#1790)', () => {
+  const unconfirmed = (
+    identity: Record<string, unknown>,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    coverCandidate({
+      identity: coverIdentity(identity),
+      manual_eligible: false,
+      match_state: 'match_not_confirmed',
+      selectable: false,
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      state: 'excluded',
+      ...overrides,
+    })
+  const read = (candidate: unknown, overrides: Record<string, unknown> = {}) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        choice_contexts: [choiceContext()],
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+        ...overrides,
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it.each([
+    ['a different book', 'conflict', ['unrelated_identifier'], 'book'],
+    ['a different work', 'conflict', ['edition_work_contradiction'], 'book'],
+    ['a different edition', 'conflict', ['manifestation_publication_incompatible'], 'edition'],
+    ['a different creator', 'unknown', ['retained_creator_or_contributor_disagreement'], 'creator'],
+  ])('names %s', (_name, outcome, reasons, contradiction) => {
+    const [mapped] = read(unconfirmed({ outcome, reasons })).candidates
+    expect(mapped).toMatchObject({ contradiction, manualEligible: false })
+  })
+
+  it('leaves an unconfirmed cover with no contradiction unmarked', () => {
+    const [mapped] = read(
+      unconfirmed(
+        { outcome: 'unknown', reasons: ['insufficient_identity_evidence'] },
+        { manual_eligible: true },
+      ),
+      {
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+      },
+    ).candidates
+    expect(mapped?.manualEligible).toBe(true)
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('never marks the current cover', () => {
+    const [mapped] = read(
+      unconfirmed({ outcome: 'conflict', reasons: ['unrelated_identifier'] }, { incumbent: true }),
+      { incumbent: { reference: 'candidate-1', state: 'available' }, ready: true },
+    ).candidates
+    expect(mapped?.incumbent).toBe(true)
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('never marks the retained original', () => {
+    const [mapped] = read(
+      coverCandidate({
+        candidate_kind: 'retained',
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        identity: null,
+        match_state: 'match_not_confirmed',
+        reference: 'retained-1',
+        source_kinds: ['retained'],
+        state: 'available',
+      }),
+      {
+        policy: null,
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'retained-1', selection: 'proposed' }),
+        ],
+      },
+    ).candidates
+    expect(mapped?.candidateKind).toBe('retained')
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('refuses a contradicting cover the server says can be chosen', () => {
+    expect(() =>
+      read(
+        unconfirmed(
+          { outcome: 'conflict', reasons: ['unrelated_identifier'] },
+          { manual_eligible: true },
+        ),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'contradictory_cover_manual_eligibility' }))
   })
 })

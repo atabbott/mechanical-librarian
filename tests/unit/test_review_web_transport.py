@@ -250,7 +250,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -322,7 +322,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -544,6 +544,102 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     unavailable = web.client.get("/api/v1/settings")
     assert unavailable.status_code == 503
     assert unavailable.json()["error"]["code"] == "settings_unavailable"
+
+
+def test_book_matching_saves_only_through_the_guarded_settings_write(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Book matching (#1355) saves through the CSRF-, Origin- and revision-bound
+    settings write like every other group, and reads back as saved."""
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v6",
+            "revision": 1,
+            "connections": [
+                {"name": "primary", "endpoint": "https://library.example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library-1",
+                    "media_kind": "ebook",
+                }
+            ],
+        }
+    )
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.execute(
+        "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY,revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO owner_settings VALUES(1,1,?)",
+        (_canonical_json(document.model_dump()),),
+    )
+    connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES('connection.primary.key','synthetic-key-1234')"
+    )
+    connection.commit()
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+            ),
+            clock=lambda: web.now,
+            settings=OwnerSettingsOperations(OwnerSettingsStore(connection)),
+        ),
+        base_url="https://review.test",
+    )
+    web.cleanup.enter_context(web.client)
+    wider = document.model_dump() | {
+        "revision": 2,
+        "matching": {"work_identity": "title_and_creator"},
+    }
+    write = {"expected_revision": 1, "document": wider, "secrets": []}
+    session = web.login()
+    build = {"x-ml-build-identity": TEST_REACT_BUILD_IDENTITY}
+    missing_csrf = web.client.patch(
+        "/api/v1/settings", json=write, headers={**web.origin, **build}
+    )
+    assert missing_csrf.status_code == 422
+    foreign = web.client.patch(
+        "/api/v1/settings",
+        json=write,
+        headers={
+            "Origin": "https://elsewhere.invalid",
+            "x-csrf-token": session["csrf_token"],
+            **build,
+        },
+    )
+    assert foreign.status_code == 403
+    assert foreign.json()["error"]["code"] == "origin"
+    assert web.client.get("/api/v1/settings").json()["document"]["matching"] == {
+        "work_identity": "identifier"
+    }
+    saved = web.client.patch(
+        "/api/v1/settings",
+        json=write,
+        headers={**web.origin, "x-csrf-token": session["csrf_token"], **build},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["document"]["matching"] == {
+        "work_identity": "title_and_creator"
+    }
+    stale = web.client.patch(
+        "/api/v1/settings",
+        json=write,
+        headers={**web.origin, "x-csrf-token": session["csrf_token"], **build},
+    )
+    assert stale.status_code == 409
+    assert web.client.get("/api/v1/settings").json()["document"]["revision"] == 2
 
 
 def test_operational_status_and_support_are_authenticated_bounded_surfaces(

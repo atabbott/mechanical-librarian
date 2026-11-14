@@ -270,7 +270,7 @@ def _planned(
 def _settings(revision: int, protection: str) -> OwnerSettingsDocument:
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": revision,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

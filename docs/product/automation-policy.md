@@ -461,6 +461,13 @@ no longer changes it, and changing Current covers stops any automatic change
 not yet written. What you may choose is in the
 [review experience](review-experience.md#covers).
 
+Book matching in Policy, set wider than "Confirmed matches only", lets a cover
+from a source record with the book's title and author be labelled "Same title
+and author" for you to choose. Such a cover never takes part in an automatic
+choice under any option, including the deterministic switches and fills and
+automatic mode, until the owner-run qualification in #1418 passes
+([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
+
 The previous cover is kept as rollback evidence before any write.
 
 ## Explicit

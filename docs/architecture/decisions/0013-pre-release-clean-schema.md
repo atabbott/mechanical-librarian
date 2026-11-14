@@ -487,15 +487,30 @@ alternative, `cover-consideration-v6` names each candidate's kind, and
 verified Put back releases its copy. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1355's activation A takes the clean-rebuild branch. `config-v10` adds
+`review.work_identity`, and `owner-settings-v5` adds its store-managed
+equivalent, `matching.work_identity`; a v9 file and a v4 settings document are
+refused. `cover-identity-report-v2` records the level a cover was classified
+under and adds the `title_creator_work_match` outcome and the level reasons,
+`cover-policy-report-v3` embeds that document, and `cover-consideration-v7`
+binds the level into its replay reference and stores the cover's would-admit
+note. The review preparation trigger set gains `matching_changed`, a schema
+`CHECK` change. The metadata report, proposal policy, shadow decision policy
+and decision-set versions do not move: the report records no level and live
+decisions are unchanged at every level. Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
 Issue #1363's activation of the measured cover rules also takes the
-clean-rebuild branch. `cover-policy-v2` adds Current covers (`current_protection`
-and `prefer_edition`), so every cover policy reference moves.
-`cover-policy-report-v3` records the measured stage's outcome, reason, issues,
-same-art groups, exclusions and edition preference, and each consideration's
-currentness document now carries that outcome and reason, which attention reads.
-`cover-automatic-decision-v4` records the closed reason a replacement was made
-for and drops the `replace_if_strictly_better` option, which the metadata policy
-profile no longer offers. `owner-settings-v5` stores Current covers and
-`config-v10` admits `cover_current_protection` and `cover_prefer_edition`; a
-`config-v9` file must be rewritten by hand. Every earlier application database
-is rejected before mutation and needs a clean rebuild; no adoption is supplied.
+clean-rebuild branch, after #1355's activation A, so each version it moves takes
+the next number free on main. `cover-policy-v2` adds Current covers
+(`current_protection` and `prefer_edition`), so every cover policy reference
+moves. `cover-policy-report-v4` records the measured stage's outcome, reason,
+issues, same-art groups, exclusions and edition preference, and each
+consideration's currentness document now carries that outcome and reason, which
+attention reads. `cover-automatic-decision-v4` records the closed reason a
+replacement was made for and drops the `replace_if_strictly_better` option,
+which the metadata policy profile no longer offers. `owner-settings-v6` stores
+Current covers and `config-v11` admits `cover_current_protection` and
+`cover_prefer_edition`; a `config-v10` file must be rewritten by hand. Every
+earlier application database is rejected before mutation and needs a clean
+rebuild; no adoption is supplied.

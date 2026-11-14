@@ -56,6 +56,15 @@ The base rung and ordered query-only transformations used for one work
 request, and whether its single candidate-limit narrowing retry ran. It
 records no query text and grants no evidence or write authority.
 
+**Work identity level**
+How strictly title and creator agreement establishes that a provider record
+is the item's work, set by Book matching (`review.work_identity`, or
+`matching.work_identity` in store mode): `identifier` (Confirmed matches
+only, the default), `title_and_creator_exact` (Same title and every author) or
+`title_and_creator` (Same title and any author). A record admitted only by a
+wider level is offered to the owner and never decides automatically until
+#1418 ([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
+
 **Work transformation lineage**
 The nullable replay field naming the production that admitted a provider
 work identity, and every field it changed: family, local or provider side,

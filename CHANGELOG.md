@@ -238,12 +238,22 @@ brackets are GitHub issues.
   or not an image, reads **Image unavailable** instead of **No cover** in
   Covers and on the book page, and a rotated cover reports the size it is
   shown at (#1363).
+- **Clean rebuild required.** Policy has a Book matching setting. Set wider
+  than "Confirmed matches only", a cover from a source record with the book's
+  title and author is labelled "Same title and author", and one whose author's
+  initials are written differently, such as "R.F." for "R. F.", can be chosen.
+  None is chosen automatically. The default changes nothing (#1355).
+- A cover you cannot choose because a source says it belongs to a different
+  book or edition, or names a different author or contributor, now reads
+  "Contradicts this book" with that reason, instead of "Match not confirmed"
+  or "Same book". The Other covers gallery now counts its covers instead of
+  calling them all available (#1790).
 - **Clean rebuild required.** Covers follow measured rules: a readable cover
   with no fault is kept without asking, and a cover with a fault (wrong shape,
   under 300 px, unreadable, a sharper copy, another language's edition) is
   suggested in Covers with that fault named. Policy's new Current covers says
   when a cover may be replaced; the replace-if-larger cover option is gone. A
-  configuration file must be rewritten as `config-v10` (#1363).
+  configuration file must be rewritten as `config-v11` (#1363).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

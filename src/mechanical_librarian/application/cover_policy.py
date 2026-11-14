@@ -41,11 +41,16 @@ from mechanical_librarian.domain.field_outcomes import (
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    ClaimKind,
+    ClaimScope,
+    FieldState,
     MetadataReport,
+    ProviderCandidate,
     TargetDestination,
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
     from .configuration import ReviewWebConfiguration
@@ -53,7 +58,6 @@ if TYPE_CHECKING:
 from .cover_identity import (
     CLASSIFIER_REFERENCE,
     _preview_reference,
-    _record_title,
     classify_cover_identity,
 )
 from .cover_identity import (
@@ -81,12 +85,13 @@ from .cover_observation import (
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 from .cover_packets import cover_source_reference
 
-SCHEMA_VERSION = "cover-policy-report-v3"
+SCHEMA_VERSION = "cover-policy-report-v4"
 POLICY_SCHEMA_VERSION = "cover-policy-v2"
 _IDENTITY_OUTCOMES = frozenset(
     {
         "conflict",
         "plausible_match",
+        "title_creator_work_match",
         "unknown",
         "verified_manifestation_match",
         "verified_work_match",
@@ -193,11 +198,14 @@ def adjudicate_cover_policy(
     profile_payload: bytes | None = None,
     read_preview: Callable[[str, str], bytes],
     provider_fetching: bool = False,
+    work_identity_level: WorkIdentityLevel,
 ) -> CoverPolicyReport:
     """Return an identity-confirmed technical recommendation.
 
     Observations remain bound diagnostic evidence, but cannot change the
-    confirmation, readiness, or order that this policy reports.
+    confirmation, readiness, or order that this policy reports. The configured
+    work-identity level reaches only identity classification: a
+    ``title_creator_work_match`` is admitted as a row and never elected (#1355).
     """
     if type(policy) is not CoverPolicy:
         raise ValueError("cover policy is invalid")
@@ -206,6 +214,7 @@ def adjudicate_cover_policy(
         packet_document,
         image_payloads,
         read_preview=read_preview,
+        work_identity_level=work_identity_level,
     ).document
     bind_cover_packet(packet_document, image_payloads)
     packet = _load_object(packet_document, "cover packet")
@@ -417,6 +426,19 @@ def _valid_stage(value: object, references: tuple[str, ...]) -> bool:
     )
 
 
+def _record_title(candidate: ProviderCandidate) -> str | None:
+    """The one work title a provider record states, if it states exactly one."""
+    titles = [
+        claim.value
+        for claim in sorted(candidate.claims, key=lambda claim: claim.raw_order)
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+    ]
+    return titles[0] if len(titles) == 1 else None
+
+
 def _title_conflict(report: MetadataReport) -> bool:
     """Whether the case's title result is an unresolved choice that may name another book."""
     title = next(
@@ -612,9 +634,12 @@ def _identity_rows(
             "cover_packet_reference",
             "report_reference",
             "schema_version",
+            "work_identity_level",
             "work_target_reference",
         }
         or value["schema_version"] != IDENTITY_SCHEMA_VERSION
+        or value["work_identity_level"]
+        not in {level.value for level in WorkIdentityLevel}
         or value["cover_packet_reference"] != packet_reference
         or value["classifier_reference"] != CLASSIFIER_REFERENCE
         or _REFERENCE.fullmatch(str(value["report_reference"])) is None

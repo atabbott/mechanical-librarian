@@ -789,3 +789,64 @@ def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
         "value": "Authored synthetic description.",
     }
     repository.close()
+
+
+def test_a_matching_check_reuses_description_advice_and_makes_no_model_request(
+    tmp_path,
+):
+    """Description advice does not depend on Book matching, so a matching
+    check's projection reuses what exists and never asks the model, even
+    for a request with no earlier attempt or with a pending retry (#1355)."""
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from mechanical_librarian.domain.description_advice import (
+        DescriptionAdviceSettings,
+        description_digest,
+    )
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, original, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repository, report, _decision, access, calls: (
+            captured.append((report, access, calls))
+        ),
+    )
+    report, access, calls = captured[0]
+
+    def refuse():
+        raise AssertionError("model request during a matching check")
+
+    access.dispatch_description_rewrite = refuse
+
+    def attempts() -> int:
+        return repository._connection.execute(
+            "SELECT count(*) FROM description_advice_attempts"
+        ).fetchone()[0]
+
+    before = attempts()
+    service = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 20
+    )
+    current = lambda: store.binding_is_current(binding)  # noqa: E731
+    # An earlier candidate is reused, even with a retry pending.
+    store.request_retry(binding.review_case_id, 19)
+    reused = service.prepare(report, binding, current, reuse_only=True)
+    assert reused is not None and reused.candidate_id == original.candidate_id
+    assert store.pending_retry(binding.review_case_id)
+    # A request with no earlier attempt starts none.
+    settings = DescriptionAdviceSettings(remove_marketing=False)
+    store.bind_settings(settings)
+    fresh = binding.model_copy(
+        update={"preferences_digest": description_digest(settings.model_dump())}
+    )
+    assert (
+        service.prepare(
+            report, fresh, lambda: store.binding_is_current(fresh), reuse_only=True
+        )
+        is None
+    )
+    assert attempts() == before
+    assert len(calls) == 1
+    repository.close()

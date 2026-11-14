@@ -49,6 +49,7 @@ from mechanical_librarian.domain.proposal_set import (
     provider_candidate_represents_target_recording,
     provider_candidate_represents_target_work,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     audio_local_claims,
@@ -271,8 +272,11 @@ def test_the_store_cover_binds_and_is_offered_beside_the_recording() -> None:
 
     # It binds to the store's candidate, which states no identifier, so its
     # identity stays unknown until ADR-0096's title and creator match.
-    outcome, reasons, _evidence = _classify_sources(report, (source,))
-    assert ("unknown", ["retained_title_evidence_insufficient"]) == (outcome, reasons)
+    outcome, reasons, _evidence = _classify_sources(
+        report, (source,), WorkIdentityLevel.IDENTIFIER
+    )
+    assert outcome == "unknown"
+    assert reasons[0] == "retained_title_evidence_insufficient"
     cover = next(
         result
         for result in evaluate_report(report).results

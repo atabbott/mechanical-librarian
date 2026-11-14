@@ -84,7 +84,7 @@ def _configuration(
     config.write_text(
         json.dumps(
             {
-                "schema_version": "config-v10",
+                "schema_version": "config-v11",
                 "provider_recovery_generation": 1,
                 "connections": [
                     {

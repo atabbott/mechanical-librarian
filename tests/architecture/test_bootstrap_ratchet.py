@@ -77,7 +77,7 @@ CEILING = {
 }
 DEF_COUNT = {
     "__init__.py": 1,
-    "composition.py": 111,
+    "composition.py": 110,
     "contained_reviewer.py": 5,
 }
 # Set to the measured size only by an owner review; lowered by a refactor

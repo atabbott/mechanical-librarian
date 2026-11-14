@@ -182,13 +182,6 @@ prefix; reads show only presence and, from eight characters, the last four.
 Reviewer paths are never browser fields. When `/data/config.json` exists,
 covered writes are refused and the store is not read.
 
-Current covers (`cover_preferences.current_protection` and
-`cover_preferences.prefer_edition`) change only through this settings command:
-the session, the CSRF token, an allowed Origin and the expected revision. A
-file-managed value is read-only in the browser. A change moves the live cover
-policy reference, so a planned automatic cover change from before it is stale
-and never writes (#1363).
-
 New settings start a dormant successor runtime under one cutover lock. A
 commit failure keeps the predecessor; a fault after commit stops the server
 rather than run mismatched authority.
@@ -367,6 +360,17 @@ email stays on Open Library's origin. A retrieved Open Library cover records
 only the closed `final_host` family: `covers.openlibrary.org`, `archive.org`
 or `us.archive.org`.
 
+Book matching (`review.work_identity`, #1355) changes which retrieved covers
+the owner may choose, never what is fetched: a level reads only records the
+report already retained. Saving it re-checks comparisons from stored data and
+makes no file, Audiobookshelf, provider, cover image or model request: the
+cover observer's earlier output is reused, and description advice reuses an
+earlier attempt and starts none. A
+cover that matches only by a level's title and author predicate keeps
+`match_not_confirmed`, needs the owner's explicit unverified-match
+confirmation, and is never elected automatically until #1418 qualifies it
+([ADR-0096](decisions/0096-owner-chosen-work-identity-strictness.md)).
+
 ### Provider recovery
 
 [Provider recovery](../operations/provider-recovery.md) is background egress
@@ -464,7 +468,9 @@ of two or more letters. Letter count and order still count, no NFKC,
 confusable mapping or other dot character applies, a fold that would merge two
 listed creators is not applied, and the fold never removes an agreement the
 unfolded comparison makes. Sidecar belonging compares creators exactly until
-#1418 (#1780).
+#1418 (#1780). The fold is read only on ADR-0096's level path, never by a
+live comparison, and it applies at a wider `review.work_identity` level only
+(#1355). Belonging never reads the level.
 
 Incumbent description HTML is rendered by the one provider renderer, which
 drops attributes and refuses event handlers and unbalanced markup; path and
@@ -531,7 +537,10 @@ advisory evidence
 returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
 observation per admitted candidate and checks every binding. The adjudicator
-makes no model call and recomputes identity from the retained report.
+makes no model call and recomputes identity from the retained report, under
+the Book matching level the comparison binds. A level change re-adjudicates
+from the observer's earlier output and sends nothing to the observer, because
+the image and its observation do not depend on the level (#1355).
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
@@ -606,15 +615,21 @@ is a CSRF-protected mutation bound to the expected active policy and exact
 draft, and old proposals then fail as stale.
 
 Automation replaces a populated cover only for a fault the measured cover
-rules record, under the owner's Current covers setting and its own shadow
-qualification identity, with room to retain the original
-([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md));
-no shipped qualification record admits it, so every such switch is a
-suggestion. Any other automatic cover write needs a known-empty target. It replaces a populated ebook description only through
+rules record, under Current covers, whose settings change stales any switch
+planned before it, and a qualification no release ships yet
+([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
+Any other automatic cover write needs a known-empty target. It replaces a populated ebook
+description only through
 description advice with `description_automatic_application` on. Evidence
 never creates series, contributor, title or recording identity on its own;
 conflicts go to the owner, never to a write. The explicit flag is set only by
-an exact positive.
+an exact positive. A level admission under Book matching
+(`review.work_identity`) reaches owner review and the stored would-admit
+note only: it never decides automatically, under any qualified option,
+ADR-0093's switches and fills or ADR-0095's automatic mode, until #1418
+(#1355). Saving the setting is a CSRF-protected settings write with an
+optimistic revision; it writes no Activity row, and a pending cover effect
+chosen under another level closes stale (`matching_changed`).
 
 ### Consent and guarded effects
 

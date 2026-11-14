@@ -3189,9 +3189,6 @@ def _compose_cover_considerations(
 
     policy = cover_policy_of(review)
 
-    def bind_policy(policy_reference: str, replay_reference: str) -> None:
-        repository.bind_current_cover_authority(policy_reference, replay_reference)
-
     provider_fetching = (
         (lambda _report: False)
         if provider_recovery is None
@@ -3214,7 +3211,7 @@ def _compose_cover_considerations(
         reviewer_dispatch=reviewer_access.dispatch_cover_observation,
         reviewer_identity=reviewer_access.current_cover_observation_identity,
         reviewer_revision_current=reviewer_access.revision_is_current,
-        bind_policy=bind_policy,
+        bind_policy=repository.bind_current_cover_authority,
         provider_fetching=provider_fetching,
         retained_original=repository.retained_cover_original,
         # Opened per check, so composing never creates the private directory.
@@ -3222,6 +3219,7 @@ def _compose_cover_considerations(
         require_retained=None
         if retained_root is None
         else lambda digest: RetainedCoverStore(retained_root).require(digest),
+        work_identity_level=review.work_identity,
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
     repository.bind_cover_consideration_currentness(

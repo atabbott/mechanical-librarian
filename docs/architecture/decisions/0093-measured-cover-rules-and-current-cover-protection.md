@@ -232,7 +232,7 @@ audit.
   status or support bundle. The stage adds no disclosure to any provider or
   reviewer.
 - Clean rebuild required under ADR-0013: the proposal and decision policy
-  versions, `config-v10` and the retained-cover bindings change persisted
+  versions, `config-v11` and the retained-cover bindings change persisted
   state. The bindings are append-only with immutable-row
   triggers.
 - `security.md`, `data-privacy.md`, `configuration.md`,

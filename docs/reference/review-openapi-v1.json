@@ -867,6 +867,52 @@
         "title": "LibrarySettings",
         "type": "object"
       },
+      "MatchingCheck": {
+        "additionalProperties": false,
+        "description": "How far current cover comparisons follow Book matching (#1355).\n\n`current_works` counts current cases; `checking` those whose comparison is\nqueued for the re-check; `failed` those whose re-check gave up or was not\ntaken, which saving the setting again retries.",
+        "properties": {
+          "checking": {
+            "minimum": 0.0,
+            "title": "Checking",
+            "type": "integer"
+          },
+          "current_works": {
+            "minimum": 0.0,
+            "title": "Current Works",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current_works",
+          "checking",
+          "failed"
+        ],
+        "title": "MatchingCheck",
+        "type": "object"
+      },
+      "MatchingSettings": {
+        "additionalProperties": false,
+        "description": "Book matching (#1355, ADR-0096): the closed `review.work_identity` level.",
+        "properties": {
+          "work_identity": {
+            "default": "identifier",
+            "enum": [
+              "identifier",
+              "title_and_creator_exact",
+              "title_and_creator"
+            ],
+            "title": "Work Identity",
+            "type": "string"
+          }
+        },
+        "title": "MatchingSettings",
+        "type": "object"
+      },
       "MeasuredRun": {
         "additionalProperties": false,
         "properties": {
@@ -1070,6 +1116,12 @@
               "timeout_seconds": 30
             }
           },
+          "matching": {
+            "$ref": "#/components/schemas/MatchingSettings",
+            "default": {
+              "work_identity": "identifier"
+            }
+          },
           "pending_restart": {
             "default": [],
             "items": {
@@ -1147,7 +1199,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "owner-settings-v5",
+            "const": "owner-settings-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -1823,6 +1875,16 @@
               }
             ],
             "title": "Managed Path"
+          },
+          "matching_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchingCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "provider_capabilities": {
             "default": [],
@@ -4152,7 +4214,10 @@
           "match_reason": {
             "anyOf": [
               {
-                "const": "matched_book",
+                "enum": [
+                  "matched_book",
+                  "title_and_author"
+                ],
                 "type": "string"
               },
               {
@@ -4440,7 +4505,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v6",
+            "const": "cover-consideration-v7",
             "title": "Schema Version",
             "type": "string"
           },
@@ -4535,6 +4600,7 @@
             "enum": [
               "verified_manifestation_match",
               "verified_work_match",
+              "title_creator_work_match",
               "plausible_match",
               "unknown",
               "conflict"
@@ -4919,7 +4985,7 @@
             "title": "Recommended Candidate Reference"
           },
           "schema_version": {
-            "const": "cover-policy-report-v3",
+            "const": "cover-policy-report-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -5009,6 +5075,7 @@
                   "cover_recovery",
                   "cover_retention",
                   "dependency",
+                  "matching_changed",
                   "not_applied",
                   "not_sent",
                   "owner_abandoned",
@@ -9042,7 +9109,7 @@
             "items": {
               "$ref": "#/components/schemas/_PreparationTriggerRecord"
             },
-            "maxItems": 5,
+            "maxItems": 6,
             "minItems": 1,
             "title": "Triggers",
             "type": "array"
@@ -9446,7 +9513,8 @@
               "manual_scan",
               "library_added",
               "title_recovery",
-              "automatic_confirmed"
+              "automatic_confirmed",
+              "matching_changed"
             ],
             "title": "Trigger",
             "type": "string"

@@ -3,7 +3,7 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import type { SyntheticEvent } from 'react'
 
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
-import type { CoverObservationView, CoverCandidateView, DecisionCommand } from '../api/http'
+import type { CoverObservationView, DecisionCommand } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
 import type { CoverPrepareFailure, RecordCoverPrepareFailure } from '../coverChoices'
@@ -28,12 +28,6 @@ import {
 } from '../fieldDecision'
 import type { ReviewField, ChoiceProgress } from '../fieldDecision'
 import { ChoiceEvidencePanel } from './FieldDecisionChoices'
-const coverStateLabels = {
-  acceptable: 'Acceptable',
-  available: 'Available',
-  excluded: 'Excluded',
-  recommended: 'Recommended',
-} satisfies Record<CoverCandidateView['state'], string>
 // The press that failed picks the copy, whichever layout the reload shows.
 const coverPrepareFailureCopy = ({ action, error }: CoverPrepareFailure) =>
   action === 'prepare'
@@ -320,13 +314,6 @@ function LibraryCoverChoicesContent({
   const alternatives = candidates.filter((candidate) => !candidate.incumbent)
   const coverContexts = consideration.choiceContexts
   const currentContext = coverContexts[0]
-  const acceptableReferences =
-    Array.isArray(consideration.policy?.acceptable_candidate_references) &&
-    consideration.policy.acceptable_candidate_references.every(
-      (reference): reference is string => typeof reference === 'string',
-    )
-      ? consideration.policy.acceptable_candidate_references
-      : []
   const policyStatus =
     typeof consideration.policy?.status === 'string' ? consideration.policy.status : null
   const recommendedReference =
@@ -334,11 +321,6 @@ function LibraryCoverChoicesContent({
     typeof consideration.policy?.recommended_candidate_reference === 'string'
       ? consideration.policy.recommended_candidate_reference
       : null
-  const policyReasons = Array.isArray(consideration.policy?.reasons)
-    ? consideration.policy.reasons
-        .filter((reason): reason is string => typeof reason === 'string')
-        .slice(0, 2)
-    : []
   // The measured rules' stage (#1363): over a populated cover its choice is a
   // suggestion, shown with the fault that prompted it; a fill is recommended.
   const stage = consideration.stage ?? null
@@ -350,19 +332,24 @@ function LibraryCoverChoicesContent({
     stageReason !== null && stage?.outcome !== 'fill'
       ? coverFaultLabel(stageReason, audiobook)
       : null
+  // A contradiction says why the cover cannot be chosen, ahead of the matched
+  // book (#1790). Every other card the line reaches says Match not confirmed in
+  // its title, so no line repeats it (#1765).
   const excludedReason = (candidate: (typeof candidates)[number]) =>
-    candidate.matchReason === 'matched_book'
-      ? 'From the matched book, not a confirmed recording.'
-      : // The card's title already says Match not confirmed, so no line repeats it (#1765).
-        candidate.matchState === 'match_not_confirmed'
-        ? null
-        : candidate.observation === null
-          ? 'The reviewer did not check this cover.'
-          : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
-            ? policyReasons.length
-              ? policyReasons.map((reason) => coverNoteLabel(reason, audiobook)).join(', ')
-              : 'Your cover settings do not accept this cover.'
-            : coverStateLabels[candidate.state]
+    candidate.contradiction === 'book'
+      ? 'A source says it belongs to a different book, so you cannot choose it.'
+      : candidate.contradiction === 'edition'
+        ? 'A source says it belongs to a different edition, so you cannot choose it.'
+        : candidate.contradiction === 'creator'
+          ? 'A source names a different author or contributor, so you cannot choose it.'
+          : candidate.matchReason === 'matched_book'
+            ? 'From the matched book, not a confirmed recording.'
+            : candidate.matchReason === 'title_and_author' &&
+                Array.isArray(candidate.identity?.reasons) &&
+                candidate.identity.reasons.includes('creator_initials_folded')
+              ? // The title names the basis, so only folded initials add a line (#1355).
+                "An author's initials are written differently in this source."
+              : null
   const cardState = (candidate: (typeof candidates)[number]) => {
     const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
@@ -479,13 +466,20 @@ function LibraryCoverChoicesContent({
             <strong>
               {retained
                 ? coverSourceLabels.retained
-                : candidate.matchState === 'same_edition'
-                  ? 'Same edition'
-                  : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
-                    ? 'Same book'
-                    : 'Match not confirmed'}
+                : candidate.contradiction
+                  ? 'Contradicts this book'
+                  : candidate.matchState === 'same_edition'
+                    ? 'Same edition'
+                    : candidate.matchState === 'same_book' ||
+                        candidate.matchReason === 'matched_book'
+                      ? 'Same book'
+                      : candidate.matchReason === 'title_and_author'
+                        ? 'Same title and author'
+                        : 'Match not confirmed'}
               {/* The identity stays unverified: only the wording names its basis (#1642). */}
-              {candidate.matchReason === 'matched_book' ? ' · recording not confirmed' : ''}
+              {candidate.matchReason === 'matched_book' && !candidate.contradiction
+                ? ' · recording not confirmed'
+                : ''}
             </strong>
             <span className="cover-dimensions">
               {`${String(candidate.width)} × ${String(candidate.height)} px`}
@@ -647,7 +641,8 @@ function LibraryCoverChoicesContent({
           <div className="library-cover-gallery">
             <header>
               <strong>Other covers</strong>
-              <small>{String(alternatives.length)} available</small>
+              {/* A count of covers: some may be ones you cannot choose (#1790). */}
+              <small>{`${String(alternatives.length)} covers`}</small>
             </header>
             <div>
               {alternatives.map((candidate) => card(candidate, candidates.indexOf(candidate)))}

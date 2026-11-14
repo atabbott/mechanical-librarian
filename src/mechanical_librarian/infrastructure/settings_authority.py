@@ -27,6 +27,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from mechanical_librarian.infrastructure.configuration import (
     _read_regular,
     _reject_number,
@@ -128,6 +129,7 @@ def store_runtime_configuration(
         description_remove_sales_boasts=document.description_advice.remove_sales_boasts,
         description_remove_praise=document.description_advice.remove_praise,
         description_automatic_application=document.description_advice.automatic_application,
+        work_identity=WorkIdentityLevel(document.matching.work_identity),
     )
     return ApplicationConfiguration(
         connections=tuple(

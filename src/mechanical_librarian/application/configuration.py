@@ -28,6 +28,7 @@ from mechanical_librarian.domain.validation import (
     http_origin,
     owner_session_lifetime,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -130,6 +131,9 @@ class ReviewWebConfiguration:
     description_remove_sales_boasts: bool = True
     description_remove_praise: bool = True
     description_automatic_application: bool = False
+    # ADR-0096's Book matching level (#1355): which provider records count as
+    # the same book when the owner reviews. Review-only until #1418.
+    work_identity: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER
 
     def __post_init__(self) -> None:
         if (
@@ -183,6 +187,7 @@ class ReviewWebConfiguration:
                     self.description_automatic_application,
                 )
             )
+            or type(self.work_identity) is not WorkIdentityLevel
         ):
             raise ConfigurationError("review web configuration is invalid")
         try:
@@ -413,12 +418,12 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v10"
+    schema_version: str = "config-v11"
     provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v10":
+        if self.schema_version != "config-v11":
             raise ConfigurationError("configuration schema is unsupported")
         # Recovery is deliberately tied to an operator-visible configuration
         # generation.  There is no file watcher, hash, or environment override:

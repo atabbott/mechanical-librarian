@@ -347,6 +347,47 @@ def _build_case(
     return case
 
 
+# The cover identity outcomes every source revision may store. A level match
+# (#1355, ADR-0096) is stored at a configured Book matching level wider than
+# `identifier`; it never elects a cover, so the gates read it with unknown.
+_COVER_OUTCOMES = frozenset(
+    {
+        "verified_manifestation_match",
+        "verified_work_match",
+        "title_creator_work_match",
+        "plausible_match",
+        "unknown",
+        "conflict",
+    }
+)
+_COVER_UNELECTED = frozenset({"unknown", "title_creator_work_match"})
+# The level facts #1355 appends to an unverified candidate's reasons.
+_COVER_LEVEL_REASONS = frozenset(
+    {
+        "work_identity_level_met",
+        "work_identity_level_refused",
+        "work_identity_level_ambiguous",
+        "creator_initials_folded",
+        "work_identity:title_and_creator_exact",
+        "work_identity:title_and_creator",
+    }
+)
+
+
+def _known_cover_candidate(candidate: dict[str, object]) -> bool:
+    reasons = candidate.get("reasons", [])
+    return (
+        candidate.get("outcome") in _COVER_OUTCOMES
+        and isinstance(reasons, list)
+        and all(
+            reason in _COVER_LEVEL_REASONS
+            for reason in reasons
+            if isinstance(reason, str)
+            and (reason.startswith("work_identity") or reason.startswith("creator_"))
+        )
+    )
+
+
 def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
     """Bind each cover candidate to the provider records whose covers it shows.
 
@@ -355,8 +396,11 @@ def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
     the stated edition when there is one. A work-level cover (a default, work
     or related cover without an edition) binds every record of that work at
     that provider, and so does a listed edition, whose edition is never a
-    record (#1380).
+    record (#1380). A candidate whose outcome or level reason the ledger does
+    not know refuses the snapshot rather than being counted as anything.
     """
+    if not all(_known_cover_candidate(value) for value in case.cover_candidates):
+        raise Refusal("snapshot schema unrecognised")
     works: dict[tuple[str, str], list[str]] = {}
     for provider in case.providers():
         name = _text(provider.get("provider"))
@@ -713,7 +757,7 @@ def _pictured(case: Case, candidate: dict[str, object]) -> frozenset[str]:
 
 
 def _work_search_unknown(case: Case, candidate: dict[str, object]) -> bool:
-    if candidate.get("outcome") != "unknown":
+    if candidate.get("outcome") not in _COVER_UNELECTED:
         return False
     records = _pictured(case, candidate)
     return bool(records) and all(
@@ -1063,8 +1107,8 @@ CATALOGUE: tuple[Gate, ...] = (
         "cover",
         "admit unknown and conflict cover candidates",
         "cover_candidates",
-        _cover(_candidate_outcome("unknown", "conflict")),
-        cover_predicate=_candidate_outcome("unknown", "conflict"),
+        _cover(_candidate_outcome(*_COVER_UNELECTED, "conflict")),
+        cover_predicate=_candidate_outcome(*_COVER_UNELECTED, "conflict"),
         disposition="already filed as #1355",
     ),
     Gate(

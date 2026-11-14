@@ -740,6 +740,8 @@ export interface CoverCandidateView {
   artifactId: string
   /** `retained` is the original an automatic switch replaced: Put back (#1363). */
   candidateKind: 'candidate' | 'retained'
+  /** Why a proposed cover cannot be chosen: a source says it belongs to a different book or edition, or names a different author or contributor (#1790). */
+  contradiction?: 'book' | 'edition' | 'creator'
   deterministicCitations: readonly string[]
   deterministicRank: number | null
   deterministicRankKey: readonly (number | string)[] | null
@@ -747,8 +749,12 @@ export interface CoverCandidateView {
   identity: Readonly<Record<string, unknown>> | null
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
-  /** A proposed cover from the matched book; the recording stays unconfirmed (#1642). */
-  matchReason?: 'matched_book'
+  /**
+   * A proposed cover from the matched book; the recording stays unconfirmed
+   * (#1642). `title_and_author`: from a record Book matching counts as the same
+   * book by title and author; the match stays unconfirmed (#1355).
+   */
+  matchReason?: 'matched_book' | 'title_and_author'
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
@@ -3060,13 +3066,19 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
           ? 'same_book'
           : 'match_not_confirmed'
     const confirmed = expectedMatchState !== 'match_not_confirmed'
+    // Why a proposed cover contradicts the book (#1790); the incumbent never
+    // carries one.
+    const contradiction = incumbent
+      ? undefined
+      : identity.outcome === 'conflict'
+        ? identity.reasons.includes('manifestation_publication_incompatible')
+          ? 'edition'
+          : 'book'
+        : identity.reasons.includes('retained_creator_or_contributor_disagreement')
+          ? 'creator'
+          : undefined
     const manualEligible = candidate.manual_eligible
-    if (
-      manualEligible !==
-      (!incumbent &&
-        identity.outcome !== 'conflict' &&
-        !identity.reasons.includes('retained_creator_or_contributor_disagreement'))
-    )
+    if (manualEligible !== (!incumbent && contradiction === undefined))
       throw new ApiError(502, 'contradictory_cover_manual_eligibility')
     const { reference } = candidate
     const previewSha256 = candidate.preview_sha256
@@ -3091,6 +3103,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     return {
       artifactId: candidate.artifact_id,
       candidateKind: 'candidate',
+      ...(contradiction === undefined ? {} : { contradiction }),
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
       deterministicRankKey,

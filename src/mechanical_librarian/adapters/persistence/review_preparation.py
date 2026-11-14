@@ -110,6 +110,163 @@ _COMPLETE_CURRENT_CASE_WORK_SQL = (
 _COMPLETE_CASE_WORK_WHERE_SQL = (
     "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
 )
+# A current case's cover comparison waits for Book matching while its current
+# consideration was classified under another level (#1355). Its work is
+# re-projected, which prepares the comparison again from stored evidence.
+_MATCHING_CONSIDERATION_SQL = (
+    "JOIN current_cover_considerations current "
+    "ON current.review_case_id=c.review_case_id "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current.consideration_id "
+)
+_MATCHING_LEVEL_SQL = "json_extract(consideration.document,'$.work_identity_level')"
+
+
+def requeue_projection_work(
+    connection: sqlite3.Connection,
+    rows: list[tuple[str, str]],
+    updated_at: int,
+    trigger: PreparationTrigger,
+) -> None:
+    """Project the named current case works again, in the caller's transaction."""
+    for work_id, scan_id in rows:
+        connection.execute(
+            "UPDATE review_preparation_work SET stage='projection',state='queued',"
+            "attempt=0,recovery_attempt=0,retry_not_before=0,failure_code=NULL,"
+            "failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
+            (updated_at, work_id),
+        )
+        connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+            (updated_at, scan_id),
+        )
+    if rows:
+        reopen_preparation_projection(
+            connection, tuple(row[0] for row in rows), updated_at, trigger
+        )
+        refresh_preparation_presentation(connection, updated_at)
+
+
+_MATCHING_UNCHECKED_SQL = (
+    "FROM current_review_case_lineages c "
+    + _MATCHING_CONSIDERATION_SQL
+    + "JOIN review_preparation_work w ON w.connection_name=c.connection_name "
+    "AND w.library_name=c.library_name AND w.item_id=c.item_id "
+    "JOIN current_metadata_report_lineages l ON l.connection_name=c.connection_name "
+    "AND l.library_name=c.library_name AND l.item_id=c.item_id "
+    "AND l.report_id=c.report_id "
+    # As `_schedule_current_shadow_work`: the case's report is also current
+    # for the item's file now, so re-projecting it cannot go stale.
+    "JOIN current_metadata_reports f ON f.connection_name=c.connection_name "
+    "AND f.library_name=c.library_name AND f.item_id=c.item_id "
+    "AND f.file_identity=w.file_identity AND f.report_id=c.report_id "
+    "WHERE c.review_case_id IS NOT NULL AND " + _MATCHING_LEVEL_SQL + "<>? "
+)
+
+
+def request_matching_check(
+    connection: sqlite3.Connection,
+    work_identity_level: str,
+    *,
+    updated_at: int,
+) -> None:
+    """Check current cover comparisons against Book matching (#1355).
+
+    Every current case whose comparison was made under another level, and
+    whose report is still current for its item and its file, is checked
+    through its item's one preparation work, from stored data only: no stage
+    that reads the file, Audiobookshelf or a provider runs again. A work that
+    completed the case, or whose projection gave up, is projected again
+    (#1573), so no case is retired and the projection prepares the cover
+    comparison again, reusing the stored observer output. A work that gave up at a stored-data
+    stage (provider, proposal or admission) is retried there. Any other work
+    that is neither queued nor running, such as one that names another case,
+    went stale, or failed extraction, is bound to the current case and
+    projected again, as `_schedule_current_shadow_work` does. A work already
+    queued or running is left to finish. Every save runs this, so saving
+    again retries whatever gave up.
+    """
+    rows = connection.execute(
+        "SELECT DISTINCT w.work_id,w.scan_id,w.stage,w.state,"
+        "w.review_case_id=c.review_case_id AND w.proposal_set_id=c.proposal_set_id "
+        "AND w.report_id=c.report_id,c.review_case_id,c.proposal_set_id,c.report_id "
+        + _MATCHING_UNCHECKED_SQL
+        + "AND w.state IN ('complete','failed','stale') ORDER BY w.work_id",
+        (work_identity_level,),
+    ).fetchall()
+    projections: list[tuple[str, str]] = []
+    for work_id, scan_id, stage, state, same_case, case_id, proposal, report in rows:
+        if same_case and (
+            (stage, state) == ("complete", "complete")
+            or (stage == "projection" and state in {"failed", "stale"})
+        ):
+            projections.append((work_id, scan_id))
+        elif state == "failed" and stage in _STORED_DATA_STAGES:
+            _retry_failed_stage(connection, work_id, scan_id, updated_at)
+        else:
+            connection.execute(
+                "UPDATE review_preparation_work SET stage='projection',state='queued',"
+                "report_id=?,proposal_set_id=?,review_case_id=?,"
+                "recovery_source_report_id=NULL,outcome=NULL,updated_at=? "
+                "WHERE work_id=?",
+                (report, proposal, case_id, updated_at, work_id),
+            )
+            projections.append((work_id, scan_id))
+    requeue_projection_work(
+        connection, projections, updated_at, PreparationTrigger.MATCHING_CHANGED
+    )
+    if rows and not projections:
+        refresh_preparation_presentation(connection, updated_at)
+
+
+# The stages that read only stored data: retrying one makes no file,
+# Audiobookshelf or provider request.
+_STORED_DATA_STAGES = frozenset({"provider", "proposal", "admission"})
+
+
+def _retry_failed_stage(
+    connection: sqlite3.Connection, work_id: str, scan_id: str, updated_at: int
+) -> None:
+    connection.execute(
+        "UPDATE review_preparation_work SET state='queued',attempt=0,"
+        "recovery_attempt=0,retry_not_before=0,failure_code=NULL,failure_root=NULL,"
+        "updated_at=? WHERE work_id=?",
+        (updated_at, work_id),
+    )
+    connection.execute(
+        "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+        "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+        (updated_at, scan_id),
+    )
+
+
+def matching_check_counts(
+    connection: sqlite3.Connection, work_identity_level: str
+) -> tuple[int, int, int]:
+    """Current works, works being checked, and works whose check gave up.
+
+    A current case is checked once its current cover consideration was made
+    under the configured Book matching level (#1355). One that is not is
+    being checked while its item's work is queued, delayed or running, and
+    otherwise could not be checked; saving the setting again retries it. A
+    case whose item has no preparation work, because it left the library and
+    awaits retirement at the next scan, or whose report is no longer its
+    item's current report or the current report for its item's file, because
+    the next scan replaces it, is not counted as either: only that scan, not
+    a save, can bring it up to date.
+    """
+    current = connection.execute(
+        "SELECT count(*) FROM current_review_case_lineages "
+        "WHERE review_case_id IS NOT NULL"
+    ).fetchone()[0]
+    unchecked, checking = connection.execute(
+        "SELECT count(*),coalesce(sum(w.state IN ('queued','delayed','running')),0) "
+        + _MATCHING_UNCHECKED_SQL,
+        (work_identity_level,),
+    ).fetchone()
+    return int(current), int(checking), int(unchecked) - int(checking)
+
 
 # The exact vocabulary `review_preparation_work.failure_code` accepts. It
 # duplicates the CHECK in `schema.py`, which cannot be generated from this set
@@ -1939,23 +2096,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         updated_at: int,
         trigger: PreparationTrigger,
     ) -> None:
-        for work_id, scan_id in rows:
-            self._connection.execute(
-                "UPDATE review_preparation_work SET stage='projection',state='queued',"
-                "attempt=0,recovery_attempt=0,retry_not_before=0,failure_code=NULL,"
-                "failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
-                (updated_at, work_id),
-            )
-            self._connection.execute(
-                "UPDATE review_preparation_scans SET state='processing',updated_at=? "
-                "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
-                (updated_at, scan_id),
-            )
-        if rows:
-            reopen_preparation_projection(
-                self._connection, tuple(row[0] for row in rows), updated_at, trigger
-            )
-            refresh_preparation_presentation(self._connection, updated_at)
+        requeue_projection_work(self._connection, rows, updated_at, trigger)
 
     def _restart_metadata_policy_work(
         self,

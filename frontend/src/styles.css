@@ -1357,20 +1357,29 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 
 .description-advice-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:28rem; overflow:auto; }
 
-.description-advice-settings {
+.description-advice-settings,
+.matching-settings {
   display: grid;
   gap: 0.75rem;
   min-width: 0;
   padding: 1.25rem;
   border-bottom: 1px solid var(--line);
 }
-.description-advice-settings h3 {
+.description-advice-settings h3,
+.matching-settings h3 {
   margin: 0;
   scroll-margin-top: 6rem;
 }
-.description-advice-settings p {
+.description-advice-settings p,
+.matching-settings p {
   max-width: 75ch;
   margin: 0.5rem 0;
+}
+/* Book matching's three levels run strict to wide; where they cannot sit in
+   one row they stack one per row, so the order still reads top to bottom. */
+.matching-settings { container-type: inline-size; }
+@container (max-width: 34rem) {
+  .matching-settings .cm-segmented { grid-template-columns: minmax(0, 1fr); }
 }
 .description-advice-fields { display:grid; max-width:52rem; border:1px solid var(--line); border-radius:.65rem; overflow:hidden; }
 .description-advice-fields .settings-field-row:last-child { border-bottom:0; }

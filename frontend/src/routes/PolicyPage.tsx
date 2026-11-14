@@ -30,6 +30,7 @@ import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
 import { CurrentCoverSettings } from '../components/CurrentCoverSettings'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
+import { MatchingSettings } from '../components/MatchingSettings'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FinishTray } from '../components/FinishTray'
@@ -850,6 +851,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 ) : null,
                 field.key === 'cover_order' ? (
                   <DescriptionAdviceSettings key="description-advice" http={http} />
+                ) : null,
+                field.key === 'cover_order' ? (
+                  <MatchingSettings key="book-matching" http={http} />
                 ) : null,
               ]
             })}

@@ -1675,7 +1675,7 @@ class _StoreRuntime:
         )
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v5",
+                "schema_version": "owner-settings-v6",
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.example.invalid"}

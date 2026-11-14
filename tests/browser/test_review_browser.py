@@ -187,7 +187,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v5",
+        "schema_version": "owner-settings-v6",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -9227,7 +9227,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v5",
+                "schema_version": "owner-settings-v6",
                 "revision": 1,
                 "connections": [
                     {
@@ -13642,7 +13642,7 @@ _FOCUSED = """() => {
 
 _NAMED_LIBRARIES = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v5",
+        "schema_version": "owner-settings-v6",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [

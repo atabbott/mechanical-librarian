@@ -319,7 +319,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v6",
+        "schema_version": "cover-consideration-v7",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -4604,7 +4604,7 @@ def _retry_settings_document(generation: int):
 
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
