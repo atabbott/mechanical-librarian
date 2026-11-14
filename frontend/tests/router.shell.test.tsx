@@ -457,7 +457,7 @@ describe('Application shell', () => {
     // The latched first finishes survive only as Prepared history.
     expect(screen.queryByRole('progressbar', { name: /^Prepared/u })).toBeNull()
     expect(
-      screen.getByText('Prepared', { selector: '.preparation-completions strong' }),
+      screen.getByText('Prepared', { selector: '.preparation-completions small' }),
     ).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))

@@ -7075,7 +7075,12 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                         "name": "Synthetic finished title",
                                         "outcome": "ready",
                                         "completed_at": 100,
-                                    }
+                                    },
+                                    {
+                                        "name": " ".join(["Synthetic long title"] * 40),
+                                        "outcome": "failed",
+                                        "completed_at": 101,
+                                    },
                                 ],
                                 "throughput_per_minute": 0,
                                 "started_at": 100,
@@ -7144,12 +7149,60 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 expect(page.locator(".preparation-run-state")).to_have_attribute(
                     "role", "status"
                 )
-                # Find in Works is a full target even though it wraps with the
-                # name it searches for (#1288).
-                find = page.get_by_role("link", name="Find in Works")
-                expect(find).to_have_count(1)
-                find_bounds = find.bounding_box()
-                assert find_bounds is not None and find_bounds["height"] >= 44
+                # Each completion is one row of equal height at 390 px: the
+                # title is a full-size link, a long one ends in an ellipsis,
+                # and the outcome label sits on the same line (#1288, #1516).
+                expect(page.get_by_role("link", name="Find in Works")).to_have_count(0)
+                expect(
+                    page.get_by_role("link", name="Synthetic finished title")
+                ).to_have_count(1)
+                viewport = page.viewport_size
+                assert viewport is not None
+                page.set_viewport_size({"width": 390, "height": 844})
+                rows = page.locator(".preparation-completions li").evaluate_all(
+                    "rows => rows.map(row => {"
+                    "const box = row.getBoundingClientRect();"
+                    "const link = row.querySelector('a').getBoundingClientRect();"
+                    "const label = row.querySelector('small').getBoundingClientRect();"
+                    "const title = row.querySelector('a span');"
+                    "return {height:box.height,link:link.height,"
+                    "label:row.querySelector('small').textContent,"
+                    "inside:label.top>=box.top&&label.bottom<=box.bottom"
+                    "&&label.right<=box.right+0.5&&label.left>=link.right,"
+                    "clipped:title.scrollWidth>title.clientWidth,"
+                    "pageFits:box.right<=innerWidth"
+                    "&&document.documentElement.scrollWidth<=innerWidth}"
+                    "})"
+                )
+                assert [row["label"] for row in rows] == ["Prepared", "Couldn't finish"]
+                assert rows[0]["height"] == rows[1]["height"]
+                assert all(row["link"] >= 44 and row["inside"] for row in rows)
+                assert [row["clipped"] for row in rows] == [False, True]
+                assert all(row["pageFits"] for row in rows)
+                # Enlarged, the label moves under its title and the title takes
+                # two lines; the rows stay equal and nothing scrolls.
+                set_root_text(page, "200%")
+                enlarged = page.locator(".preparation-completions li").evaluate_all(
+                    "rows => rows.map(row => {"
+                    "const box = row.getBoundingClientRect();"
+                    "const link = row.querySelector('a').getBoundingClientRect();"
+                    "const label = row.querySelector('small').getBoundingClientRect();"
+                    "const title = row.querySelector('a span');"
+                    "return {height:box.height,"
+                    "below:label.top>=link.bottom-0.5&&label.bottom<=box.bottom,"
+                    "titleWidth:title.getBoundingClientRect().width/box.width,"
+                    "clipped:title.scrollWidth>title.clientWidth"
+                    "||title.scrollHeight>title.clientHeight+1,"
+                    "pageFits:box.right<=innerWidth"
+                    "&&document.documentElement.scrollWidth<=innerWidth}"
+                    "})"
+                )
+                set_root_text(page, "")
+                assert enlarged[0]["height"] == enlarged[1]["height"]
+                assert all(row["below"] and row["pageFits"] for row in enlarged)
+                assert [row["clipped"] for row in enlarged] == [False, True]
+                assert enlarged[1]["titleWidth"] > 0.95
+                page.set_viewport_size(viewport)
                 passage = page.get_by_role("progressbar")
                 expect(passage).to_have_count(4)
                 passage_facts = passage.evaluate_all(
