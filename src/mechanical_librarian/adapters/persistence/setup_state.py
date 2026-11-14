@@ -64,7 +64,7 @@ class SetupStateStore(ConnectionScoped):
     def initialize(self, claim_token_digest: str) -> SetupStateDocument:
         """Create the verifier-free exact-current setup predecessor."""
         document = SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version="setup-state-v5",
             revision=1,
             # This closed member has no verifier, claim-code, or authentication
             # meaning; it binds only the exact empty-volume predecessor. The

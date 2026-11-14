@@ -301,7 +301,7 @@ class _State:
     def __init__(self, sessions: _Sessions | None = None) -> None:
         self.sessions = sessions
         self.document = SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version="setup-state-v5",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
             claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -1075,7 +1075,7 @@ def test_connect_requires_session_csrf_and_origin_and_never_returns_key() -> Non
     assert response.status_code == 200
     assert response.json() == {
         "completed_steps": ["claim", "connect"],
-        "next_step": "providers",
+        "next_step": "libraries",
         "revision": 3,
     }
     assert "secret-value" not in response.text
@@ -1225,14 +1225,6 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
         ).status_code
         == 200
     )
-    assert (
-        client.post(
-            "/api/setup/providers",
-            json={"expected_revision": 3, "providers": []},
-            headers=headers,
-        ).status_code
-        == 200
-    )
     duplicate = {
         "name": "books",
         "library_id": "books",
@@ -1242,13 +1234,57 @@ def test_duplicate_local_library_names_return_closed_validation_without_mutation
 
     response = client.post(
         "/api/setup/libraries",
-        json={"expected_revision": 4, "libraries": [duplicate, duplicate]},
+        json={"expected_revision": 3, "libraries": [duplicate, duplicate]},
         headers=headers,
     )
 
     assert response.status_code == 422
     assert response.json() == {"detail": {"error": "invalid_libraries"}}
-    assert state.document.revision == 4
+    assert state.document.revision == 3
+    assert state.document.next_step() == "libraries"
+
+
+@pytest.mark.parametrize(
+    "library",
+    (
+        {"name": "books", "library_id": "books", "display_name": "My Shelf"},
+        {"name": "books", "library_id": "books", "provider_connections": ["open"]},
+    ),
+    ids=("display-name", "provider-connections"),
+)
+def test_library_selection_refuses_an_owner_display_name(
+    library: dict[str, object],
+) -> None:
+    client, state, _connection = _client()
+    login = _claim(client)
+    headers = {
+        "cookie": _session_cookie(login),
+        "origin": "https://setup.invalid",
+        "x-csrf-token": login.json()["csrf_token"],
+    }
+    assert (
+        client.post(
+            "/api/setup/connect",
+            json={
+                "expected_revision": 2,
+                "name": "primary",
+                "endpoint": "https://abs.invalid",
+                "key": "secret-value",
+            },
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+    response = client.post(
+        "/api/setup/libraries",
+        json={"expected_revision": 3, "libraries": [library]},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": {"error": "invalid_request"}}
+    assert state.document.revision == 3
     assert state.document.next_step() == "libraries"
 
 
@@ -1275,39 +1311,27 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         },
         headers=headers,
     )
-    # The providers step reads the libraries too, to suggest what fits them.
-    suggestions = client.get(
-        "/api/setup/libraries",
-        params={"expected_revision": connect.json()["revision"]},
-        headers={"cookie": headers["cookie"]},
-    )
-    providers = client.post(
-        "/api/setup/providers",
-        json={"expected_revision": connect.json()["revision"], "providers": []},
-        headers=headers,
-    )
-
     discovery = client.get(
         "/api/setup/libraries",
-        params={"expected_revision": providers.json()["revision"]},
+        params={"expected_revision": connect.json()["revision"]},
         headers={"cookie": headers["cookie"]},
     )
     libraries = client.post(
         "/api/setup/libraries",
         json={
-            "expected_revision": providers.json()["revision"],
+            "expected_revision": connect.json()["revision"],
             "libraries": [
                 {
                     "name": "books",
-                    "display_name": "Owner's Ebooks & Audiobooks",
                     "library_id": "books",
                     "media_kind": "book",
-                    "provider_connections": [],
                 }
             ],
         },
         headers=headers,
     )
+    # Audiobookshelf reported no folder, so the folder step is next.
+    assert libraries.json()["next_step"] == "mounts"
     mounts = client.post(
         "/api/setup/mounts",
         json={
@@ -1316,16 +1340,31 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         },
         headers=headers,
     )
+    assert mounts.json()["next_step"] == "providers"
+    # The sources step reads the libraries too, to tick what suits them.
+    suggestions = client.get(
+        "/api/setup/libraries",
+        params={"expected_revision": mounts.json()["revision"]},
+        headers={"cookie": headers["cookie"]},
+    )
+    providers = client.post(
+        "/api/setup/providers",
+        json={"expected_revision": mounts.json()["revision"], "providers": []},
+        headers=headers,
+    )
     stale_reviewer = client.post(
         "/api/setup/reviewer",
-        json={"expected_revision": mounts.json()["revision"] - 1, "outcome": "skipped"},
+        json={
+            "expected_revision": providers.json()["revision"] - 1,
+            "outcome": "skipped",
+        },
         headers=headers,
     )
     assert stale_reviewer.status_code == 409
     reviewer_access.select_none.assert_not_called()
     reviewer = client.post(
         "/api/setup/reviewer",
-        json={"expected_revision": mounts.json()["revision"], "outcome": "skipped"},
+        json={"expected_revision": providers.json()["revision"], "outcome": "skipped"},
         headers=headers,
     )
     kickoff = client.post(
@@ -1356,10 +1395,19 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
             },
         ]
     }
+    assert [
+        connect.json()["revision"],
+        libraries.json()["revision"],
+        mounts.json()["revision"],
+        providers.json()["revision"],
+        reviewer.json()["revision"],
+    ] == [3, 4, 5, 6, 7]
     assert kickoff.status_code == 202
+    # Start reuses the owner's session: no second cookie or credential.
+    assert "set-cookie" not in kickoff.headers
     reviewer_access.select_none.assert_not_called()
     assert state.document.reviewer_setup == "skipped"
-    assert state.document.libraries[0].display_name == "Owner's Ebooks & Audiobooks"
+    assert state.document.libraries[0].display_name == "Books"
     assert kickoff.json() == {
         "status": "active",
         "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",
@@ -1658,6 +1706,33 @@ def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() ->
     assert ".finally(" not in SETUP_JS
 
 
+def _reach_sources(client: TestClient, headers: dict[str, str]) -> int:
+    """Connect, choose the one book library and find its folder."""
+    revision = 2
+    for path, body in (
+        (
+            "/api/setup/connect",
+            {
+                "name": "primary",
+                "endpoint": "https://abs.invalid",
+                "key": "secret-value",
+            },
+        ),
+        (
+            "/api/setup/libraries",
+            {"libraries": [{"name": "books", "library_id": "books"}]},
+        ),
+        ("/api/setup/mounts", {"service_paths": {"books": "/library"}}),
+    ):
+        response = client.post(
+            path, json={"expected_revision": revision, **body}, headers=headers
+        )
+        assert response.status_code == 200, path
+        revision = response.json()["revision"]
+    assert response.json()["next_step"] == "providers"
+    return revision
+
+
 def test_setup_admits_the_keyless_audiobook_providers_with_no_credential() -> None:
     client, state, _connection = _client()
     login = _claim(client)
@@ -1666,24 +1741,12 @@ def test_setup_admits_the_keyless_audiobook_providers_with_no_credential() -> No
         "origin": "https://setup.invalid",
         "x-csrf-token": login.json()["csrf_token"],
     }
-    assert (
-        client.post(
-            "/api/setup/connect",
-            json={
-                "expected_revision": 2,
-                "name": "primary",
-                "endpoint": "https://abs.invalid",
-                "key": "secret-value",
-            },
-            headers=headers,
-        ).status_code
-        == 200
-    )
+    revision = _reach_sources(client, headers)
 
     accepted = client.post(
         "/api/setup/providers",
         json={
-            "expected_revision": 3,
+            "expected_revision": revision,
             "providers": [
                 {"name": name, "adapter": adapter, "enabled": True}
                 for name, adapter in (
@@ -1913,7 +1976,7 @@ def test_setup_paints_the_saved_theme_first_and_serves_only_the_workspace_fonts(
 ):
     state = SimpleNamespace(
         read=lambda _verifier: SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version="setup-state-v5",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
             claim_token_digest=claim_token_digest(_CLAIM_TOKEN),

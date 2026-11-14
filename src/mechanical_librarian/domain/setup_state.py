@@ -24,14 +24,14 @@ from mechanical_librarian.domain.owner_settings import (
 )
 
 SetupStep = Literal[
-    "claim", "connect", "providers", "libraries", "mounts", "reviewer", "kick_off"
+    "claim", "connect", "libraries", "mounts", "providers", "reviewer", "kick_off"
 ]
 _RECORDED_STEPS: tuple[SetupStep, ...] = (
     "claim",
     "connect",
-    "providers",
     "libraries",
     "mounts",
+    "providers",
     "reviewer",
 )
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -77,7 +77,7 @@ class SetupLibraryCandidate(_Closed):
 class SetupStateDocument(_Closed):
     """The only incomplete authority admitted before the owner is established."""
 
-    schema_version: Literal["setup-state-v4"]
+    schema_version: Literal["setup-state-v5"]
     revision: Annotated[StrictInt, Field(ge=1)]
     bootstrap_verifier_digest: StrictStr
     # Only the digest of the deployment-held token is kept, and only while the
@@ -122,6 +122,12 @@ class SetupStateDocument(_Closed):
             raise SetupStateError("setup state is unavailable")
         if "mounts" in self.completed_steps and not self.mounts:
             raise SetupStateError("setup state is unavailable")
+        if "providers" not in self.completed_steps and any(
+            library.provider_connections for library in self.libraries
+        ):
+            # Sources are chosen after libraries, so no library names one
+            # before that step completes.
+            raise SetupStateError("setup state is unavailable")
         if (self.reviewer_setup is not None) != ("reviewer" in self.completed_steps):
             raise SetupStateError("setup state is unavailable")
         return self
@@ -142,11 +148,13 @@ class SetupStateDocument(_Closed):
         if index <= 1:
             values["connection"] = None
         if index <= 2:
-            values["providers"] = []
-        if index <= 3:
             values["libraries"] = []
-        if index <= 4:
+        if index <= 3:
             values["mounts"] = []
+        if index <= 4:
+            values["providers"] = []
+            for library in values["libraries"]:
+                library["provider_connections"] = []
         if index <= 5:
             values["reviewer_setup"] = None
         return SetupStateDocument.model_validate(values)
@@ -173,7 +181,7 @@ class SetupStateDocument(_Closed):
         fields.update(
             f"provider.{item.name}.key"
             for item in self.providers
-            if item.enabled and item.adapter == "hardcover"
+            if item.enabled and item.adapter in {"hardcover", "google_books"}
         )
         return frozenset(fields)
 

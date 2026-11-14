@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 from _thread import RLock
@@ -11,7 +12,10 @@ import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
@@ -43,6 +47,7 @@ _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
 _OWNER = "$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash"
 _CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
 _CLAIM_DIGEST = claim_token_digest(_CLAIM_TOKEN)
+_SOURCES = ["claim", "connect", "libraries", "mounts", "providers"]
 
 
 class _PostReleaseInterruptionLock:
@@ -276,12 +281,11 @@ def _connected(store: SetupStateStore) -> SetupStateDocument:
     )
 
 
-def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
+def _folders_found(store: SetupStateStore) -> SetupStateDocument:
     state = _connected(store)
     for completed, changes in (
-        (["claim", "connect", "providers"], {}),
         (
-            ["claim", "connect", "providers", "libraries"],
+            ["claim", "connect", "libraries"],
             {
                 "libraries": [
                     {
@@ -295,7 +299,7 @@ def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
             },
         ),
         (
-            ["claim", "connect", "providers", "libraries", "mounts"],
+            ["claim", "connect", "libraries", "mounts"],
             {"mounts": [{"library": "books", "state": "matched"}]},
         ),
     ):
@@ -303,6 +307,14 @@ def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
             _next(state, completed_steps=completed, **changes), state.revision
         )
     return state
+
+
+def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
+    state = _folders_found(store)
+    return store.write(
+        _next(state, completed_steps=[*state.completed_steps, "providers"]),
+        state.revision,
+    )
 
 
 def _configured_reviewer(store: ReviewerAccessStore) -> ReviewerAccessDocument:
@@ -504,7 +516,40 @@ def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> No
     assert connection.execute("SELECT * FROM owner_setting_secrets").fetchall() == []
 
 
-def test_setup_state_v3_is_rejected_and_clean_v4_restarts(tmp_path: Path) -> None:
+# Produced once by main 1e40063's own SetupStateStore (claimed, connected,
+# Hardcover with its key) and frozen here; it is never rebuilt.
+_V4_DOCUMENT = (
+    '{"bootstrap_verifier_digest":"0000000000000000000000000000000000000000000000000000000000000000",'
+    '"claim_token_digest":null,"claimed":true,'
+    '"completed_steps":["claim","connect","providers"],'
+    '"connection":{"endpoint":"https://abs.example.invalid","name":"primary"},'
+    '"libraries":[],"mounts":[],'
+    '"providers":[{"adapter":"hardcover","cover_enabled":false,"enabled":true,"name":"hardcover"}],'
+    '"reviewer_setup":null,"revision":4,"schema_version":"setup-state-v4"}'
+)
+
+
+def _retain_v4(path: Path) -> None:
+    connection = sqlite3.connect(path, isolation_level=None)
+    _create_schema(connection)
+    connection.execute(
+        "INSERT INTO owner_settings(singleton,revision,document) VALUES(1,4,?)",
+        (_V4_DOCUMENT,),
+    )
+    connection.executemany(
+        "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?)",
+        (
+            ("connection.primary.key", "abs-secret"),
+            ("owner.password.verifier", _OWNER),
+            ("provider.hardcover.key", "hc-secret"),
+        ),
+    )
+    connection.close()
+
+
+def test_setup_state_v4_and_v3_are_rejected_and_clean_v5_restarts(
+    tmp_path: Path,
+) -> None:
     v3 = {
         "schema_version": "setup-state-v3",
         "revision": 1,
@@ -514,8 +559,10 @@ def test_setup_state_v3_is_rejected_and_clean_v4_restarts(tmp_path: Path) -> Non
         SetupStateDocument.model_validate(v3)
     with pytest.raises(ValidationError):
         SetupStateDocument.model_validate({**v3, "claim_token_digest": _CLAIM_DIGEST})
+    with pytest.raises(ValidationError):
+        SetupStateDocument.model_validate_json(_V4_DOCUMENT)
 
-    # An incomplete v3 store is refused at open: clean rebuild required.
+    # An incomplete v3 or v4 store is refused at open: clean rebuild required.
     retained = tmp_path / "retained-v3.sqlite3"
     connection = sqlite3.connect(retained, isolation_level=None)
     _create_schema(connection)
@@ -529,18 +576,121 @@ def test_setup_state_v3_is_rejected_and_clean_v4_restarts(tmp_path: Path) -> Non
         _validate_owner_settings_content(connection)
     connection.close()
 
+    retained_v4 = tmp_path / "retained-v4.sqlite3"
+    _retain_v4(retained_v4)
+    connection = sqlite3.connect(retained_v4, isolation_level=None)
+    with pytest.raises(SetupStateError):
+        SetupStateStore(connection).read()
+    with pytest.raises(OwnerSettingsError):
+        _validate_owner_settings_content(connection)
+    connection.close()
+    with pytest.raises(MetadataReportError):
+        open_repository(retained_v4, create=False)
+
+    # Negative control: the v5 literal with the v4 step order is refused.
+    v4_order = {
+        **json.loads(_V4_DOCUMENT),
+        "schema_version": "setup-state-v5",
+    }
+    with pytest.raises(ValidationError):
+        SetupStateDocument.model_validate(v4_order)
+
     path = tmp_path / "setup-state.sqlite3"
     connection = sqlite3.connect(path)
     _create_schema(connection)
     state = SetupStateStore(connection).initialize(_CLAIM_DIGEST)
-    assert state.schema_version == "setup-state-v4"
+    assert state.schema_version == "setup-state-v5"
     connection.close()
 
     reopened = sqlite3.connect(path)
     try:
-        assert SetupStateStore(reopened).read().schema_version == "setup-state-v4"
+        assert SetupStateStore(reopened).read().schema_version == "setup-state-v5"
     finally:
         reopened.close()
+
+
+def _library(**changes: object) -> dict[str, object]:
+    return {
+        "name": "books",
+        "connection": "primary",
+        "library_id": "books",
+        "media_kind": "book",
+        "mount": "books",
+        **changes,
+    }
+
+
+def test_v5_ledger_orders_libraries_and_folders_before_sources() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    assert state.next_step() == "libraries"
+
+    # Sources cannot be recorded before libraries and their folders.
+    with pytest.raises(ValidationError):
+        _next(state, completed_steps=["claim", "connect", "providers"])
+
+    libraries = store.write(
+        _next(
+            state,
+            completed_steps=["claim", "connect", "libraries"],
+            libraries=[_library(mount=None)],
+            mounts=[{"library": "books", "state": "missing"}],
+        ),
+        state.revision,
+    )
+    assert libraries.next_step() == "mounts"
+    found = store.write(
+        _next(
+            libraries,
+            completed_steps=["claim", "connect", "libraries", "mounts"],
+            libraries=[_library()],
+            mounts=[{"library": "books", "state": "matched"}],
+        ),
+        libraries.revision,
+    )
+    assert found.next_step() == "providers"
+
+    # No library names a source until the sources step completes.
+    with pytest.raises(ValidationError):
+        _next(found, libraries=[_library(provider_connections=["hardcover"])])
+
+    sources = store.write(
+        _next(
+            found,
+            completed_steps=_SOURCES,
+            providers=[
+                {
+                    "name": "hardcover",
+                    "adapter": "hardcover",
+                    "enabled": True,
+                    "cover_enabled": False,
+                }
+            ],
+            libraries=[_library(provider_connections=["hardcover"])],
+        ),
+        found.revision,
+        _BOOTSTRAP,
+        {"provider.hardcover.key": "provider-secret"},
+    )
+    assert sources.next_step() == "reviewer"
+
+    reopened = sources.invalidate_after("providers")
+    assert reopened.completed_steps == ["claim", "connect", "libraries", "mounts"]
+    assert reopened.providers == []
+    assert [value.provider_connections for value in reopened.libraries] == [[]]
+    assert reopened.mounts == sources.mounts
+
+    folders = sources.invalidate_after("mounts")
+    assert folders.completed_steps == ["claim", "connect", "libraries"]
+    assert folders.mounts == []
+    assert folders.providers == []
+
+    chosen = sources.invalidate_after("libraries")
+    assert chosen.completed_steps == ["claim", "connect"]
+    assert chosen.libraries == []
+    assert chosen.mounts == []
+    assert chosen.providers == []
+    assert chosen.connection == sources.connection
 
 
 @pytest.mark.parametrize(
@@ -559,7 +709,7 @@ def test_claim_token_digest_exists_exactly_while_unclaimed(
     with pytest.raises(ValidationError):
         SetupStateDocument.model_validate(
             {
-                "schema_version": "setup-state-v4",
+                "schema_version": "setup-state-v5",
                 "revision": 2 if claimed else 1,
                 "bootstrap_verifier_digest": "0" * 64,
                 "completed_steps": ["claim"] if claimed else [],
@@ -770,11 +920,9 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
         connection={"name": "primary", "endpoint": "https://abs.example.invalid"},
     )
     state = store.write(state, 2, _BOOTSTRAP, {"connection.primary.key": "secret"})
-    state = _next(state, completed_steps=["claim", "connect", "providers"])
-    state = store.write(state, 3, _BOOTSTRAP, {"connection.primary.key": "secret"})
     state = _next(
         state,
-        completed_steps=["claim", "connect", "providers", "libraries"],
+        completed_steps=["claim", "connect", "libraries"],
         libraries=[
             {
                 "name": "books",
@@ -784,11 +932,15 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
             }
         ],
     )
-    state = store.write(state, 4, _BOOTSTRAP, {"connection.primary.key": "secret"})
+    state = store.write(state, 3, _BOOTSTRAP, {"connection.primary.key": "secret"})
     state = _next(
         state,
-        completed_steps=["claim", "connect", "providers", "libraries", "mounts"],
+        completed_steps=["claim", "connect", "libraries", "mounts"],
         mounts=[{"library": "books", "state": "matched"}],
+    )
+    state = store.write(state, 4, _BOOTSTRAP, {"connection.primary.key": "secret"})
+    state = _next(
+        state, completed_steps=["claim", "connect", "libraries", "mounts", "providers"]
     )
     state = store.write(state, 5, _BOOTSTRAP, {"connection.primary.key": "secret"})
     store.write(
@@ -797,9 +949,9 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
             completed_steps=[
                 "claim",
                 "connect",
-                "providers",
                 "libraries",
                 "mounts",
+                "providers",
                 "reviewer",
             ],
             reviewer_setup="skipped",
@@ -824,53 +976,16 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
 
 def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() -> None:
     connection, store = _store()
-    state = _connected(store)
-    state = store.write(
-        _next(state, completed_steps=["claim", "connect", "providers"]),
-        state.revision,
-        _BOOTSTRAP,
-    )
-    state = store.write(
-        _next(
-            state,
-            completed_steps=["claim", "connect", "providers", "libraries"],
-            libraries=[
-                {
-                    "name": "books",
-                    "connection": "primary",
-                    "library_id": "books",
-                    "media_kind": "ebook",
-                    "mount": "books",
-                }
-            ],
-        ),
-        state.revision,
-        _BOOTSTRAP,
-    )
+    state = _reviewer_ready(store)
     state = store.write(
         _next(
             state,
             completed_steps=[
                 "claim",
                 "connect",
-                "providers",
                 "libraries",
                 "mounts",
-            ],
-            mounts=[{"library": "books", "state": "matched"}],
-        ),
-        state.revision,
-        _BOOTSTRAP,
-    )
-    state = store.write(
-        _next(
-            state,
-            completed_steps=[
-                "claim",
-                "connect",
                 "providers",
-                "libraries",
-                "mounts",
                 "reviewer",
             ],
             reviewer_setup="skipped",
@@ -922,7 +1037,7 @@ def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() ->
 def test_changing_a_recorded_step_removes_its_dependents() -> None:
     state = SetupStateDocument.model_validate(
         {
-            "schema_version": "setup-state-v4",
+            "schema_version": "setup-state-v5",
             "revision": 1,
             "bootstrap_verifier_digest": "0" * 64,
             "claim_token_digest": _CLAIM_DIGEST,
@@ -935,12 +1050,12 @@ def test_changing_a_recorded_step_removes_its_dependents() -> None:
 
 def test_provider_key_can_be_added_without_resending_connection_key() -> None:
     connection, store = _store()
-    state = _connected(store)
+    state = _folders_found(store)
 
     state = store.write(
         _next(
             state,
-            completed_steps=["claim", "connect", "providers"],
+            completed_steps=_SOURCES,
             providers=[
                 {
                     "name": "hardcover",
@@ -965,37 +1080,47 @@ def test_provider_key_can_be_added_without_resending_connection_key() -> None:
     ]
 
 
-def test_google_books_is_allowed_without_a_key_but_hardcover_is_not() -> None:
+@pytest.mark.parametrize("adapter", ("google_books", "hardcover"))
+def test_v5_requires_a_key_for_google_books_and_hardcover(adapter: str) -> None:
     _connection, store = _store()
-    state = _connected(store)
-    google = _next(
+    state = _folders_found(store)
+    keyless = _next(
         state,
-        completed_steps=["claim", "connect", "providers"],
+        completed_steps=_SOURCES,
         providers=[
             {
-                "name": "google",
-                "adapter": "google_books",
+                "name": "source",
+                "adapter": adapter,
                 "enabled": True,
                 "cover_enabled": False,
             }
         ],
     )
-
-    assert store.write(google, state.revision, _BOOTSTRAP) == google
-
-    hardcover = _next(
-        google,
-        providers=[
-            {
-                "name": "hardcover",
-                "adapter": "hardcover",
-                "enabled": True,
-                "cover_enabled": False,
-            }
-        ],
-    )
+    assert keyless.required_secret_fields() >= {"provider.source.key"}
     with pytest.raises(SetupStateError):
-        store.write(hardcover, google.revision, _BOOTSTRAP)
+        store.write(keyless, state.revision, _BOOTSTRAP)
+    assert store.read(_BOOTSTRAP) == state
+
+    assert (
+        store.write(
+            keyless, state.revision, _BOOTSTRAP, {"provider.source.key": "secret"}
+        )
+        == keyless
+    )
+    # A turned-off source needs no key.
+    off = _next(
+        state,
+        completed_steps=_SOURCES,
+        providers=[
+            {
+                "name": "source",
+                "adapter": adapter,
+                "enabled": False,
+                "cover_enabled": False,
+            }
+        ],
+    )
+    assert "provider.source.key" not in off.required_secret_fields()
 
 
 def test_resume_rejects_invalid_secret_value_and_runtime_rows() -> None:
@@ -1045,10 +1170,10 @@ def test_resume_rejects_changed_seeded_singleton_value() -> None:
 
 def test_provider_skip_preserves_connection_key_without_a_secret_delta() -> None:
     connection, store = _store()
-    state = _connected(store)
+    state = _folders_found(store)
 
     state = store.write(
-        _next(state, completed_steps=["claim", "connect", "providers"]),
+        _next(state, completed_steps=_SOURCES),
         state.revision,
         _BOOTSTRAP,
     )
@@ -1064,11 +1189,11 @@ def test_provider_skip_preserves_connection_key_without_a_secret_delta() -> None
 
 def test_change_invalidation_removes_only_secrets_owned_by_dependents() -> None:
     connection, store = _store()
-    state = _connected(store)
+    state = _folders_found(store)
     state = store.write(
         _next(
             state,
-            completed_steps=["claim", "connect", "providers"],
+            completed_steps=_SOURCES,
             providers=[
                 {
                     "name": "hardcover",
@@ -1109,7 +1234,7 @@ def test_invalid_secret_delta_changes_neither_document_nor_secrets(
     delta: dict[str, str | None],
 ) -> None:
     connection, store = _store()
-    state = _connected(store)
+    state = _folders_found(store)
     before_document = connection.execute(
         "SELECT revision,document FROM owner_settings"
     ).fetchall()
@@ -1119,7 +1244,7 @@ def test_invalid_secret_delta_changes_neither_document_nor_secrets(
 
     with pytest.raises(SetupStateError):
         store.write(
-            _next(state, completed_steps=["claim", "connect", "providers"]),
+            _next(state, completed_steps=_SOURCES),
             state.revision,
             _BOOTSTRAP,
             delta,
@@ -1139,9 +1264,9 @@ def test_invalid_secret_delta_changes_neither_document_nor_secrets(
 
 def test_stale_write_changes_neither_document_nor_secrets() -> None:
     connection, store = _store()
-    state = _connected(store)
+    state = _folders_found(store)
     successor = store.write(
-        _next(state, completed_steps=["claim", "connect", "providers"]),
+        _next(state, completed_steps=_SOURCES),
         state.revision,
         _BOOTSTRAP,
     )
