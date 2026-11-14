@@ -329,7 +329,7 @@ jobs:
       # `~/.cache/ms-playwright` and nothing else, so on a cache hit the flag's
       # only contribution was `apt-get` -- and an unreachable
       # `azure.archive.ubuntu.com` twice spent this job's entire ten-minute
-      # budget inside it without running one test. The `ubuntu-24.04` image
+      # budget inside it without running one test. The `ubuntu-26.04` image
       # already ships Chromium's shared libraries, so the flag bought a stall
       # rather than a dependency.
       #
