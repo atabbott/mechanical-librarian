@@ -34,6 +34,9 @@ from mechanical_librarian.adapters.persistence.catalogue import CatalogueReadAdm
 from mechanical_librarian.adapters.persistence.cover_considerations import (
     SQLiteCoverConsiderationRepository,
 )
+from mechanical_librarian.adapters.persistence.cover_taste import (
+    SQLiteCoverTasteRepository,
+)
 from mechanical_librarian.adapters.persistence.crash_recovery import (
     recover_private_bindings,
 )
@@ -338,6 +341,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
+        self._cover_taste = SQLiteCoverTasteRepository(connection)
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
         self._current_work_identity_level = "identifier"
@@ -607,6 +611,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             self._reviewer_access,
             self._description_advice,
             self._review_scans,
+            self._cover_taste,
             self._retained_covers,
             self._field_effects,
             self._review_preparation,
@@ -1655,6 +1660,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def description_advice_store(self) -> SQLiteDescriptionAdviceRepository:
         return self._description_advice
+
+    def cover_taste_store(self) -> SQLiteCoverTasteRepository:
+        return self._cover_taste
 
     def read_staged_description_preparation(
         self, action: PipelineAction

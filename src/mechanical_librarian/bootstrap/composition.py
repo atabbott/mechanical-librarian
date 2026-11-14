@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass
-from functools import partial
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
@@ -59,6 +59,9 @@ from mechanical_librarian.adapters.persistence.batch_manifest import (
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.cover_taste import (
+    SQLiteCoverTasteRepository,
+)
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     activity_projector_event,
 )
@@ -162,6 +165,7 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.cover_retention import CoverRetention
+from mechanical_librarian.application.cover_taste_build import CoverTasteBuildService
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -1694,6 +1698,13 @@ def create_review_pipeline(
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,
+        # The lane that calls it opens its own repository on first use.
+        background_wake=_compose_cover_taste(
+            lru_cache(maxsize=1)(lambda: repository_factory().cover_taste_store()),
+            artifact_store_path,
+            review_configuration,
+            reviewer_access,
+        ).wake,
     )
 
 
@@ -2337,6 +2348,12 @@ def compose_store_runtime_generation(
                 cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
                 reviewer_access=reviewer_access,
+                cover_taste=_compose_cover_taste(
+                    repository.cover_taste_store,
+                    artifact_store_path,
+                    review,
+                    reviewer_access,
+                ),
                 settings_activation=None if activation is None else activation.activate,
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
@@ -2877,6 +2894,12 @@ def run_review_server(
                     cover_considerations=cover_considerations,
                     settings=settings,
                     reviewer_access=reviewer_access,
+                    cover_taste=_compose_cover_taste(
+                        repository.cover_taste_store,
+                        artifact_store_path,
+                        review,
+                        reviewer_access,
+                    ),
                     first_boot=first_boot,
                     provider_throttling=_provider_throttling_reader(
                         provider_recovery, configuration, credentials, "managed_by_file"
@@ -3166,6 +3189,26 @@ def _compose_reviewer_access(
         ),
         openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
         codex_description_binding=description_binding,
+        taste_daily_requests=review.cover_taste_build_daily_requests,
+    )
+
+
+def _compose_cover_taste(
+    repository: Callable[[], SQLiteCoverTasteRepository],
+    artifact_store_path: Path,
+    review: ReviewWebConfiguration,
+    reviewer_access: ReviewerAccessOperations,
+) -> CoverTasteBuildService:
+    """Wire one taste profile build service over one repository (#1372)."""
+    # The artifact store opens on the first preview read, never at composition.
+    artifacts = lru_cache(maxsize=1)(
+        lambda: CoverArtifactStore(artifact_store_path, create=False)
+    )
+    return CoverTasteBuildService(
+        repository,
+        reviewer_access,
+        lambda digest: artifacts().read_preview_digest(digest),
+        daily_limit=review.cover_taste_build_daily_requests,
     )
 
 

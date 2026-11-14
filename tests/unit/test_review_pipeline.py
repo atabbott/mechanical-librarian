@@ -12873,3 +12873,64 @@ def test_a_matching_check_projection_starts_no_description_attempt(
         stages.prepare_advice(repository, action)
     assert calls == [{"reuse_only": reuse_only}]
     assert order == ["cover"]
+
+
+def _lane_run(supervisor: ReviewPreparationSupervisor, lane: int, wakes: int) -> int:
+    """Run one lane for `wakes` wakes; returns how many times work was run."""
+    runs = 0
+    pipeline = supervisor._pipeline
+
+    def run_next(maximum_actions: int = 64) -> bool:
+        nonlocal runs
+        runs += 1
+        if runs == wakes:
+            supervisor._stop.set()
+        else:
+            supervisor._wake.set()
+        return False
+
+    pipeline.run_next = run_next  # type: ignore[method-assign]
+    supervisor._wake.set()
+    supervisor._run(lane)
+    return runs
+
+
+def test_lane_one_carries_the_background_wake_with_the_supervisor_clock() -> None:
+    """The taste profile build runs on lane 1, never lane 0 (#1372 Q7)."""
+    woken: list[int] = []
+    supervisor = ReviewPreparationSupervisor(
+        _ScheduledPipeline(), clock=lambda: 41, background_wake=woken.append
+    )
+    assert _lane_run(supervisor, 1, 2) == 2
+    assert woken == [41, 41]
+    lane_zero: list[int] = []
+    other = ReviewPreparationSupervisor(
+        _ScheduledPipeline(), clock=lambda: 41, background_wake=lane_zero.append
+    )
+    _lane_run(other, 0, 1)
+    assert lane_zero == []
+
+
+def test_lane_one_contains_a_background_failure_and_continues() -> None:
+    wakes: list[int] = []
+
+    def background(now: int) -> None:
+        wakes.append(now)
+        raise RuntimeError("synthetic build failure")
+
+    supervisor = ReviewPreparationSupervisor(
+        _ScheduledPipeline(), clock=lambda: 41, background_wake=background
+    )
+    assert _lane_run(supervisor, 1, 3) == 3
+    assert wakes == [41, 41, 41]
+
+
+def test_a_stopped_supervisor_never_wakes_background_work() -> None:
+    woken: list[int] = []
+    supervisor = ReviewPreparationSupervisor(
+        _ScheduledPipeline(), clock=lambda: 41, background_wake=woken.append
+    )
+    supervisor._stop.set()
+    supervisor._wake.set()
+    supervisor._run(1)
+    assert woken == []

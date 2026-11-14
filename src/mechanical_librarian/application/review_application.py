@@ -18,6 +18,10 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_taste_build import (
+    CoverTasteBuildService,
+    CoverTasteRetryError,
+)
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
@@ -545,6 +549,7 @@ class ReviewApplication:
         cover_store: CoverBrowseStore | None = None,
         settings: OwnerSettingsOperations | None = None,
         reviewer_access: ReviewerAccessOperations | None = None,
+        cover_taste: CoverTasteBuildService | None = None,
         settings_activation: (
             Callable[
                 [
@@ -595,6 +600,7 @@ class ReviewApplication:
         if reviewer_access is not None:
             reviewer_access.attach_serialization(self.serialized)
             reviewer_access.attach_changes(self._reviewer_changed)
+        self._cover_taste = cover_taste
         self._settings_activation = settings_activation
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot
@@ -659,6 +665,21 @@ class ReviewApplication:
     @property
     def reviewer_access(self) -> ReviewerAccessOperations | None:
         return self._reviewer_access
+
+    def taste_profile(self) -> dict[str, object]:
+        """Covers → Taste profile: configured, builds and versions (#1372)."""
+        if self._cover_taste is None:
+            raise ReviewApplicationError("unavailable")
+        return self._cover_taste.read()
+
+    def retry_taste_build(self, build_id: str) -> None:
+        if self._cover_taste is None:
+            raise ReviewApplicationError("unavailable")
+        try:
+            self._cover_taste.retry(build_id)
+        except CoverTasteRetryError:
+            raise ReviewApplicationError("stale") from None
+        self._updates.publish("library")
 
     def owner_settings(self) -> object:
         if self._settings is None:
@@ -1861,6 +1882,7 @@ def compose_review_application(
     cover_considerations: CoverConsiderationService | None = None,
     settings: OwnerSettingsOperations | None = None,
     reviewer_access: ReviewerAccessOperations | None = None,
+    cover_taste: CoverTasteBuildService | None = None,
     settings_activation: (
         Callable[
             [
@@ -1960,6 +1982,7 @@ def compose_review_application(
         cover_store=library_store,
         settings=settings,
         reviewer_access=reviewer_access,
+        cover_taste=cover_taste,
         settings_activation=settings_activation,
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,

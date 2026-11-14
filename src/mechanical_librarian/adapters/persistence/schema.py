@@ -39,6 +39,9 @@ from mechanical_librarian.adapters.persistence.binding import (
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
 )
+from mechanical_librarian.adapters.persistence.cover_taste import (
+    validate_cover_taste_versions,
+)
 from mechanical_librarian.adapters.persistence.description_advice import (
     validate_description_history,
 )
@@ -68,6 +71,7 @@ from mechanical_librarian.domain.cover_automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
+from mechanical_librarian.domain.cover_taste import COVER_TASTE_PROFILE_SCHEMA
 from mechanical_librarian.domain.human_decision import (
     AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
@@ -1244,6 +1248,21 @@ _DESCRIPTION_ADVICE_TRIGGERS = {
     for table in ("description_advice_candidates", "description_decisions")
     for operation in ("update", "delete")
 }
+# #1372: the taste profile's builds, its append-only versions and the durable
+# per-task, per-UTC-day request count every reviewer ceiling reads.
+_COVER_TASTE_FAILURES = "'unavailable','invalid_output','ceiling','unknown_charge','interrupted','unconfigured'"
+_COVER_TASTE_TABLES = {
+    "reviewer_task_requests": "CREATE TABLE reviewer_task_requests (task TEXT NOT NULL CHECK(task IN ('cover_taste_build')), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), requests INTEGER NOT NULL CHECK(typeof(requests)='integer' AND requests>=0), stopped TEXT CHECK(stopped IS NULL OR stopped='unknown_charge'), PRIMARY KEY(task,day))",
+    "cover_taste_builds": "CREATE TABLE cover_taste_builds (build_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(build_id)='text' AND build_id GLOB 'taste_build_[0-9a-f]*' AND length(build_id)=44), trigger TEXT NOT NULL CHECK(trigger IN ('cadence','retry')), retry_of TEXT UNIQUE REFERENCES cover_taste_builds(build_id), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed')), "
+    f"failure TEXT CHECK(failure IN ({_COVER_TASTE_FAILURES})), "
+    "model TEXT CHECK(model IS NULL OR length(model) BETWEEN 1 AND 256), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), selection_watermark INTEGER NOT NULL CHECK(typeof(selection_watermark)='integer' AND selection_watermark>=0), requested_at INTEGER NOT NULL CHECK(typeof(requested_at)='integer' AND requested_at>=0), updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=requested_at), CHECK((state='failed')=(failure IS NOT NULL)), CHECK(trigger='retry' OR retry_of IS NULL))",
+    "cover_taste_profile_versions": "CREATE TABLE cover_taste_profile_versions (version INTEGER PRIMARY KEY CHECK(typeof(version)='integer' AND version>=1), build_id TEXT NOT NULL UNIQUE REFERENCES cover_taste_builds(build_id), created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0), "
+    f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_PROFILE_SCHEMA}'))",
+}
+_COVER_TASTE_TRIGGERS = {
+    f"cover_taste_profile_versions_no_{operation}": f"CREATE TRIGGER cover_taste_profile_versions_no_{operation} BEFORE {operation.upper()} ON cover_taste_profile_versions BEGIN SELECT RAISE(ABORT, 'taste profile versions are append-only'); END"
+    for operation in ("update", "delete")
+}
 # A corrective keep_current's predecessor and an authored description's both
 # find a case's description decisions; without this the pending statements
 # built an automatic index over field_effects per call (#1204).
@@ -1496,6 +1515,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     for statement in (
         *_DESCRIPTION_ADVICE_TABLES.values(),
         *_DESCRIPTION_ADVICE_TRIGGERS.values(),
+        *_COVER_TASTE_TABLES.values(),
+        *_COVER_TASTE_TRIGGERS.values(),
     ):
         connection.execute(statement)
     """Build the exact schema and seed its singleton rows.
@@ -1705,6 +1726,18 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             *(
                 ("trigger", name, statement)
                 for name, statement in _DESCRIPTION_ADVICE_TRIGGERS.items()
+            ),
+            *(
+                ("table", name, statement)
+                for name, statement in _COVER_TASTE_TABLES.items()
+            ),
+            ("index", "sqlite_autoindex_reviewer_task_requests_1", None),
+            ("index", "sqlite_autoindex_cover_taste_builds_1", None),
+            ("index", "sqlite_autoindex_cover_taste_builds_2", None),
+            ("index", "sqlite_autoindex_cover_taste_profile_versions_1", None),
+            *(
+                ("trigger", name, statement)
+                for name, statement in _COVER_TASTE_TRIGGERS.items()
             ),
             ("index", "sqlite_autoindex_current_metadata_reports_1", None),
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
@@ -2278,6 +2311,7 @@ def _validate_schema_contents_without_review_field_facts(
         raise MetadataReportError("database is unavailable or incompatible")
     try:
         validate_description_history(connection)
+        validate_cover_taste_versions(connection)
     except ValueError as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
