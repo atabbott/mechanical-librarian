@@ -68,6 +68,11 @@ CURRENT_VERSIONS: tuple[tuple[str, str], ...] = (
     ),
     ("mechanical_librarian.domain.human_decision", "COVER_SELECTION_AUTHORITY_SCHEMA"),
     (
+        "mechanical_librarian.application.cover_taste_contract",
+        "COVER_TASTE_BUILD_PACKET_SCHEMA",
+    ),
+    ("mechanical_librarian.domain.cover_taste", "COVER_TASTE_PROFILE_SCHEMA"),
+    (
         "mechanical_librarian.adapters.persistence.field_effect_validation",
         "FIELD_EFFECT_CONSENT_STATE_SCHEMA",
     ),

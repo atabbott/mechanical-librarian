@@ -81,6 +81,11 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** Covers has a Taste profile tab. Once you have
+  chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
+  writes rules about the covers you choose and pass over. The profile is shown
+  read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
+  (default 8) caps its requests a day (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when

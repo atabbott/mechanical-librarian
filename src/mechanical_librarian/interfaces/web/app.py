@@ -114,6 +114,13 @@ from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterPublicFailure,
 )
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
+from mechanical_librarian.domain.cover_taste import (
+    MAX_TASTE_RULE_CODE_POINTS,
+    MAX_TASTE_RULES,
+    TASTE_FIRST_BUILD_DECISIONS,
+    TasteBuildFailure,
+    TasteSection,
+)
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
@@ -138,6 +145,7 @@ from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldState,
 )
 from mechanical_librarian.domain.reviewer_access import (
+    CoverModelMetadata,
     DescriptionModelMetadata,
     OpenRouterModelId,
 )
@@ -436,13 +444,18 @@ class _ReviewerRevisionRequest(_ClosedModel):
     expected_revision: StrictInt = Field(ge=1)
 
 
+_ReviewerTaskName = Literal[
+    "cover_observation", "description_rewrite", "cover_taste_build"
+]
+
+
 class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
-    task: Literal["cover_observation", "description_rewrite"] = "cover_observation"
+    task: _ReviewerTaskName = "cover_observation"
     engine: Literal["codex"] | None
 
 
 class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
-    task: Literal["cover_observation", "description_rewrite"] = "cover_observation"
+    task: _ReviewerTaskName = "cover_observation"
     api_key: SecretStr = Field(json_schema_extra={"writeOnly": True})
     model: OpenRouterModelId
 
@@ -1456,6 +1469,86 @@ class _CoverCounts(_ClosedModel):
     kept: _Count
     switched: _Count
     all: _Count
+
+
+class _TasteRule(_ClosedModel):
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULES)
+    section: TasteSection
+    text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
+
+
+class _TasteVersion(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    built_at: StrictInt = Field(ge=0)
+    decisions: StrictInt = Field(ge=0, le=50)
+
+
+class _TasteProfileVersion(_TasteVersion):
+    rules: list[_TasteRule] = Field(max_length=MAX_TASTE_RULES)
+
+
+class _TasteBuild(_ClosedModel):
+    build_id: StrictStr = Field(pattern=r"^taste_build_[0-9a-f]{32}$")
+    state: Literal["building", "failed"]
+    failure: TasteBuildFailure | None
+    # When a ceiling or unknown charge lifts: the next UTC midnight.
+    retry_after: StrictInt | None = Field(ge=0)
+
+
+class _TasteProfileResponse(_ClosedModel):
+    """Covers → Taste profile, read-only (#1372). It never carries a path,
+    title, reference or anything the model saw."""
+
+    schema_version: Literal["review-taste-profile-v1"]
+    configured: StrictBool
+    chosen: StrictInt = Field(ge=0)
+    required: Literal[25]
+    daily_limit: StrictInt = Field(ge=1, le=100)
+    build: _TasteBuild | None
+    profile: _TasteProfileVersion | None
+    versions: list[_TasteVersion] = Field(max_length=50)
+
+
+class _TasteRetryRequest(_ClosedModel):
+    build_id: StrictStr = Field(pattern=r"^taste_build_[0-9a-f]{32}$")
+
+
+def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
+    versions = cast("list[tuple[int, int, dict[str, Any]]]", data["versions"])
+    build = cast("dict[str, object] | None", data["build"])
+    return _TasteProfileResponse(
+        schema_version="review-taste-profile-v1",
+        configured=cast(bool, data["configured"]),
+        chosen=cast(int, data["eligible"]),
+        required=TASTE_FIRST_BUILD_DECISIONS,
+        daily_limit=cast(int, data["daily_limit"]),
+        build=None
+        if build is None
+        else _TasteBuild.model_validate(
+            {**build, "state": "building" if build["failure"] is None else "failed"}
+        ),
+        profile=None
+        if not versions
+        else _TasteProfileVersion(
+            version=versions[0][0],
+            built_at=versions[0][1],
+            decisions=versions[0][2]["input"]["included"],
+            rules=[
+                _TasteRule(
+                    number=rule["number"], section=rule["section"], text=rule["text"]
+                )
+                for rule in versions[0][2]["rules"]
+            ],
+        ),
+        versions=[
+            _TasteVersion(
+                version=version,
+                built_at=built_at,
+                decisions=document["input"]["included"],
+            )
+            for version, built_at, document in versions
+        ],
+    )
 
 
 class _CoversResponse(_ClosedModel):
@@ -2868,6 +2961,8 @@ def create_review_app(
             # model, revision, and JSON framing.
             "/api/v1/reviewer-access/openrouter": 4096,
             "/api/v1/reviewer-access/description-model/test": 4096,
+            "/api/v1/reviewer-access/taste-model/test": 4096,
+            "/api/v1/covers/taste/retry": 2048,
             "/api/v1/reviewer-access/selection": 2048,
             "/api/v1/reviewer-access/codex/device": 2048,
             "/api/v1/reviewer-access/codex/recheck": 2048,
@@ -3284,6 +3379,27 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().test_description_model(
+                request.api_key.get_secret_value(), request.model
+            )
+        except (ValueError, *_REVIEWER_FAILURES) as error:
+            raise problem(error) from None
+
+    @app.post(
+        "/api/v1/reviewer-access/taste-model/test",
+        response_model=CoverModelMetadata,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def test_taste_model(
+        request: _OpenRouterWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CoverModelMetadata:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().test_taste_model(
                 request.api_key.get_secret_value(), request.model
             )
         except (ValueError, *_REVIEWER_FAILURES) as error:
@@ -4568,6 +4684,45 @@ def _register_cover_routes(
             )
 
         return await _browse_response(request, read)
+
+    @app.get(
+        "/api/v1/covers/taste",
+        response_model=_TasteProfileResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def taste_profile(
+        ml_session: str | None = Security(session_cookie),
+    ) -> _TasteProfileResponse:
+        """Read-only: the taste profile in use, its versions and build state."""
+        _require_session(sessions, ml_session)
+        try:
+            return _taste_response(application.taste_profile())
+        except (ReviewApplicationError, ReviewerAccessApplicationError):
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+    @app.post(
+        "/api/v1/covers/taste/retry",
+        response_model=_TasteProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def retry_taste_build(
+        request: _TasteRetryRequest,
+        ml_session: str | None = Security(session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _TasteProfileResponse:
+        """Try again after a failed build; repeating it names the same retry."""
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            application.retry_taste_build(request.build_id)
+            return _taste_response(application.taste_profile())
+        except ReviewApplicationError as error:
+            status = 409 if error.code == "stale" else 503
+            raise HTTPException(status, detail={"code": error.code}) from None
+        except ReviewerAccessApplicationError:
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
 
     @app.get(
         "/api/v1/covers/replaced",

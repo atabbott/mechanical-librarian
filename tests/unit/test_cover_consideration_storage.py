@@ -24,6 +24,7 @@ from mechanical_librarian.domain.cover_automatic_decision import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
+from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
@@ -223,6 +224,14 @@ def test_actual_embedded_predecessor_refused_without_mutation(
                 f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
             ),
         ),
+        # Its reviewer access CHECK names v3 (#1372 moved it).
+        patch.object(
+            schema,
+            "_REVIEWER_ACCESS_SQL",
+            schema._REVIEWER_ACCESS_SQL.replace(
+                f"'{REVIEWER_ACCESS_SCHEMA}'", "'reviewer-access-v3'"
+            ),
+        ),
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's
@@ -253,6 +262,9 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP TABLE retained_cover_listings;"
         "DROP TABLE retained_cover_removals;"
         "DROP TABLE retained_cover_bindings;"
+        "DROP TABLE cover_taste_profile_versions;"
+        "DROP TABLE cover_taste_builds;"
+        "DROP TABLE reviewer_task_requests;"
     )
     rows = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"

@@ -18,12 +18,19 @@ from mechanical_librarian.application.contained_reviewer_contract import (
     canonical_json,
     unique_json_object,
 )
+from mechanical_librarian.application.cover_taste_contract import (
+    TASTE_OUTPUT_TOKENS,
+    AdmittedTasteBuildRequest,
+    TasteBuildReply,
+    TasteChargeUnknownError,
+)
 from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterAccountStatus,
     OpenRouterFailure,
     OpenRouterReviewerError,
     openrouter_cover_profile,
     openrouter_profile,
+    openrouter_taste_profile,
 )
 from mechanical_librarian.domain.description_advice import (
     DESCRIPTION_INSTRUCTION,
@@ -48,6 +55,16 @@ _MAX_CATALOGUE_ENTRY = 65_536
 # the provider envelope.
 _MAX_CHAT_RESPONSE = 1_048_576
 _MAX_ERROR_RESPONSE = 8_192
+# One taste build sends up to 100 images and asks for up to 4,096 tokens, so
+# its completion phase gets a longer bound than the 30-second default.
+_TASTE_SECONDS = 300.0
+# Transport failures raised before a request could reach the provider.
+_UNSENT = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ProxyError,
+    httpx.UnsupportedProtocol,
+)
 _STRUCTURE = re.compile(rb'[\[\]{},:"]')
 _STRING_END = re.compile(rb'["\\]')
 
@@ -352,6 +369,84 @@ class OpenRouterReviewer:
             {"request_sha256": request.digest, "result": result.model_dump()}
         )
 
+    def run_taste_build(
+        self, profile: bytes, request: AdmittedTasteBuildRequest
+    ) -> TasteBuildReply:
+        """Send one admitted taste build and parse its closed JSON object.
+
+        A completion that times out after it was sent may still be charged, so
+        it raises `TasteChargeUnknownError` instead of a provider failure.
+        """
+        deadline = time.monotonic() + max(self._timeout_seconds, _TASTE_SECONDS)
+        if profile != openrouter_taste_profile(self._model):
+            raise OpenRouterReviewerError("profile_mismatch")
+        if type(request) is not AdmittedTasteBuildRequest:
+            raise OpenRouterReviewerError("malformed_request")
+        _status, reasoning_supported = self._probe_capabilities(deadline)
+        content: list[dict[str, object]] = [
+            {
+                "type": "text",
+                "text": request.instruction
+                + "\nSealed packet:\n"
+                + request.packet_document,
+            }
+        ]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in request.data_urls()
+        )
+        chat_body: dict[str, object] = {
+            "max_tokens": TASTE_OUTPUT_TOKENS,
+            "messages": [{"role": "user", "content": content}],
+            "model": self._model,
+            "provider": {"require_parameters": True, "data_collection": "deny"},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "cover_taste_profile",
+                    "strict": True,
+                    "schema": json.loads(request.output_schema),
+                },
+            },
+        }
+        if reasoning_supported:
+            chat_body["reasoning"] = {"effort": "minimal", "exclude": True}
+        try:
+            response = self._json_request(
+                "POST",
+                _CHAT_PATH,
+                _MAX_CHAT_RESPONSE,
+                deadline,
+                json_body=chat_body,
+                phase_seconds=_TASTE_SECONDS,
+            )
+        except OpenRouterReviewerError as error:
+            # Only a failure to connect proves nothing was sent; any other
+            # transport loss may follow a request the provider charges for.
+            unsent = isinstance(error.__cause__, _UNSENT)
+            if error.code == "timed_out" or (
+                error.code == "unreachable" and not unsent
+            ):
+                raise TasteChargeUnknownError("taste build outcome unknown") from None
+            raise
+        try:
+            choices = response["choices"]
+            if (
+                response.get("model") != self._model
+                or type(choices) is not list
+                or len(choices) != 1
+            ):
+                raise ValueError
+            text = choices[0]["message"]["content"]
+            if type(text) is not str or len(text.encode("utf-8")) > 65_536:
+                raise ValueError
+            result = json.loads(text, object_pairs_hook=unique_json_object)
+            if type(result) is not dict:
+                raise ValueError
+        except (ValueError, TypeError, KeyError, IndexError, RecursionError):
+            raise OpenRouterReviewerError("malformed_response") from None
+        return TasteBuildReply(result, type(response.get("usage")) is dict)
+
     def _current_model(self, deadline: float) -> dict[str, object]:
         catalogue = _Catalogue(self._model)
         self._exchange("GET", _MODELS_PATH, None, deadline, catalogue.feed)
@@ -368,9 +463,12 @@ class OpenRouterReviewer:
         deadline: float,
         *,
         json_body: dict[str, object] | None = None,
+        phase_seconds: float | None = None,
     ) -> dict[str, object]:
         body = bytearray()
-        self._exchange(method, path, maximum, deadline, body.extend, json_body)
+        self._exchange(
+            method, path, maximum, deadline, body.extend, json_body, phase_seconds
+        )
         try:
             value = json.loads(bytes(body).decode("utf-8", "strict"))
             if type(value) is not dict:
@@ -387,6 +485,7 @@ class OpenRouterReviewer:
         deadline: float,
         consume: Callable[[bytes], object],
         json_body: dict[str, object] | None = None,
+        phase_seconds: float | None = None,
     ) -> None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -397,7 +496,9 @@ class OpenRouterReviewer:
                 path,
                 json=json_body,
                 # Each phase keeps its own bound, never past the shared deadline.
-                timeout=httpx.Timeout(min(self._timeout_seconds, remaining)),
+                timeout=httpx.Timeout(
+                    min(phase_seconds or self._timeout_seconds, remaining)
+                ),
             ) as response:
                 if response.is_redirect:
                     raise OpenRouterReviewerError("transport")

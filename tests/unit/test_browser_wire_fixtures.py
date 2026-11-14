@@ -44,6 +44,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.cover_taste_build import CoverTasteBuildService
 from mechanical_librarian.application.description_advice import DescriptionAdviceService
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
@@ -51,12 +52,14 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+from mechanical_librarian.domain.cover_taste import TasteProfile
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
     DescriptionAdviceSettings,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.description_advice import _prepared
 from tests.support.field_effects import _EffectEnvironment, _plan
 from tests.support.field_effects import effects as effects
@@ -622,3 +625,57 @@ def test_field_effect_reconciliation(effects: _EffectEnvironment, tmp_path) -> N
         capture = live.call("POST", f"{path}/reconcile")
     assert isinstance(capture[3], dict) and capture[3]["state"] == "verified"
     _expect_wire("post-field-effects-reconcile", capture, {})
+
+
+def test_taste_profile(tmp_path) -> None:
+    """Covers → Taste profile with one version written from 25 choices (#1372)."""
+    repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
+    try:
+        record_owner_cover_decisions(tmp_path, repository, 25)
+        access = _access(repository)
+        access.configure_openrouter(
+            expected_revision=access.read().revision,
+            api_key="synthetic-key",
+            model="example/vision",
+            task="cover_taste_build",
+        )
+        store = repository.cover_taste_store()
+        store.schedule(NOW, True, 8)
+        build = store.pending()
+        assert build is not None
+        assert store.claim(build, NOW, "example/vision", 8) is None
+        store.succeed(
+            build,
+            NOW,
+            TasteProfile.from_output(
+                {
+                    "sections": {
+                        "drawn_to": ["Bold illustrated art over photography."],
+                        "avoid": ["Covers whose title is hard to read at a glance."],
+                        "trade_offs": ["Takes a sharper copy of the same art."],
+                        "keep_or_switch": [],
+                    }
+                }
+            ),
+            {
+                "corrections": 0,
+                "dropped": 0,
+                "eligible": 25,
+                "images": 50,
+                "included": 25,
+                "input_sha256": "0" * 64,
+                "truncated": False,
+            },
+        )
+        service = CoverTasteBuildService(
+            repository.cover_taste_store,
+            access,
+            lambda _digest: b"",
+            daily_limit=8,
+            clock=lambda: NOW,
+        )
+        with _signed_in(tmp_path, repository, access, cover_taste=service) as live:
+            capture = live.call("GET", "/api/v1/covers/taste")
+    finally:
+        repository.close()
+    _expect_wire("get-covers-taste", capture, {})

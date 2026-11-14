@@ -255,6 +255,8 @@ INVENTORY: dict[tuple[str, str], Row] = {
     # Price and disclosure probes never write (`test_description_model`,
     # `describe_contained_description`).
     ("POST", "/api/v1/reviewer-access/description-model/test"): _REVIEWER_NO_COMMIT,
+    # `ReviewerAccessOperations.test_taste_model` probes and stores nothing.
+    ("POST", "/api/v1/reviewer-access/taste-model/test"): _REVIEWER_NO_COMMIT,
     (
         "POST",
         "/api/v1/reviewer-access/description-model/contained",
@@ -369,6 +371,14 @@ INVENTORY: dict[tuple[str, str], Row] = {
         "POST",
         "/api/v1/review-cases/{review_case_id}/description-advice/retry",
     ): _CASE_CALL,
+    # --- covers ------------------------------------------------------------------
+    # `retry_taste_build`: no service or a build that is not the latest failed
+    # one refuses before `request_retry` inserts; the profile read that follows
+    # the committed retry can answer `unavailable` (#1372).
+    ("POST", "/api/v1/covers/taste/retry"): {
+        (409, "stale"): "pre-commit",
+        (503, "unavailable"): "post-commit",
+    },
     # --- review preparation -----------------------------------------------------
     ("POST", "/api/v1/review-preparation/dismiss"): _PREPARATION,
     ("POST", "/api/v1/review-preparation/first-boot/acknowledge"): {

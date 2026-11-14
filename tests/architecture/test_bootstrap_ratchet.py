@@ -71,13 +71,18 @@ CEILING = {
     # The currentness check also skips a retained source, whose original is
     # in the retained store only (one import). 3245 since #1363's activation
     # passed the two Current covers settings into the cover preferences.
-    "composition.py": 3245,
+    # 3277 since #1372 wired the taste profile build service into the
+    # preparation runner's background lane and both review applications, and
+    # passed its daily limit to reviewer access: construction and keywords,
+    # with its artifact store opened on first read.
+    "composition.py": 3277,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
 DEF_COUNT = {
     "__init__.py": 1,
-    "composition.py": 110,
+    # 111 since #1372's _compose_cover_taste, a one-call constructor.
+    "composition.py": 111,
     "contained_reviewer.py": 5,
 }
 # Set to the measured size only by an owner review; lowered by a refactor
@@ -105,7 +110,8 @@ RESIDUAL: dict[str, int | None] = {
     _C + "_metadata_provider": 98,
     # Binds adapter-typed callbacks (SQLite repositories, Audiobookshelf reader)
     # into ReviewPipelineStages; the stage logic moved to application in stage 4.
-    _C + "create_review_pipeline": 195,
+    # 202 since #1372 passed the taste build's wake as the background lane.
+    _C + "create_review_pipeline": 202,
     # Wires recovery to the built pipeline; catches an adapter error type.
     _C + "_provider_recovery_wiring": 95,
     # CLI entries: each opens its own stores and adapters for one command and
@@ -116,14 +122,17 @@ RESIDUAL: dict[str, int | None] = {
     _C + "run_cover_review": 105,
     # Build the whole store and setup runtimes from adapters (wiring kept by
     # A-U4); a feature split of composition is A-U6, deferred to stage 7.
-    _C + "compose_store_runtime_generation": 238,
+    # 244 since #1372 passed the taste build service to the review application.
+    _C + "compose_store_runtime_generation": 244,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.
-    _C + "run_review_server": 351,
+    # 357 since #1372 passed the taste build service to the review application.
+    _C + "run_review_server": 357,
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
-    _C + "_compose_reviewer_access": 167,
+    # 168 since #1372 passed the taste profile daily limit.
+    _C + "_compose_reviewer_access": 168,
     # Opens the cover artifact store and binds the SQLite repository's cover
     # hooks to CoverConsiderationService; both are adapter calls. 84 since
     # #1363 passed the Current covers settings as two keyword arguments.

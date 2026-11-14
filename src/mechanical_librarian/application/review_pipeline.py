@@ -1473,6 +1473,7 @@ class ReviewPreparationSupervisor:
         recovery_drain: Callable[[], None] | None = None,
         recovery_resume: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
+        background_wake: Callable[[int], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
             type(polling_interval_seconds) is not int
@@ -1491,6 +1492,7 @@ class ReviewPreparationSupervisor:
         self._recovery_wake = recovery_wake
         self._recovery_drain = recovery_drain
         self._recovery_resume = recovery_resume
+        self._background_wake = background_wake
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
@@ -1837,6 +1839,16 @@ class ReviewPreparationSupervisor:
                                 # here needs a channel of its own.
                                 pass
                         self._schedule_due()
+                    elif self._background_wake is not None:
+                        # Lane 1 carries owner-requested background work such as
+                        # a taste profile build, so a slow request never holds
+                        # up recovery or scheduling on lane 0. The work persists
+                        # its own state; a failure here is contained like
+                        # recovery's above and retried at the next wake.
+                        try:
+                            self._background_wake(self._clock())
+                        except Exception:  # noqa: BLE001 - see above
+                            pass
                     while (
                         not self._stop.is_set() and not self._pipeline.recovery_required
                     ):

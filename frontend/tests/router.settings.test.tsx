@@ -31,7 +31,11 @@ import { createHttp, idlePreparation, renderRoute } from './fixtures'
 import { document, savedDocument, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
-  schema_version: 'reviewer-access-view-v3',
+  schema_version: 'reviewer-access-view-v4',
+  taste_mapping: null,
+  taste_metadata: null,
+  taste_daily_requests: 8,
+  taste_recommendations: ['anthropic/claude-sonnet-5.5'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,
@@ -2793,7 +2797,12 @@ const typeDescriptionModel = async (user: ReturnType<typeof userEvent.setup>) =>
     screen.getByRole('textbox', { name: 'Description model ID' }),
     descriptionModel.model,
   )
-  await user.type(screen.getByLabelText('Shared OpenRouter API key'), 'synthetic-key')
+  await user.type(
+    within(screen.getByRole('region', { name: 'Description adviser' })).getByLabelText(
+      'Shared OpenRouter API key',
+    ),
+    'synthetic-key',
+  )
 }
 
 it('shows a failed OpenRouter description selection under its button, above Refresh (#1663)', async () => {
@@ -3844,5 +3853,132 @@ describe('settings provider throttling (#1282)', () => {
     expect(await screen.findByText('Settings could not be loaded')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull()
     expect(failing.retryProviderRecovery).not.toHaveBeenCalled()
+  })
+})
+
+// Settings → Reviewer › Taste profile (#1372): its own OpenRouter model.
+describe('taste profile model (#1372)', () => {
+  const metadata = {
+    model: 'anthropic/claude-sonnet-5.5',
+    observed_at: 100,
+    prompt_price: '0.000003',
+    completion_price: '0.000015',
+    image_price: '0.0048',
+    request_price: null,
+  }
+  const initial: ReviewerAccessView = { ...reviewerView, openrouter_key_configured: true }
+  const section = async () => {
+    const heading = await screen.findByRole('heading', { level: 3, name: 'Taste profile' })
+    const found = heading.closest('section')
+    if (!found) throw new Error('the taste profile section is required')
+    return found
+  }
+
+  it('discloses what OpenRouter receives, the limit and no selection', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    renderRoute('/settings?group=reviewer', http)
+    const taste = await section()
+    expect(
+      within(taste).getByText(
+        'A vision model writes your taste profile from the covers you chose and passed over.',
+      ),
+    ).toBeVisible()
+    expect(
+      within(taste).getByText(
+        'OpenRouter receives those covers with their sizes and the book’s format, never its title or files.',
+      ),
+    ).toBeVisible()
+    expect(within(taste).getByText('No taste profile model selected.')).toBeVisible()
+    expect(
+      within(taste).getByText('Mechanical Librarian asks for at most 8 taste profiles a day.'),
+    ).toBeVisible()
+    expect(
+      within(taste).getByText('Test this model to see its prices before you use it.'),
+    ).toBeVisible()
+    expect(within(taste).getByRole('button', { name: 'Use for taste profile' })).toBeDisabled()
+  })
+
+  it('tests the recommended model, shows its prices and saves it for taste profiles', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    http.testTasteModel = vi.fn(async () => metadata)
+    http.configureOpenRouter = vi.fn(async () => ({
+      ...initial,
+      revision: 4,
+      taste_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      taste_metadata: metadata,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    await user.click(within(taste).getByRole('combobox', { name: 'Taste profile model' }))
+    await user.click(screen.getByRole('option', { name: /anthropic\/claude-sonnet-5\.5/u }))
+    expect(screen.getByText('Recommended. Measured for taste profiles.')).toBeVisible()
+    await user.click(
+      within(taste).getByRole('button', { name: 'Test taste profile model and prices' }),
+    )
+    expect(
+      await within(taste).findByText('Image input, text output and structured output supported.'),
+    ).toBeVisible()
+    expect(
+      within(taste).getByText(
+        '0.000003 per input token, 0.000015 per output token, 0.0048 per image, Unavailable per request.',
+      ),
+    ).toBeVisible()
+    expect(http.testTasteModel).toHaveBeenCalledWith({
+      expected_revision: 3,
+      api_key: '',
+      model: metadata.model,
+    })
+    await user.click(within(taste).getByRole('button', { name: 'Use for taste profile' }))
+    await waitFor(() =>
+      expect(http.configureOpenRouter).toHaveBeenCalledWith({
+        expected_revision: 3,
+        api_key: '',
+        model: metadata.model,
+        task: 'cover_taste_build',
+      }),
+    )
+    expect(await within(taste).findByText('Taste profile model saved.')).toBeVisible()
+    expect(
+      within(taste).getByText('Selected: anthropic/claude-sonnet-5.5 on OpenRouter.'),
+    ).toBeVisible()
+  })
+
+  it.each([
+    [
+      new ApiError(409, 'access_changed'),
+      'Taste profile setup did not complete. Check the model and key, then try again.',
+    ],
+    [
+      new UncertainMutationError({
+        operation: 'PUT /api/v1/reviewer-access/openrouter',
+        responseStatus: 200,
+        at: 'invalid_reviewer_access_response',
+        reason: 'invariant',
+      }),
+      'No answer came back. Check whether the taste profile model was saved before trying again.',
+    ],
+  ])('says when saving the taste profile model fails (%s)', async (failure, copy) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    http.testTasteModel = vi.fn(async () => metadata)
+    http.configureOpenRouter = vi.fn(async () => {
+      throw failure
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    await user.click(within(taste).getByRole('combobox', { name: 'Taste profile model' }))
+    await user.click(screen.getByRole('option', { name: /anthropic\/claude-sonnet-5\.5/u }))
+    await user.click(
+      within(taste).getByRole('button', { name: 'Test taste profile model and prices' }),
+    )
+    await user.click(await within(taste).findByRole('button', { name: 'Use for taste profile' }))
+    expect(await within(taste).findByRole('alert')).toHaveTextContent(copy)
   })
 })

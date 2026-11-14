@@ -1431,10 +1431,48 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "reviewer-access-view-v3",
-            "default": "reviewer-access-view-v3",
+            "const": "reviewer-access-view-v4",
+            "default": "reviewer-access-view-v4",
             "title": "Schema Version",
             "type": "string"
+          },
+          "taste_daily_requests": {
+            "default": 8,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Taste Daily Requests",
+            "type": "integer"
+          },
+          "taste_mapping": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenRouterTaskSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "taste_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoverModelMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "taste_recommendations": {
+            "default": [
+              "anthropic/claude-sonnet-5.5"
+            ],
+            "items": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+              "type": "string"
+            },
+            "title": "Taste Recommendations",
+            "type": "array"
           }
         },
         "required": [
@@ -7734,7 +7772,8 @@
             "default": "cover_observation",
             "enum": [
               "cover_observation",
-              "description_rewrite"
+              "description_rewrite",
+              "cover_taste_build"
             ],
             "title": "Task",
             "type": "string"
@@ -11036,7 +11075,8 @@
             "default": "cover_observation",
             "enum": [
               "cover_observation",
-              "description_rewrite"
+              "description_rewrite",
+              "cover_taste_build"
             ],
             "title": "Task",
             "type": "string"
@@ -11818,6 +11858,248 @@
           "title"
         ],
         "title": "_TargetIdentity",
+        "type": "object"
+      },
+      "_TasteBuild": {
+        "additionalProperties": false,
+        "properties": {
+          "build_id": {
+            "pattern": "^taste_build_[0-9a-f]{32}$",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unavailable",
+                  "invalid_output",
+                  "ceiling",
+                  "unknown_charge",
+                  "interrupted",
+                  "unconfigured"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After"
+          },
+          "state": {
+            "enum": [
+              "building",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "build_id",
+          "state",
+          "failure",
+          "retry_after"
+        ],
+        "title": "_TasteBuild",
+        "type": "object"
+      },
+      "_TasteProfileResponse": {
+        "additionalProperties": false,
+        "description": "Covers → Taste profile, read-only (#1372). It never carries a path,\ntitle, reference or anything the model saw.",
+        "properties": {
+          "build": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_TasteBuild"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "chosen": {
+            "minimum": 0.0,
+            "title": "Chosen",
+            "type": "integer"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "daily_limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Daily Limit",
+            "type": "integer"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_TasteProfileVersion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required": {
+            "const": 25,
+            "title": "Required",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "review-taste-profile-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/_TasteVersion"
+            },
+            "maxItems": 50,
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "configured",
+          "chosen",
+          "required",
+          "daily_limit",
+          "build",
+          "profile",
+          "versions"
+        ],
+        "title": "_TasteProfileResponse",
+        "type": "object"
+      },
+      "_TasteProfileVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "built_at": {
+            "minimum": 0.0,
+            "title": "Built At",
+            "type": "integer"
+          },
+          "decisions": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Decisions",
+            "type": "integer"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/_TasteRule"
+            },
+            "maxItems": 40,
+            "title": "Rules",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "built_at",
+          "decisions",
+          "rules"
+        ],
+        "title": "_TasteProfileVersion",
+        "type": "object"
+      },
+      "_TasteRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "build_id": {
+            "pattern": "^taste_build_[0-9a-f]{32}$",
+            "title": "Build Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "build_id"
+        ],
+        "title": "_TasteRetryRequest",
+        "type": "object"
+      },
+      "_TasteRule": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "section": {
+            "enum": [
+              "drawn_to",
+              "avoid",
+              "trade_offs",
+              "keep_or_switch"
+            ],
+            "title": "Section",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "section",
+          "text"
+        ],
+        "title": "_TasteRule",
+        "type": "object"
+      },
+      "_TasteVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "built_at": {
+            "minimum": 0.0,
+            "title": "Built At",
+            "type": "integer"
+          },
+          "decisions": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Decisions",
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "built_at",
+          "decisions"
+        ],
+        "title": "_TasteVersion",
         "type": "object"
       },
       "_TitleEbookQualification": {
@@ -12775,6 +13057,165 @@
           }
         ],
         "summary": "Replaced Cover"
+      }
+    },
+    "/api/v1/covers/taste": {
+      "get": {
+        "description": "Read-only: the taste profile in use, its versions and build state.",
+        "operationId": "taste_profile_api_v1_covers_taste_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TasteProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Taste Profile"
+      }
+    },
+    "/api/v1/covers/taste/retry": {
+      "post": {
+        "description": "Try again after a failed build; repeating it names the same retry.",
+        "operationId": "retry_taste_build_api_v1_covers_taste_retry_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_TasteRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TasteProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Retry Taste Build"
       }
     },
     "/api/v1/field-effects/pause": {
@@ -18527,6 +18968,120 @@
           }
         ],
         "summary": "Select Reviewer"
+      }
+    },
+    "/api/v1/reviewer-access/taste-model/test": {
+      "post": {
+        "operationId": "test_taste_model_api_v1_reviewer_access_taste_model_test_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OpenRouterWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverModelMetadata"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Test Taste Model"
       }
     },
     "/api/v1/session/login": {

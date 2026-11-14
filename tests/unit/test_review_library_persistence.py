@@ -118,7 +118,7 @@ def test_cover_currentness_sql_binding_fails_closed_for_unknown_and_failure(
             "provider_fetching": False,
             "manual_ready": True,
             "replay_reference": replay,
-            "cover_stage": {"outcome": "keep", "reason": None},
+            "cover_stage": {"arts": 2, "outcome": "keep", "reason": None},
         }
     )
 

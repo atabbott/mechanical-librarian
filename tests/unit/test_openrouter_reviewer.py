@@ -5,7 +5,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -1081,3 +1081,178 @@ def test_description_probe_refuses_present_invalid_request_fee(
     finally:
         reviewer.close()
     assert posted == []
+
+
+def _taste_request():
+    import hashlib as _hashlib
+
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        canonical_json,
+    )
+    from mechanical_librarian.application.cover_taste_contract import (
+        COVER_TASTE_BUILD_PACKET_SCHEMA,
+        TasteBuildImage,
+        admit_taste_build_request,
+        taste_transport_jpeg,
+    )
+    from tests.support.cover_taste import canonical, stored_preview
+
+    images = []
+    for index in range(2):
+        png = canonical(stored_preview(index)).payload
+        reference = "taste_image_" + _hashlib.sha256(bytes([index])).hexdigest()
+        images.append(TasteBuildImage(reference, png, taste_transport_jpeg(png)))
+    packet = canonical_json(
+        {
+            "decisions": [
+                {
+                    "images": [
+                        {
+                            "current": index == 1,
+                            "group": "AB"[index],
+                            "height": 900,
+                            "reference": image.reference,
+                            "role": "chosen" if index == 0 else "passed_over",
+                            "shape": "fits",
+                            "width": 600,
+                        }
+                        for index, image in enumerate(images)
+                    ],
+                    "medium": "ebook",
+                }
+            ],
+            "schema_version": COVER_TASTE_BUILD_PACKET_SCHEMA,
+        }
+    )
+    return admit_taste_build_request(packet, tuple(images))
+
+
+_TASTE_OUTPUT = {
+    "sections": {
+        "drawn_to": ["Bold art."],
+        "avoid": [],
+        "trade_offs": [],
+        "keep_or_switch": [],
+    }
+}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "valid",
+        "no_usage",
+        "wrong_model",
+        "duplicate",
+        "not_object",
+        "timeout",
+        "unsent",
+    ],
+)
+def test_taste_build_sends_the_admitted_request_only_to_the_exact_model(
+    answer: str,
+) -> None:
+    from mechanical_librarian.application.cover_taste_contract import (
+        TASTE_OUTPUT_SCHEMA,
+        TasteChargeUnknownError,
+    )
+    from mechanical_librarian.application.reviewer_contracts import (
+        openrouter_taste_profile,
+    )
+
+    request = _taste_request()
+    posted: list[dict[str, object]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        if http_request.url.path == "/api/v1/key":
+            return httpx.Response(200, json=_key())
+        if http_request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=_models())
+        posted.append(json.loads(http_request.content))
+        if answer == "timeout":
+            raise httpx.ReadTimeout("synthetic", request=http_request)
+        if answer == "unsent":
+            raise httpx.ConnectError("synthetic", request=http_request)
+        content = {
+            "duplicate": '{"sections":{},"sections":{}}',
+            "not_object": "[]",
+        }.get(answer, json.dumps(_TASTE_OUTPUT))
+        return httpx.Response(
+            200,
+            json={
+                "model": "other/model" if answer == "wrong_model" else "example/vision",
+                "choices": [{"message": {"content": content}}],
+                **({} if answer == "no_usage" else {"usage": {"total_tokens": 10}}),
+            },
+        )
+
+    reviewer = OpenRouterReviewer(
+        "synthetic-secret", "example/vision", transport=httpx.MockTransport(handler)
+    )
+    profile = openrouter_taste_profile("example/vision")
+    try:
+        if answer == "timeout":
+            with pytest.raises(TasteChargeUnknownError):
+                reviewer.run_taste_build(profile, request)
+            return
+        if answer == "unsent":
+            with pytest.raises(OpenRouterReviewerError, match="unreachable"):
+                reviewer.run_taste_build(profile, request)
+            return
+        if answer in {"wrong_model", "duplicate", "not_object"}:
+            with pytest.raises(OpenRouterReviewerError, match="malformed_response"):
+                reviewer.run_taste_build(profile, request)
+            return
+        reply = reviewer.run_taste_build(profile, request)
+        assert reply.result == _TASTE_OUTPUT
+        assert reply.usage_reported is (answer == "valid")
+        [body] = posted
+        assert body["model"] == "example/vision"
+        assert body["max_tokens"] == 4096
+        assert body["provider"] == {
+            "require_parameters": True,
+            "data_collection": "deny",
+        }
+        assert body["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "cover_taste_profile",
+                "strict": True,
+                "schema": json.loads(TASTE_OUTPUT_SCHEMA),
+            },
+        }
+        [message] = cast("list[dict[str, list[dict[str, Any]]]]", body["messages"])
+        text, *images = message["content"]
+        assert text["text"].endswith(request.packet_document)
+        assert [image["image_url"]["url"] for image in images] == list(
+            request.data_urls()
+        )
+        # Never a PNG, path or title: only the admitted JPEGs and packet.
+        assert "image/png" not in json.dumps(body)
+    finally:
+        reviewer.close()
+
+
+def test_taste_build_refuses_another_profile_or_an_unadmitted_request() -> None:
+    from mechanical_librarian.application.reviewer_contracts import (
+        openrouter_profile,
+        openrouter_taste_profile,
+    )
+
+    reviewer = OpenRouterReviewer(
+        "synthetic-secret",
+        "example/vision",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(500)),
+    )
+    try:
+        with pytest.raises(OpenRouterReviewerError, match="profile_mismatch"):
+            reviewer.run_taste_build(
+                openrouter_profile("example/vision"), _taste_request()
+            )
+        with pytest.raises(OpenRouterReviewerError, match="malformed_request"):
+            reviewer.run_taste_build(
+                openrouter_taste_profile("example/vision"),
+                SimpleNamespace(),  # type: ignore[arg-type]
+            )
+    finally:
+        reviewer.close()

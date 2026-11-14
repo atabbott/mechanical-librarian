@@ -2964,6 +2964,7 @@ def test_openapi_is_deterministic_and_secret_free(
     assert protected_operations == {
         ("post", "/api/v1/reviewer-access/description-model/contained"),
         ("post", "/api/v1/reviewer-access/description-model/test"),
+        ("post", "/api/v1/reviewer-access/taste-model/test"),
         ("post", "/api/v1/review-cases/{review_case_id}/description-advice/retry"),
         ("post", "/api/v1/review-cases/{review_case_id}/description-advice/selection"),
         ("get", "/api/v1/appearance"),
@@ -2992,6 +2993,8 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/library/report"),
         ("get", "/api/v1/covers"),
         ("get", "/api/v1/covers/replaced"),
+        ("get", "/api/v1/covers/taste"),
+        ("post", "/api/v1/covers/taste/retry"),
         ("get", "/api/v1/operations/status"),
         ("get", "/api/v1/operations/support/preview"),
         ("post", "/api/v1/operations/support/export"),
@@ -3878,3 +3881,48 @@ def test_owner_title_recovery_route_requeues_actual_completed_work(
         assert len(repository.get_review_case_decisions(case_id)) == 1
     finally:
         repository.close()
+
+
+def test_taste_profile_routes_are_owner_only_no_store_and_csrf_bound(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Covers → Taste profile is a protected read and a CSRF-bound retry (#1372)."""
+    retry = {"build_id": "taste_build_" + "0" * 32}
+    signed_out = web.client.get("/api/v1/covers/taste")
+    assert signed_out.status_code == 401
+    assert signed_out.headers["cache-control"] == "no-store, private"
+    signed_out_retry = web.client.post(
+        "/api/v1/covers/taste/retry",
+        json=retry,
+        headers={**web.origin, "x-csrf-token": "any"},
+    )
+    assert signed_out_retry.status_code == 401
+    session = web.login()
+    missing_csrf = web.client.post(
+        "/api/v1/covers/taste/retry", json=retry, headers=web.origin
+    )
+    assert missing_csrf.status_code == 422
+    bad_csrf = web.client.post(
+        "/api/v1/covers/taste/retry",
+        json=retry,
+        headers={**web.origin, "x-csrf-token": "bad"},
+    )
+    assert bad_csrf.status_code == 403
+    assert bad_csrf.headers["cache-control"] == "no-store, private"
+    # This app has no taste profile service wired, so both answer unavailable.
+    unwired = web.client.get("/api/v1/covers/taste")
+    assert unwired.status_code == 503
+    assert unwired.json()["error"]["code"] == "unavailable"
+    assert unwired.headers["cache-control"] == "no-store, private"
+    unwired_retry = web.client.post(
+        "/api/v1/covers/taste/retry",
+        json=retry,
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert unwired_retry.status_code == 503
+    malformed = web.client.post(
+        "/api/v1/covers/taste/retry",
+        json={"build_id": "not-a-build"},
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert malformed.status_code == 422

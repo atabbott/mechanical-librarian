@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { ApiError, refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type {
   CoverTab,
+  CoversTab,
   CoversView as CoversPage,
   CoverWorkView,
   DecisionCommand,
@@ -27,6 +28,7 @@ import { Dropdown } from '../components/Dropdown'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { StatusPill } from '../components/StatusPill'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import TasteProfileView from './TasteProfileView'
 
 // Library's Covers view (#1633, #1363): every book's cover, grouped by what it
 // asks of the owner. Each choice is one gesture through the book's own
@@ -764,7 +766,9 @@ export default function CoversView() {
   const navigate = useNavigate({ from: '/library' })
   const { http } = useReviewContext()
   const queryClient = useQueryClient()
-  const tab: CoverTab = search.tab ?? 'decide'
+  // Taste profile has no page of books; To decide's page keeps the counts.
+  const taste = search.tab === 'taste'
+  const tab: CoverTab = search.tab === undefined || search.tab === 'taste' ? 'decide' : search.tab
   // As Works says it: only a confirmed snapshot with no library names the
   // way to fill the list.
   const noLibraryConnected = usePreparation().data?.libraries.length === 0
@@ -853,13 +857,13 @@ export default function CoversView() {
   // A selection the tab no longer holds is dropped, so a phone never shows
   // neither the list nor a book.
   useEffect(() => {
-    if (selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
+    if (!taste && selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
       select(undefined, true)
   })
   // On a wide screen To decide and Kept open their first undecided book
   // beside the list, so the first tap already chooses.
   useEffect(() => {
-    if (!selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
+    if (!taste && !selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
       select(firstOpen.review_case_id, true)
   })
   // Each decision asks for the counts again. Only the newest read is shown:
@@ -921,7 +925,7 @@ export default function CoversView() {
     setNotice(null)
     select(reviewCaseId, true)
   }
-  const changeTab = (next: CoverTab) => {
+  const changeTab = (next: CoversTab) => {
     setNotice(null)
     void navigate({ search: { lens: 'all', view: 'covers', tab: next } })
   }
@@ -978,15 +982,25 @@ export default function CoversView() {
           <button
             key={value}
             type="button"
-            aria-pressed={value === tab}
+            aria-pressed={!taste && value === tab}
             onClick={() => {
-              if (value !== tab) changeTab(value)
+              if (taste || value !== tab) changeTab(value)
             }}
           >
             {tabLabels[value]} <strong>{counts ? String(counts[value]) : '…'}</strong>
           </button>
         ))}
+        <button
+          type="button"
+          aria-pressed={taste}
+          onClick={() => {
+            if (!taste) changeTab('taste')
+          }}
+        >
+          Taste profile
+        </button>
       </nav>
+      {taste ? <TasteProfileView /> : null}
       <p className="covers-notice" role="status">
         {notice}
       </p>
@@ -999,7 +1013,7 @@ export default function CoversView() {
           </button>
         </div>
       ) : null}
-      <div className="covers-list">
+      <div className="covers-list" hidden={taste}>
         {pages.isPending ? (
           <p role="status">Loading covers…</p>
         ) : pages.isError ? (
@@ -1096,7 +1110,7 @@ export default function CoversView() {
           </div>
         )}
       </div>
-      {pages.hasNextPage ? (
+      {!taste && pages.hasNextPage ? (
         <button
           className="covers-more"
           type="button"
