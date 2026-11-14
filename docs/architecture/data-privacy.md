@@ -51,8 +51,12 @@ consent, state, attempts and failure codes. Activity events are append-only.
 **Reviewer work.** A cover consideration keeps its packet, the request and
 profile identities, and one locally admitted closed observation or a typed,
 value-free failure. Description advice keeps each attempt and the one bounded
-description the reviewer authored. Neither keeps prompts, raw model streams,
-reasoning or unadmitted output.
+description the reviewer authored. The taste profile keeps each build's
+state and closed failure code, the daily request count, and each admitted
+profile version with its model and the counts and one digest of the inputs
+it was built from.
+None keeps prompts, raw model streams, reasoning or unadmitted output. A
+clean rebuild discards the profile with all derived state.
 
 **Settings and access.** In store mode the application database holds owner
 settings and their secrets: the Audiobookshelf token and provider API keys.
@@ -134,15 +138,22 @@ The product sends no telemetry. It contacts only:
   references, re-encoded previews, incumbent state and bounded public provider
   provenance; never a target, library, path, URL, credential, raw provider
   response or private bibliographic value. Description advice sends only
-  provider-backed description texts and the three cleanup choices. OpenRouter
-  cover requests ask providers to deny data collection; description requests
-  do not. Read the model provider's data policy before enabling either.
+  provider-backed description texts and the three cleanup choices. The taste
+  profile sends up to 100 previews of covers the owner chose and passed over,
+  as JPEGs, with each cover's size, shape, same-art group and role and the
+  book's format; never a title, author, identifier, path or provider text.
+  OpenRouter cover and taste profile requests ask providers to deny data
+  collection; description requests do not. Read the model provider's data
+  policy before enabling any of them.
 
 ## What surfaces show
 
 All owner surfaces need a session and are `private, no-store`.
 
 - **Library, Attention and review** show the owner's own metadata and evidence.
+- **Covers → Taste profile** shows the profile's rules, versions and build
+  state. Rule text is model output, shown as text only, and never reaches a
+  log, status, diagnostic or support bundle.
 - **Preparation status** shows only connection and library names, an opaque
   scan identifier, a closed state, counts and whether a request was
   coalesced: never titles, file names, queries, failure text or values.

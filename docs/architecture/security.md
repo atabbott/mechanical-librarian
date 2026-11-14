@@ -498,9 +498,10 @@ change cannot make old evidence current.
 ### OpenRouter
 
 Egress is fixed to `https://openrouter.ai` and one exact model, with
-`require_parameters: true`. Cover requests also deny data collection;
-description requests also set `allow_fallbacks: false`. Upstream data
-practice is not verified. Responses past each endpoint's cap are refused as
+`require_parameters: true`. Cover and
+[taste profile](ai-boundary.md#taste-profile-builder) requests also deny data
+collection; description requests also set `allow_fallbacks: false`. Upstream
+data practice is not verified. Responses past each endpoint's cap are refused as
 `response_too_large`, whatever `Content-Length` says. One deadline spans the
 key, catalogue and chat requests; a single read can overrun it by its phase
 cap (30 seconds by default). Error bodies are read up to 8 KiB to recognise
