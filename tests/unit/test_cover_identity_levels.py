@@ -548,3 +548,152 @@ def test_the_shadow_election_confirms_a_level_matched_incumbent(
     )
     note = _would_admit(report, candidates, policy, provider_fetching=False)
     assert (None if note is None else note["candidate_reference"]) == expected
+
+
+# --- 6. Guard: at identifier every cover outcome is today's ------------------
+
+
+def _packet_case(
+    report: MetadataReport, payloads: dict[str, bytes]
+) -> tuple[str, str, tuple[tuple[str, str, bytes], ...], Any]:
+    def read(artifact: str, _variant: str) -> bytes:
+        return payloads[artifact]
+
+    packet = prepare_cover_packet(report.to_json(), read)
+    images = tuple(
+        (item.reference, item.digest, item.payload) for item in packet.images
+    )
+    return report.to_json(), packet.document, images, read
+
+
+def _sources_case(*sources: Any) -> Any:
+    from tests.unit.test_cover_packets import _report as _packet_report
+
+    return lambda: _packet_case(
+        _packet_report(tuple(sources)),
+        {
+            source.artifact.artifact_id: payload
+            for source, payload in (
+                (source, _CORPUS_PAYLOADS[source.artifact.artifact_id])
+                for source in sources
+            )
+        },
+    )
+
+
+def _typed_case(**values: Any) -> Any:
+    from tests.unit.test_cover_packets import _typed_discovery_identity_case
+
+    def build() -> Any:
+        report, packet, images, payload = _typed_discovery_identity_case(**values)
+        return report, packet, images, lambda *_: payload
+
+    return build
+
+
+def _isbn_lane_case(source: Any, index: int) -> Any:
+    return lambda: _packet_case(
+        _isbn_lane_report(source), {source.artifact.artifact_id: _preview(index)}
+    )
+
+
+def _corpus_sources() -> dict[str, Any]:
+    from tests.unit.test_cover_packets import _source
+
+    return {
+        "embedded": _source(3, _preview(3), embedded=True),
+        "incumbent": _source(4, _preview(4), incumbent=True),
+        "work": _source(5, _preview(5)),
+        "edition": _source(6, _preview(6)),
+    }
+
+
+_CORPUS_SOURCES = _corpus_sources()
+_CORPUS_PAYLOADS = {
+    source.artifact.artifact_id: _preview(index)
+    for index, source in zip((3, 4, 5, 6), _CORPUS_SOURCES.values(), strict=True)
+}
+_CREATORS = (
+    (("Ada Author", "Bea Author"), ("Ada Author", "Bea Author")),
+    (("Ada Author", "Bea Author"), ("Ada Author",)),
+    (("Ada Author",), ("Different Author",)),
+    (("Ada Author",), ()),
+)
+_CORPUS: dict[str, Any] = {
+    **{
+        f"sources_{'_'.join(names)}": _sources_case(
+            *(_CORPUS_SOURCES[name] for name in names)
+        )
+        for names in (
+            ("embedded",),
+            ("incumbent",),
+            ("work",),
+            ("incumbent", "embedded", "work", "edition"),
+        )
+    },
+    **{
+        f"typed_{lane}_{index}": _typed_case(
+            local_creators=local,
+            provider_creators=provider,
+            lane_kind=kind,
+        )
+        for index, (local, provider) in enumerate(_CREATORS)
+        for lane, kind in (
+            ("isbn", ProviderQueryKind.ISBN),
+            ("work", ProviderQueryKind.WORK),
+            ("no_lanes", None),
+        )
+    },
+    "typed_unrelated_isbn_mapping": _typed_case(
+        local_creators=("Ada Author",),
+        provider_creators=("Ada Author",),
+        lane_kind=ProviderQueryKind.WORK,
+        unrelated_isbn_mapping=True,
+    ),
+    "isbn_lane_listed": _isbn_lane_case(_listed_source(7), 7),
+    "isbn_lane_default": _isbn_lane_case(_default_source(8), 8),
+}
+
+
+def _identity_rows(case: Any, *, mocked: bool) -> list[dict[str, Any]]:
+    from unittest import mock
+
+    report, packet, images, read = case()
+
+    def classify() -> list[dict[str, Any]]:
+        document = classify_cover_identity(
+            report, packet, images, read_preview=read, work_identity_level=_IDENTIFIER
+        ).document
+        return cast("list[dict[str, Any]]", json.loads(document)["candidates"])
+
+    if not mocked:
+        return classify()
+    with mock.patch.object(
+        cover_identity,
+        "_level_outcome",
+        side_effect=lambda _report, _matches, identifier, _level, **_: identifier,
+    ):
+        return classify()
+
+
+def test_identifier_level_cover_outcomes_unchanged() -> None:
+    """Contract test 6: over a corpus of real reports, every outcome at
+    `identifier` is the identifier rules' alone, with the level facts only
+    added beside its reasons, and no `title_creator_work_match` appears. The
+    identifier result is the same classification with the level branch cut
+    out; the real branch runs, as the level facts it adds show."""
+    level_facts = 0
+    for name, case in _CORPUS.items():
+        level = _identity_rows(case, mocked=False)
+        identifier = _identity_rows(case, mocked=True)
+        assert len(level) == len(identifier) > 0, name
+        for row, expected in zip(level, identifier, strict=True):
+            assert row["outcome"] != "title_creator_work_match", name
+            assert row["outcome"] == expected["outcome"], name
+            assert row["evidence_references"] == expected["evidence_references"], name
+            added = sorted(set(row["reasons"]) - set(expected["reasons"]))
+            assert set(expected["reasons"]) <= set(row["reasons"]), name
+            assert set(added) <= cover_identity._LEVEL_REASONS, name
+            level_facts += bool(added)
+    # Not vacuous: the level branch ran and spoke for several candidates.
+    assert level_facts >= 3
